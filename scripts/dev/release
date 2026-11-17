@@ -1,0 +1,68 @@
+#!/bin/bash
+# Builds a release of Agneta for this Mac's architecture: build/Agneta.app, signed, notarized when it can be,
+# zipped, with its SHA-256, and smoke-tested (docs/RELEASING.md).
+#   scripts/dev/release [--engines all|goose] [--previous <Agneta.zip>]
+# AGNETA_SIGN_IDENTITY: a "Developer ID Application: …" identity in your keychain. Without it the build is signed
+#   ad hoc: fine to test, not to distribute (Gatekeeper refuses it).
+# AGNETA_NOTARY_PROFILE: an `xcrun notarytool store-credentials` profile. With an identity, the zip is notarized
+#   and the ticket stapled to the app.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+engines=all previous=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --engines) shift; engines=${1:?--engines all|goose} ;;
+    --previous) shift; previous=(--previous "${1:?--previous needs a zip}") ;;
+    *) echo "usage: release [--engines all|goose] [--previous <Agneta.zip>]" >&2; exit 2 ;;
+  esac
+  shift
+done
+[[ -z "$(git status --porcelain)" ]] || { echo "Commit first: a release is built from a clean checkout" >&2; exit 2; }
+arch=$(uname -m); [[ "$arch" == aarch64 ]] && arch=arm64
+scripts/dev/build-app --release --engines "$engines" >/dev/null
+app=build/Agneta.app
+version=$(/usr/bin/plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")
+zip="build/Agneta-$version-$arch.zip"
+
+if [[ -n "${AGNETA_SIGN_IDENTITY:-}" ]]; then
+  # Everything Agneta ships is signed with its identity, inside out, with a secure timestamp and the hardened
+  # runtime: notarization needs all three. Node compiles JavaScript at run time, so it may make executable memory.
+  entitlements=$(mktemp "${TMPDIR:-/tmp}/agneta-node-XXXX.plist")
+  trap 'rm -f "$entitlements"' EXIT
+  cat > "$entitlements" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+</dict></plist>
+PLIST
+  sign() { codesign --force --timestamp --options runtime --sign "$AGNETA_SIGN_IDENTITY" "$@"; }
+  while IFS= read -r -d '' file; do
+    file -b "$file" | grep -q Mach-O && sign "$file"
+  done < <(find "$app/Contents/Resources" -type f -perm +111 -print0)
+  codesign --force --timestamp --options runtime --preserve-metadata=entitlements --sign "$AGNETA_SIGN_IDENTITY" "$app/Contents/Resources/AgnetaTestClient.app"
+  for item in "$app/Contents/MacOS/"*; do
+    [[ "$item" == "$app/Contents/MacOS/Agneta" ]] && continue
+    if [[ "$(basename "$item")" == node ]]; then sign --entitlements "$entitlements" "$item"; else sign "$item"; fi
+  done
+  sign "$app"
+  codesign --verify --deep --strict "$app"
+  echo "signed with $AGNETA_SIGN_IDENTITY"
+else
+  echo "no AGNETA_SIGN_IDENTITY: signed ad hoc, not for distribution" >&2
+fi
+
+rm -f "$zip"
+/usr/bin/ditto -c -k --keepParent "$app" "$zip"
+if [[ -n "${AGNETA_SIGN_IDENTITY:-}" && -n "${AGNETA_NOTARY_PROFILE:-}" ]]; then
+  xcrun notarytool submit "$zip" --keychain-profile "$AGNETA_NOTARY_PROFILE" --wait
+  xcrun stapler staple "$app"
+  spctl --assess --type execute --verbose "$app"
+  rm -f "$zip"
+  /usr/bin/ditto -c -k --keepParent "$app" "$zip"
+  echo "notarized and stapled"
+fi
+(cd build && shasum -a 256 "$(basename "$zip")" > "$(basename "$zip").sha256")
+scripts/dev/smoke-test "$app" ${previous[@]+"${previous[@]}"}
+echo "$zip ($(du -h "$zip" | cut -f1)), $(cat "$zip.sha256" | cut -d' ' -f1)"

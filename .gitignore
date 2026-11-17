@@ -1,0 +1,14 @@
+.DS_Store
+.build/
+.swiftpm/
+build/
+dist/
+node_modules/
+*.xcuserstate
+xcuserdata/
+*.log
+.env
+.env.*
+!.env.example
+Engines/bin/
+.vscode/

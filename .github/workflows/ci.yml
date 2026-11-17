@@ -1,0 +1,62 @@
+# Builds and tests Agneta on the Macs it supports, with the real engines (docs/CI.md).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS 26, Apple silicon
+            runner: macos-26
+          - name: macOS 15, Apple silicon
+            runner: macos-15
+          - name: macOS 15, Intel
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Xcode 26
+        run: |
+          xcode=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          [ -n "$xcode" ] || { echo "No Xcode 26 on this runner" >&2; exit 1; }
+          sudo xcode-select -s "$xcode"
+          sw_vers
+          swift --version
+
+      - name: Fetch the pinned engines
+        run: scripts/fetch-engines --engine all
+
+      - name: Build
+        run: swift build
+
+      # The real-engine suites (Goose and OpenCode against the fake model, the sandbox acceptance test) must run:
+      # AGNETA_REQUIRE_ENGINES turns a missing engine into a failure instead of a skip.
+      - name: Test
+        env:
+          AGNETA_REQUIRE_ENGINES: "1"
+        run: swift test
+
+      - name: Build the app bundle
+        run: scripts/dev/build-app
+
+      - name: Test Project Chat
+        working-directory: examples/project-chat
+        run: |
+          node="$GITHUB_WORKSPACE/build/Agneta Dev.app/Contents/MacOS/node"
+          "$node" --test test/*.test.mjs test/agneta.smoke.mjs

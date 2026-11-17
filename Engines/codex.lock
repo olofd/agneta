@@ -1,0 +1,20 @@
+{
+  "engine": "codex",
+  "adapter": {
+    "name": "@agentclientprotocol/codex-acp",
+    "version": "2.7.0",
+    "commit": "7c98a1608022cbb2b7e425ae7a1df5fde86c6ff2",
+    "license": "Apache-2.0",
+    "url": "https://registry.npmjs.org/@agentclientprotocol/codex-acp/-/codex-acp-2.7.0.tgz",
+    "integrity": "sha512-fFFU/tV5DltBzN4cZIh5tJEWGTZFXbwHU7I5RxPkmrGraw3jhAIuvTeudYwK3wAbV311WgIi7qONl2I8uRV2jw=="
+  },
+  "node": {
+    "version": "24.19.0",
+    "license": "MIT",
+    "assets": {
+      "arm64": {"url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-darwin-arm64.tar.gz", "sha256": "8294b7aa9b03997481c06babf1e8b270c859358f27da57a11509afe537ac381d"},
+      "x86_64": {"url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-darwin-x64.tar.gz", "sha256": "d1b5e999db158c62fe8f7267a4476b035d8bd93b1a605bac24a3f0dd166e3316"}
+    }
+  },
+  "codex": {"minimum": "0.166.0", "note": "The user's own Codex; not bundled"}
+}

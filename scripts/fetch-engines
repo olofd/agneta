@@ -1,0 +1,54 @@
+#!/bin/bash
+# Downloads the pinned engines into Engines/bin/<arch>/, verifying each
+# SHA-256 from its lock (Engines/goose.lock, Engines/opencode.lock).
+# Binaries are never committed; the locks are the source of truth.
+#   scripts/fetch-engines [arch|all] [--engine goose|opencode|all]   (default: this Mac, goose)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+engines=(goose)
+archs=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --engine) shift; [[ "$1" == "all" ]] && engines=(goose opencode) || engines=("$1") ;;
+    all) archs=(x86_64 arm64) ;;
+    *) archs+=("$1") ;;
+  esac
+  shift
+done
+[[ ${#archs[@]} -eq 0 ]] && archs=("$(uname -m)")
+# Every temporary folder is removed on exit (a trap set inside the loop would keep only the last).
+temps=()
+trap 'for t in "${temps[@]:-}"; do [[ -n "$t" ]] && rm -rf "$t"; done' EXIT
+for engine in "${engines[@]}"; do
+  lock="Engines/$engine.lock"
+  [[ "$engine" == "goose" ]] && binary=goose-acp || binary=$(/usr/bin/plutil -extract binary raw -o - "$lock")
+  for arch in "${archs[@]}"; do
+    [[ "$arch" == "aarch64" ]] && arch=arm64
+    url=$(/usr/bin/plutil -extract "assets.$arch.url" raw -o - "$lock")
+    sum=$(/usr/bin/plutil -extract "assets.$arch.sha256" raw -o - "$lock")
+    dest="Engines/bin/$arch"
+    # A cached binary counts only if it's still the one installed: its own hash, recorded at install, must match.
+    if [[ -x "$dest/$binary" ]] && [[ "$(cat "$dest/.$binary.sha256" 2>/dev/null)" == "$sum" ]] \
+       && [[ "$(cat "$dest/.$binary.content" 2>/dev/null)" == "$(/usr/bin/shasum -a 256 "$dest/$binary" | cut -d' ' -f1)" ]]; then
+      echo "$binary $arch: up to date"; continue
+    fi
+    tmp=$(mktemp -d); temps+=("$tmp")
+    archive="$tmp/archive"
+    /usr/bin/curl --fail --location --silent --show-error --output "$archive" "$url"
+    actual=$(/usr/bin/shasum -a 256 "$archive" | cut -d' ' -f1)
+    if [[ "$actual" != "$sum" ]]; then echo "$binary $arch: checksum mismatch ($actual)" >&2; exit 1; fi
+    mkdir -p "$tmp/x"
+    case "$url" in
+      *.zip) /usr/bin/ditto -x -k "$archive" "$tmp/x" ;;
+      *) /usr/bin/tar -xzf "$archive" -C "$tmp/x" ;;
+    esac
+    bin=$(find "$tmp/x" -type f -name "$binary" -perm -u+x | head -1)
+    [[ -n "$bin" ]] || { echo "$binary $arch: binary not found in archive" >&2; exit 1; }
+    mkdir -p "$dest"
+    rm -f "$dest/$binary"
+    mv "$bin" "$dest/$binary"
+    echo "$sum" > "$dest/.$binary.sha256"
+    /usr/bin/shasum -a 256 "$dest/$binary" | cut -d' ' -f1 > "$dest/.$binary.content"
+    echo "$binary $arch: $(/usr/bin/plutil -extract version raw -o - "$lock") installed"
+  done
+done

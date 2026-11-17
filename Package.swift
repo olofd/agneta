@@ -1,0 +1,39 @@
+// swift-tools-version: 6.0
+// Agneta's logic lives in AgnetaKit so it can be tested without a window;
+// the app target is a thin SwiftUI/AppKit layer on top.
+import PackageDescription
+
+let package = Package(
+    name: "Agneta",
+    platforms: [.macOS(.v14)],
+    products: [
+        .library(name: "AgnetaKit", targets: ["AgnetaKit"]),
+        .executable(name: "agneta-probe", targets: ["agneta-probe"]),
+        .executable(name: "agneta-shell", targets: ["agneta-shell"]),
+        .executable(name: "agnetad", targets: ["agnetad"]),
+        .executable(name: "agneta-testclient", targets: ["agneta-testclient"]),
+        .executable(name: "agneta-signin", targets: ["agneta-signin"]),
+        .executable(name: "Agneta", targets: ["Agneta"]),
+        .executable(name: "agneta-diag", targets: ["agneta-diag"]),
+    ],
+    dependencies: [
+        // SQLite with migrations. Pinned exactly; updates are deliberate.
+        .package(url: "https://github.com/groue/GRDB.swift", exact: "7.9.0"),
+    ],
+    targets: [
+        .target(name: "AgnetaKit", dependencies: [.product(name: "GRDB", package: "GRDB.swift")]),
+        .executableTarget(name: "agneta-probe", dependencies: ["AgnetaKit"]),
+        // GOOSE_SHELL inside engines: forwards commands to Agneta's tool broker. No dependencies.
+        .executableTarget(name: "agneta-shell"),
+        // agnetad: a headless development host, never shipped. agneta-testclient: a stand-in app, shipped only
+        // inside the development bundle as the panel's sandboxed "Run a Test Task" app.
+        .executableTarget(name: "agnetad", dependencies: ["AgnetaKit"]),
+        .executableTarget(name: "agneta-testclient"),
+        .executableTarget(name: "agneta-signin", dependencies: ["AgnetaKit"]),
+        // The app: menu bar panel and windows over AgnetaKit (scripts/dev/build-app bundles it).
+        .executableTarget(name: "Agneta", dependencies: ["AgnetaKit"]),
+        // Reads task traces for people and scripts (docs/DIAGNOSTICS.md); bundled in the app.
+        .executableTarget(name: "agneta-diag", dependencies: ["AgnetaKit"]),
+        .testTarget(name: "AgnetaKitTests", dependencies: ["AgnetaKit"]),
+    ]
+)

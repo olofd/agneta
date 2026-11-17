@@ -1,0 +1,54 @@
+#!/bin/bash
+# A Claude plan round on Goose: signs in with your installed Claude Code's own
+# login (once; the browser opens), then runs one confined Goose session on that
+# plan, through claude-agent-acp and your Claude Code, with the fake app tool
+# server. Credentials stay in the data folder you name; nothing is printed or
+# logged. (ChatGPT plans run on Codex: use the real probe.)
+#
+#   AGNETA_REAL_PROBE_HOME=<folder> scripts/dev/subscription-round claude [model]
+#
+# The folder is laid out like Agneta's own data (Accounts/claude, Runtimes), and
+# the real probe (AGNETA_REAL_PROBE_HOME too) reuses the sign-in.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+route=${1:?usage: subscription-round claude [model]}
+[[ "$route" == claude ]] || { echo "unknown route $route" >&2; exit 2; }
+home=${AGNETA_REAL_PROBE_HOME:?set AGNETA_REAL_PROBE_HOME to the folder that holds the sign-in}
+provider=claude-acp
+model=${2:-current}
+# Your installed Claude Code: the Claude app's newest bundled copy, else one on the PATH.
+cli=$(ls -d "$HOME/Library/Application Support/Claude/claude-code/"*/*/claude.app/Contents/MacOS/claude 2>/dev/null | tail -1)
+[[ -n "$cli" ]] || cli=$(command -v claude || true)
+[[ -n "$cli" ]] || { echo "Claude Code isn't installed" >&2; exit 2; }
+arch=$(uname -m); [[ "$arch" == aarch64 ]] && arch=arm64
+scripts/fetch-engines "$arch" >/dev/null
+swift build >/dev/null
+account="$home/Accounts/$route"
+mkdir -p "$account"
+echo "== Sign in to Claude if needed (your browser opens; paste the code it shows here)"
+.build/debug/agneta-signin claude --home "$account"   # skips when `auth status` says signed in
+# The pinned adapter version, which agneta-signin installed.
+version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["claude-agent-acp"]["version"])' Engines/runtimes.lock)
+runtime="$home/Runtimes/claude-agent-acp/$version"
+[[ -x "$runtime/claude-agent-acp" ]] || { echo "claude-agent-acp $version isn't installed in $home/Runtimes" >&2; exit 2; }
+ctmp="${TMPDIR:-/tmp}/agneta-cdev"; mkdir -p "$ctmp"; ctmp=$(cd "$ctmp" && pwd -P)
+bundle=$(cd "$(dirname "$cli")" && pwd -P); [[ "$bundle" == */Contents/MacOS ]] && bundle=${bundle%/Contents/MacOS}
+extra=(--path "$runtime" --path "$bundle" --writable "$account/claude" --writable "$ctmp" --env "CLAUDE_CONFIG_DIR=$account/claude" --env "CLAUDE_CODE_TMPDIR=$ctmp"
+       --env "CLAUDE_CODE_EXECUTABLE=$cli" --env "GOOSE_MODEL=$model")
+run=$(mktemp -d "${TMPDIR:-/tmp}/agneta-sub-XXXX"); mkdir -p "$run/work"
+mcp_token=$(uuidgen)
+python3 scripts/dev/fake-mcp.py 47392 "$mcp_token" "$run/mcp.log" & mcp=$!
+trap 'kill $mcp 2>/dev/null; rm -rf "$run"' EXIT
+sleep 0.5
+echo "== Session on $provider"
+.build/debug/agneta-probe --goose "Engines/bin/$arch/goose-acp" --home "$account" --cwd "$run/work" \
+  --confine 47392 --builtins --mcp http://127.0.0.1:47392/mcp --mcp-token "$mcp_token" \
+  --env GOOSE_PROVIDER=$provider ${extra[@]+"${extra[@]}"} \
+  --system "You are a test assistant for Agneta. Be brief. Use tools exactly when asked." \
+  --prompt "Reply with exactly five words." \
+  --prompt "Call the echo tool with the text 'agneta', then report what it returned." \
+  --prompt "Call the swatch tool and describe the colour of the image it returns in one sentence." \
+  --prompt "Use the shell to run: echo hi > hi.txt && cat hi.txt && (curl -s -o /dev/null --max-time 4 https://example.com && echo NET || echo no-network). Report the output." \
+  2>&1 | grep -v "session_info_update\|available_commands_update"
+echo "--- workspace: $(ls "$run/work" | tr '\n' ' ')"
+echo "--- MCP calls: $(grep -c tools/call "$run/mcp.log" || true)"

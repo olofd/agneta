@@ -1,0 +1,54 @@
+#!/bin/bash
+# Installs a built Agneta into a temporary folder and checks it as a user would get it: its signature holds, it
+# starts, listens for apps, writes its data and log, agneta-diag reads that data, and it starts again on the same
+# data. With --previous <Agneta.zip>, that release runs first on the same data folder, so the new one starts on
+# what an older one left (an upgrade). Every run is an isolated instance (its own data folder, Keychain service
+# and port): nothing touches your own Agneta. It stops what it started.
+#   scripts/dev/smoke-test <Agneta.app> [--previous <Agneta.zip>]
+set -euo pipefail
+app=${1:?usage: smoke-test <Agneta.app> [--previous <Agneta.zip>]}
+previous=""
+[[ "${2:-}" == --previous ]] && previous=${3:?--previous needs a zip}
+work=$(mktemp -d "${TMPDIR:-/tmp}/agneta-smoke-XXXX")
+pid=""
+cleanup() {
+  [[ -n "$pid" ]] && kill "$pid" 2>/dev/null && wait "$pid" 2>/dev/null
+  rm -rf "$work"
+}
+trap cleanup EXIT
+home="$work/home"
+port=47700
+while nc -z 127.0.0.1 "$port" 2>/dev/null || nc -z 127.0.0.1 $((port + 2)) 2>/dev/null; do port=$((port + 4)); done
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+# Starts the app at $1, waits until it listens, checks its log, then stops it.
+run() {
+  local binary="$1/Contents/MacOS/Agneta" label=$2 started
+  AGNETA_HOME="$home" AGNETA_PORT="$port" "$binary" >/dev/null 2>&1 &
+  pid=$!
+  started=$(date +%s)
+  for _ in $(seq 1 100); do nc -z 127.0.0.1 "$port" 2>/dev/null && break; sleep 0.2; done
+  nc -z 127.0.0.1 "$port" 2>/dev/null || fail "$label didn't listen on $port"
+  echo "ok: $label listens on $port after $(( $(date +%s) - started )) s"
+  grep -qh '"event":"start"' "$home"/Logs/*.jsonl 2>/dev/null || fail "$label wrote no start to its log"
+  grep -h '"level":"error"' "$home"/Logs/*.jsonl 2>/dev/null && fail "$label logged errors"
+  kill "$pid"; wait "$pid" 2>/dev/null || true; pid=""
+}
+
+mkdir -p "$work/install"
+ditto "$app" "$work/install/Agneta.app"
+codesign --verify --deep --strict "$work/install/Agneta.app" || fail "the installed copy's signature doesn't hold"
+echo "ok: signature holds"
+
+if [[ -n "$previous" ]]; then
+  mkdir -p "$work/previous"
+  ditto -x -k "$previous" "$work/previous"
+  run "$(ls -d "$work"/previous/*.app | head -1)" "the previous release"
+fi
+run "$work/install/Agneta.app" "the new build"
+[[ -f "$home/agneta.sqlite" ]] || fail "no database in the data folder"
+"$work/install/Agneta.app/Contents/MacOS/agneta-diag" tasks --home "$home" >/dev/null || fail "agneta-diag couldn't read the data"
+echo "ok: agneta-diag reads the data"
+run "$work/install/Agneta.app" "a second start on the same data"
+echo "smoke test passed"

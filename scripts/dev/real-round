@@ -1,0 +1,39 @@
+#!/bin/bash
+# A real-provider round with your own API key. The key
+# is read from the environment of the terminal that runs this script; it is
+# never printed, logged or written to disk. Small prompts, a few cents at most.
+#
+#   export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
+#   scripts/dev/real-round anthropic [model]
+#
+# Runs one confined Goose session through agneta-probe with the fake app
+# tool server: a plain reply, an MCP text tool, an MCP image tool, a shell
+# command in the workspace (no network), and prints timings and memory.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+route=${1:?usage: real-round anthropic|openai [model]}
+case "$route" in
+  anthropic) provider=anthropic; key=ANTHROPIC_API_KEY; model=${2:-claude-sonnet-5-5} ;;
+  openai)    provider=openai;    key=OPENAI_API_KEY;    model=${2:-gpt-6.1-sol} ;;
+  *) echo "unknown route $route" >&2; exit 2 ;;
+esac
+[[ -n "${!key:-}" ]] || { echo "Set $key in this terminal first (it stays in this terminal)." >&2; exit 2; }
+arch=$(uname -m); [[ "$arch" == aarch64 ]] && arch=arm64
+scripts/fetch-engines "$arch" >/dev/null
+swift build >/dev/null
+run=$(mktemp -d "${TMPDIR:-/tmp}/agneta-real-XXXX"); mkdir -p "$run/work" "$run/home"
+token=$(uuidgen)
+python3 scripts/dev/fake-mcp.py 47392 "$token" "$run/mcp.log" & mcp=$!
+trap 'kill $mcp 2>/dev/null; rm -rf "$run"' EXIT
+sleep 0.5
+.build/debug/agneta-probe --goose "Engines/bin/$arch/goose-acp" --home "$run/home" --cwd "$run/work" \
+  --confine 47392 --builtins --mcp http://127.0.0.1:47392/mcp --mcp-token "$token" \
+  --env GOOSE_PROVIDER=$provider --env GOOSE_MODEL=$model --pass-env "$key" \
+  --system "You are a test assistant for Agneta. Be brief. Use tools exactly when asked." \
+  --prompt "Reply with exactly five words." \
+  --prompt "Call the echo tool with the text 'agneta', then report what it returned." \
+  --prompt "Call the swatch tool and describe the colour of the image it returns in one sentence." \
+  --prompt "Use the shell to run: echo hi > hi.txt && cat hi.txt && (curl -s -o /dev/null --max-time 4 https://example.com && echo NET || echo no-network). Report the output." \
+  2>&1 | grep -v "session_info_update\|available_commands_update"
+echo "--- workspace: $(ls "$run/work" | tr '\n' ' ')"
+echo "--- MCP calls: $(grep -c tools/call "$run/mcp.log" || true)"

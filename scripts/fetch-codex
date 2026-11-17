@@ -1,0 +1,54 @@
+#!/bin/bash
+# Installs the Codex engine's bundled parts from Engines/codex.lock into
+# Engines/bin/<arch>/: Node (SHA-256 from nodejs.org's SHASUMS256) and codex-acp
+# (the npm package, checked against its sha512 integrity, with its production
+# dependencies installed by the pinned Node's npm exactly as
+# Engines/codex-acp.package-lock.json pins them). Codex itself is the user's own
+# install. A cached copy is used only when its content still matches what was
+# installed (a hash of the files, recorded at install), not just its marker.
+#   scripts/fetch-codex [arch]
+set -euo pipefail
+cd "$(dirname "$0")/.."
+arch=${1:-$(uname -m)}; [[ "$arch" == aarch64 ]] && arch=arm64
+lock=Engines/codex.lock
+dest="Engines/bin/$arch"
+node_url=$(/usr/bin/plutil -extract "node.assets.$arch.url" raw -o - "$lock")
+node_sum=$(/usr/bin/plutil -extract "node.assets.$arch.sha256" raw -o - "$lock")
+acp_url=$(/usr/bin/plutil -extract adapter.url raw -o - "$lock")
+acp_integrity=$(/usr/bin/plutil -extract adapter.integrity raw -o - "$lock")
+mkdir -p "$dest"
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+# A hash of every file under a folder (paths and contents), to check a cached copy is the one installed.
+tree_sum() { (cd "$1" && /usr/bin/find . -type f -print0 | /usr/bin/sort -z | /usr/bin/xargs -0 /usr/bin/shasum -a 256 | /usr/bin/shasum -a 256 | cut -d' ' -f1); }
+lock_version=$(/usr/bin/plutil -extract version raw -o - Engines/codex-acp.package-lock.json)
+[[ "$lock_version" == "$(/usr/bin/plutil -extract adapter.version raw -o - "$lock")" ]] || { echo "codex-acp: package lock is for $lock_version" >&2; exit 1; }
+if [[ "$(cat "$dest/.node.sha256" 2>/dev/null)" != "$node_sum" ]] || [[ "$(cat "$dest/.node.content" 2>/dev/null)" != "$(tree_sum "$dest/node-runtime" 2>/dev/null)" ]]; then
+  /usr/bin/curl --fail --location --silent --show-error --output "$tmp/node.tar.gz" "$node_url"
+  [[ "$(/usr/bin/shasum -a 256 "$tmp/node.tar.gz" | cut -d' ' -f1)" == "$node_sum" ]] || { echo "node $arch: checksum mismatch" >&2; exit 1; }
+  mkdir -p "$tmp/node" && /usr/bin/tar -xzf "$tmp/node.tar.gz" -C "$tmp/node" --strip-components 1
+  rm -rf "$dest/node-runtime" && mkdir -p "$dest/node-runtime" && mv "$tmp/node/bin" "$tmp/node/lib" "$dest/node-runtime/"
+  echo "$node_sum" > "$dest/.node.sha256"
+  tree_sum "$dest/node-runtime" > "$dest/.node.content"
+  echo "node $arch: $(/usr/bin/plutil -extract node.version raw -o - "$lock") installed"
+else
+  echo "node $arch: up to date"
+fi
+lock_sum=$(/usr/bin/shasum -a 256 Engines/codex-acp.package-lock.json | cut -d' ' -f1)
+if [[ "$(cat "$dest/.codex-acp.integrity" 2>/dev/null)" != "$acp_integrity $lock_sum" ]] || [[ "$(cat "$dest/.codex-acp.content" 2>/dev/null)" != "$(tree_sum "$dest/codex-acp" 2>/dev/null)" ]]; then
+  /usr/bin/curl --fail --location --silent --show-error --output "$tmp/codex-acp.tgz" "$acp_url"
+  actual="sha512-$(/usr/bin/openssl dgst -sha512 -binary "$tmp/codex-acp.tgz" | /usr/bin/base64)"
+  [[ "$actual" == "$acp_integrity" ]] || { echo "codex-acp: integrity mismatch ($actual)" >&2; exit 1; }
+  mkdir -p "$tmp/acp" && /usr/bin/tar -xzf "$tmp/codex-acp.tgz" -C "$tmp/acp"
+  rm -rf "$dest/codex-acp" && mv "$tmp/acp/package" "$dest/codex-acp"
+  # Production dependencies with the pinned Node, exactly as the lock pins them (npm ci fails on any drift);
+  # @openai/codex is removed (Agneta points codex-acp at the user's Codex), and so is node_modules/.bin: nothing
+  # runs those links, and the one to @openai/codex would dangle and fail the app's strict signature check.
+  cp Engines/codex-acp.package-lock.json "$dest/codex-acp/package-lock.json"
+  (cd "$dest/codex-acp" && PATH="$PWD/../node-runtime/bin:/usr/bin:/bin" ../node-runtime/bin/npm ci --omit=dev --omit=optional --no-audit --no-fund --ignore-scripts --silent \
+     && rm -rf node_modules/@openai node_modules/.bin)
+  echo "$acp_integrity $lock_sum" > "$dest/.codex-acp.integrity"
+  tree_sum "$dest/codex-acp" > "$dest/.codex-acp.content"
+  echo "codex-acp: $(/usr/bin/plutil -extract adapter.version raw -o - "$lock") installed"
+else
+  echo "codex-acp: up to date"
+fi

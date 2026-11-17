@@ -1,0 +1,81 @@
+#!/bin/bash
+# Builds the app bundle.
+#   scripts/dev/build-app [--release] [--engines all|goose]
+# Development (the default): build/Agneta Dev.app, bundle ID com.objectivecoder.agneta.dev, apps connect on
+#   port 47331, data in ~/Library/Application Support/com.objectivecoder.agneta.dev.
+# --release: build/Agneta.app, bundle ID com.objectivecoder.agneta, port 47321 (scripts/dev/release signs it).
+# --engines goose: only the default engine (no OpenCode, and no Node and codex-acp for Codex), about a tenth
+#   of the size (docs/RELEASING.md).
+# Contents/MacOS holds the app, the pinned engines, agneta-shell and agneta-diag; Contents/Resources holds the
+# locks, the sandboxed test client, the licences and the bill of materials. Signed ad hoc here.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+release=false engines=all
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --release) release=true ;;
+    --engines) shift; engines=${1:?--engines all|goose} ;;
+    *) echo "usage: build-app [--release] [--engines all|goose]" >&2; exit 2 ;;
+  esac
+  shift
+done
+[[ "$engines" == all || "$engines" == goose ]] || { echo "--engines is all or goose" >&2; exit 2; }
+if $release; then id=com.objectivecoder.agneta name=Agneta app="build/Agneta.app"; else id=com.objectivecoder.agneta.dev name="Agneta Dev" app="build/Agneta Dev.app"; fi
+arch=$(uname -m); [[ "$arch" == aarch64 ]] && arch=arm64
+if [[ "$engines" == all ]]; then scripts/fetch-engines "$arch" --engine all >/dev/null; else scripts/fetch-engines "$arch" --engine goose >/dev/null; fi
+swift build -c release -q --product Agneta
+swift build -c release -q --product agneta-shell
+swift build -c release -q --product agneta-diag
+scripts/dev/testclient-app >/dev/null
+bin=$(swift build -c release --show-bin-path)
+rm -rf "$app"; mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp "$bin/Agneta" "$app/Contents/MacOS/Agneta"
+cp "$bin/agneta-shell" "$app/Contents/MacOS/agneta-shell"
+cp "$bin/agneta-diag" "$app/Contents/MacOS/agneta-diag"
+cp "Engines/bin/$arch/goose-acp" "$app/Contents/MacOS/goose-acp"
+if [[ "$engines" == all ]]; then
+  cp "Engines/bin/$arch/opencode" "$app/Contents/MacOS/opencode"
+  cp Engines/opencode.lock "$app/Contents/Resources/opencode.lock"
+  # Codex engine: the pinned Node (just the binary) and codex-acp; Codex itself is the user's own.
+  scripts/fetch-codex "$arch" >/dev/null
+  cp "Engines/bin/$arch/node-runtime/bin/node" "$app/Contents/MacOS/node"
+  cp -R "Engines/bin/$arch/codex-acp" "$app/Contents/Resources/codex-acp"
+  cp Engines/codex.lock "$app/Contents/Resources/codex.lock"
+fi
+cp Engines/runtimes.lock "$app/Contents/Resources/runtimes.lock"
+cp Engines/goose.lock "$app/Contents/Resources/goose.lock"
+cp -R .build/AgnetaTestClient.app "$app/Contents/Resources/AgnetaTestClient.app"
+# The build number is numeric and only grows (macOS compares it); the commit goes in a key of its own.
+build=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>$id</string>
+  <key>CFBundleName</key><string>Agneta</string>
+  <key>CFBundleDisplayName</key><string>$name</string>
+  <key>CFBundleExecutable</key><string>Agneta</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>$build</string>
+  <key>AgnetaCommit</key><string>$commit</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSSupportsAutomaticTermination</key><false/>
+  <key>NSHumanReadableCopyright</key><string>Agneta, open source under Apache License 2.0</string>
+</dict></plist>
+PLIST
+# Licences of what the bundle carries, and a bill of materials (CycloneDX) of what it ships and downloads.
+mkdir -p "$app/Contents/Resources/Licenses"
+cp LICENSE NOTICE THIRD_PARTY.md Licenses/*.txt Licenses/README.md "$app/Contents/Resources/Licenses/"
+python3 scripts/dev/sbom "$arch" "$app" "$app/Contents/Resources/sbom.cdx.json" "$engines" >/dev/null
+# Inside out: nested code first, then the app.
+# Ours are signed every time; engines keep their own vendor signature when they have a valid one.
+for item in "$app/Contents/MacOS/goose-acp" "$app/Contents/MacOS/agneta-shell" "$app/Contents/MacOS/agneta-diag"; do codesign --force --sign - --options runtime "$item"; done
+for item in "$app/Contents/MacOS/"*; do
+  [[ "$item" == "$app/Contents/MacOS/Agneta" ]] && continue
+  codesign --verify "$item" 2>/dev/null || codesign --force --sign - --options runtime "$item"
+done
+codesign --force --sign - --options runtime "$app"
+codesign --verify --deep --strict "$app" && echo "$app"

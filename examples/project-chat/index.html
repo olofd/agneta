@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>Project Chat</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="renderer.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h1>Project Chat</h1>
+    </div>
+    <div class="connection">
+      <span id="account"></span>
+      <button class="quiet" id="new-chat" hidden>New chat</button>
+      <button id="connection-button">Connect to Agneta</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="conversation" aria-label="Conversation">
+      <div class="thread" id="thread">
+        <div class="empty" id="empty">
+          <h2>What’s happening with Field Notes?</h2>
+          <p>Ask about the sample project or have the agent draft a note for your review.</p>
+        </div>
+        <div id="messages" class="messages" aria-label="Messages"></div>
+      </div>
+
+      <div class="composer">
+        <div class="pairing" id="pairing" hidden>
+          <strong id="pairing-code"></strong>
+          <span>Match this code in Agneta, then choose Allow Once.</span>
+        </div>
+        <div class="suggestions" role="group" aria-label="Example prompts">
+          <button class="quiet"
+            data-prompt="Read the project brief. What is ready to announce?">What’s ready to announce?</button>
+          <button class="quiet"
+            data-prompt="Read the project brief, then draft a short release announcement and propose it as a note.">Draft a release announcement</button>
+        </div>
+        <form id="form">
+          <label class="sr-only" for="prompt">Message</label>
+          <input id="prompt" maxlength="4000" placeholder="Ask about the project…" autocomplete="off">
+          <button id="send" type="submit" disabled>Send</button>
+          <button id="stop" type="button" hidden>Stop</button>
+        </form>
+        <div class="composer-detail">
+          <span id="status" role="status">Connect to start chatting.</span>
+          <span id="usage"></span>
+        </div>
+      </div>
+    </section>
+
+    <aside class="project" aria-label="Sample project">
+      <section>
+        <h2>Field Notes</h2>
+        <p>Sample project brief</p>
+        <ul class="brief" id="brief"></ul>
+      </section>
+      <section id="proposal" class="proposal" hidden>
+        <h3>Proposed note</h3>
+        <p id="draft"></p>
+        <div class="review">
+          <button class="quiet" id="dismiss">Dismiss</button>
+          <button id="save">Save note</button>
+        </div>
+      </section>
+      <section class="saved">
+        <h3>Saved notes</h3>
+        <p id="no-notes">Notes you approve appear here for this demo.</p>
+        <ol id="notes"></ol>
+      </section>
+    </aside>
+  </main>
+</body>
+</html>

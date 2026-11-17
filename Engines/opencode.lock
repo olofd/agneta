@@ -1,0 +1,20 @@
+{
+  "engine": "opencode",
+  "version": "2.3.0",
+  "commit": "a6b15d33daf6ab7d35569f6d711fdb630b9f04e7",
+  "source": "https://github.com/anomalyco/opencode/releases/tag/v2.3.0",
+  "license": "MIT",
+  "binary": "opencode",
+  "assets": {
+    "arm64": {
+      "url": "https://github.com/anomalyco/opencode/releases/download/v2.3.0/opencode-darwin-arm64.zip",
+      "sha256": "7907df2b12720a840fbb49c5b978b9b82925b6bf75479a5fd216afa8932b6702",
+      "size": 108043550
+    },
+    "x86_64": {
+      "url": "https://github.com/anomalyco/opencode/releases/download/v2.3.0/opencode-darwin-x64.zip",
+      "sha256": "79a4841925e3344d5bb4b000acf6c50b11de301e9047aa9bea9e288e77fe4249",
+      "size": 113407057
+    }
+  }
+}

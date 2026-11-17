@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Writes a CycloneDX 1.5 SBOM of what a built Agneta bundle ships and downloads.
+
+Usage: scripts/dev/sbom <arch> <app bundle> <output.json> [all|goose]
+
+`goose`: the bundle carries only the default engine (no OpenCode, Node or codex-acp).
+
+Reads the pins (Engines/*.lock, Package.resolved) and the codex-acp packages
+actually installed in the bundle; nothing is fetched. Standard library only.
+"""
+import base64
+import json
+import pathlib
+import sys
+import uuid
+from datetime import datetime, timezone
+
+arch, bundle, output = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+every_engine = (sys.argv[4] if len(sys.argv) > 4 else "all") == "all"
+repo = pathlib.Path(__file__).resolve().parents[2]
+engines = repo / "Engines"
+
+
+def load(name):
+    return json.loads((engines / name).read_text())
+
+
+def sri_hex(integrity):
+    """npm's integrity ("sha512-<base64>") as the hex CycloneDX expects."""
+    return base64.b64decode(integrity.removeprefix("sha512-")).hex()
+
+
+def component(name, version, licence, purl, hashes=(), kind="application", delivery="bundled"):
+    item = {"type": kind, "name": name, "version": version, "purl": purl,
+            "licenses": [{"license": {"id": licence}}],
+            "properties": [{"name": "agneta:delivery", "value": delivery}]}
+    if hashes:
+        item["hashes"] = [{"alg": alg, "content": value} for alg, value in hashes]
+    return item
+
+
+components = []
+goose = load("goose.lock")
+components.append(component("goose-acp", goose["version"], "Apache-2.0", f"pkg:github/aaif-goose/goose@v{goose['version']}",
+                            [("SHA-256", goose["assets"][arch]["sha256"])]))
+if every_engine:
+    opencode = load("opencode.lock")
+    components.append(component("opencode", opencode["version"], "MIT", f"pkg:github/anomalyco/opencode@v{opencode['version']}",
+                                [("SHA-256", opencode["assets"][arch]["sha256"])]))
+    codex = load("codex.lock")
+    components.append(component("node", codex["node"]["version"], "MIT", f"pkg:generic/node@{codex['node']['version']}",
+                                [("SHA-256", codex["node"]["assets"][arch]["sha256"])]))
+    adapter = codex["adapter"]
+    components.append(component(adapter["name"], adapter["version"], adapter["license"],
+                                f"pkg:npm/{adapter['name'].replace('@', '%40')}@{adapter['version']}",
+                                [("SHA-512", sri_hex(adapter["integrity"]))], kind="library"))
+    # codex-acp's dependencies as installed in the bundle (npm ci from Engines/codex-acp.package-lock.json).
+    lock = json.loads((engines / "codex-acp.package-lock.json").read_text())["packages"]
+    modules = bundle / "Contents/Resources/codex-acp/node_modules"
+    for manifest in sorted(modules.glob("**/package.json")):
+        relative = manifest.parent.relative_to(modules)
+        if "node_modules" in relative.parts:
+            continue  # nested copies are listed by their lock path below
+        package = json.loads(manifest.read_text())
+        if "name" not in package or "version" not in package or package["name"].split("/")[-1] != relative.name:
+            continue  # a sub-folder's package.json, not a package
+        entry = lock.get(f"node_modules/{package['name']}", {})
+        digest = entry.get("integrity", "")
+        components.append(component(package["name"], package["version"], package.get("license", "NOASSERTION"),
+                                    f"pkg:npm/{package['name'].replace('@', '%40')}@{package['version']}",
+                                    [("SHA-512", sri_hex(digest))] if digest.startswith("sha512-") else (), kind="library"))
+resolved = json.loads((repo / "Package.resolved").read_text())
+for pin in resolved["pins"]:
+    components.append(component(pin["identity"], pin["state"]["version"], "MIT" if pin["identity"] == "grdb.swift" else "NOASSERTION",
+                                f"pkg:swift/{pin['location'].removeprefix('https://').removesuffix('.git')}@{pin['state']['version']}",
+                                kind="library", delivery="linked"))
+runtimes = load("runtimes.lock")
+for name, pin in runtimes.items():
+    components.append(component(name, pin["version"], "Apache-2.0", f"pkg:github/agentclientprotocol/{name}@v{pin['version']}",
+                                [("SHA-256", pin["assets"][arch]["sha256"])], delivery="downloaded on first use"))
+
+sbom = {
+    "bomFormat": "CycloneDX", "specVersion": "1.5", "serialNumber": f"urn:uuid:{uuid.uuid4()}", "version": 1,
+    "metadata": {"timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                 "component": {"type": "application", "name": "Agneta", "licenses": [{"license": {"id": "Apache-2.0"}}]}},
+    "components": components,
+}
+output.write_text(json.dumps(sbom, indent=2) + "\n")
+print(f"{output}: {len(components)} components")

@@ -1,0 +1,16 @@
+{
+  "claude-agent-acp": {
+    "version": "0.107.2",
+    "source": "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json (claude-acp)",
+    "assets": {
+      "x86_64": {
+        "url": "https://github.com/agentclientprotocol/claude-agent-acp/releases/download/v0.107.2/claude-agent-acp-darwin-x64.zip",
+        "sha256": "252e5d9fde55fa1b0db349ea4066ae268d8ca124bb2d9ef399b59e48f5bf5ae4"
+      },
+      "arm64": {
+        "url": "https://github.com/agentclientprotocol/claude-agent-acp/releases/download/v0.107.2/claude-agent-acp-darwin-arm64.zip",
+        "sha256": "9d9a4c924b76d77b94794d0d4724420ab0a840af0ff8112b5b885c771c78c888"
+      }
+    }
+  }
+}
