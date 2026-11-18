@@ -123,7 +123,8 @@ final class GlassPanel: NSPanel {
 /// Real glass behind content: Liquid Glass on macOS 26, a behind-window blur before.
 enum GlassBackground {
     enum Surface {
-        /// The menu bar panel: clear glass, the desktop showing through, refracted and softly blurred.
+        /// The menu bar panel: frosted glass with a light tint of the window colour. What's behind it shows as colour
+        /// and shape, never as text that competes with the panel's own (clear glass let a browser's tabs read through).
         case panel
         /// A dialog that asks the user to read and decide: frosted and tinted, so what's behind it never competes
         /// with its text, even while it's in front (clear glass is for media, not text).
@@ -136,8 +137,12 @@ enum GlassBackground {
             let glass = NSGlassEffectView()
             switch surface {
             case .panel:
-                // AGNETA_GLASS=regular switches to the frostier style for comparison.
-                glass.style = ProcessInfo.processInfo.environment["AGNETA_GLASS"] == "regular" ? .regular : .clear
+                // For design review: AGNETA_GLASS=clear shows the old see-through style, AGNETA_PANEL_TINT=<0…1> tries
+                // another strength of tint.
+                let environment = ProcessInfo.processInfo.environment
+                glass.style = environment["AGNETA_GLASS"] == "clear" ? .clear : .regular
+                let tint = environment["AGNETA_PANEL_TINT"].flatMap(Double.init).map { min(max($0, 0), 1) } ?? 0.35
+                if glass.style == .regular { glass.tintColor = NSColor.windowBackgroundColor.withAlphaComponent(tint) }
             case .dialog:
                 glass.style = .regular
                 glass.tintColor = NSColor.windowBackgroundColor.withAlphaComponent(0.5)

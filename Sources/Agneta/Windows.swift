@@ -25,7 +25,9 @@ final class WindowPresenter {
         if resizable { style.formUnion([.resizable, .miniaturizable]) }
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: style, backing: .buffered, defer: false)
         window.title = title
-        window.titlebarAppearsTransparent = true
+        // Only dialogs hide their title bar. A standard window (Settings, task details) keeps it, so on macOS 26 the
+        // content scrolling under the title fades beneath it instead of running into the title's text.
+        window.titlebarAppearsTransparent = glass
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = glass
         // Dialogs have a fixed size; Settings sizes itself.

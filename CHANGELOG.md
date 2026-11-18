@@ -2,6 +2,12 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
+## Unreleased
+
+- The menu bar panel is frosted glass: what's behind it no longer reads through its text.
+- Settings and task details keep their title bar, so scrolled content no longer runs into the title.
+- Run a Test Task's pairing code opens as a normal, centred dialog that closes itself once you answer in Agneta.
+
 ## 0.1.0 (2026-11-18)
 
 The first public release, for macOS 14 or later on Apple silicon and Intel (tested on macOS 15 and 26). Download the DMG for your Mac below, or `brew install olofd/tap/agneta`. It is signed with a Developer ID and notarized by Apple.

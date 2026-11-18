@@ -31,11 +31,39 @@ if let saved = ProcessInfo.processInfo.environment["AGNETA_TOKEN"], !saved.isEmp
 nonisolated(unsafe) var transcript: [String] = []
 func say(_ text: String) { print("[client] \(text)"); fflush(stdout); transcript.append(text) }
 
-/// As a sandboxed app (launched from Agneta's menu), show the result in a small window.
+/// Launched from Agneta's menu, it's a sandboxed app: it runs an app event loop and shows what happens in dialogs.
+/// From a terminal, it only prints.
+let sandboxed = ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
+
+/// The pairing code's dialog, while Agneta waits for the user. Only the main thread touches it.
+nonisolated(unsafe) var codeAlert: NSAlert?
+
+/// Shows the code to compare with Agneta's approval window, until the user has answered there.
+@MainActor func showCode(_ code: String) {
+    let alert = NSAlert()
+    alert.icon = NSImage(systemSymbolName: "number.square", accessibilityDescription: nil)
+    alert.messageText = "Check this code in Agneta"
+    alert.informativeText = "Agneta Test Client's code is \(code.prefix(3)) \(code.suffix(3)). Allow it in Agneta only if Agneta shows the same code."
+    alert.addButton(withTitle: "OK")
+    codeAlert = alert
+    NSApp.activate(ignoringOtherApps: true)
+    // Modal, but the connection keeps going: Swift's main-actor work runs in the modal loop too, and hideCode()
+    // ends it once Agneta has the answer.
+    alert.runModal()
+    codeAlert = nil
+}
+
+@MainActor func hideCode() {
+    guard codeAlert != nil else { return }
+    codeAlert = nil
+    NSApp.abortModal()
+}
+
+/// Shows the result (sandboxed) and quits.
 @MainActor func finish(_ status: Int32) -> Never {
-    if ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil {
-        NSApplication.shared.setActivationPolicy(.accessory)
+    if sandboxed {
         let alert = NSAlert()
+        alert.icon = NSImage(systemSymbolName: status == 0 ? "checkmark.circle" : "exclamationmark.triangle", accessibilityDescription: nil)
         alert.messageText = status == 0 ? "Test task finished" : "Test task failed"
         let reply = transcript.filter { $0.hasPrefix("text: ") }.map { String($0.dropFirst(6)) }.joined()
         alert.informativeText = (reply.isEmpty ? "" : "Reply: \(reply)\n\n") + transcript.filter { !$0.hasPrefix("text: ") }.suffix(6).joined(separator: "\n")
@@ -84,17 +112,7 @@ final class Client: @unchecked Sendable {
         if method == "agneta/pairingCode", let code = params["code"] as? String {
             // Agneta couldn't verify this app: show the code the user compares with Agneta's window.
             say("pairing code: \(code)")
-            if ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil {
-                DispatchQueue.main.async {
-                    NSApplication.shared.setActivationPolicy(.accessory)
-                    let alert = NSAlert()
-                    alert.messageText = "Check this code in Agneta"
-                    alert.informativeText = "Agneta Test Client's code is \(code.prefix(3)) \(code.suffix(3)). Allow it in Agneta only if Agneta shows the same code."
-                    alert.layout()
-                    alert.window.level = .floating
-                    alert.window.orderFrontRegardless()
-                }
-            }
+            if sandboxed { DispatchQueue.main.async { showCode(code) } }
         } else if method == "session/update", let update = params["update"] as? [String: Any] {
             switch update["sessionUpdate"] as? String {
             case "agent_message_chunk": say("text: \((update["content"] as? [String: Any])?["text"] ?? "")")
@@ -136,15 +154,16 @@ final class Client: @unchecked Sendable {
     }
 }
 
-let sandboxed = ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
-say("starting (sandboxed: \(sandboxed))")
+/// The whole exchange: pair, initialize, open a session, prompt. Returns the exit status.
+@MainActor func run() async -> Int32 {
 do {
     let client = Client(url: URL(string: "ws://127.0.0.1:\(port)/acp")!)
     if token == nil {
         // The scope the user approves: the tools this run uses, in the folder it was given (or none: its own workspace).
         var scope: [String: Any] = ["tools": tools]
         if !cwd.isEmpty { scope["folders"] = [cwd] }
-        let paired = try await client.request("agneta/pair", ["name": "Agneta Test Client", "scope": scope])
+        let paired: [String: Any]
+        do { paired = try await client.request("agneta/pair", ["name": "Agneta Test Client", "scope": scope]); hideCode() } catch { hideCode(); throw error }
         token = paired["token"] as? String ?? ""
         say("paired; accounts \(paired["accounts"] ?? [])")
     }
@@ -170,8 +189,19 @@ do {
         say("turn ended: \(result["stopReason"] ?? "?")")
     }
     say("done")
-    finish(0)
+    return 0
 } catch {
     say("failed: \(error.localizedDescription)")
-    finish(1)
+    return 1
+}
+}
+
+say("starting (sandboxed: \(sandboxed))")
+Task { @MainActor in finish(await run()) }
+if sandboxed {
+    // A real app event loop: without it the dialogs never get their clicks, and macOS shows a spinning cursor.
+    NSApplication.shared.setActivationPolicy(.accessory)
+    NSApplication.shared.run()
+} else {
+    dispatchMain()
 }
