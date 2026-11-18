@@ -478,11 +478,19 @@ actor FakeEngines: EngineSource {
         let big = AppClient(port: stack.port)
         defer { big.close() }
         #expect(await refused(big, ["protocolVersion": 1, "padding": .string(String(repeating: "x", count: 4096))]))
+        // The closed one counts until its connection has wound down.
+        big.close()
+        try await Task.sleep(for: .milliseconds(200))
 
-        let first = AppClient(port: stack.port), second = AppClient(port: stack.port), third = AppClient(port: stack.port)
-        defer { first.close(); second.close(); third.close() }
-        let firstRefused = await refused(first), secondRefused = await refused(second)
-        #expect(!firstRefused && !secondRefused)
+        // One at a time: connections made together are accepted in any order.
+        let first = AppClient(port: stack.port)
+        defer { first.close() }
+        #expect(!(await refused(first)))
+        let second = AppClient(port: stack.port)
+        defer { second.close() }
+        #expect(!(await refused(second)))
+        let third = AppClient(port: stack.port)
+        defer { third.close() }
         #expect(await refused(third))
 
         try await Task.sleep(for: .milliseconds(800))
