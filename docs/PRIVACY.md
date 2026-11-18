@@ -8,6 +8,7 @@ What leaves your Mac when an app runs a task through Agneta, what stays on it an
 | --- | --- | --- |
 | The task's prompts and instructions, the conversation so far, and what its tools returned (including the files an engine read) | Your AI provider (OpenAI or Anthropic), through the engine, over HTTPS | That is how the model sees the task |
 | Tool calls to the app's own tools | The app, on this Mac (loopback) | The app's tools run in the app |
+| A request for the public model catalog, with nothing of yours in it | models.dev, from Goose when it starts | Goose looks up model names and limits there and has no setting to stop it ([ENGINES.md](ENGINES.md#goose)) |
 | Nothing else from Agneta | | Agneta has no servers, sends no telemetry and checks for no updates |
 
 Engines are run with their own telemetry, update checks, analytics and feedback turned off where they allow it ([ENGINES.md](ENGINES.md)). On Codex, web search (which runs on OpenAI's servers) and the features that bring tools of their own (the ChatGPT account's connectors, plugins, browser and computer use) are off. What your provider keeps, and for how long, is set by your account with them.
