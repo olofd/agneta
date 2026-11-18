@@ -4,6 +4,8 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 ## Unreleased
 
+- **Engines belong to providers.** Settings → Engines selects which engine each kind of provider (ChatGPT plan, Claude plan, OpenAI or Anthropic API key) runs on, and shows each engine's source, version and install. Accounts and apps no longer carry an engine: the per-account picker and 0.2.0's per-app choice are gone, and your choices carry over to the provider. An app can ask for any engine an account's provider supports, per task (`_meta.agneta.engine`; `initialize` lists them); `engineUnavailable` is gone. A resumed task keeps the engine that saved it.
+
 - **ChatGPT plans: sign in again once.** Codex now keeps each account's sign-in in the login Keychain instead of a file in the account's folder, which Codex's own file tools could read inside a task. After updating, the ChatGPT account asks you to sign in again; Sign Out and Reset also remove the Keychain entry.
 
 - **Downloads you can follow.** OpenCode and Codex's runtime show their progress (bytes of total) in the panel and under the account in Settings, whatever started them; a failed download says why, with Try Again. An app whose task needs an engine still downloading is told so (`-32015`, with the progress) instead of that Agneta lacks the engine.

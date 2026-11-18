@@ -41,13 +41,12 @@ public struct AccountRecord: Codable, Sendable, Identifiable, Equatable {
     public var email: String?
     public var model: String?
     public var created: Date
-    /// A paused account takes no new tasks; running ones finish.
+    /// A paused account takes no new tasks; running ones finish. It names no engine: it runs on its provider's
+    /// (ProviderEngines).
     public var paused: Bool
-    /// The engine serving the account ("goose", "opencode").
-    public var engine: String
 
     public init(id: String = String(UUID().uuidString.prefix(8)).lowercased(), kind: AccountKind, label: String, email: String? = nil, model: String? = nil,
-                created: Date = Date(), paused: Bool = false, engine: String = "goose") {
+                created: Date = Date(), paused: Bool = false) {
         self.id = id
         self.kind = kind
         self.label = label
@@ -55,7 +54,6 @@ public struct AccountRecord: Codable, Sendable, Identifiable, Equatable {
         self.model = model
         self.created = created
         self.paused = paused
-        self.engine = engine
     }
 
     public init(from decoder: any Decoder) throws {
@@ -67,7 +65,6 @@ public struct AccountRecord: Codable, Sendable, Identifiable, Equatable {
         model = try container.decodeIfPresent(String.self, forKey: .model)
         created = try container.decode(Date.self, forKey: .created)
         paused = try container.decodeIfPresent(Bool.self, forKey: .paused) ?? false
-        engine = try container.decodeIfPresent(String.self, forKey: .engine) ?? "goose"
     }
 }
 

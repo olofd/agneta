@@ -337,8 +337,7 @@ struct ApprovalView: View {
                                     ProviderIcon(kind: account.kind, size: 28)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(account.label).font(.system(size: 13, weight: .semibold))
-                                        Text("\(account.kind.plan) · \(model.engineName(approval.engines[account.id] ?? account.engine, for: account))")
-                                            .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                        Text("\(account.kind.plan) · \(model.engineName(of: account))").font(.system(size: 11.5)).foregroundStyle(.secondary)
                                     }
                                     Spacer()
                                     Image(systemName: on ? "checkmark.circle.fill" : "circle").font(.system(size: 18))
@@ -349,16 +348,6 @@ struct ApprovalView: View {
                             }
                             .buttonStyle(RowButtonStyle())
                             .accessibilityAddTraits(on ? .isSelected : [])
-                            // Which engine this app's tasks on the account run on, where there's a choice; the
-                            // account's own is preselected.
-                            if on, model.engines(for: account).count > 1 {
-                                Picker("Runs on", selection: Binding(get: { approval.engines[account.id] ?? account.engine },
-                                                                     set: { model.approval?.engines[account.id] = $0 })) {
-                                    ForEach(model.engines(for: account), id: \.id) { engine in Text(model.engineChoice(engine, for: account)).tag(engine.id) }
-                                }
-                                .font(.system(size: 11.5)).controlSize(.small).fixedSize()
-                                .padding(.leading, 49).padding(.bottom, 4).frame(maxWidth: .infinity, alignment: .leading)
-                            }
                         }
                     }
                     .padding(5)
@@ -412,12 +401,13 @@ struct SettingsView: View {
     ]
 
     enum Pane: String, CaseIterable, Identifiable {
-        case general = "General", accounts = "Accounts", apps = "Apps", activity = "Activity", privacy = "Privacy", advanced = "Advanced", about = "About"
+        case general = "General", accounts = "Accounts", engines = "Engines", apps = "Apps", activity = "Activity", privacy = "Privacy", advanced = "Advanced", about = "About"
         var id: String { rawValue }
         var symbol: String {
             switch self {
             case .general: "gearshape"
             case .accounts: "person.crop.circle"
+            case .engines: "cpu"
             case .apps: "square.grid.2x2"
             case .activity: "clock"
             case .privacy: "hand.raised"
@@ -445,6 +435,7 @@ struct SettingsView: View {
                 switch section {
                 case .general: general
                 case .accounts: accountsPane
+                case .engines: enginesPane
                 case .apps: appsPane
                 case .activity: activityPane
                 case .privacy: privacyPane
@@ -495,26 +486,15 @@ struct SettingsView: View {
                         Text(account.label).font(.system(size: 13, weight: .semibold))
                         Text([account.kind.plan, account.email].compactMap { $0 }.joined(separator: " · "))
                             .font(.system(size: 12)).foregroundStyle(.secondary)
-                        if let download = model.downloads.values.first(where: { $0.account == account.id || $0.engine == account.engine }) {
+                        if let engine = model.engine(of: account), let download = model.downloads[engine] {
                             DownloadStatus(download: download) { model.retryDownload(download.engine) }.padding(.top, 3)
                         }
                     }
                     Spacer()
                     if account.paused { StatusPill(text: "Paused", color: .secondary) }
-                    // The engine, in plain sight: a picker when the account has a choice, else just its name.
-                    if model.engines(for: account).count > 1 {
-                        Picker("Engine", selection: Binding(get: { account.engine }, set: { model.setEngine(account, $0) })) {
-                            ForEach(model.engines(for: account), id: \.id) { engine in
-                                let notes = [engine.id == model.defaultEngine(for: account.kind) ? "recommended" : nil, model.downloadNote(for: engine.id)].compactMap { $0 }
-                                Text(notes.isEmpty ? engine.displayName : "\(engine.displayName) (\(notes.joined(separator: ", ")))").tag(engine.id)
-                            }
-                        }
-                        .labelsHidden().fixedSize()
-                        .disabled(model.downloads.values.contains { $0.account == account.id && $0.problem == nil })
-                        .help("The engine this account's tasks run on")
-                    } else {
-                        Text(model.engineName(of: account)).font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
+                    // Its provider's engine (Settings → Engines), for reference.
+                    Text(model.engineName(of: account)).font(.system(size: 12)).foregroundStyle(.secondary)
+                        .help("Tasks on \(account.kind.plan.lowercased())s run on \(model.engineName(of: account)) unless they ask for another; change it in Engines")
                     Menu {
                         Button("Rename…") { askRename(account) }
                         Button(account.paused ? "Resume" : "Pause") { model.setPaused(account, !account.paused) }
@@ -601,6 +581,74 @@ struct SettingsView: View {
         if alert.runModal() == .alertSecondButtonReturn { model.signOut(account) }
     }
 
+    /// Engines and providers, the one link between them (ProviderEngines): which engine each kind of provider runs on,
+    /// and what each engine is, where it comes from and whom it serves.
+    @ViewBuilder private var enginesPane: some View {
+        Section {
+            ForEach(AccountKind.allCases, id: \.self) { kind in
+                let options = model.engines(for: kind)
+                if options.count > 1 {
+                    Picker(Self.providerName(kind), selection: Binding(get: { model.engine(for: kind) ?? "" }, set: { model.select($0, for: kind) })) {
+                        ForEach(options, id: \.id) { engine in Text(model.engineChoice(engine, for: kind)).tag(engine.id) }
+                    }
+                    .disabled(downloading(any: options.map(\.id)))
+                } else {
+                    LabeledContent(Self.providerName(kind)) {
+                        Text(model.engine(for: kind).map { model.engineName($0) } ?? (kind == .chatGPT ? "Needs Codex" : "Needs Claude Code")).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        } header: {
+            Text("Which engine each provider uses")
+        } footer: {
+            Text("A task runs on its provider's engine here, unless the app asks for another that provider supports. A ChatGPT plan works only with Codex; a Claude plan with Claude Code, or Goose running that Claude Code.")
+        }
+        Section {
+            engineRow("goose", detail: "Built in · \(lockedVersion("goose"))")
+            engineRow("opencode", detail: "OpenCode \(lockedVersion("opencode")) · " + (model.needsDownload("opencode") ? "\(model.downloadNote(for: "opencode") ?? "downloads") when first used" : "downloaded"))
+            engineRow("claude-code", detail: "Your Claude Code, through claude-agent-acp \(lockedVersion("runtimes", runtime: "claude-agent-acp"))") {
+                cliPicker("Claude Code install", name: "claude", installs: model.claudeCodeInstalls, missing: "Install the Claude app or Claude Code to use it.")
+            }
+            engineRow("codex", detail: "Your Codex, through codex-acp on Node.js · " + (model.download(for: "codex") == nil ? "built in" : model.needsDownload("codex") ? "\(model.downloadNote(for: "codex") ?? "downloads") when first used" : "downloaded")) {
+                cliPicker("Codex install", name: "codex", installs: model.codexInstalls, missing: "Install Codex to use it.")
+            }
+        } header: {
+            Text("Engines")
+        } footer: {
+            Text("Goose is built in. OpenCode and Codex's runtime download the first time they're needed, pinned and checked. Claude Code and Codex are your own installs; when you have more than one, choose which.")
+        }
+    }
+
+    /// Whether one of these engines is downloading: a provider's picker waits for it.
+    private func downloading(any engines: [String]) -> Bool {
+        model.downloads.values.contains { download in download.problem == nil && engines.contains(download.engine) }
+    }
+
+    /// One engine: its name, where it comes from, which providers it serves, its download if one is going, and any
+    /// extra controls (the install it uses).
+    @ViewBuilder private func engineRow(_ id: String, detail: String, @ViewBuilder extra: () -> some View = { EmptyView() }) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(model.engineName(id)).font(.system(size: 13, weight: .semibold))
+            Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+            Text("Serves " + AccountKind.allCases.filter { ProviderEngines.supported(by: $0).contains(id) }.map { Self.providerName($0) }.joined(separator: ", "))
+                .font(.system(size: 11)).foregroundStyle(.tertiary)
+            if let download = model.downloads[id] {
+                DownloadStatus(download: download) { model.retryDownload(id) }.padding(.top, 3)
+            }
+        }
+        .padding(.vertical, 2)
+        extra()
+    }
+
+    static func providerName(_ kind: AccountKind) -> String {
+        switch kind {
+        case .chatGPT: "ChatGPT plan"
+        case .claude: "Claude plan"
+        case .openAIKey: "OpenAI API key"
+        case .anthropicKey: "Anthropic API key"
+        }
+    }
+
     @ViewBuilder private var appsPane: some View {
         Section {
             if model.grants.isEmpty {
@@ -618,19 +666,6 @@ struct SettingsView: View {
                     Button("Remove Access") { model.removeAccess(grant.id) }
                 }
                 .padding(.vertical, 3)
-                // The engine this app's tasks run on, per account it may use.
-                ForEach(model.accounts.filter { grant.accounts.contains($0.id) }) { account in
-                    if model.engines(for: account).count > 1 {
-                        Picker("With \(account.label)", selection: Binding(get: { model.engine(of: account, for: grant) },
-                                                                                    set: { model.setEngine($0, for: account, in: grant) })) {
-                            ForEach(model.engines(for: account), id: \.id) { engine in Text(model.engineChoice(engine, for: account)).tag(engine.id) }
-                        }
-                        .padding(.leading, 44)
-                    } else {
-                        LabeledContent("With \(account.label)") { Text(model.engineName(of: account)).foregroundStyle(.secondary) }
-                            .padding(.leading, 44)
-                    }
-                }
             }
         } header: {
             Text("Apps that can use Agneta")
@@ -754,14 +789,6 @@ struct SettingsView: View {
             Text("Diagnostics")
         } footer: {
             Text("Tools you give this token, such as Claude Code, can read every task's trace on this Mac: prompts, tool calls and results included. Turn it off or make a new token to stop them.")
-        }
-        Section {
-            cliPicker("Claude Code", name: "claude", installs: model.claudeCodeInstalls, missing: "Install the Claude app or Claude Code to use it.")
-            cliPicker("Codex", name: "codex", installs: model.codexInstalls, missing: "Install Codex to use it.")
-        } header: {
-            Text("Your installed tools")
-        } footer: {
-            Text("Agneta uses your own Claude Code and Codex. When you have more than one, choose which.")
         }
         Section {
             LabeledContent("Running at once", value: "8 tasks, 3 per account")

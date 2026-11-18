@@ -37,8 +37,6 @@ final class AppModel {
         /// What the app asks to do: the most built-in tools, and folders of the user's beyond its own workspace.
         var tools: SessionPolicy.Tools = .appOnly
         var folders: [URL] = []
-        /// The engine chosen for this app, per account, where it isn't the account's own.
-        var engines: [String: String] = [:]
     }
 
     struct SignIn {
@@ -73,8 +71,6 @@ final class AppModel {
     struct EngineDownload: Equatable {
         var engine: String
         var title: String
-        /// The account that asked for it, whose Settings row shows it too.
-        var account: String?
         var received: Int64 = 0
         var total: Int64?
         var problem: String?
@@ -270,67 +266,61 @@ final class AppModel {
         return engines
     }
 
-    /// Engines an account can be set to: API keys run on any engine; plans on the engine their sign-in belongs to.
-    /// OpenCode is among them before it's downloaded.
-    func engines(for account: AccountRecord) -> [any EngineAdapter] { engines(for: account.kind) }
+    /// The one link between providers and engines: which engine each kind of provider runs on (ProviderEngines).
+    /// Accounts and apps name no engine; an account runs on its provider's.
+    private(set) var providerEngines = ProviderEngines()
 
+    /// Engines that can run now or download when needed: what a provider's selection is checked against.
+    private var availableEngineIDs: Set<String> { Set(engines(downloadable: true).map(\.id)) }
+
+    /// The engines that can serve a kind of provider here, most preferred first.
     func engines(for kind: AccountKind) -> [any EngineAdapter] {
         let all = engines(downloadable: true)
-        return switch kind {
-        case .openAIKey: all.filter { $0.id != "claude-code" }
-        case .anthropicKey: all.filter { $0.id != "codex" }
-        case .chatGPT: all.filter { $0.id == "codex" }
-        case .claude: all.filter { ["goose", "claude-code"].contains($0.id) }
-        }
+        return ProviderEngines.supported(by: kind).compactMap { id in all.first { $0.id == id } }
     }
 
-    /// The engine a new account starts on: the one its sign-in belongs to for a plan (Codex for ChatGPT; Claude Code for
-    /// Claude when it's installed, else Goose, which runs that Claude Code's sign-in too), and the bundled Goose, which
-    /// needs nothing else, for an API key.
-    func defaultEngine(for kind: AccountKind) -> String {
-        switch kind {
-        case .chatGPT: "codex"
-        case .claude: availableEngines.contains { $0.id == "claude-code" } ? "claude-code" : "goose"
-        case .openAIKey, .anthropicKey: "goose"
-        }
-    }
+    /// The engine a kind of provider runs on: its selection, else its most preferred available one; nil when none can
+    /// (a ChatGPT plan without Codex installed).
+    func engine(for kind: AccountKind) -> String? { providerEngines.engine(for: kind, available: availableEngineIDs) }
 
-    /// The engine an account runs on, by name ("Codex"), as the panel, the approval window and Settings show it.
-    func engineName(of account: AccountRecord) -> String { engineName(account.engine, for: account) }
+    /// The engine an account runs on: its provider's.
+    func engine(of account: AccountRecord) -> String? { engine(for: account.kind) }
 
-    func engineName(_ engine: String, for account: AccountRecord) -> String {
-        engines(for: account).first { $0.id == engine }?.displayName ?? Self.engineNames[engine] ?? engine
+    /// An engine's name ("Codex"), also for one that isn't installed now.
+    func engineName(_ engine: String?) -> String {
+        guard let engine else { return "no engine" }
+        return engines(downloadable: true).first { $0.id == engine }?.displayName ?? Self.engineNames[engine] ?? engine
     }
-
-    /// An engine's choice label: its name, marked when it's the account's own and with what it downloads first.
-    func engineChoice(_ engine: any EngineAdapter, for account: AccountRecord) -> String {
-        let notes = [engine.id == account.engine ? "account default" : nil, downloadNote(for: engine.id)].compactMap { $0 }
-        return notes.isEmpty ? engine.displayName : "\(engine.displayName) (\(notes.joined(separator: ", ")))"
-    }
-    /// Names for engines that aren't available right now (Claude Code or Codex not installed).
+    func engineName(of account: AccountRecord) -> String { engineName(engine(of: account)) }
     static let engineNames = ["goose": "Goose", "opencode": "OpenCode", "claude-code": "Claude Code", "codex": "Codex"]
 
-    /// What choosing this engine would download first, e.g. "downloads 108 MB"; nil when it's here already.
+    /// An engine's label in a provider's picker: its name, marked when it's the one recommended for that provider, and
+    /// with what it downloads first.
+    func engineChoice(_ engine: any EngineAdapter, for kind: AccountKind) -> String {
+        let notes = [ProviderEngines.supported(by: kind).first == engine.id ? "recommended" : nil, downloadNote(for: engine.id)].compactMap { $0 }
+        return notes.isEmpty ? engine.displayName : "\(engine.displayName) (\(notes.joined(separator: ", ")))"
+    }
+
+    /// What selecting this engine would download first, e.g. "downloads 108 MB"; nil when it's here already.
     func downloadNote(for engine: String) -> String? {
         guard needsDownload(engine), let asset = download(for: engine)?.asset else { return nil }
         return asset.size.map { "downloads \(ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file))" } ?? "downloads first"
     }
 
-    /// New tasks on this account run on this engine; running ones keep theirs. An engine that isn't here yet
-    /// (OpenCode, Codex's runtime) is downloaded and checked first; the account switches once it's installed.
-    func setEngine(_ account: AccountRecord, _ engine: String) {
-        guard let index = accounts.firstIndex(where: { $0.id == account.id }), engines(for: account).contains(where: { $0.id == engine }) else { return }
+    /// Selects the engine a kind of provider runs on. New tasks on its accounts run on it; running ones keep theirs.
+    /// One that isn't here yet downloads first, and the selection takes effect once it's installed.
+    func select(_ engine: String, for kind: AccountKind) {
+        guard ProviderEngines.supported(by: kind).contains(engine), availableEngineIDs.contains(engine) else { return }
         if needsDownload(engine) {
-            downloadEngine(engine, showingUnder: account.id, reason: "chosen") { [weak self] in
-                guard let self, let current = accounts.first(where: { $0.id == account.id }) else { return }
-                setEngine(current, engine)
-            }
+            downloadEngine(engine, reason: "selected") { [weak self] in self?.select(engine, for: kind) }
             return
         }
-        accounts[index].engine = engine
-        log.log("engine-changed", ["account": .string(account.id), "engine": .string(engine)])
-        save(accounts[index])
+        providerEngines.selected[kind] = engine
+        try? database?.set(engine, for: ProviderEngines.settingKey(kind))
+        log.log("engine-selected", ["provider": .string(kind.rawValue), "engine": .string(engine)])
+        for account in accounts where account.kind == kind { _Concurrency.Task { await configure(account) } }
     }
+
     var shellToolURL: URL { bundleFolder.appending(path: "agneta-shell") }
     var runtimeLock: URL { Bundle.main.url(forResource: "runtimes", withExtension: "lock") ?? bundleFolder.appending(path: "runtimes.lock") }
     var testClientURL: URL? { Bundle.main.url(forResource: "AgnetaTestClient", withExtension: "app") }
@@ -367,13 +357,14 @@ final class AppModel {
         grants = (try? database.grants()) ?? [:]
         historyDays = await runtime.historyDays
         for name in ["claude", "codex"] { if let path = try? database.setting("cli.\(name)") { chosenCLI[name] = path } }
+        for kind in AccountKind.allCases {
+            if let engine = try? database.setting(ProviderEngines.settingKey(kind)) { providerEngines.selected[kind] = engine }
+        }
         (claudeCodeInstalls, codexInstalls) = await Self.lookUpInstalls()
         for engine in availableEngines { await runtime.register(engine) }
         await runtime.observe { [weak self] event in _Concurrency.Task { @MainActor in self?.handle(event) } }
         reloadHistory()
         for account in accounts { await configure(account) }
-        // Apps set to an engine that isn't here (a new pin, a download that failed) get it again, in the background.
-        for engine in Set(grants.values.flatMap { $0.engines.values }) { ensureEngine(engine) }
 
         if let portProblem {
             serverProblem = portProblem
@@ -457,12 +448,6 @@ final class AppModel {
         case .chatGPT:
             provider = ProviderSetup(kind: .chatGPT, model: account.model, subscription: SubscriptionAccount(route: .chatGPT, home: home))
             billing = "subscription"
-            // ChatGPT plans run on Codex only; an account from before runs there now (signing in again if Codex hasn't).
-            if account.engine != "codex", let index = accounts.firstIndex(where: { $0.id == account.id }) {
-                accounts[index].engine = "codex"
-                save(accounts[index])
-                return await configure(accounts[index])
-            }
         case .claude:
             let adapter = try? await installer().install("claude-agent-acp")
             guard current() else { return }
@@ -477,14 +462,15 @@ final class AppModel {
         case .openAIKey:
             provider = ProviderSetup(kind: .openAI, model: account.model, apiKey: keychain.get(account.id))
         }
-        // An account set to OpenCode before it was here (0.1.0 bundled it; a new pin; a reset data folder) gets it in
-        // the background: Agneta starts listening for apps meanwhile, and Settings shows the download.
-        if needsDownload(account.engine) { downloadEngine(account.engine, showingUnder: account.id, reason: "account") }
+        // The provider's engine (ProviderEngines). One that isn't here yet (0.1.0 bundled OpenCode; a new pin; a reset data
+        // folder) downloads in the background: Agneta listens for apps meanwhile, and the panel shows the download.
+        let engine = engine(of: account) ?? ProviderEngines.supported(by: account.kind)[0]
+        if needsDownload(engine) { downloadEngine(engine, reason: "account") }
         guard current() else { return }
         for secret in provider.secrets { runtime.traces.mask.register(secret) }
-        // Claude Code and Codex run their own tools whatever the account; the router decides per session, since an app
-        // may be set to another engine than the account's (Router.runner(account:engine:)).
-        await runtime.serve(account: account.id, label: account.label, setup: AccountSetup(engine: account.engine, provider: provider),
+        // Claude Code and Codex run their own tools whatever the account; the router decides per session, since a task
+        // may ask for another engine its provider supports (Router.runner(account:engine:)).
+        await runtime.serve(account: account.id, label: account.label, setup: AccountSetup(engine: engine, provider: provider),
                             runner: runner, kind: account.kind.rawValue, billing: billing, paused: account.paused)
     }
 
@@ -574,10 +560,7 @@ final class AppModel {
         guard let pending = approvals.current else { return }
         // In account order, so "the first allowed account" (the default for new sessions) is stable.
         let allowed = accounts.map(\.id).filter { pending.allowed.contains($0) }
-        // Only engines that differ from the account's own: an app on the default follows the account if it changes.
-        let engines = pending.engines.filter { id, engine in allowed.contains(id) && accounts.first { $0.id == id }?.engine != engine }
-        if remember != nil { for engine in Set(engines.values) { ensureEngine(engine) } }
-        let answer = remember.map { Router.PairingAnswer(accounts: allowed, remember: $0, engines: engines) }
+        let answer = remember.map { Router.PairingAnswer(accounts: allowed, remember: $0) }
         settleApproval(pending.id, with: answer)
     }
 
@@ -590,43 +573,16 @@ final class AppModel {
         }
     }
 
-    /// The engine an app's tasks on an account run on.
-    func engine(of account: AccountRecord, for grant: Router.Grant) -> String { grant.engines[account.id] ?? account.engine }
-
-    /// Sets the engine an app's tasks on an account run on; the account's own engine clears the choice.
-    func setEngine(_ engine: String, for account: AccountRecord, in grant: Router.Grant) {
-        guard let runtime else { return }
-        let chosen = engine == account.engine ? nil : engine
-        if let chosen { ensureEngine(chosen) }
-        log.log("app-engine-changed", ["grant": .string(grant.id), "account": .string(account.id), "engine": .string(engine)])
-        let log = log
-        _Concurrency.Task {
-            do { try await runtime.setEngine(grant: grant.id, account: account.id, engine: chosen) } catch {
-                log.error("app-engine-not-saved", ["grant": .string(grant.id), "reason": .string("\(error)")])
-            }
-        }
-    }
-
-    /// Makes sure an engine an app was set to is here: what it needs downloads the first time. A failure is logged,
-    /// and the app's tasks are refused with a reason until it's fixed.
-    func ensureEngine(_ engine: String) {
-        guard needsDownload(engine) else { return }
-        downloadEngine(engine, showingUnder: nil, reason: "app")
-    }
-
     /// Downloads, checks and installs what an engine needs in the background, then makes it available to the router
-    /// and supervisor and runs `done`. Downloads asked for meanwhile share this one (RuntimeInstaller). `account`: the
-    /// Settings row that shows its progress and any failure.
-    private func downloadEngine(_ engine: String, showingUnder account: String?, reason: String, then done: (@MainActor () -> Void)? = nil) {
+    /// and supervisor and runs `done`. Downloads asked for meanwhile share this one (RuntimeInstaller).
+    private func downloadEngine(_ engine: String, reason: String, then done: (@MainActor () -> Void)? = nil) {
         guard let download = download(for: engine), let asset = download.asset else { return }
         // A download already going is joined (RuntimeInstaller shares it); one that failed starts again.
         let joining = downloads[engine].map { $0.problem == nil } ?? false
         if !joining {
-            downloads[engine] = EngineDownload(engine: engine, title: download.title, account: account, total: asset.size.map(Int64.init))
+            downloads[engine] = EngineDownload(engine: engine, title: download.title, total: asset.size.map(Int64.init))
             log.log("engine-download", ["engine": .string(engine), "version": .string(asset.version), "reason": .string(reason)])
             sendProgress(engine, force: true)
-        } else if let account, downloads[engine]?.account == nil {
-            downloads[engine]?.account = account
         }
         let started = Date()
         _Concurrency.Task {
@@ -652,7 +608,7 @@ final class AppModel {
 
     /// Starts a failed download again (the panel's and Settings' Try Again).
     func retryDownload(_ engine: String) {
-        downloadEngine(engine, showingUnder: downloads[engine]?.account, reason: "retry")
+        downloadEngine(engine, reason: "retry")
     }
 
     /// Bytes arriving: the panel and Settings follow in steps of half a percent, so drawing keeps up.
@@ -710,7 +666,6 @@ final class AppModel {
                     }
                     try await CodexSignIn(cli: cli.path, codexHome: CodexAdapter.codexHome(account: home))
                         .run(progress: progress)
-                    record.engine = "codex"
                 case .claude:
                     // The user's own Claude Code signs in; the adapter its engines run it through is fetched now too.
                     guard let cli = chosen("claude", from: claudeCodeInstalls) else {
@@ -723,8 +678,6 @@ final class AppModel {
                 }
                 guard signInAttempt == attempt, !_Concurrency.Task.isCancelled else { return }
                 log.log("signed-in", ["account": .string(record.id), "kind": .string(kind.rawValue)])
-                // A new account starts on its kind's default engine: Claude Code for a Claude plan when it's on this Mac.
-                if existing == nil { record.engine = defaultEngine(for: kind) }
                 if let index = accounts.firstIndex(where: { $0.id == record.id }) { accounts[index] = record } else { accounts.append(record) }
                 needsSignIn.remove(record.id)
                 try? database?.save(record)
@@ -806,10 +759,9 @@ final class AppModel {
         signIn = nil
     }
 
-    /// Adds an API-key account. Adding a provider asks nothing about engines: the account starts on its kind's default
-    /// (defaultEngine), and the user can change it later.
+    /// Adds an API-key account. It names no engine: it runs on its provider's (Settings → Engines).
     func addAPIKey(_ kind: AccountKind, key: String) async throws {
-        let record = AccountRecord(kind: kind, label: kind == .anthropicKey ? "Claude API" : "OpenAI API", engine: defaultEngine(for: kind))
+        let record = AccountRecord(kind: kind, label: kind == .anthropicKey ? "Claude API" : "OpenAI API")
         try keychain.set(key, for: record.id)
         accounts.append(record)
         try database?.save(record)
@@ -1043,15 +995,14 @@ final class AppModel {
 
     /// Sample data for design snapshots (AGNETA_SHOWCASE).
     func loadSample() {
-        // Each on the engine it would really run on: a ChatGPT plan always runs on Codex.
-        accounts = [AccountRecord(id: "a", kind: .claude, label: "Claude", email: "work@example.com", engine: "claude-code"),
-                    AccountRecord(id: "b", kind: .chatGPT, label: "ChatGPT", email: "me@example.com", engine: "codex"),
+        accounts = [AccountRecord(id: "a", kind: .claude, label: "Claude", email: "work@example.com"),
+                    AccountRecord(id: "b", kind: .chatGPT, label: "ChatGPT", email: "me@example.com"),
                     AccountRecord(id: "c", kind: .openAIKey, label: "OpenAI API")]
         tasks = [Task(id: "1", app: "Example App", appIdentifier: nil, account: "a", title: "Summarizing meeting notes", started: Date().addingTimeInterval(-840), running: true),
                  Task(id: "2", app: "Example App", appIdentifier: nil, account: "b", title: "Naming a project", started: Date(), running: true)]
-        grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"], engines: ["c": "opencode"])]
-        downloads = ["opencode": EngineDownload(engine: "opencode", title: "OpenCode", account: "c", received: 52_400_000, total: 113_407_057),
-                     "codex": EngineDownload(engine: "codex", title: "Codex's runtime", account: "b",
+        grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"])]
+        downloads = ["opencode": EngineDownload(engine: "opencode", title: "OpenCode", received: 52_400_000, total: 113_407_057),
+                     "codex": EngineDownload(engine: "codex", title: "Codex's runtime",
                                              problem: "Codex's runtime couldn't be downloaded: The Internet connection appears to be offline.")]
         let sample = UUID()
         _ = approvals.add(id: sample, Approval(id: sample, app: "Example App", identifier: "com.example.app", verified: true, code: "123456",

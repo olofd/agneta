@@ -37,7 +37,9 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
 
 - **Result:** standard `agentCapabilities` (`loadSession: true`, images in prompts, HTTP MCP servers, `session/close`), plus:
   - `_meta.agneta.extensions`: the extensions below;
-  - `_meta.agneta.accounts`: `[{"id", "label", "paused", "capabilities"}]`, the accounts this app may use. A paused account starts nothing new (**Pause**, under [Turns](#turns)). `capabilities` describes the engine this app's sessions on the account run on (see [the session result](#the-result)): the account's own, or the one the user chose for this app when allowing it or later in Settings → Apps. If that engine can't run now (OpenCode removed, Codex uninstalled), `session/new` fails with `data.agneta.engineUnavailable` naming it, rather than quietly running another engine.
+  - `_meta.agneta.accounts`: `[{"id", "label", "paused", "capabilities", "engines"}]`, the accounts this app may use. A paused account starts nothing new (**Pause**, under [Turns](#turns)).
+    - `capabilities` describes the engine a session on the account runs on by default: its provider's selected engine (see [the session result](#the-result)).
+    - `engines` lists `[{"id", "name", "capabilities"}]`, every engine a session on the account may ask for (the engines its provider supports that are on this Mac), the default first.
   - `_meta.agneta.scope` (`{"tools", "folders"}`, what the user allowed) and `_meta.agneta.workspace` (the app's own workspace).
 - **Error `-32001`** with `data.agneta.needsPairing: true` means the token is unknown, access was removed, an Allow Once grant has ended, or (for a verified app) the connecting program isn't the one that paired. Pair again.
 
@@ -78,6 +80,8 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
 **`cwd`** is the workspace: the folder the agent works in. It must be an absolute path, and the same rules as the policy's folders apply to it.
 
 **`_meta.agneta.account`** chooses the account, one the app's grant allows. If it's omitted, the first allowed account is used.
+
+**`_meta.agneta.engine`** (optional) chooses the engine, one of that account's `engines` from `initialize`. Without it the session runs on the account's provider's selected engine. An engine the provider doesn't support, or that isn't on this Mac, is refused with `-32602` and `data.agneta.engines` listing what the account can run on. A loaded or forked session always runs on the engine that saved it.
 
 **`mcpServers`** are the app's own tools: Streamable HTTP on loopback, with a bearer token.
 - Only `type: "http"` with a `127.0.0.1`, `localhost` or `::1` URL is accepted. Anything else is refused with `-32602` and `data.agneta.unenforceable: ["mcpServers"]`: a stdio server would be a command run inside the engine's sandbox, and a remote one a host the policy didn't allow.

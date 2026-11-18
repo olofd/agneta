@@ -25,7 +25,7 @@ public protocol EngineSource: Sendable {
     /// - Parameters:
     ///   - key: an earlier lease's key, to resume in the same engine home (its sessions live there).
     ///   - session: the session, for engines configured per process.
-    ///   - engine: the engine to run instead of the account's own (an app set to another engine), or nil.
+    ///   - engine: the engine the task runs on, when it isn't the account's provider's selected one (ProviderEngines).
     func open(account: String, engine: String?, policy: SessionPolicy, mcpPorts: [Int], key: String?, session: EngineSessionSpec?) async throws -> EngineLease
     /// Called when a session ends; a dedicated engine stops, a shared one stays.
     func release(_ lease: EngineLease) async
@@ -36,7 +36,7 @@ extension EngineSource {
         try await open(account: account, engine: nil, policy: policy, mcpPorts: mcpPorts, key: key, session: nil)
     }
 
-    /// On the account's own engine.
+    /// On the account's provider's selected engine.
     public func open(account: String, policy: SessionPolicy, mcpPorts: [Int], key: String?, session: EngineSessionSpec?) async throws -> EngineLease {
         try await open(account: account, engine: nil, policy: policy, mcpPorts: mcpPorts, key: key, session: session)
     }
@@ -139,7 +139,7 @@ public actor EngineSupervisor: EngineSource {
 
     public func open(account: String, engine chosen: String?, policy: SessionPolicy, mcpPorts: [Int], key resume: String?, session: EngineSessionSpec?) async throws -> EngineLease {
         guard var setup = accounts[account] else { throw RPCError(code: RPCError.invalidParams, message: "Unknown account \(account)") }
-        // An app set to another engine runs that engine with the account's provider.
+        // The task's engine, with the account's provider (the router checked the provider supports it).
         if let chosen { setup.engine = chosen }
         guard let adapter = engines[setup.engine] else {
             throw RPCError(code: RPCError.internalError, message: "This Agneta doesn't include the \(setup.engine) engine")
@@ -150,9 +150,8 @@ public actor EngineSupervisor: EngineSource {
         let resumable = resume.flatMap { $0.hasPrefix(account + "/") && !$0.contains("..") ? $0 : nil }
         let dedicated = resumable.map { !EngineKeys.isShared($0) }
             ?? (adapter.capabilities.processPerSession || policy.tools != .appOnly || setup.provider.kind == .claudeCode)
-        // A shared engine's key names its engine, so an app set to the account's engine and one set to it explicitly
-        // share one process; a task from a shared engine (any key shape) resumes on today's shared engine, in the
-        // same account home.
+        // A shared engine's key names its engine: when the provider's engine changes, the new one never joins a process
+        // of the old one on the same account home. A task from a shared engine (any key shape) resumes on today's.
         let key = dedicated ? (resumable ?? "\(account)/\(UUID().uuidString.lowercased())") : EngineKeys.shared(account: account, engine: setup.engine)
         if dedicated, resumable != nil {
             // A task's own engine is never shared. A load (or a fork copying a closed task) waits until no other process

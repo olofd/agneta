@@ -163,7 +163,7 @@ Everything is in Agneta's Application Support folder, named by its bundle identi
 
 ## The app
 
-A menu bar app (`LSUIElement`) with no Dock icon. Its own `NSStatusItem` and a borderless glass panel show the accounts, running tasks with Stop, and anything needing attention. Settings has panes for general settings, accounts (with each account's default engine and Claude Code or Codex install), apps (with the engine each app runs on, per account), activity with task details, privacy and retention, advanced diagnostics, and about. Approval and sign-in open as their own windows. Reduce Motion and Reduce Transparency are respected, and every control is labelled for VoiceOver.
+A menu bar app (`LSUIElement`) with no Dock icon. Its own `NSStatusItem` and a borderless glass panel show the accounts, running tasks with Stop, and anything needing attention. Settings has panes for general settings, accounts, engines (which engine each kind of provider runs on, and each engine's source, version and install), apps, activity with task details, privacy and retention, advanced diagnostics, and about. Approval and sign-in open as their own windows. Reduce Motion and Reduce Transparency are respected, and every control is labelled for VoiceOver.
 
 Release builds update themselves with Sparkle, from the latest published GitHub release; development builds never do ([RELEASING.md](RELEASING.md#3-updates-in-the-app-sparkle-2)).
 

@@ -50,7 +50,7 @@ extension Router {
     /// What an authorized session runs with.
     struct Plan {
         var account: String
-        /// The engine the app chose for this account, or nil for the account's own.
+        /// The engine the task runs on (ProviderEngines: the one it asked for, else its provider's).
         var engine: String?
         var policy: SessionPolicy
         var servers: [JSONValue]
@@ -61,7 +61,7 @@ extension Router {
     /// that parses and fits the grant; tool servers Agneta can confine; and a cost limit only where the engine
     /// reports cost (on another it would silently never trip). `sent`: the policy came from the app (or the task
     /// it resumes), so it's held to the grant as it is; one Agneta supplies gets no more tools than granted.
-    func authorize(grant: Grant, account: String?, cwd: String?, policy value: JSONValue?, sent: Bool,
+    func authorize(grant: Grant, account: String?, engine requested: String? = nil, resuming: Bool = false, cwd: String?, policy value: JSONValue?, sent: Bool,
                            servers: [JSONValue], instructions: String?) -> Result<Plan, RPCError> {
         guard let account, grant.accounts.contains(account), accounts[account] != nil else {
             return .failure(RPCError(code: RPCError.invalidParams, message: "This app isn't allowed to use that account"))
@@ -79,15 +79,15 @@ extension Router {
         case .failure(let refusal): return .failure(refusal)
         }
         if let refusal = Self.refuseServers(servers) { return .failure(refusal) }
-        let engine = self.engine(for: account, in: grant)
-        if let wanted = grant.engines[account] ?? accountEngines[account], let progress = downloading[wanted] {
+        let engineID: String?
+        switch taskEngine(account: account, requested: requested, resuming: resuming) {
+        case .success(let id): engineID = id
+        case .failure(let refusal): return .failure(refusal)
+        }
+        let engine = engineID.flatMap { adapters[$0] } ?? accounts[account]?.engine
+        if let wanted = engineID, let progress = downloading[wanted] {
             return .failure(RPCError(code: Self.engineDownloading, message: "Agneta is still downloading what this engine needs; try again shortly",
                                      data: ["agneta": ["engineDownloading": progress.setting("engine", to: .string(wanted))]]))
-        }
-        if grant.engines[account] != nil, engine == nil {
-            return .failure(RPCError(code: RPCError.internalError,
-                                     message: "\(grant.app) is set to run on \(grant.engines[account] ?? "an engine") with this account, which this Agneta can't run now; change it in Agneta's Settings → Apps",
-                                     data: ["agneta": ["engineUnavailable": .string(grant.engines[account] ?? "")]]))
         }
         if let engine,
            let taken = servers.compactMap({ $0["name"]?.stringValue }).first(where: engine.reservedToolServers.contains) {
@@ -97,7 +97,7 @@ extension Router {
         if policy.limits.maxCostUSD != nil, let engine, !engine.capabilities.reportsCost {
             return .failure(PolicyRejection(field: "limits", reason: "\(engine.displayName) doesn't report cost, so maxCostUSD can't be enforced").rpcError)
         }
-        return .success(Plan(account: account, engine: grant.engines[account], policy: policy, servers: servers, instructions: instructions))
+        return .success(Plan(account: account, engine: engineID, policy: policy, servers: servers, instructions: instructions))
     }
 
     /// The refusal for anything new on a paused account, or nil when it isn't paused.
@@ -108,19 +108,13 @@ extension Router {
                  data: ["agneta": ["paused": .string(account)]])
     }
 
-    /// Why a saved task can't continue on its account's engine, or nil. A task resumes (or is forked) only on the
-    /// engine that saved it, in a state format that engine still reads: the account may have moved to another
-    /// engine since, or the engine may store its sessions differently now. Traces from before the format was
-    /// recorded are compared by engine alone.
-    func savedStateRefusal(_ meta: JSONValue, account: String, grant: Grant) -> RPCError? {
-        guard let engine = engine(for: account, in: grant) else { return nil } // a host that doesn't say: the supervisor decides
-        let saved = meta["engine"]?["id"]?.stringValue
-        let format = meta["engine"]?["stateFormat"]?.stringValue
-        guard saved != engine.id || (format != nil && format != engine.stateFormat) else { return nil }
-        let reason = saved == engine.id ? "\(engine.displayName) now stores sessions as \(engine.stateFormat), not \(format ?? "?")"
-            : "it ran on \(saved ?? "another engine"), and \(accounts[account]?.label ?? "the account") now uses \(engine.displayName)"
-        return RPCError(code: RPCError.invalidParams, message: "This task can't continue: \(reason)",
-                        data: ["agneta": ["engineChanged": ["saved": saved.map(JSONValue.string) ?? .null, "current": .string(engine.id)]]])
+    /// Why a saved task can't continue on the engine that saved it, or nil: a task resumes (or is forked) only there,
+    /// in a state format that engine still reads. Traces from before the format was recorded are compared by engine.
+    func savedStateRefusal(_ meta: JSONValue) -> RPCError? {
+        guard let saved = meta["engine"]?["id"]?.stringValue, let engine = adapters[saved] else { return nil } // a host that doesn't say: the supervisor decides
+        guard let format = meta["engine"]?["stateFormat"]?.stringValue, format != engine.stateFormat else { return nil }
+        return RPCError(code: RPCError.invalidParams, message: "This task can't continue: \(engine.displayName) now stores sessions as \(engine.stateFormat), not \(format)",
+                        data: ["agneta": ["engineChanged": ["saved": .string(saved), "current": .string(engine.id)]]])
     }
 
     /// Starts (or joins) the plan's engine and routes its messages. `key` returns to an earlier engine home.
@@ -195,7 +189,8 @@ extension Router {
         let instructions = meta?["agneta/instructions"]?["text"]?.stringValue
             ?? params?["systemPrompt"]?["content"]?.arrayValue?.compactMap { $0["text"]?.stringValue }.joined(separator: "\n")
         let plan: Plan, lease: EngineLease
-        switch authorize(grant: grant, account: requested ?? grant.accounts.first { accounts[$0] != nil }, cwd: params?["cwd"]?.stringValue,
+        switch authorize(grant: grant, account: requested ?? grant.accounts.first { accounts[$0] != nil },
+                         engine: params?["_meta"]?["agneta"]?["engine"]?.stringValue, cwd: params?["cwd"]?.stringValue,
                          policy: meta?[SessionPolicy.key], sent: meta?[SessionPolicy.key] != nil,
                          servers: params?["mcpServers"]?.arrayValue ?? [], instructions: instructions) {
         case .success(let authorized): plan = authorized
@@ -261,7 +256,8 @@ extension Router {
         let original = meta["request"]
         let policyValue = params?["_meta"]?[SessionPolicy.key] ?? original?["_meta"]?[SessionPolicy.key]
         let plan: Plan, lease: EngineLease
-        switch authorize(grant: grant, account: meta["account"]?["id"]?.stringValue, cwd: params?["cwd"]?.stringValue ?? original?["cwd"]?.stringValue,
+        switch authorize(grant: grant, account: meta["account"]?["id"]?.stringValue, engine: meta["engine"]?["id"]?.stringValue, resuming: true,
+                         cwd: params?["cwd"]?.stringValue ?? original?["cwd"]?.stringValue,
                          policy: policyValue, sent: policyValue != nil, servers: params?["mcpServers"]?.arrayValue ?? [],
                          instructions: params?["_meta"]?["agneta/instructions"]?["text"]?.stringValue ?? meta["instructions"]?.stringValue) {
         case .success(let authorized): plan = authorized
@@ -272,7 +268,7 @@ extension Router {
         if EngineKeys.isShared(engineKey), plan.policy.tools != .appOnly {
             return .failure(PolicyRejection(field: "tools", reason: "this task ran without built-in tools; resume it the same way").rpcError)
         }
-        if let refusal = savedStateRefusal(meta, account: plan.account, grant: grant) { return .failure(refusal) }
+        if let refusal = savedStateRefusal(meta) { return .failure(refusal) }
         switch await launch(plan, key: engineKey) {
         case .success(let started): lease = started
         case .failure(let error): return .failure(error)
@@ -320,14 +316,15 @@ extension Router {
         }
         let cwd = params?["cwd"]?.stringValue ?? original?["cwd"]?.stringValue
         let plan: Plan, lease: EngineLease
-        switch authorize(grant: grant, account: meta["account"]?["id"]?.stringValue, cwd: cwd, policy: policyValue, sent: true,
+        switch authorize(grant: grant, account: meta["account"]?["id"]?.stringValue, engine: meta["engine"]?["id"]?.stringValue, resuming: true, cwd: cwd,
+                         policy: policyValue, sent: true,
                          servers: params?["mcpServers"]?.arrayValue ?? [],
                          instructions: params?["_meta"]?["agneta/instructions"]?["text"]?.stringValue ?? meta["instructions"]?.stringValue) {
         case .success(let authorized): plan = authorized
         case .failure(let refusal): return .failure(refusal)
         }
         // The copy is made by the engine that saved the task and imported by the account's engine: they must be one.
-        if let refusal = savedStateRefusal(meta, account: plan.account, grant: grant) { return .failure(refusal) }
+        if let refusal = savedStateRefusal(meta) { return .failure(refusal) }
 
         // 1. The conversation, from the engine that holds it.
         let exported: JSONValue

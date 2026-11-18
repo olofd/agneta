@@ -166,6 +166,21 @@ public final class AgnetaDatabase: Sendable {
             // The engine an app's tasks run on, per account, where the user chose one for the app (Router.Grant.engines).
             try db.alter(table: "grants") { t in t.add(column: "engines", .jsonText).notNull().defaults(to: "{}") }
         }
+        migrator.registerMigration("v5") { db in
+            // Engines belong to providers only (ProviderEngines): neither accounts nor apps name one. Each kind of
+            // provider keeps the engine its accounts used (the most common one, where they differed); the per-account
+            // and per-app columns go.
+            let rows = try Row.fetchAll(db, sql: "SELECT kind, engine, COUNT(*) AS n FROM accounts GROUP BY kind, engine ORDER BY kind, n DESC, engine")
+            var kept = Set<String>()
+            for row in rows {
+                let kind: String = row["kind"], engine: String = row["engine"]
+                guard let parsed = AccountKind(rawValue: kind), !kept.contains(kind), ProviderEngines.supported(by: parsed).contains(engine) else { continue }
+                kept.insert(kind)
+                try db.execute(sql: "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", arguments: [ProviderEngines.settingKey(parsed), engine])
+            }
+            try db.alter(table: "accounts") { t in t.drop(column: "engine") }
+            try db.alter(table: "grants") { t in t.drop(column: "engines") }
+        }
         return migrator
     }
 
@@ -201,7 +216,7 @@ public final class AgnetaDatabase: Sendable {
             try Row.fetchAll(db, sql: "SELECT * FROM accounts ORDER BY created").compactMap { row in
                 guard let kind = AccountKind(rawValue: row["kind"]) else { return nil }
                 return AccountRecord(id: row["id"], kind: kind, label: row["label"], email: row["email"], model: row["model"], created: row["created"],
-                                     paused: row["paused"], engine: row["engine"])
+                                     paused: row["paused"])
             }
         }
     }
@@ -212,10 +227,10 @@ public final class AgnetaDatabase: Sendable {
 
     private static func insert(_ account: AccountRecord, _ db: GRDB.Database) throws {
         try db.execute(sql: """
-            INSERT INTO accounts (id, kind, label, email, model, created, paused, engine) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO accounts (id, kind, label, email, model, created, paused) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, label = excluded.label, email = excluded.email,
-                model = excluded.model, paused = excluded.paused, engine = excluded.engine
-            """, arguments: [account.id, account.kind.rawValue, account.label, account.email, account.model, account.created, account.paused, account.engine])
+                model = excluded.model, paused = excluded.paused
+            """, arguments: [account.id, account.kind.rawValue, account.label, account.email, account.model, account.created, account.paused])
     }
 
     public func deleteAccount(_ id: String) throws {
@@ -231,10 +246,9 @@ public final class AgnetaDatabase: Sendable {
             for row in try Row.fetchAll(db, sql: "SELECT * FROM grants") {
                 let accounts = (try? JSONDecoder().decode([String].self, from: Data((row["accounts"] as String).utf8))) ?? []
                 let folders = (try? JSONDecoder().decode([String].self, from: Data((row["folders"] as String).utf8))) ?? []
-                let engines = (try? JSONDecoder().decode([String: String].self, from: Data((row["engines"] as String).utf8))) ?? [:]
                 grants[row["tokenHash"]] = Router.Grant(id: row["id"], app: row["app"], identifier: row["identifier"], team: row["team"],
                                                         verified: row["verified"], accounts: accounts, created: row["created"],
-                                                        tools: SessionPolicy.Tools(rawValue: row["tools"]) ?? .appOnly, folders: folders, engines: engines)
+                                                        tools: SessionPolicy.Tools(rawValue: row["tools"]) ?? .appOnly, folders: folders)
             }
             return grants
         }
@@ -247,12 +261,11 @@ public final class AgnetaDatabase: Sendable {
     private static func insert(_ grant: Router.Grant, hash: String, _ db: GRDB.Database) throws {
         let accounts = String(decoding: try JSONEncoder().encode(grant.accounts), as: UTF8.self)
         let folders = String(decoding: try JSONEncoder().encode(grant.folders), as: UTF8.self)
-        let engines = String(decoding: try JSONEncoder().encode(grant.engines), as: UTF8.self)
         try db.execute(sql: """
-            INSERT OR REPLACE INTO grants (tokenHash, id, app, identifier, team, verified, accounts, created, tools, folders, engines)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO grants (tokenHash, id, app, identifier, team, verified, accounts, created, tools, folders)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, arguments: [hash, grant.id, grant.app, grant.identifier, grant.team, grant.verified, accounts, grant.created,
-                             grant.tools.rawValue, folders, engines])
+                             grant.tools.rawValue, folders])
     }
 
     public func deleteGrant(id: String) throws {

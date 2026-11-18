@@ -8,7 +8,7 @@ Changes the maintainer asked for after 0.1.0, collected as they come in and work
 | 2 | Settings: scrolled content runs into the window title | Done; checked in the running app (2026-11-18) |
 | 3 | Run a Test Task: the code dialog appears off to the left and shows a spinning cursor | Done; checked in the running app (2026-11-18) |
 | 4 | The app is too big: download OpenCode only when it's chosen | OpenCode done (download 177 → 59 MB); Node and codex-acp next |
-| 5 | Which engine a connection runs on: should the user choose it? | Done (in the next build): defaults per account, a choice per app |
+| 5 | Which engine a connection runs on: should the user choose it? | Done: providers → engines only, chosen per task (after 0.2.0) |
 | 6 | No Check for Updates in the app | Done (in the next build) |
 | 7 | Quit Agneta from the menu never quits (development and 0.1.0) | Fixed in code; proven in a standalone reproduction |
 | 8 | No app icon: a frosty, Swedish icon from the two rings, flat and glassy | Done (in the next build) |
@@ -70,17 +70,14 @@ Proposal: keep the choice per account, since that's where sign-in and credential
 - An account's Settings row gets a plain Engine picker, not one buried in the ⋯ menu.
 - Not now: a different engine per app for the same account. It can be added later as a per-grant setting if a real need appears. Apps already see each engine's abilities in `initialize`.
 
-**Built (2026-11-18), as proposed and agreed:**
-- **Where the engine shows:** in the panel's account rows ("ChatGPT plan · Codex") and in the approval window's account choices. `AppModel.engineName(of:)` names it, even for an engine that isn't installed right now.
-- **Settings → Accounts:** each account row shows its engine in plain sight: a picker when the account has a choice (with OpenCode's download size), otherwise just the name. The picker is no longer in the ⋯ menu.
-- **Adding an account asks nothing about engines** (the maintainer: "Why is it connected to adding an API key? You should be able to add a provider and then, when it's time to do work, choose the engine. And we should have good defaults."). A new account starts on its kind's default, `AppModel.defaultEngine(for:)`: Codex for a ChatGPT plan; Claude Code for a Claude plan when it's installed, else Goose; Goose for an API key, since it's bundled and needs nothing else. The Settings picker marks the default. A first version had an engine picker in the add-key form; it's gone.
-- **An engine per app** (the maintainer chose it, 2026-11-18). When an app asks for access, each account you allow gets a "Runs on" picker, with the account's own engine preselected; Settings → Apps shows and changes it later, per account.
-  - The grant stores only choices that differ from the account's (`Router.Grant.engines`, database migration v4), so an app on the default follows the account if the account changes.
-  - The router opens the chosen engine with the account's provider. Its shared engine is its own (`<account>/shared-<engine>`), and `initialize` reports that engine's abilities.
-  - Whether an engine runs its own tools (Claude Code, Codex) is now decided per session, not per account.
-  - An engine that can't run now is refused with a reason (`engineUnavailable`), never quietly swapped. Choosing OpenCode for an app downloads it.
-  - Covered by `RouterContractTests.anAppRunsOnTheEngineChosenForIt` and `StoreTests`. Checked in rendered snapshots of the approval window and Settings → Apps.
-- **Checked** in rendered snapshots of the panel, the approval window and Settings. The design-review sample accounts now sit on the engines they would really use (a ChatGPT plan on Codex, a Claude plan on Claude Code).
+**Where it ended (2026-11-18), after three rounds with the maintainer.** First the engine was per account, then per app and account (0.2.0). Then: "We are pairing providers and engines in an unnecessary way", "the coupling is from Provider ⇒ Engine only", and "it's the task that defines what provider and what engine is used".
+- **One relation.** Each kind of provider has the engines that can serve it, and one selected (`ProviderEngines` in AgnetaKit, the only place that knows the table). Settings → Engines selects it, and also shows each engine's source, version and install.
+- **Per task.** A task runs on its account's provider's selected engine, unless it asks for another that provider supports (`_meta.agneta.engine`). `initialize` lists each account's engines. A resumed or forked task runs on the engine that saved it, so changing a provider's engine doesn't strand earlier tasks.
+- **Nothing else names an engine:**
+  - `AccountRecord.engine`, `Router.Grant.engines`, the approval window's "Runs on" picker and Settings → Apps' engine rows are gone.
+  - Migration v5 carried each kind's engine to its provider setting and dropped both columns. It was run on a copy of the maintainer's own data: ChatGPT → Codex and Claude → Goose kept, columns gone, no errors.
+  - The `engineUnavailable` error of 0.2.0 is gone too.
+- **Tested** by `ProviderEngineTests`, `RouterContractTests.aTaskRunsOnAnEngineItsProviderSupports` (asking, defaulting, unsupported, missing) and `aTaskContinuesOnlyOnTheEngineThatSavedIt` (still resumes after the provider's engine changes).
 
 ## 6. Check for Updates is missing
 

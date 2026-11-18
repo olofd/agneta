@@ -95,7 +95,7 @@ public actor AgnetaRuntime {
             log?.error("trace-write-failed", ["task": .string(task), "reason": .string(reason)])
             Task { await self?.emit(.traceProblem(task: task, reason: reason)) }
         }
-        // Every engine Agneta runs, so an app set to one other than its account's gets it.
+        // Every engine Agneta runs: a task may ask for any its account's provider supports.
         for engine in configuration.engines { await router.register(engine: engine) }
         prune(olderThan: historyDays)
         await sweepEngineHomes()
@@ -124,13 +124,6 @@ public actor AgnetaRuntime {
 
     /// An engine's download progress (`{"received", "total"}`), or nil once it's done or has failed.
     public func setDownloading(_ engine: String, progress: JSONValue?) async { await router.setDownloading(engine, progress: progress) }
-
-    /// Changes the engine an app's tasks on an account run on (nil: the account's own), and saves it.
-    public func setEngine(grant: String, account: String, engine: String?) async throws {
-        try await router.setEngine(grant: grant, account: account, engine: engine)
-        // Removed meanwhile (Remove Access while the change was saved): its row must not come back on the next launch.
-        if await !router.hasGrant(grant) { try database.deleteGrant(id: grant) }
-    }
 
     /// Serves an account: its engine and provider, how its tools run, and whether it's paused. Replaces what was there.
     public func serve(account id: String, label: String, setup: AccountSetup, runner: Router.ToolRunner, kind: String?, billing: String, paused: Bool) async {

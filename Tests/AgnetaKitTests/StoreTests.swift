@@ -22,7 +22,7 @@ private func temporaryFolder() throws -> URL {
         account.paused = true
         try database.save(account)
         let grant = Router.Grant(app: "Example App", identifier: "com.example.app", team: "TEAM1", verified: true, accounts: ["a1"],
-                                 tools: .read, folders: ["/tmp/project"], engines: ["a1": "claude-code"])
+                                 tools: .read, folders: ["/tmp/project"])
         try database.save(grant, tokenHash: "hash1")
 
         let reopened = try AgnetaDatabase(file: database.file)
@@ -30,7 +30,6 @@ private func temporaryFolder() throws -> URL {
         #expect(try reopened.accounts().first?.paused == true)
         let read = try #require(try reopened.grants()["hash1"])
         #expect(read.accounts == ["a1"] && read.team == "TEAM1" && read.tools == .read && read.folders == ["/tmp/project"] && read.remembered)
-        #expect(read.engines == ["a1": "claude-code"])
         try reopened.deleteGrant(id: grant.id)
         try reopened.deleteAccount("a1")
         #expect(try reopened.grants().isEmpty)
