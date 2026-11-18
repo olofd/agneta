@@ -153,14 +153,50 @@ final class AppModel {
 
     private var bundleFolder: URL { Bundle.main.bundleURL.appending(path: "Contents/MacOS", directoryHint: .isDirectory) }
     var gooseURL: URL { bundleFolder.appending(path: "goose-acp") }
-    /// OpenCode isn't bundled (most people never use it, and it's over half the app's size): it's downloaded, pinned
-    /// by the bundled `opencode.lock`, the first time an account is set to run on it.
-    private var openCodeInstaller: RuntimeInstaller? {
-        Bundle.main.url(forResource: "opencode", withExtension: "lock").map { RuntimeInstaller(lockFile: $0, runtimes: store.runtimesFolder) }
+    /// What an engine downloads before it can run, pinned by a lock the app carries, installed under Runtimes/:
+    /// - OpenCode (`opencode.lock`), most people never use and is over half Agneta's size;
+    /// - Codex's runtime (`codex-runtime.lock`, written by a release build): Node and codex-acp, which only Codex needs.
+    ///   A development build bundles them instead.
+    struct Download {
+        let installer: RuntimeInstaller
+        let name: String, executable: String, title: String
+        var asset: RuntimeInstaller.Asset? { try? installer.asset(name) }
+        /// Where the program is once installed.
+        func program(in runtimes: URL) -> URL? { asset.map { runtimes.appending(path: "\(name)/\($0.version)/\(executable)") } }
     }
-    var openCodeAsset: RuntimeInstaller.Asset? { try? openCodeInstaller?.asset("opencode") }
-    var openCodeURL: URL? { openCodeAsset.map { store.runtimesFolder.appending(path: "opencode/\($0.version)/opencode") } }
-    var openCodeInstalled: Bool { openCodeURL.map { FileManager.default.isExecutableFile(atPath: $0.path(percentEncoded: false)) } ?? false }
+
+    func download(for engine: String) -> Download? {
+        switch engine {
+        case "opencode":
+            return Bundle.main.url(forResource: "opencode", withExtension: "lock").map {
+                Download(installer: RuntimeInstaller(lockFile: $0, runtimes: store.runtimesFolder), name: "opencode", executable: "opencode", title: "OpenCode")
+            }
+        case "codex":
+            guard !codexBundled else { return nil }
+            return Bundle.main.url(forResource: "codex-runtime", withExtension: "lock").map {
+                Download(installer: RuntimeInstaller(lockFile: $0, runtimes: store.runtimesFolder), name: "codex-runtime", executable: "node", title: "Codex's runtime")
+            }
+        default: return nil
+        }
+    }
+
+    /// Whether an engine must be downloaded before it can run.
+    func needsDownload(_ engine: String) -> Bool {
+        guard let download = download(for: engine), let program = download.program(in: store.runtimesFolder) else { return false }
+        return !FileManager.default.isExecutableFile(atPath: program.path(percentEncoded: false))
+    }
+
+    var openCodeURL: URL? { download(for: "opencode")?.program(in: store.runtimesFolder) }
+
+    /// Node and codex-acp inside the bundle (a development build), else where Codex's runtime is downloaded to.
+    private var codexBundled: Bool { FileManager.default.isExecutableFile(atPath: bundleFolder.appending(path: "node").path(percentEncoded: false)) }
+    private var codexRuntime: (node: URL, script: URL)? {
+        if codexBundled {
+            return (bundleFolder.appending(path: "node"), Bundle.main.bundleURL.appending(path: "Contents/Resources/codex-acp/dist/index.js"))
+        }
+        guard let node = download(for: "codex")?.program(in: store.runtimesFolder) else { return nil }
+        return (node, node.deletingLastPathComponent().appending(path: "codex-acp/dist/index.js"))
+    }
     /// The installed claude-agent-acp (downloaded on first use, version from the bundled runtimes.lock).
     var claudeAdapterURL: URL? {
         guard let data = try? Data(contentsOf: runtimeLock), let version = (try? JSONCoding.decode(data))?["claude-agent-acp"]?["version"]?.stringValue else { return nil }
@@ -210,10 +246,9 @@ final class AppModel {
     /// With `downloadable`, also the engines an account can be set to and that download then (OpenCode).
     private func engines(downloadable: Bool) -> [any EngineAdapter] {
         var engines: [any EngineAdapter] = [GooseAdapter(executable: gooseURL)]
-        if let openCodeURL, downloadable || openCodeInstalled { engines.append(OpenCodeAdapter(executable: openCodeURL)) }
+        if let openCodeURL, downloadable || !needsDownload("opencode") { engines.append(OpenCodeAdapter(executable: openCodeURL)) }
         if let adapter = claudeAdapterURL, let cli = chosen("claude", from: claudeCodeInstalls) { engines.append(ClaudeCodeAdapter(executable: adapter, cli: cli)) }
-        let node = bundleFolder.appending(path: "node"), script = Bundle.main.bundleURL.appending(path: "Contents/Resources/codex-acp/dist/index.js")
-        if FileManager.default.isExecutableFile(atPath: node.path(percentEncoded: false)), FileManager.default.fileExists(atPath: script.path(percentEncoded: false)),
+        if let (node, script) = codexRuntime, downloadable || FileManager.default.fileExists(atPath: script.path(percentEncoded: false)),
            let cli = chosen("codex", from: codexInstalls) {
             engines.append(CodexAdapter(node: node, script: script, cli: cli))
         }
@@ -262,17 +297,17 @@ final class AppModel {
 
     /// What choosing this engine would download first, e.g. "downloads 108 MB"; nil when it's here already.
     func downloadNote(for engine: String) -> String? {
-        guard engine == "opencode", !openCodeInstalled, let asset = openCodeAsset else { return nil }
+        guard needsDownload(engine), let asset = download(for: engine)?.asset else { return nil }
         return asset.size.map { "downloads \(ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file))" } ?? "downloads first"
     }
 
     /// New tasks on this account run on this engine; running ones keep theirs. An engine that isn't here yet
-    /// (OpenCode) is downloaded and checked first; the account switches once it's installed.
+    /// (OpenCode, Codex's runtime) is downloaded and checked first; the account switches once it's installed.
     func setEngine(_ account: AccountRecord, _ engine: String) {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }), engines(for: account).contains(where: { $0.id == engine }) else { return }
-        if engine == "opencode", !openCodeInstalled {
+        if needsDownload(engine) {
             guard engineDownload == nil else { return }
-            downloadOpenCode(showingUnder: account.id, reason: "chosen") { [weak self] in
+            downloadEngine(engine, showingUnder: account.id, reason: "chosen") { [weak self] in
                 guard let self, let current = accounts.first(where: { $0.id == account.id }) else { return }
                 setEngine(current, engine)
             }
@@ -431,7 +466,7 @@ final class AppModel {
         }
         // An account set to OpenCode before it was here (0.1.0 bundled it; a new pin; a reset data folder) gets it in
         // the background: Agneta starts listening for apps meanwhile, and Settings shows the download.
-        if account.engine == "opencode", !openCodeInstalled { downloadOpenCode(showingUnder: account.id, reason: "account") }
+        if needsDownload(account.engine) { downloadEngine(account.engine, showingUnder: account.id, reason: "account") }
         guard current() else { return }
         for secret in provider.secrets { runtime.traces.mask.register(secret) }
         // Claude Code and Codex run their own tools whatever the account; the router decides per session, since an app
@@ -559,36 +594,36 @@ final class AppModel {
         }
     }
 
-    /// Makes sure an engine an app was set to is here: OpenCode downloads the first time. A failure is logged, and the
-    /// app's tasks are refused with a reason until it's fixed.
+    /// Makes sure an engine an app was set to is here: what it needs downloads the first time. A failure is logged,
+    /// and the app's tasks are refused with a reason until it's fixed.
     func ensureEngine(_ engine: String) {
-        guard engine == "opencode", !openCodeInstalled else { return }
-        downloadOpenCode(showingUnder: nil, reason: "app")
+        guard needsDownload(engine) else { return }
+        downloadEngine(engine, showingUnder: nil, reason: "app")
     }
 
-    /// Downloads, checks and installs OpenCode in the background, then makes it available to the router and supervisor
-    /// and runs `done`. Downloads asked for meanwhile share this one (RuntimeInstaller). `account`: the Settings row
-    /// that shows its progress and any failure.
-    private func downloadOpenCode(showingUnder account: String?, reason: String, then done: (@MainActor () -> Void)? = nil) {
-        guard let installer = openCodeInstaller, let version = openCodeAsset?.version else { return }
+    /// Downloads, checks and installs what an engine needs in the background, then makes it available to the router
+    /// and supervisor and runs `done`. Downloads asked for meanwhile share this one (RuntimeInstaller). `account`: the
+    /// Settings row that shows its progress and any failure.
+    private func downloadEngine(_ engine: String, showingUnder account: String?, reason: String, then done: (@MainActor () -> Void)? = nil) {
+        guard let download = download(for: engine), let version = download.asset?.version else { return }
         if let account {
             engineDownloadProblem = nil
-            engineDownload = (account, "Downloading OpenCode \(version)…")
+            engineDownload = (account, "Downloading \(download.title)…")
         }
-        log.log("engine-download", ["engine": "opencode", "version": .string(version), "reason": .string(reason)])
+        log.log("engine-download", ["engine": .string(engine), "version": .string(version), "reason": .string(reason)])
         let started = Date()
         _Concurrency.Task {
             do {
-                _ = try await installer.install("opencode")
-                log.log("engine-downloaded", ["engine": "opencode", "seconds": .int(Int64(Date().timeIntervalSince(started)))])
+                _ = try await download.installer.install(download.name, executable: download.executable)
+                log.log("engine-downloaded", ["engine": .string(engine), "seconds": .int(Int64(Date().timeIntervalSince(started)))])
                 if account != nil, engineDownload?.account == account { engineDownload = nil }
                 for adapter in availableEngines { await runtime?.register(adapter) }
                 done?()
             } catch {
-                log.error("engine-download-failed", ["engine": "opencode", "reason": .string("\(error)")])
+                log.error("engine-download-failed", ["engine": .string(engine), "reason": .string("\(error)")])
                 if let account {
                     if engineDownload?.account == account { engineDownload = nil }
-                    engineDownloadProblem = (account, "OpenCode couldn't be downloaded: \(error.localizedDescription)")
+                    engineDownloadProblem = (account, "\(download.title) couldn't be downloaded: \(error.localizedDescription)")
                 }
             }
         }

@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 
 arch, bundle, output = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
 every_engine = (sys.argv[4] if len(sys.argv) > 4 else "all") == "all"
+# A release build carries Codex's runtime (Node, codex-acp) as a download of its own, pinned by codex-runtime.lock.
+codex_downloaded = (bundle / "Contents/Resources/codex-runtime.lock").exists()
 repo = pathlib.Path(__file__).resolve().parents[2]
 engines = repo / "Engines"
 
@@ -47,17 +49,18 @@ components.append(component("goose-acp", goose["version"], "Apache-2.0", f"pkg:g
 opencode = load("opencode.lock")
 components.append(component("opencode", opencode["version"], "MIT", f"pkg:github/anomalyco/opencode@v{opencode['version']}",
                             [("SHA-256", opencode["assets"][arch]["sha256"])], delivery="downloaded on first use"))
-if every_engine:
+if every_engine or codex_downloaded:
+    codex_delivery = "downloaded on first use" if codex_downloaded else "bundled"
     codex = load("codex.lock")
     components.append(component("node", codex["node"]["version"], "MIT", f"pkg:generic/node@{codex['node']['version']}",
-                                [("SHA-256", codex["node"]["assets"][arch]["sha256"])]))
+                                [("SHA-256", codex["node"]["assets"][arch]["sha256"])], delivery=codex_delivery))
     adapter = codex["adapter"]
     components.append(component(adapter["name"], adapter["version"], adapter["license"],
                                 f"pkg:npm/{adapter['name'].replace('@', '%40')}@{adapter['version']}",
-                                [("SHA-512", sri_hex(adapter["integrity"]))], kind="library"))
+                                [("SHA-512", sri_hex(adapter["integrity"]))], kind="library", delivery=codex_delivery))
     # codex-acp's dependencies as installed in the bundle (npm ci from Engines/codex-acp.package-lock.json).
     lock = json.loads((engines / "codex-acp.package-lock.json").read_text())["packages"]
-    modules = bundle / "Contents/Resources/codex-acp/node_modules"
+    modules = (engines / f"bin/{arch}/codex-acp/node_modules") if codex_downloaded else bundle / "Contents/Resources/codex-acp/node_modules"
     for manifest in sorted(modules.glob("**/package.json")):
         relative = manifest.parent.relative_to(modules)
         if "node_modules" in relative.parts:
@@ -69,7 +72,8 @@ if every_engine:
         digest = entry.get("integrity", "")
         components.append(component(package["name"], package["version"], package.get("license", "NOASSERTION"),
                                     f"pkg:npm/{package['name'].replace('@', '%40')}@{package['version']}",
-                                    [("SHA-512", sri_hex(digest))] if digest.startswith("sha512-") else (), kind="library"))
+                                    [("SHA-512", sri_hex(digest))] if digest.startswith("sha512-") else (), kind="library",
+                                    delivery=codex_delivery))
 resolved = json.loads((repo / "Package.resolved").read_text())
 for pin in resolved["pins"]:
     components.append(component(pin["identity"], pin["state"]["version"], {"grdb.swift": "MIT", "sparkle": "MIT"}.get(pin["identity"], "NOASSERTION"),

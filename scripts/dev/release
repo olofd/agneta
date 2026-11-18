@@ -38,7 +38,8 @@ fi
 keychain=(); [[ -n "${AGNETA_KEYCHAIN:-}" ]] && keychain=(--keychain "$AGNETA_KEYCHAIN")
 arch=$(uname -m); [[ "$arch" == aarch64 ]] && arch=arm64
 
-scripts/dev/build-app --release --engines "$engines" >/dev/null
+# The bundle carries Goose only; with every engine, Codex's runtime (Node, codex-acp) is a download of its own, below.
+scripts/dev/build-app --release --engines goose >/dev/null
 app=build/Agneta.app
 out=build/release
 rm -rf "$out"; mkdir -p "$out"
@@ -64,6 +65,40 @@ notarize() {
   fi
   echo "notarized $(basename "$1") ($id)"
 }
+
+# Codex's runtime: Node and codex-acp, which only a Codex account needs, as Agneta-codex-runtime-<version>-<arch>.zip
+# beside the release; the app downloads it when Codex is first used, pinned by Resources/codex-runtime.lock (its
+# URL on this release, SHA-256 and size), written here before the app is signed.
+if [[ "$engines" == all ]]; then
+  scripts/fetch-codex "$arch" >/dev/null
+  stage=$(mktemp -d "${TMPDIR:-/tmp}/agneta-runtime-XXXX")
+  mkdir -p "$stage/codex-runtime"
+  cp "Engines/bin/$arch/node-runtime/bin/node" "$stage/codex-runtime/node"
+  cp -R "Engines/bin/$arch/codex-acp" "$stage/codex-runtime/codex-acp"
+  sign --entitlements "$entitlements/node.plist" "$stage/codex-runtime/node"
+  runtime_zip="$out/Agneta-codex-runtime-$AGNETA_VERSION-$arch.zip"
+  (cd "$stage" && /usr/bin/ditto -c -k --keepParent codex-runtime "$OLDPWD/$runtime_zip")
+  # As the app will run it: unpacked from the archive, Node runs JavaScript (its JIT under the signature) and codex-acp parses.
+  check=$(mktemp -d "${TMPDIR:-/tmp}/agneta-runtime-check-XXXX")
+  /usr/bin/ditto -x -k "$runtime_zip" "$check"
+  [[ "$(env -i HOME="$check" "$check/codex-runtime/node" -e 'console.log([1, 2, 3].map(n => n * 2).join(","))')" == 2,4,6 ]] || { echo "Codex's runtime: Node doesn't run" >&2; exit 1; }
+  env -i HOME="$check" "$check/codex-runtime/node" --check "$check/codex-runtime/codex-acp/dist/index.js" || { echo "Codex's runtime: codex-acp doesn't parse" >&2; exit 1; }
+  rm -rf "$stage" "$check"
+  runtime_version="node-$(/usr/bin/plutil -extract node.version raw -o - Engines/codex.lock)-codex-acp-$(/usr/bin/plutil -extract adapter.version raw -o - Engines/codex.lock)"
+  runtime_sha=$(shasum -a 256 "$runtime_zip" | cut -d' ' -f1)
+  runtime_size=$(stat -f %z "$runtime_zip")
+  cat > "$app/Contents/Resources/codex-runtime.lock" <<LOCK
+{
+  "engine": "codex-runtime",
+  "version": "$runtime_version",
+  "assets": {
+    "$arch": {"url": "https://github.com/olofd/agneta/releases/download/v$AGNETA_VERSION/$(basename "$runtime_zip")", "sha256": "$runtime_sha", "size": $runtime_size}
+  }
+}
+LOCK
+  python3 scripts/dev/sbom "$arch" "$app" "$app/Contents/Resources/sbom.cdx.json" goose >/dev/null
+  echo "Codex's runtime: $(basename "$runtime_zip") ($(du -h "$runtime_zip" | cut -f1)), runs"
+fi
 
 if [[ -n "$identity" ]]; then
   # Inside out. Every program Agneta ships is signed with its identity: the engines' own vendor signatures are
@@ -119,7 +154,7 @@ if [[ -n "$identity" ]]; then
   xcrun stapler validate "$out/$name.dmg"
 fi
 
-(cd "$out" && shasum -a 256 "$name.dmg" "$name.zip" > "SHA256SUMS-$arch.txt")
+(cd "$out" && shasum -a 256 "$name.dmg" "$name.zip" $(ls Agneta-codex-runtime-*.zip 2>/dev/null) > "SHA256SUMS-$arch.txt")
 gatekeeper=(); [[ -n "$identity" ]] && gatekeeper=(--gatekeeper)
 scripts/dev/smoke-test "$out/$name.dmg" ${gatekeeper[@]+"${gatekeeper[@]}"} ${previous[@]+"${previous[@]}"}
 for file in "$out/$name.dmg" "$out/$name.zip"; do echo "$file ($(du -h "$file" | cut -f1))"; done

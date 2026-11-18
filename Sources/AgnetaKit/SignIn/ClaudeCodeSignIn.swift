@@ -44,16 +44,26 @@ public struct RuntimeInstaller: Sendable {
     /// time in this process (a second caller gets the first's result); a cached copy is used only while its content
     /// still hashes to what was installed; a new copy is moved into place in one step, so a running engine never
     /// sees a half-installed or replaced folder.
-    public func install(_ name: String, progress: SignInProgress? = nil) async throws -> URL {
+    /// - Parameter executable: the program in the archive, when it isn't named `name` (the Codex runtime: `node`,
+    ///   beside the codex-acp folder). Everything beside it in the archive is installed with it.
+    public func install(_ name: String, executable: String? = nil, progress: SignInProgress? = nil) async throws -> URL {
         let asset = try asset(name)
         let folder = runtimes.appending(path: "\(name)/\(asset.version)", directoryHint: .isDirectory)
         return try await InstallGate.shared.run(folder.path(percentEncoded: false)) {
-            try await self.installNow(name, asset: asset, folder: folder, progress: progress)
+            try await self.installNow(name, executable: executable ?? name, asset: asset, folder: folder, progress: progress)
         }
     }
 
-    private func installNow(_ name: String, asset: Asset, folder: URL, progress: SignInProgress?) async throws -> URL {
-        let executable = folder.appending(path: name)
+    /// Where `name`'s program is (or will be) installed, for checking before a download.
+    public func installed(_ name: String, executable: String? = nil) -> URL? {
+        guard let asset = try? asset(name) else { return nil }
+        let folder = runtimes.appending(path: "\(name)/\(asset.version)", directoryHint: .isDirectory)
+        let program = folder.appending(path: executable ?? name)
+        return FileManager.default.isExecutableFile(atPath: program.path(percentEncoded: false)) ? program : nil
+    }
+
+    private func installNow(_ name: String, executable program: String, asset: Asset, folder: URL, progress: SignInProgress?) async throws -> URL {
+        let executable = folder.appending(path: program)
         if Self.isInstalled(executable: executable, folder: folder, asset: asset) { return executable }
         progress?(.waiting("Downloading \(name) \(asset.version)…"))
         let (download, _) = try await URLSession.shared.download(from: asset.url)
@@ -66,7 +76,7 @@ public struct RuntimeInstaller: Sendable {
         let unzip = try ChildProcess(executable: "/usr/bin/ditto", arguments: ["-x", "-k", download.path(percentEncoded: false), staging.path(percentEncoded: false)], environment: [:])
         guard await unzip.waitForExit() == 0 else { throw SignInError.provider("couldn't unpack \(name)") }
         guard let found = FileManager.default.enumerator(at: staging, includingPropertiesForKeys: nil)?
-            .compactMap({ $0 as? URL }).first(where: { $0.lastPathComponent == name }) else {
+            .compactMap({ $0 as? URL }).first(where: { $0.lastPathComponent == program }) else {
             throw SignInError.provider("\(name) wasn't in its archive")
         }
         // The markers go in before the folder is published: archive and content hashes, checked on every later use.

@@ -2,6 +2,10 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
+## Unreleased
+
+- **A 16 MB download.** Releases no longer bundle Codex's runtime (Node and codex-acp): it's a download of its own on each release, pinned and checked, fetched the first time a ChatGPT plan or an app set to Codex needs it. Settings shows the progress.
+
 ## 0.2.0 (2026-11-18)
 
 A smaller download, a choice of engine per app, an app icon, and fixes. Agneta is now about 60 MB to download instead of about 175.

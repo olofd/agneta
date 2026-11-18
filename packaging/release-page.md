@@ -37,4 +37,4 @@ shasum -a 256 -c SHA256SUMS.txt --ignore-missing
 gh attestation verify Agneta-@VERSION@-arm64.dmg --repo olofd/agneta
 ```
 
-The `.zip` files and `appcast-*.xml` are for Agneta's updater; you don't need them. Problems and questions go to [Issues](https://github.com/olofd/agneta/issues); security reports go privately through the [Security tab](https://github.com/olofd/agneta/security).
+The other files are for Agneta itself: the `.zip` files and `appcast-*.xml` for its updater, and `Agneta-codex-runtime-…` (Node and codex-acp), which it downloads the first time a Codex account is used. You don't need them. Problems and questions go to [Issues](https://github.com/olofd/agneta/issues); security reports go privately through the [Security tab](https://github.com/olofd/agneta/security).

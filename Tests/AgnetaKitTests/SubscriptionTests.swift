@@ -79,6 +79,32 @@ import Testing
         #expect(FileManager.default.isExecutableFile(atPath: tool.path(percentEncoded: false)))
     }
 
+    /// Codex's runtime: a program (node) with a folder beside it (codex-acp), installed together under the lock's name.
+    @Test func installsAProgramWithWhatSitsBesideIt() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "agneta-runtime-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
+        defer { try? FileManager.default.removeItem(at: root) }
+        let payload = root.appending(path: "payload/codex-runtime", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: payload.appending(path: "codex-acp/dist"), withIntermediateDirectories: true)
+        try "#!/bin/sh\necho ok\n".write(to: payload.appending(path: "node"), atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: payload.appending(path: "node").path(percentEncoded: false))
+        try "// adapter".write(to: payload.appending(path: "codex-acp/dist/index.js"), atomically: true, encoding: .utf8)
+        let zip = root.appending(path: "runtime.zip")
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/ditto")
+        process.arguments = ["-c", "-k", "--keepParent", payload.path(percentEncoded: false), zip.path(percentEncoded: false)]
+        try process.run()
+        process.waitUntilExit()
+        let asset: JSONValue = ["url": .string(zip.absoluteString), "sha256": .string(RuntimeInstaller.sha256(try Data(contentsOf: zip)))]
+        let lock = root.appending(path: "codex-runtime.lock")
+        try JSONCoding.encode(["engine": "codex-runtime", "version": "node-1-codex-acp-2", "assets": .object([RuntimeInstaller.architecture: asset])] as JSONValue).write(to: lock)
+        let installer = RuntimeInstaller(lockFile: lock, runtimes: root.appending(path: "Runtimes", directoryHint: .isDirectory))
+        #expect(installer.installed("codex-runtime", executable: "node") == nil)
+        let node = try await installer.install("codex-runtime", executable: "node")
+        #expect(node.path(percentEncoded: false).hasSuffix("Runtimes/codex-runtime/node-1-codex-acp-2/node"))
+        #expect(FileManager.default.fileExists(atPath: node.deletingLastPathComponent().appending(path: "codex-acp/dist/index.js").path(percentEncoded: false)))
+        #expect(installer.installed("codex-runtime", executable: "node") == node)
+    }
+
     @Test func aDownloadThatDoesntMatchItsPinIsRefused() async throws {
         let (installer, root, zip) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
