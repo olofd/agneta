@@ -6,6 +6,7 @@
   "main": "main.mjs",
   "scripts": {
     "start": "electron .",
+    "bundle": "node scripts/bundle.mjs",
     "test": "node --test test/*.test.mjs",
     "test:integration": "node --test test/agneta.smoke.mjs"
   },

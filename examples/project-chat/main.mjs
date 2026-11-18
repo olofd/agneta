@@ -1,8 +1,13 @@
 import { app, BrowserWindow, ipcMain, net, protocol } from 'electron';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { ProjectChat } from './chat.mjs';
 
-const port = Number(process.env.AGNETA_PORT ?? 47331);
+// AGNETA_PORT, else the port a bundle was made for (scripts/bundle.mjs), else a development Agneta's.
+// Read synchronously: the scheme below must be registered before Electron is ready.
+let bundled = null;
+try { bundled = readFileSync(new URL('./port', import.meta.url), 'utf8'); } catch {}
+const port = Number(process.env.AGNETA_PORT ?? bundled?.trim() ?? 47331);
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   throw new Error('AGNETA_PORT must be a valid TCP port.');
 }
