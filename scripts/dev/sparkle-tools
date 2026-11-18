@@ -1,0 +1,19 @@
+#!/bin/bash
+# Prints the folder holding Sparkle's tools (generate_appcast, generate_keys, sign_update): SPARKLE_BIN if set, else
+# the pinned release, downloaded once and checked against its SHA-256 into ~/Library/Caches.
+#   scripts/dev/sparkle-tools
+set -euo pipefail
+sparkle_version=2.10.1
+sparkle_sha256=1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27
+
+if [[ -n "${SPARKLE_BIN:-}" ]]; then echo "$SPARKLE_BIN"; exit 0; fi
+tools="$HOME/Library/Caches/agneta-build/sparkle-$sparkle_version"
+if [[ ! -x "$tools/bin/generate_appcast" ]]; then
+  download=$(mktemp -d "${TMPDIR:-/tmp}/agneta-sparkle-XXXX")
+  trap 'rm -rf "$download"' EXIT
+  curl -fsSL -o "$download/sparkle.tar.xz" "https://github.com/sparkle-project/Sparkle/releases/download/$sparkle_version/Sparkle-$sparkle_version.tar.xz"
+  echo "$sparkle_sha256  $download/sparkle.tar.xz" | shasum -a 256 -c - >/dev/null || { echo "Sparkle's download doesn't match its checksum" >&2; exit 1; }
+  mkdir -p "$tools"
+  tar -xJf "$download/sparkle.tar.xz" -C "$tools"
+fi
+echo "$tools/bin"

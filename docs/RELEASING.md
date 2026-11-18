@@ -12,15 +12,15 @@ It follows what open-source Mac apps that release from CI do (Stats, AltTab, Cod
 
 ### 0. Accounts and secrets (once, by the maintainer)
 
-- A Developer ID Application certificate for Agneta alone, so revoking it never affects another app. Exported as a `.p12` with macOS-compatible encryption (`openssl pkcs12 -export -legacy`, or Keychain Access): newer OpenSSL defaults don't import into a macOS keychain.
+- A Developer ID Application certificate for Agneta alone, so revoking it never affects another app. `release-secrets` writes its `.p12` with the LibreSSL macOS ships, since OpenSSL 3's defaults don't import into a macOS keychain.
 - An App Store Connect API key for notarization, Agneta's own.
 - A GitHub environment `release`, usable only from `v*` tags and from `main` (for dry runs), and waiting for the maintainer's approval, holding the secrets `DEVELOPER_ID_P12`, `DEVELOPER_ID_P12_PASSWORD`, `ASC_KEY_P8`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `SPARKLE_ED_PRIVATE_KEY` and `HOMEBREW_TAP_TOKEN` (a fine-grained token that may write only to the tap), and the variables `AGNETA_SIGN_IDENTITY` and `AGNETA_SPARKLE_PUBLIC_KEY` (Sparkle's public key, built into the app). A ruleset lets only the maintainer create `v*` tags. Pull requests never see these secrets.
-- Sparkle's EdDSA key, made once with Sparkle's `generate_keys` (`generate_keys -x <file>` exports the private key for the secret; the public key it prints is the variable). The private key is kept offline as well as in the secret: without it, installed copies can't be updated again.
+- Sparkle's EdDSA key, made once with Sparkle's `generate_keys` in the maintainer's login keychain (account `agneta`), and kept in a password manager too. The private key is kept offline as well as in the secret: without it, installed copies can't be updated again.
 - The repository `olofd/homebrew-tap`.
 
-[RELEASE_SETUP.md](RELEASE_SETUP.md) walks through all of it.
+[RELEASE_SETUP.md](RELEASE_SETUP.md) walks through all of it; `scripts/dev/release-secrets`, run by the maintainer, puts every key in the environment.
 
-Status: not done.
+Status: the environment, the tag ruleset and the tap exist (2026-11-18). The certificate, the notarization key, Sparkle's key and the tap token wait for the maintainer.
 
 ### 1. A correct release build (`scripts/dev/build-app --release`, `scripts/dev/release`)
 

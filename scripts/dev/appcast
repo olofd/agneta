@@ -4,27 +4,13 @@
 # EdDSA key, its notes taken from CHANGELOG.md. The feeds are published as release assets, so
 # releases/latest/download/appcast-<arch>.xml is always the newest published release's.
 #   SPARKLE_ED_PRIVATE_KEY=… scripts/dev/appcast <version> <folder>
-# Sparkle's tools come from SPARKLE_BIN, or are downloaded once (pinned, checked) into ~/Library/Caches.
+# Sparkle's tools come from scripts/dev/sparkle-tools.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 version=${1:?usage: appcast <version> <folder>} folder=${2:?usage: appcast <version> <folder>}
 : "${SPARKLE_ED_PRIVATE_KEY:?set it to the EdDSA private key, as generate_keys -x writes it}"
 repository=https://github.com/olofd/agneta
-sparkle_version=2.10.1
-sparkle_sha256=1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27
-
-if [[ -z "${SPARKLE_BIN:-}" ]]; then
-  tools="$HOME/Library/Caches/agneta-build/sparkle-$sparkle_version"
-  if [[ ! -x "$tools/bin/generate_appcast" ]]; then
-    download=$(mktemp -d "${TMPDIR:-/tmp}/agneta-sparkle-XXXX")
-    curl -fsSL -o "$download/sparkle.tar.xz" "https://github.com/sparkle-project/Sparkle/releases/download/$sparkle_version/Sparkle-$sparkle_version.tar.xz"
-    echo "$sparkle_sha256  $download/sparkle.tar.xz" | shasum -a 256 -c - >/dev/null || { echo "Sparkle's download doesn't match its checksum" >&2; exit 1; }
-    mkdir -p "$tools"
-    tar -xJf "$download/sparkle.tar.xz" -C "$tools"
-    rm -rf "$download"
-  fi
-  SPARKLE_BIN="$tools/bin"
-fi
+SPARKLE_BIN=$(scripts/dev/sparkle-tools)
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/agneta-appcast-XXXX")
 trap 'rm -rf "$work"' EXIT
