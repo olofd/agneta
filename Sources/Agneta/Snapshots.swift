@@ -56,6 +56,10 @@ enum Snapshots {
                         line += "  " + capture(window, to: out.appending(path: "\(key)-\(suffix).png"))
                         line += "  " + captureOverBackdrop(window, to: out.appending(path: "\(key)-\(suffix)-glass.png"))
                     }
+                    // Where the close button sits, from the window's top-left corner, for checking it clears the corner.
+                    if let close = window.standardWindowButton(.closeButton), let frame = close.superview?.convert(close.frame, to: nil) {
+                        line += String(format: "  close %.0f,%.0f %.0fx%.0f", frame.minX, window.frame.height - frame.maxY, frame.width, frame.height)
+                    }
                     print(line)
                     fflush(stdout)
                 }

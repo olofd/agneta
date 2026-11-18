@@ -10,6 +10,9 @@ import SwiftUI
 @MainActor
 final class WindowPresenter {
     static let shared = WindowPresenter()
+    /// A dialog's corner radius, the same as a macOS window with a toolbar: the close button and the action buttons
+    /// are placed for it.
+    static let dialogCorner: CGFloat = 26
     private var windows: [String: NSWindow] = [:]
 
     /// A borderless-looking glass dialog, or a standard window for Settings.
@@ -31,21 +34,24 @@ final class WindowPresenter {
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = glass
         // Dialogs have a fixed size; Settings sizes itself.
-        let host = NSHostingView(rootView: content().frame(width: glass ? size.width : nil, height: glass ? size.height : nil).environment(\.onDialogGlass, glass))
+        // A dialog lays itself out under its (transparent) title bar, so it ignores the title bar's safe area.
+        let host = NSHostingView(rootView: content().frame(width: glass ? size.width : nil, height: glass ? size.height : nil)
+            .ignoresSafeArea(edges: glass ? .all : []).environment(\.onDialogGlass, glass))
         if glass { host.sizingOptions = [] }
         if glass {
             window.titleVisibility = .hidden
             window.standardWindowButton(.miniaturizeButton)?.isHidden = true
             window.standardWindowButton(.zoomButton)?.isHidden = true
-            // An empty toolbar gives the title bar a toolbar's height, which places the close button further in from
-            // the dialog's large rounded corner, as macOS lays it out (not moved by hand).
+            // An empty toolbar gives the title bar a toolbar's height, so macOS places the close button for a window
+            // with a toolbar's large corners, where Settings has it (measured: 19 points in from both edges; without
+            // it, and with the compact style, 12 and 13: crowding the corner). Not moved by hand.
             let toolbar = NSToolbar(identifier: "dialog")
             toolbar.showsBaselineSeparator = false
             window.toolbar = toolbar
-            window.toolbarStyle = .unifiedCompact
+            window.toolbarStyle = .unified
             window.isOpaque = false
             window.backgroundColor = .clear
-            window.contentView = GlassBackground.make(content: host, cornerRadius: 26, surface: .dialog)
+            window.contentView = GlassBackground.make(content: host, cornerRadius: Self.dialogCorner, surface: .dialog)
         } else {
             window.contentView = host
         }
@@ -155,7 +161,8 @@ struct DialogLayout<Hero: View, Content: View, Actions: View>: View {
             }
             content.padding(.top, 20)
             Spacer(minLength: 16)
-            actions.padding(.horizontal, 24).padding(.bottom, 22)
+            // As far in as the corners are round, on the sides and the bottom: no button reaches into a corner's curve.
+            actions.padding(.horizontal, WindowPresenter.dialogCorner).padding(.bottom, WindowPresenter.dialogCorner)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -260,15 +267,16 @@ struct SignInView: View {
                     }
                 }
             } actions: {
-                HStack {
+                // Like every dialog's: the buttons share the width, so they line up with the dialog's edges.
+                HStack(spacing: 8) {
                     if let page = signIn.page, !signIn.finished, signIn.failed == nil {
-                        Button("Open the Page Again") { NSWorkspace.shared.open(page) }.glassButton()
+                        Button { NSWorkspace.shared.open(page) } label: { Text("Open the Page Again").frame(maxWidth: .infinity) }.glassButton()
                     }
-                    Spacer()
                     if signIn.finished || signIn.failed != nil {
-                        Button("Done") { model.cancelSignIn() }.glassButton(prominent: true).tint(Palette.accent).keyboardShortcut(.defaultAction)
+                        Button { model.cancelSignIn() } label: { Text("Done").frame(maxWidth: .infinity) }
+                            .glassButton(prominent: true).tint(Palette.accent).keyboardShortcut(.defaultAction)
                     } else {
-                        Button("Cancel") { model.cancelSignIn() }.glassButton().keyboardShortcut(.cancelAction)
+                        Button { model.cancelSignIn() } label: { Text("Cancel").frame(maxWidth: .infinity) }.glassButton().keyboardShortcut(.cancelAction)
                     }
                 }
                 .controlSize(.large)
