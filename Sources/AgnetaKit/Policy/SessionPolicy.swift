@@ -159,9 +159,20 @@ extension SessionPolicy {
                 default: throw PolicyRejection(field: "limits", reason: "\(key) must be a number")
                 }
             }
-            if let turns = try number("maxTurns") { limits.maxTurns = Int(turns) }
-            if let seconds = try number("maxSeconds") { limits.maxSeconds = Int(seconds) }
-            limits.maxCostUSD = try number("maxCostUSD")
+            // Checked before converting: Int(1e300) traps, which would take Agneta down with every task in it.
+            func whole(_ key: String) throws -> Int? {
+                guard let value = try number(key) else { return nil }
+                guard value.isFinite, value.rounded() == value, value >= 1, value <= Double(Int32.max) else {
+                    throw PolicyRejection(field: "limits", reason: "\(key) must be a whole number from 1 to \(Int32.max)")
+                }
+                return Int(value)
+            }
+            if let turns = try whole("maxTurns") { limits.maxTurns = turns }
+            if let seconds = try whole("maxSeconds") { limits.maxSeconds = seconds }
+            if let cost = try number("maxCostUSD") {
+                guard cost.isFinite else { throw PolicyRejection(field: "limits", reason: "maxCostUSD must be a finite number") }
+                limits.maxCostUSD = cost
+            }
             guard limits.maxTurns > 0, limits.maxSeconds > 0, (limits.maxCostUSD ?? 1) > 0 else { throw PolicyRejection(field: "limits", reason: "must be positive") }
         }
 

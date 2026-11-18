@@ -31,6 +31,15 @@ import Testing
         #expect(policy.limits.maxTurns == 50)
     }
 
+    /// Any JSON number an app sends as a limit is refused or used, never a crash: `Int(1e300)` traps.
+    @Test func outOfRangeLimitsAreRefusedNotACrash() {
+        for limits: JSONValue in [["maxTurns": .double(1e300)], ["maxSeconds": .double(-1e300)], ["maxTurns": .double(2.5)],
+                                  ["maxSeconds": .double(Double(Int32.max) + 1)], ["maxTurns": 0], ["maxCostUSD": .double(-1)]] {
+            #expect(throws: PolicyRejection.self, "\(limits)") { _ = try SessionPolicy.parse(["limits": limits], cwd: workspace, context: context) }
+        }
+        #expect((try? SessionPolicy.parse(["limits": ["maxTurns": .double(12), "maxSeconds": 600, "maxCostUSD": .double(0.5)]], cwd: workspace, context: context))?.limits.maxTurns == 12)
+    }
+
     @Test func projectPackageRequirements() throws {
         // Read-only folders inside the workspace, and the one port and Unix socket its tools may reach.
         let tests = home.appending(path: "Documents/Example/Project.example/Workspace/tests").path(percentEncoded: false)
