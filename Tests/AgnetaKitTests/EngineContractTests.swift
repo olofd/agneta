@@ -80,16 +80,30 @@ import Testing
     }
 
     /// The table native runners are answered by: nothing built in under app-only, reading under read, and no commands
-    /// or fetches while there's no network. Kinds that touch nothing pass.
+    /// or fetches while there's no network. Kinds that touch nothing pass; a missing kind, or one ACP doesn't define,
+    /// is refused even under the widest policy.
     @Test func nativeRunnersAreAnsweredByTheContract() throws {
         let all = try policies
-        func may(_ kind: String, _ tools: SessionPolicy.Tools) -> Bool {
+        func may(_ kind: String?, _ tools: SessionPolicy.Tools) -> Bool {
             BuiltinTools.nativeRunnerMayUse(kind: kind, policy: all.first { $0.tools == tools }!)
         }
         for kind in ["read", "search", "edit", "delete", "move", "execute", "fetch"] { #expect(!may(kind, .appOnly), "\(kind) under app-only") }
         #expect(may("read", .read) && may("search", .read) && !may("edit", .read) && !may("execute", .read))
         #expect(may("read", .workspace) && may("edit", .workspace) && may("move", .workspace) && !may("execute", .workspace) && !may("fetch", .workspace))
         for kind in ["think", "switch_mode", "other"] { #expect(may(kind, .appOnly)) }
+        for kind in [nil, "", "shell", "network"] as [String?] { #expect(!may(kind, .workspace), "\(kind ?? "no kind") under workspace") }
+    }
+
+    /// An app's "always" covers one call: narrowed to "once", and declined when the engine offers no once-option
+    /// rather than passed on to be kept.
+    @Test func anAlwaysAnswerNeverOutlivesTheCall() {
+        func answer(_ id: String) -> JSONValue { ["outcome": ["outcome": "selected", "optionId": .string(id)]] }
+        let full: [JSONValue] = [["optionId": "a", "kind": "allow_always"], ["optionId": "o", "kind": "allow_once"], ["optionId": "r", "kind": "reject_once"]]
+        #expect(Router.onlyOnce(answer("a"), options: full)["outcome"]?["optionId"]?.stringValue == "o")
+        let noOnce: [JSONValue] = [["optionId": "a", "kind": "allow_always"], ["optionId": "r", "kind": "reject_once"]]
+        #expect(Router.onlyOnce(answer("a"), options: noOnce)["outcome"]?["optionId"]?.stringValue == "r")
+        #expect(Router.onlyOnce(answer("a"), options: [["optionId": "a", "kind": "allow_always"]])["outcome"]?["outcome"]?.stringValue == "cancelled")
+        #expect(Router.onlyOnce(answer("o"), options: full)["outcome"]?["optionId"]?.stringValue == "o")
     }
 
     /// Codex's own settings keep out what no policy could refuse: web search on OpenAI's servers, and the features

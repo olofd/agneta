@@ -87,8 +87,8 @@ extension Router {
             return (.failure(RPCError(code: RPCError.invalidParams, message: "Unknown session")), "unknown-session")
         }
         if method == "session/request_permission", runner(account: session.account, engine: session.lease.engine) == .native,
-           let kind = params?["toolCall"]?["kind"]?.stringValue, !Self.isAppTool(params, in: session),
-           !BuiltinTools.nativeRunnerMayUse(kind: kind, policy: session.policy) {
+           !Self.isAppTool(params, in: session),
+           !BuiltinTools.nativeRunnerMayUse(kind: params?["toolCall"]?["kind"]?.stringValue, policy: session.policy) {
             // Claude Code and Codex run their own tools inside the engine sandbox, which allows port 443:
             // refuse what the policy forbids before it runs.
             let options = params?["options"]?.arrayValue ?? []
@@ -124,7 +124,13 @@ extension Router {
               let kind = options.first(where: { $0["optionId"]?.stringValue == chosen })?["kind"]?.stringValue,
               kind == "allow_always" || kind == "reject_always" else { return answer }
         let replacement = kind == "allow_always" ? "allow_once" : "reject_once"
-        guard let once = options.first(where: { $0["kind"]?.stringValue == replacement })?["optionId"] else { return answer }
+        // With no once-option, "always" can't be narrowed: the call is declined rather than allowed for good.
+        guard let once = options.first(where: { $0["kind"]?.stringValue == replacement })?["optionId"] else {
+            if let reject = options.first(where: { $0["kind"]?.stringValue == "reject_once" })?["optionId"] {
+                return answer.setting("outcome", to: ["outcome": "selected", "optionId": reject])
+            }
+            return answer.setting("outcome", to: ["outcome": "cancelled"])
+        }
         return answer.setting("outcome", to: ["outcome": "selected", "optionId": once])
     }
 

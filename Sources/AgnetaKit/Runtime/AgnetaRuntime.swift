@@ -70,7 +70,7 @@ public actor AgnetaRuntime {
         let router = Router(context: PolicyContext(userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [store.root],
                                                    appWorkspaces: configuration.appWorkspaces),
                             engines: supervisor, traces: traces, concurrency: configuration.concurrency,
-                            commit: { hash, grant in try database.save(grant, tokenHash: hash) }, approve: approve)
+                            commit: { hash, grant, replacing in try database.save(grant, tokenHash: hash, replacing: replacing) }, approve: approve)
         await router.restore(Self.attempt(log, "read-grants") { try database.grants() } ?? [:])
         // Events are recorded one at a time, in the order the router sent them.
         let (events, sink) = AsyncStream<Router.Event>.makeStream()
@@ -140,9 +140,11 @@ public actor AgnetaRuntime {
     // MARK: Grants
 
     /// Removes an app's access: forgotten first, so it can't come back at the next launch, then cut off now.
+    /// The token stops working now, whatever happens to the saved row; a row that couldn't be deleted throws, so the
+    /// app can say so (it would work again at the next launch).
     public func revoke(grant id: String) async throws {
-        try database.deleteGrant(id: id)
         await router.revoke(grant: id)
+        try database.deleteGrant(id: id)
     }
 
     // MARK: Tasks

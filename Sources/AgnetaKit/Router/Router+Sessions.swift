@@ -210,9 +210,9 @@ extension Router {
             return .failure(engineFailure(error, account: plan.account, otherwise: "The engine stopped"))
         }
         // The app may have gone or lost access while the engine started: nothing to hand the session to.
-        guard holds(appID, grant) else {
+        if let refusal = refusal(appID, grant, plan) {
             await engines.release(lease)
-            return .failure(Self.appGone)
+            return .failure(refusal)
         }
         let id = "s_" + UUID().uuidString.lowercased()
         let generation = register(id, app: appID, plan: plan, lease: lease, engineSession: engineSession)
@@ -269,9 +269,9 @@ extension Router {
         case .success(let started): lease = started
         case .failure(let error): return .failure(error)
         }
-        guard holds(appID, grant) else {
+        if let refusal = refusal(appID, grant, plan) {
             await engines.release(lease)
-            return .failure(Self.appGone)
+            return .failure(refusal)
         }
         // Registered before loading, so the replayed history reaches the app under Agneta's id.
         let generation = register(id, app: appID, plan: plan, lease: lease, engineSession: engineSession)
@@ -355,9 +355,9 @@ extension Router {
             await engines.release(lease)
             return .failure(engineFailure(error, account: plan.account, otherwise: "The engine couldn't fork the session"))
         }
-        guard holds(appID, grant) else {
+        if let refusal = refusal(appID, grant, plan) {
             await engines.release(lease)
-            return .failure(Self.appGone)
+            return .failure(refusal)
         }
         let id = "s_" + UUID().uuidString.lowercased()
         let generation = register(id, app: appID, plan: plan, lease: lease, engineSession: engineSession)

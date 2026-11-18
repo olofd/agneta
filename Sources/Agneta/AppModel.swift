@@ -283,13 +283,13 @@ final class AppModel {
 
     private func handle(_ event: Router.Event) {
         switch event {
-        case .paired(let hash, let grant):
+        case .paired(let hash, let grant, let replaced):
             log.log("paired", ["grant": .string(grant.id), "app": .string(grant.app), "verified": .bool(grant.verified), "accounts": .int(Int64(grant.accounts.count)),
                                "tools": .string(grant.tools.rawValue), "folders": .int(Int64(grant.folders.count)), "remembered": .bool(grant.remembered)])
             // Saved by the router before the token went out; an "Allow Once" grant is never saved or listed. Pairing again
             // replaced the app's earlier token, if it had one.
             if grant.remembered {
-                grants = grants.filter { $0.value.id != grant.id }
+                grants = grants.filter { $0.value.id != grant.id && $0.value.id != replaced }
                 grants[hash] = grant
             }
         case .grantChanged(let hash, let grant):
@@ -370,13 +370,21 @@ final class AppModel {
         }
     }
 
+    /// Remove Access: the app is cut off at once. If its saved access can't be deleted, it stays listed (it would work
+    /// again at the next launch) and the user is told, so they can try again.
     func removeAccess(_ grantID: String) {
+        let removed = grants.filter { $0.value.id == grantID }
         grants = grants.filter { $0.value.id != grantID }
         guard let runtime else { return }
         let log = log
         _Concurrency.Task {
             do { try await runtime.revoke(grant: grantID) } catch {
                 log.error("revoke-not-saved", ["grant": .string(grantID), "reason": .string("\(error)")])
+                grants.merge(removed) { current, _ in current }
+                let alert = NSAlert()
+                alert.messageText = "Agneta couldn't remove \(removed.first?.value.app ?? "the app")'s access"
+                alert.informativeText = "It can't connect until Agneta quits, but its access would come back after that. Try Remove Access again.\n\n\(error.localizedDescription)"
+                alert.runModal()
             }
         }
     }

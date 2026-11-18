@@ -40,6 +40,13 @@ import Testing
         #expect((try? SessionPolicy.parse(["limits": ["maxTurns": .double(12), "maxSeconds": 600, "maxCostUSD": .double(0.5)]], cwd: workspace, context: context))?.limits.maxTurns == 12)
     }
 
+    /// A field of the wrong type is refused, not taken as left out (which would quietly mean the default).
+    @Test func aFieldOfTheWrongTypeIsRefused() {
+        for policy: JSONValue in [["tools": 5], ["tools": .null], ["approval": .bool(true)], ["toolSockets": "/tmp/x.sock"], ["network": 0]] {
+            #expect(throws: PolicyRejection.self, "\(policy)") { _ = try SessionPolicy.parse(policy, cwd: workspace, context: context) }
+        }
+    }
+
     /// A folder checked when the session was authorized and swapped for a symlink before the sandbox profile is written
     /// stays the folder that was checked: the profile never follows the new link past the checks.
     @Test func aFolderSwappedForASymlinkAfterTheCheckGainsNothing() throws {

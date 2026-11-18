@@ -72,8 +72,9 @@ public actor Router {
     }
 
     public enum Event: Sendable {
-        /// A new grant; persist `tokenHash` → grant. The token itself is never stored.
-        case paired(tokenHash: String, grant: Grant)
+        /// A new grant, saved by then when remembered; the token itself is never stored. `replaced` is the app's
+        /// earlier grant when that one is gone (an unverified app paired again: its new grant starts afresh).
+        case paired(tokenHash: String, grant: Grant, replaced: String?)
         /// A grant's providers or engines changed (Settings → Apps), already saved.
         case grantChanged(tokenHash: String, grant: Grant)
         case sessionStarted(SessionInfo)
@@ -141,7 +142,8 @@ public actor Router {
     public typealias Approve = @Sendable (PairingRequest) async -> PairingAnswer?
     /// Saves a remembered grant before its token is handed out: a token for a grant Agneta then forgets would
     /// work until the next launch and fail after it.
-    public typealias Commit = @Sendable (_ tokenHash: String, _ grant: Grant) async throws -> Void
+    /// Saves a grant under its token's hash, in one step removing the saved grant `replacing` names, if any.
+    public typealias Commit = @Sendable (_ tokenHash: String, _ grant: Grant, _ replacing: String?) async throws -> Void
 
     struct App {
         var peer: RPCPeer
@@ -198,7 +200,16 @@ public actor Router {
         public var queue: Int
         /// How long an engine has to stop a turn after a limit cancels it, before Agneta ends the session.
         public var limitGrace: Duration
-        public init(global: Int = 8, perAccount: Int = 3, queue: Int = 32, limitGrace: Duration = .seconds(10)) {
+        /// A connection without a grant is anything on this Mac: at most this many at once, each message at most
+        /// `unpairedFrame` bytes, closed after `unpairedFor` (longer than the approval window waits).
+        public var unpaired: Int
+        public var unpairedFrame: Int
+        public var unpairedFor: Duration
+        public init(global: Int = 8, perAccount: Int = 3, queue: Int = 32, limitGrace: Duration = .seconds(10),
+                    unpaired: Int = 16, unpairedFrame: Int = 256 << 10, unpairedFor: Duration = .seconds(600)) {
+            self.unpaired = unpaired
+            self.unpairedFrame = unpairedFrame
+            self.unpairedFor = unpairedFor
             self.global = global
             self.perAccount = perAccount
             self.queue = queue
@@ -279,18 +290,29 @@ public actor Router {
             var changed = grant
             changed.accounts = allowed
             changed.engines = engines
-            if changed.remembered, let commit { try await commit(hash, changed) }
+            if changed.remembered, let commit { try await commit(hash, changed, nil) }
             // Access removed while the change was saved stays removed (AgnetaRuntime.setAccess deletes the saved row again).
             guard tokens[hash]?.id == id else { continue }
             tokens[hash] = changed
-            for (appID, app) in apps where app.grant?.id == id { apps[appID]?.grant = changed }
             onEvent(.grantChanged(tokenHash: hash, grant: changed))
+            await apply(changed)
         }
-        for (session, entry) in sessions where apps[entry.app]?.grant?.id == id
-            && (!allowed.contains(entry.account) || !engines.allows(entry.lease.engine.id)) {
+    }
+
+    /// A grant changed (Settings → Apps, or its app paired again): every connection holding it has it now, its
+    /// sessions that no longer fit stop, and its apps hear what they may use.
+    func apply(_ grant: Grant) async {
+        for (appID, app) in apps where app.grant?.id == grant.id { apps[appID]?.grant = grant }
+        for (session, entry) in sessions where apps[entry.app]?.grant?.id == grant.id
+            && !Self.fits(account: entry.account, engine: entry.lease.engine.id, policy: entry.policy, grant: grant) {
             await stop(session)
         }
-        accessChanged(grant: id)
+        accessChanged(grant: grant.id)
+    }
+
+    /// Whether a session on this account and engine, with this policy, is within what `grant` allows.
+    static func fits(account: String, engine: String, policy: SessionPolicy, grant: Grant) -> Bool {
+        grant.accounts.contains(account) && grant.engines.allows(engine) && GrantScope.check(policy, against: grant) == nil
     }
 
     /// What an app may use, as it sees it (AccessReport): each provider it may use, with the engines its tasks there
@@ -438,10 +460,16 @@ public actor Router {
     /// Whether `id` is still the session registered as `generation`.
     func current(_ id: String, _ generation: UUID) -> Bool { sessions[id]?.generation == generation }
 
-    /// Whether an app's connection still holds this grant: checked after every wait, since the user may
-    /// have removed access, or the app gone, meanwhile.
-    func holds(_ appID: UUID, _ grant: Grant) -> Bool {
-        !shutDown && apps[appID]?.grant?.id == grant.id
+    /// Why a session planned under `grant` can't be registered now, or nil: checked after every wait, since meanwhile
+    /// the app may have gone, the user removed its access, or a change of access (Settings, or pairing again) left the
+    /// plan outside what the grant allows.
+    func refusal(_ appID: UUID, _ grant: Grant, _ plan: Plan) -> RPCError? {
+        guard !shutDown, let current = apps[appID]?.grant, current.id == grant.id else { return Self.appGone }
+        guard Self.fits(account: plan.account, engine: plan.engine.id, policy: plan.policy, grant: current) else {
+            return RPCError(code: RPCError.invalidParams, message: "This app's access changed while the task started",
+                            data: ["agneta": ["accessChanged": true]])
+        }
+        return nil
     }
 
     /// Stops a session from Agneta's UI. The app sees the turn end as cancelled by the user.

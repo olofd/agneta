@@ -200,8 +200,12 @@ public final class AgnetaDatabase: Sendable {
         }
     }
 
-    public func save(_ grant: Router.Grant, tokenHash: String) throws {
-        try queue.write { db in try Self.insert(grant, hash: tokenHash, db) }
+    /// Saves a grant, in the same transaction removing the grant `replacing` names (an app's earlier one).
+    public func save(_ grant: Router.Grant, tokenHash: String, replacing: String? = nil) throws {
+        try queue.write { db in
+            if let replacing { try db.execute(sql: "DELETE FROM grants WHERE id = ?", arguments: [replacing]) }
+            try Self.insert(grant, hash: tokenHash, db)
+        }
     }
 
     private static func insert(_ grant: Router.Grant, hash: String, _ db: GRDB.Database) throws {

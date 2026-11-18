@@ -11,8 +11,13 @@ extension Router {
         let id = connection.id
         let port = connection.remotePort
         let serverPort = connection.localPort
-        guard !shutDown else { connection.close(); return }
+        guard !shutDown, apps.values.count(where: { $0.grant == nil }) < concurrency.unpaired else { connection.close(); return }
         apps[id] = App(peer: peer, grant: nil, close: { connection.close() })
+        let unpairedFor = concurrency.unpairedFor
+        Task { [weak self] in
+            try? await Task.sleep(for: unpairedFor)
+            await self?.closeIfUnpaired(id)
+        }
         if let traces { await peer.handle(tap: traces.appAttributor().frame) }
         await peer.handle(requests: { [weak self] method, params in
             guard let self else { return .failure(RPCError(code: RPCError.internalError, message: "Agneta is stopping")) }
@@ -21,8 +26,26 @@ extension Router {
         await peer.handle(notifications: { [weak self] method, params in
             await self?.appNotification(id, method: method, params: params)
         })
-        await peer.run(connection.messages)
+        // Until it has a grant, a connection's messages are small: a large one closes it.
+        let (messages, input) = AsyncThrowingStream<Data, Error>.makeStream()
+        let relay = Task { [weak self] in
+            do {
+                for try await message in connection.messages {
+                    guard let self, await self.admits(id, size: message.count) else { connection.close(); break }
+                    input.yield(message)
+                }
+                input.finish()
+            } catch { input.finish(throwing: error) }
+        }
+        await peer.run(messages)
+        relay.cancel()
         await disconnect(id)
+    }
+
+    func admits(_ app: UUID, size: Int) -> Bool { size <= concurrency.unpairedFrame || apps[app]?.grant != nil }
+
+    func closeIfUnpaired(_ id: UUID) async {
+        if let app = apps[id], app.grant == nil { await hangUp(app, reason: "didn't pair in time") }
     }
 
     func disconnect(_ app: UUID) async {
@@ -105,11 +128,13 @@ extension Router {
             guard !shutDown, apps[appID] != nil else { return .failure(RPCError(code: RPCError.internalError, message: "The app disconnected")) }
             let token = Self.newToken(), hash = Self.hash(token)
             let identifier = verified ? peer?.identifier : nil, team = verified ? peer?.team : nil
-            // "Always Allow" for an app that has it already replaces its access rather than adding to it: the same grant
-            // (its workspace, and its tasks to resume) with what was just allowed and a new token; the old token stops
-            // working. "Allow Once" leaves remembered access alone.
+            // "Always Allow" for an app that has it already replaces its access rather than adding to it, and its old
+            // token stops working. A verified app keeps its grant (its workspace, and its tasks to resume) with what was
+            // just allowed. An unverified app is only a name, which another program could give: its new grant starts
+            // afresh, and the earlier one is removed. "Allow Once" leaves remembered access alone.
             let earlier = answer.remember ? tokens.values.first { $0.remembered && Self.sameApp($0, app: name, identifier: identifier, team: team, verified: verified) } : nil
-            var grant = Grant(id: earlier?.id ?? UUID().uuidString, app: name, identifier: identifier, team: team, verified: verified,
+            let renewed = earlier.flatMap { $0.verified ? $0 : nil }
+            var grant = Grant(id: renewed?.id ?? UUID().uuidString, app: name, identifier: identifier, team: team, verified: verified,
                               accounts: answer.accounts, engines: answer.engines, tools: scope.tools,
                               folders: scope.folders.map { $0.path(percentEncoded: false) }, remembered: answer.remember)
             // The app's own workspace, inside its grant whatever else it asked for.
@@ -123,17 +148,22 @@ extension Router {
                 grant.folders.append(workspace.realFileURL.path(percentEncoded: false))
             }
             if answer.remember, let commit {
-                do { try await commit(hash, grant) } catch {
+                do { try await commit(hash, grant, earlier.flatMap { $0.id == grant.id ? nil : $0.id }) } catch {
                     return .failure(RPCError(code: RPCError.internalError, message: "Agneta couldn't save \(name)'s access: \(error.localizedDescription)"))
                 }
                 guard !shutDown, apps[appID] != nil else { return .failure(RPCError(code: RPCError.internalError, message: "The app disconnected")) }
             }
-            // The grant's earlier tokens stop working (its row was replaced when it was saved, its id being unique).
+            // The earlier grant's tokens stop working (its saved row was replaced or removed with this one's saving).
             if let earlier { tokens = tokens.filter { $0.value.id != earlier.id } }
             tokens[hash] = grant
             if !answer.remember { onceTokens[appID] = hash }
-            onEvent(.paired(tokenHash: hash, grant: grant))
             apps[appID]?.grant = grant // the live entry, not a copy from before the approval
+            onEvent(.paired(tokenHash: hash, grant: grant, replaced: earlier.flatMap { $0.id == grant.id ? nil : $0.id }))
+            // The app's other connections on the earlier grant: a renewed one's get what was just allowed (their
+            // sessions outside it stop); a replaced one's are cut off like Remove Access.
+            if let earlier {
+                if earlier.id == grant.id { await apply(grant) } else { await revoke(grant: earlier.id) }
+            }
             // `remembered`: keep the token (in the Keychain) to connect with next time; an Allow Once token ends with this
             // connection.
             return .success(["token": .string(token), "remembered": .bool(answer.remember), "access": access(grant)])

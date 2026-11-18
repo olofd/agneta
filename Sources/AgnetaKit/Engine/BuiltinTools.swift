@@ -46,11 +46,17 @@ public enum BuiltinTools: String, CaseIterable, Sendable {
         }
     }
 
+    /// ACP kinds that run nothing of their own: a plan, a mode switch, or an engine's own step (a subagent, a to-do
+    /// list) whose commands ask again under their own kind.
+    public static let inertKinds: Set<String> = ["think", "switch_mode", "other"]
+
     /// Whether a native runner may use a built-in tool of this ACP kind. Its commands run inside the engine's own
-    /// sandbox, which reaches port 443, not through Agneta's broker: with no network, they're refused. Kinds that
-    /// touch nothing (think, switch_mode, other) aren't Agneta's to refuse.
-    public static func nativeRunnerMayUse(kind: String, policy: SessionPolicy) -> Bool {
-        guard let tool = allCases.first(where: { $0.kinds.contains(kind) }) else { return true }
+    /// sandbox, which reaches port 443, not through Agneta's broker: with no network, they're refused. A request
+    /// with no kind, or one ACP doesn't define, can't be checked, so it's refused too.
+    public static func nativeRunnerMayUse(kind: String?, policy: SessionPolicy) -> Bool {
+        guard let kind else { return false }
+        if inertKinds.contains(kind) { return true }
+        guard let tool = allCases.first(where: { $0.kinds.contains(kind) }) else { return false }
         var allowed = permitted(by: policy)
         if policy.network == .none { allowed.subtract([.shell, .readOnlyShell, .web]) }
         return allowed.contains(tool) || (tool == .shell && allowed.contains(.readOnlyShell))

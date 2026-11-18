@@ -94,7 +94,9 @@ extension Router {
             guard let hit = limits.breached(seconds: seconds, modelCalls: progress.turnModelCalls, cost: progress.taskCost) else { continue }
             sessions[id]?.limitHit = hit
             traces?.session(id)?.writer.record("lifecycle", ["event": "limit", "limit": .string(hit.limit), "value": hit.value])
-            try? await session.lease.peer.notify("session/cancel", ["sessionId": .string(session.engineSession)])
+            // Sent on its own: an engine that isn't reading can hold the write, and the grace runs regardless.
+            let peer = session.lease.peer, engineSession = JSONValue.string(session.engineSession)
+            Task { try? await peer.notify("session/cancel", ["sessionId": engineSession]) }
             // A limit is a hard limit: an engine that hasn't stopped within the grace (stuck in a tool, not reading,
             // or ignoring the cancel) gets its session ended, which stops a dedicated engine, and the prompt is
             // answered as stopped by the limit.

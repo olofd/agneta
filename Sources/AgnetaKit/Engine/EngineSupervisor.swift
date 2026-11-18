@@ -43,9 +43,13 @@ public actor EngineSupervisor: EngineSource {
         public var ledger: (any EngineLedger)?
         /// Task traces: shell commands, engine stderr and exits are reported here.
         public var traces: Traces?
+        /// How long a new engine has to answer `initialize`: one that hangs while starting is stopped, rather than
+        /// holding the task (and its app) open for good.
+        public var startDeadline: Duration
 
         public init(shellTool: URL, root: URL, engineLoopbackPorts: [Int] = [], confine: Bool = true,
-                    ledger: (any EngineLedger)? = nil, traces: Traces? = nil) {
+                    ledger: (any EngineLedger)? = nil, traces: Traces? = nil, startDeadline: Duration = .seconds(60)) {
+            self.startDeadline = startDeadline
             self.shellTool = shellTool
             self.root = root
             self.engineLoopbackPorts = engineLoopbackPorts
@@ -219,7 +223,9 @@ public actor EngineSupervisor: EngineSource {
         Task { await peer.run(lines) }
         let initialized: JSONValue
         do {
-            initialized = try await peer.request("initialize", ["protocolVersion": 1, "clientCapabilities": [:], "clientInfo": ["name": "agneta", "version": "0"]])
+            initialized = try await Self.within(configuration.startDeadline) {
+                try await peer.request("initialize", ["protocolVersion": 1, "clientCapabilities": [:], "clientInfo": ["name": "agneta", "version": "0"]])
+            }
         } catch {
             await stop(process)
             throw RPCError(code: RPCError.internalError, message: "The engine didn't start: \(error)")
@@ -325,6 +331,25 @@ final class GrantTable: @unchecked Sendable {
         lock.withLock {
             guard let entry = entries[token], cwd.isInside(entry.workspace.realFileURL) else { return nil }
             return entry.grant
+        }
+    }
+}
+
+extension EngineSupervisor {
+    /// No answer within the deadline.
+    struct TimedOut: Error, CustomStringConvertible {
+        let after: Duration
+        var description: String { "no answer within \(after.components.seconds) seconds" }
+    }
+
+    /// `work`'s result, or TimedOut once `limit` has passed (`work` is cancelled then).
+    static func within<T: Sendable>(_ limit: Duration, _ work: @escaping @Sendable () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T?.self) { group in
+            group.addTask { try await work() }
+            group.addTask { try await Task.sleep(for: limit); return nil }
+            defer { group.cancelAll() }
+            guard let first = try await group.next(), let value = first else { throw TimedOut(after: limit) }
+            return value
         }
     }
 }

@@ -125,7 +125,13 @@ extension SessionPolicy {
             throw PolicyRejection(field: unknown, reason: "isn't a policy field Agneta knows")
         }
 
-        let toolsName = value["tools"]?.stringValue ?? Tools.workspace.rawValue
+        // A field that's there must be the right type: one of another type is refused, never read as left out.
+        func name(_ field: String, otherwise: String) throws -> String {
+            guard let raw = value[field] else { return otherwise }
+            guard let text = raw.stringValue else { throw PolicyRejection(field: field, reason: "must be a string") }
+            return text
+        }
+        let toolsName = try name("tools", otherwise: Tools.workspace.rawValue)
         guard let tools = Tools(rawValue: toolsName) else { throw PolicyRejection(field: "tools", reason: "unknown value \(toolsName)") }
 
         func folders(_ field: String) throws -> [URL] {
@@ -153,7 +159,7 @@ extension SessionPolicy {
             throw PolicyRejection(field: "network", reason: "per-host network access for tools isn't supported yet")
         }
 
-        let approvalName = value["approval"]?.stringValue ?? Approval.askApp.rawValue
+        let approvalName = try name("approval", otherwise: Approval.askApp.rawValue)
         guard let approval = Approval(rawValue: approvalName) else { throw PolicyRejection(field: "approval", reason: "unknown value \(approvalName)") }
 
         var limits = Limits.default
@@ -202,6 +208,7 @@ extension SessionPolicy {
                   ports.allSatisfy({ (1...65535).contains($0) }) else { throw PolicyRejection(field: "toolPorts", reason: "must be a list of port numbers") }
             toolPorts = ports.map(Int.init)
         }
+        if let raw = value["toolSockets"], raw.arrayValue == nil { throw PolicyRejection(field: "toolSockets", reason: "must be a list of absolute socket paths") }
         let toolSockets = try (value["toolSockets"]?.arrayValue ?? []).map { item -> URL in
             guard let path = item.stringValue, path.hasPrefix("/") else { throw PolicyRejection(field: "toolSockets", reason: "must be a list of absolute socket paths") }
             return URL(filePath: path).realFileURL

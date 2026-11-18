@@ -372,7 +372,7 @@ actor FakeEngines: EngineSource {
     /// grant stops what no longer fits and tells the app; Remove Access while the change is saved wins.
     @Test func theGrantLimitsTheEnginesAnAppMayPick() async throws {
         let saved = SavedGrants()
-        let stack = try await Stack.start(port: 47652, commit: { hash, grant in await saved.commit(hash, grant) }) { _ in
+        let stack = try await Stack.start(port: 47652, commit: { hash, grant, replacing in await saved.commit(hash, grant, replacing: replacing) }) { _ in
             Router.PairingAnswer(accounts: ["brokered"], engines: .only(["opencode"]), remember: true)
         }
         defer { stack.stop() }
@@ -417,15 +417,17 @@ actor FakeEngines: EngineSource {
         #expect(await !stack.router.hasGrant(grant.id))
     }
 
-    /// An app that pairs again with Always Allow gets its earlier access back, renewed: the same grant (its workspace and
-    /// tasks), what was just allowed, and a new token; the old token stops working. Allow Once leaves it alone, and the
-    /// app learns from pairing whether to keep its token.
+    /// An app that pairs again with Always Allow replaces its earlier access: the old token stops working, and a
+    /// connection still on it is cut off. An unverified app is only a name, so its new grant is a fresh one (its own
+    /// workspace, none of the earlier tasks) and the earlier one is removed with the saving. (A verified app keeps its
+    /// grant id; what it was just allowed reaches its other connections as a Settings change does.) Allow Once leaves
+    /// it alone, and the app learns from pairing whether to keep its token.
     @Test func pairingAgainReplacesAnAppsAccess() async throws {
         let saved = SavedGrants()
         let answers = Answers([Router.PairingAnswer(accounts: ["brokered"], remember: true),
                                Router.PairingAnswer(accounts: ["brokered", "native"], remember: true),
                                Router.PairingAnswer(accounts: ["native"], remember: false)])
-        let stack = try await Stack.start(port: 47655, commit: { hash, grant in await saved.commit(hash, grant) }) { _ in await answers.next() }
+        let stack = try await Stack.start(port: 47655, commit: { hash, grant, replacing in await saved.commit(hash, grant, replacing: replacing) }) { _ in await answers.next() }
         defer { stack.stop() }
         func pair() async throws -> (token: String, result: JSONValue) {
             let app = AppClient(port: stack.port)
@@ -436,10 +438,19 @@ actor FakeEngines: EngineSource {
         let first = try await pair()
         let grant = try #require(await saved.last)
         #expect(first.result["remembered"]?.boolValue == true)
+        let still = AppClient(port: stack.port)
+        defer { still.close() }
+        _ = try await still.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(first.token)]]])
 
         let second = try await pair()
         let renewed = try #require(await saved.last)
-        #expect(renewed.id == grant.id && renewed.accounts == ["brokered", "native"])
+        #expect(renewed.id != grant.id && renewed.accounts == ["brokered", "native"] && renewed.app == grant.app)
+        #expect(await saved.replaced == grant.id)
+        #expect(!(await stack.router.hasGrant(grant.id)))
+        do {
+            _ = try await still.request("session/new", ["cwd": "/tmp", "mcpServers": [], "_meta": ["agneta": ["account": "brokered"]]])
+            Issue.record("a connection on the replaced grant kept working")
+        } catch {}
         let app = AppClient(port: stack.port)
         defer { app.close() }
         do {
@@ -453,7 +464,29 @@ actor FakeEngines: EngineSource {
         // Allow Once is a grant of its own, for that connection, and says so.
         let once = try await pair()
         #expect(once.result["remembered"]?.boolValue == false)
-        #expect(await saved.last?.id == grant.id) // the remembered one wasn't touched
+        #expect(await saved.last?.id == renewed.id) // the remembered one wasn't touched
+    }
+
+    /// A connection without a grant is anything on this Mac, so it gets little: a few at a time, small messages, and
+    /// not for ever. A refused one is closed, which the app sees as its requests failing.
+    @Test func connectionsWithoutAGrantAreBounded() async throws {
+        let stack = try await Stack.start(port: 47671, concurrency: .init(unpaired: 2, unpairedFrame: 1024, unpairedFor: .milliseconds(500)))
+        defer { stack.stop() }
+        func refused(_ app: AppClient, _ params: JSONValue = ["protocolVersion": 1]) async -> Bool {
+            do { _ = try await app.request("initialize", params); return false } catch let error as RPCError { return error.code != -32001 } catch { return true }
+        }
+        let big = AppClient(port: stack.port)
+        defer { big.close() }
+        #expect(await refused(big, ["protocolVersion": 1, "padding": .string(String(repeating: "x", count: 4096))]))
+
+        let first = AppClient(port: stack.port), second = AppClient(port: stack.port), third = AppClient(port: stack.port)
+        defer { first.close(); second.close(); third.close() }
+        let firstRefused = await refused(first), secondRefused = await refused(second)
+        #expect(!firstRefused && !secondRefused)
+        #expect(await refused(third))
+
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(await refused(first)) // never paired: closed once its time was up
     }
 
     /// While the engine a session needs is downloading, the app hears that, with the progress, instead of that
@@ -1168,9 +1201,12 @@ final class Recorder: @unchecked Sendable {
 /// Grants the router saves, in order; `revoking` removes the grant while the next one is being saved.
 actor SavedGrants {
     private(set) var last: Router.Grant?
+    /// The earlier grant the last save removed, if any.
+    private(set) var replaced: String?
     private var revoke: (Router, String)?
-    func commit(_ hash: String, _ grant: Router.Grant) async {
+    func commit(_ hash: String, _ grant: Router.Grant, replacing: String? = nil) async {
         last = grant
+        replaced = replacing
         if let (router, id) = revoke {
             revoke = nil
             await router.revoke(grant: id)

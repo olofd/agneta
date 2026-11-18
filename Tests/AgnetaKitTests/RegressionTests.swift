@@ -152,3 +152,11 @@ import Testing
     #expect(!page("https://evilclaude.ai/x", SignInPage.anthropic) && !page("https://claude.ai.example.com/x", SignInPage.anthropic))
     #expect(!page("http://claude.ai/x", SignInPage.anthropic) && !page("https://example.com/openai.com", SignInPage.openAI))
 }
+
+/// An engine that never answers while starting is given up on at the deadline, not waited on for good.
+@Test func aStartThatNeverAnswersTimesOut() async throws {
+    await #expect(throws: EngineSupervisor.TimedOut.self) {
+        try await EngineSupervisor.within(.milliseconds(50)) { try await Task.sleep(for: .seconds(30)); return 1 }
+    }
+    #expect(try await EngineSupervisor.within(.seconds(5)) { 7 } == 7)
+}

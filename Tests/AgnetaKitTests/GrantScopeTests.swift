@@ -81,7 +81,7 @@ extension RouterContractTests {
     /// "Allow Once" works for the connection that paired, only while it lasts, and is never saved.
     @Test func allowOnceEndsWithItsConnection() async throws {
         let saved = Recorder()
-        let stack = try await Stack.start(port: 47613, commit: { _, grant in saved.add(grant.app) },
+        let stack = try await Stack.start(port: 47613, commit: { _, grant, _ in saved.add(grant.app) },
                                           approve: { _ in Router.PairingAnswer(accounts: ["brokered"], remember: false) })
         defer { stack.stop() }
         let app = AppClient(port: stack.port)
@@ -106,7 +106,7 @@ extension RouterContractTests {
     /// A grant that can't be saved isn't handed out: the token would work until the next launch and then fail.
     @Test func aGrantThatCantBeSavedIsntGiven() async throws {
         struct DiskFull: Error {}
-        let stack = try await Stack.start(port: 47614, commit: { _, _ in throw DiskFull() })
+        let stack = try await Stack.start(port: 47614, commit: { _, _, _ in throw DiskFull() })
         defer { stack.stop() }
         let app = AppClient(port: stack.port)
         defer { app.close() }
