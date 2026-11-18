@@ -201,7 +201,7 @@ struct RouterIntegrationTests {
             server.stop()
             await runtime.shutdown()
             await model.stop()
-            try? FileManager.default.removeItem(at: root)
+            GooseHarness.discard(root)
         }
     }
 

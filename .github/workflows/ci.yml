@@ -47,10 +47,26 @@ jobs:
 
       # The real-engine suites (Goose and OpenCode against the fake model, the sandbox acceptance test) must run:
       # AGNETA_REQUIRE_ENGINES turns a missing engine into a failure instead of a skip.
+      # Tests keep their folders (fake model and tool server logs, engine logs, traces) in one place, uploaded if a test fails.
       - name: Test
         env:
           AGNETA_REQUIRE_ENGINES: "1"
-        run: swift test
+          AGNETA_KEEP_TEST_FILES: "1"
+        run: |
+          export TMPDIR="$RUNNER_TEMP/agneta-tests/"
+          mkdir -p "$TMPDIR"
+          for python in /usr/local/bin/python3 /opt/homebrew/bin/python3 /usr/bin/python3; do
+            [ -x "$python" ] && { echo "fake servers run on $python: $("$python" --version)"; break; }
+          done
+          swift test
+
+      - name: Upload the test folders
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-folders-${{ matrix.runner }}
+          path: ${{ runner.temp }}/agneta-tests/
+          retention-days: 7
 
       - name: Build the app bundle
         run: scripts/dev/build-app

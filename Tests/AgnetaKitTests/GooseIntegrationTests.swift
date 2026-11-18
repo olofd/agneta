@@ -16,8 +16,16 @@ struct GooseHarness {
     static let goose = repo.appending(path: "Engines/bin/\(arch)/goose-acp")
     static let opencode = repo.appending(path: "Engines/bin/\(arch)/opencode")
     static var openCodeAvailable: Bool { FileManager.default.isExecutableFile(atPath: opencode.path(percentEncoded: false)) && python != nil }
-    static let python = ["/usr/local/bin/python3", "/opt/homebrew/bin/python3", "/usr/bin/python3"].first { FileManager.default.isExecutableFile(atPath: $0) }
+    /// `AGNETA_TEST_PYTHON` picks another Python, to run the fake servers on the version a CI runner has.
+    static let python = [ProcessInfo.processInfo.environment["AGNETA_TEST_PYTHON"], "/usr/local/bin/python3", "/opt/homebrew/bin/python3", "/usr/bin/python3"]
+        .compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0) }
     static var available: Bool { FileManager.default.isExecutableFile(atPath: goose.path(percentEncoded: false)) && python != nil }
+
+    /// Removes a test's folder, unless `AGNETA_KEEP_TEST_FILES` is set: CI keeps them to upload when a run fails.
+    static func discard(_ folder: URL) {
+        guard ProcessInfo.processInfo.environment["AGNETA_KEEP_TEST_FILES"] == nil else { return }
+        try? FileManager.default.removeItem(at: folder)
+    }
 
     let root: URL
     let model: ChildProcess
@@ -100,7 +108,7 @@ struct GooseHarness {
     func stop() async {
         await engine.stop()
         await model.stop()
-        try? FileManager.default.removeItem(at: root)
+        Self.discard(root)
     }
 }
 
