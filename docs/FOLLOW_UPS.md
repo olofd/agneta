@@ -162,3 +162,13 @@ A review of `v0.2.0..3133e96`, judged here:
 ## Architecture review after the grant (2026-11-18)
 
 Fixed: Allow blocked for a provider whose engine isn't installed; a dismissed failed download restarting at once; a ~1 s main-thread hash at launch; a failed default stalling tasks while another engine was ready; small ones (checkbox flicker, the access log line, engines no provider can run listed to apps). Then the debt: `EngineLibrary` takes engines out of `AppModel` (1,100 → 860 lines); one `EngineSource` per engine; `AccessReport` and `SessionCapabilities` type what apps see; a downloaded runtime's whole tree is checked at launch, not only its program (codex-acp's JavaScript beside Node).
+
+## External review of 0.3.0 (2026-11-18)
+
+Tagged 0.3.0 as it was; the fixes go to 0.3.1. Real and fixed: pairing again left live connections on the old access and let an unverified app inherit another's grant by name; a session opening across an access change was checked only by grant id; Remove Access deleted before revoking; native runners allowed requests with no kind or an unknown one, and "always" passed through where there was no "once"; the limit grace waited on the cancel write; `initialize` had no deadline; history deletion left Claude Code transcripts and Codex rollouts; policy fields of the wrong type fell back to defaults; nothing bounded connections before pairing. By design: 0.2.0's data isn't read (no compatibility before 1.0); the update is now always shown across a minor version.
+
+Left for later:
+- **A wedged shared engine.** A limit ends the session and answers the prompt, but a shared engine (Goose or OpenCode without built-in tools) that ignores the cancel keeps running, for every app on that account. Restarting it would stop the others' sessions; decide whether a limit may.
+- **Shared engines' conversations.** A task on a shared engine is a row in that engine's database, deleted only at sign-out. Deleting it with the task means editing the engine's database under it, or asking the engine (no ACP call for that yet).
+- **From the review's product ideas:** a support matrix (plan × engine × what works), an operator runbook, a contributing guide, more end-to-end tests against the real engines.
+

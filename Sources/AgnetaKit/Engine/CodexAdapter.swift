@@ -169,6 +169,15 @@ public struct CodexAdapter: EngineAdapter {
     public func exportSession(_ engineSession: String) -> EngineRequest? { nil }
     public func importSession(_ exported: JSONValue) -> EngineRequest? { nil }
     public func importedSession(_ result: JSONValue) -> String? { nil }
+    /// A session's rollout files, live or archived, in the account's CODEX_HOME.
+    static func rollouts(codexHome: URL, session: String) -> [URL] {
+        ["sessions", "archived_sessions"].flatMap { folder -> [URL] in
+            guard let walker = FileManager.default.enumerator(at: codexHome.appending(path: folder, directoryHint: .isDirectory),
+                                                              includingPropertiesForKeys: nil) else { return [] }
+            return walker.compactMap { $0 as? URL }.filter { $0.lastPathComponent.hasPrefix("rollout-") && $0.lastPathComponent.hasSuffix("-\(session).jsonl") }
+        }
+    }
+
     public func ledger(stateRoot: URL, engineSession: String) -> (any UsageLedger)? {
         CodexRolloutLedger(codexHome: stateRoot, session: engineSession)
     }

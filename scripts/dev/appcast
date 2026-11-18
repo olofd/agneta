@@ -14,6 +14,14 @@ SPARKLE_BIN=$(scripts/dev/sparkle-tools)
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/agneta-appcast-XXXX")
 trap 'rm -rf "$work"' EXIT
+# The oldest build this one updates silently, for people who let Agneta download updates: until 1.0 each minor
+# version starts afresh (no data carried over), so updating from an earlier one is always shown, with its notes.
+# Sparkle compares build numbers (CFBundleVersion, the commit count): the series' first release's, from its tag,
+# or this one's when it starts the series (or a dry run's). Needs the full history.
+core=${version%%-*}
+if [[ $core == 0.* ]]; then series="${core%.*}.0"; else series="${core%%.*}.0.0"; fi
+if git rev-parse -q --verify "refs/tags/v$series" >/dev/null; then first=$(git rev-list --count "v$series"); else first=$(git rev-list --count HEAD); fi
+[[ $(git rev-parse --is-shallow-repository) == false ]] || { echo "appcast needs the full history for build numbers" >&2; exit 1; }
 notes=$(scripts/dev/release-notes "$version" | python3 scripts/dev/notes-html "$repository/blob/v$version/")
 for arch in arm64 x86_64; do
   zip="$folder/Agneta-$version-$arch.zip"
@@ -25,7 +33,7 @@ for arch in arm64 x86_64; do
   printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | "$SPARKLE_BIN/generate_appcast" --ed-key-file - \
     --download-url-prefix "$repository/releases/download/v$version/" \
     --full-release-notes-url "$repository/releases/tag/v$version" --link "$repository" \
-    --embed-release-notes -o "$folder/appcast-$arch.xml" "$work/$arch"
+    --embed-release-notes --major-version "$first" -o "$folder/appcast-$arch.xml" "$work/$arch"
   grep -q 'sparkle:edSignature=' "$folder/appcast-$arch.xml" || { echo "appcast-$arch.xml has no EdDSA signature" >&2; exit 1; }
   echo "wrote appcast-$arch.xml"
 done

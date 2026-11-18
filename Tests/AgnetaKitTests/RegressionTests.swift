@@ -160,3 +160,28 @@ import Testing
     }
     #expect(try await EngineSupervisor.within(.seconds(5)) { 7 } == 7)
 }
+
+/// A task's conversation kept in the account's folder (Claude Code's transcript, Codex's rollout) is found by its
+/// engine session to go with the task's history; nothing outside Agneta's data, and no session id that's a path.
+@Test func aTasksConversationInTheAccountFolderIsFound() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: "agneta-forget-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let claude = root.appending(path: "Accounts/a/claude", directoryHint: .isDirectory), codex = root.appending(path: "Accounts/b/codex", directoryHint: .isDirectory)
+    let project = claude.appending(path: "projects/-work", directoryHint: .isDirectory)
+    let day = codex.appending(path: "sessions/2026/11/18", directoryHint: .isDirectory)
+    for folder in [project.appending(path: "s1", directoryHint: .isDirectory), day] {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    }
+    for file in [project.appending(path: "s1.jsonl"), project.appending(path: "s2.jsonl"), day.appending(path: "rollout-2026-11-18T15-20-15-c1.jsonl"),
+                 day.appending(path: "rollout-2026-11-18T15-21-15-c2.jsonl")] {
+        try Data("{}".utf8).write(to: file)
+    }
+    func found(_ id: String, _ session: String, _ state: URL) -> [String] {
+        EngineHomes.conversation(engine: ["id": .string(id), "session": .string(session), "stateRoot": .string(state.path(percentEncoded: false))], root: root)
+            .map(\.lastPathComponent).sorted()
+    }
+    #expect(found("claude-code", "s1", claude) == ["s1", "s1.jsonl"])
+    #expect(found("codex", "c1", codex) == ["rollout-2026-11-18T15-20-15-c1.jsonl"])
+    #expect(found("goose", "s1", claude).isEmpty && found("claude-code", "../s1", claude).isEmpty)
+    #expect(found("claude-code", "s1", URL(filePath: "/tmp")).isEmpty && found("claude-code", "s1", root).isEmpty)
+}

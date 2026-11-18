@@ -1,7 +1,9 @@
 // Engine homes of dedicated sessions (`Engines/<account>-<id>`): each holds that
 // session's engine state, its conversation included, which `session/load` needs.
 // So they live exactly as long as the task's history: removed with it, with the
-// account at sign-out, and swept when nothing refers to them any more.
+// account at sign-out, and swept when nothing refers to them any more. Engines
+// whose state is the account's (Claude Code, Codex) keep a task's conversation in
+// the account's folder instead: those files go with the task too.
 import Foundation
 
 /// Lease keys: `<account>/<id>` for a dedicated engine, `<account>/shared-<engine>` for an account's shared one. Every
@@ -24,12 +26,29 @@ public enum EngineHomes {
         folder(root: root).appending(path: key.replacingOccurrences(of: "/", with: "-"), directoryHint: .isDirectory)
     }
 
-    /// Removes the engine homes of these tasks, read from their traces' `meta` (call before deleting the traces).
+    /// Removes the engine homes of these tasks, and their conversations kept in an account's folder, read from their
+    /// traces' `meta` (call before deleting the traces).
     public static func remove(tasks: [String], traces: Traces, root: URL) {
         for task in tasks {
-            guard let engine = traces.meta(task: task)?["engine"], engine["dedicated"]?.boolValue == true,
-                  let key = engine["key"]?.stringValue, !key.contains("..") else { continue }
+            guard let engine = traces.meta(task: task)?["engine"] else { continue }
+            for file in conversation(engine: engine, root: root) { try? FileManager.default.removeItem(at: file) }
+            guard engine["dedicated"]?.boolValue == true, let key = engine["key"]?.stringValue, !key.contains("..") else { continue }
             try? FileManager.default.removeItem(at: home(root: root, key: key))
+        }
+    }
+
+    /// A task's conversation as its engine keeps it in the account's folder (its state root, inside Agneta's data):
+    /// Claude Code's transcript, Codex's rollout. Other engines keep theirs in the engine home.
+    static func conversation(engine: JSONValue, root: URL) -> [URL] {
+        guard let session = engine["session"]?.stringValue, !session.isEmpty,
+              session.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }),
+              let path = engine["stateRoot"]?.stringValue else { return [] }
+        let state = URL(filePath: path, directoryHint: .isDirectory).standardizedFileURL
+        guard state.isInside(root.standardizedFileURL), state.path(percentEncoded: false) != root.standardizedFileURL.path(percentEncoded: false) else { return [] }
+        switch engine["id"]?.stringValue {
+        case "claude-code": return ClaudeCodeAdapter.transcripts(config: state, session: session)
+        case "codex": return CodexAdapter.rollouts(codexHome: state, session: session)
+        default: return []
         }
     }
 

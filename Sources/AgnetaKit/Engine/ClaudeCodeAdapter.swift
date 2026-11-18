@@ -72,6 +72,14 @@ public struct ClaudeCodeAdapter: EngineAdapter {
         return launch
     }
 
+    /// A session's transcript and its subagents' folder, in each project folder of the account's config.
+    static func transcripts(config: URL, session: String) -> [URL] {
+        let projects = config.appending(path: "projects", directoryHint: .isDirectory)
+        let folders = (try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? []
+        return folders.flatMap { [$0.appending(path: "\(session).jsonl"), $0.appending(path: session, directoryHint: .isDirectory)] }
+            .filter { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
+    }
+
     /// The `.app` folder around the Claude app's bundled copy, or the CLI's own folder.
     static func bundle(of binary: URL) -> URL {
         var url = binary

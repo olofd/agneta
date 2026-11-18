@@ -21,7 +21,7 @@ Engines are run with their own telemetry, update checks, analytics and feedback 
 | --- | --- | --- |
 | Task history: titles, apps, accounts, turns, usage, outcome | Agneta's database | As long as task history (30 days by default; Settings → Privacy) |
 | Each task's trace: prompts, tool calls and results, model calls, decisions, timing | `Traces/`, one owner-only file per task | As long as its history |
-| An engine's own record of the conversation, so the task can resume | The engine's home (`Engines/`), Claude Code's transcripts in the account's folder, Codex's sessions in the account's `CODEX_HOME` | As long as its history; an account's go when it's signed out |
+| An engine's own record of the conversation, so the task can resume | The engine's home (`Engines/`), Claude Code's transcripts in the account's folder, Codex's sessions in the account's `CODEX_HOME` | As long as its history: each goes with its task. A task that ran on Goose or OpenCode without built-in tools shares its account's engine: it's a row in that engine's own database, which goes when the account is signed out |
 | Agneta's own log: events, ids, names, counts and timing, never content, tokens or keys | `~/Library/Logs/Agneta/` | 7 days |
 | Downloaded components (Claude Code's adapter, OpenCode) | `Runtimes/` in Agneta's data folder | Until Reset; an update keeps them while their pin is unchanged |
 | Update settings, the last check's time, and an update downloaded but not yet installed | Agneta's preferences; `~/Library/Caches/com.objectivecoder.agneta/` | Until the update installs, or Reset |

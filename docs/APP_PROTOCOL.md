@@ -9,6 +9,7 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
 ## Connecting
 
 - **Address:** `ws://127.0.0.1:47321/acp` for releases, `47331` for development builds. Loopback only, one JSON-RPC message per text frame, frames up to 16 MB.
+- **Before it has a grant** (until pairing or `initialize` succeeds), a connection is anything on this Mac and gets little: at most 16 such connections at once, messages up to 256 KB, and 10 minutes to pair. Past any of these, Agneta closes it.
 - **Browsers can't connect:** a WebSocket upgrade with an `Origin` header is refused, so a web page can't drive Agneta.
 - **Sandboxed (Mac App Store) apps** need `com.apple.security.network.client` to connect to Agneta, and `com.apple.security.network.server` as well if they serve their own MCP server on loopback.
 - **Folders for sandboxed apps.** A folder inside an app container (`~/Library/Containers`, `~/Library/Group Containers`) can't be a session's folder: Agneta keeps apps' private storage out of reach. Ask in the pairing scope for folders the user chose (an open panel or a security-scoped bookmark gives the real path, outside the container), or let tasks work in the workspace Agneta makes for the app and hand results back through the app's MCP tools: the sandbox keeps the app itself out of that workspace.
@@ -21,7 +22,9 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
    - Allowed: `{"token": "…", "remembered": true, "access": {…}}` ([Access](#access)). Agneta stores only the token's hash.
    - **Always Allow** (`remembered: true`): keep the token in the app's Keychain and connect with it next time (`initialize`), without asking again. When `initialize` answers `-32001` (`needsPairing`), the user removed the app's access: forget the token, and pair again when the user asks to connect. Agneta also closes the app's open connections when its access is removed.
    - **Allow Once** (`remembered: false`) grants this connection only: the token stops working when it closes, and Agneta keeps nothing. Pair again next time.
-   - **Pairing again** with Always Allow, for an app that has remembered access already (the same verified signing identity, or for an app Agneta can't verify, the same name), renews that access instead of adding to it: the same grant, its workspace and tasks to resume, with what the user just allowed and a new token; the old token stops working. The approval window says so.
+   - **Pairing again** with Always Allow, for an app that has remembered access already, replaces that access instead of adding to it, and the old token stops working. The approval window says so.
+     - A **verified** app (the same signing identity) keeps its grant: its workspace and tasks to resume, with what the user just allowed. Its other open connections get the new access at once, as `agneta/accessChanged`; their sessions outside it stop, with `agneta/sessionStopped`.
+     - An app Agneta **can't verify** is known only by its name, which another program could give, so its new grant starts afresh: a new workspace, and none of the earlier tasks to resume. The earlier grant is removed, and connections still using it are closed.
    - A scope Agneta can't accept (a folder it protects, an unknown field) is refused with `-32602` before the user is asked.
    - Don't Allow: error `-32002`. Closing the approval window, or leaving it unanswered for 5 minutes, is the same.
    - Several apps asking at once are shown one at a time. An app that disconnects while waiting withdraws its request.
@@ -244,8 +247,8 @@ The result:
 ## Permissions
 
 With `approval: "ask-app"`, the engine's `session/request_permission` requests reach the app with Agneta's session id. Agneta applies two rules:
-- **"Always" becomes "once".** An engine may keep an "always" answer beyond the session (OpenCode keeps it for the whole project), so Agneta answers with the matching "once" option.
-- **Native runners are checked first.** Claude Code and Codex run their own tools, so Agneta answers each request for a built-in tool by its contract with every engine (`BuiltinTools`), before the app is asked: nothing built in under `app-only`; reading and searching (`read`, `search`) under `read`; also editing (`edit`, `delete`, `move`) under `workspace`; and never `execute` or `fetch` while the network is `none`.
+- **"Always" becomes "once".** An engine may keep an "always" answer beyond the session (OpenCode keeps it for the whole project), so Agneta answers with the matching "once" option. Where the engine offers no "once" option, the call is declined.
+- **Native runners are checked first.** Claude Code and Codex run their own tools, so Agneta answers each request for a built-in tool by its contract with every engine (`BuiltinTools`), before the app is asked: nothing built in under `app-only`; reading and searching (`read`, `search`) under `read`; also editing (`edit`, `delete`, `move`) under `workspace`; and never `execute` or `fetch` while the network is `none`. Kinds that run nothing of their own (`think`, `switch_mode`, `other`) pass; a request with no kind, or one ACP doesn't define, is refused, since Agneta can't tell what it would run.
 - **The app's own tools are the app's.** A request for a tool of one of the app's MCP servers isn't refused by that contract (Codex asks for those as `execute`). Agneta trusts only what the engine's adapter vouches for: Codex's own MCP approval marker, Claude Code's tool names. A server can't take a name an engine uses for its own tools (Claude Code's `workspace` and `acp`, Codex's `codex_apps`): `session/new` refuses it with `-32602` and `unenforceable: ["mcpServers"]`.
 
 Every decision is in the trace's `permission` records: who decided (`asked-app`, `allowed-by-policy`, `refused-by-policy`), the answer, and how long it took.
