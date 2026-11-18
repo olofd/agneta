@@ -27,14 +27,14 @@ App (sandboxed or not) ──ACP over a local WebSocket, paired──▶ Agneta 
 | `  ACP/` | `RPCPeer`: one side of a JSON-RPC connection, transport-agnostic |
 | `  Transport/` | Newline-delimited stdio framing, the WebSocket server for apps, a minimal HTTP server for diagnostics |
 | `  Runtime/` | `AgnetaRuntime`: the router, engines and records wired together; it records grants and task history, cleans up after a crash and applies retention |
-| `  Router/` | The router: pairing and app connections (`Router.swift`), opening sessions (`+Sessions`), engine messages and permissions (`+Engines`), the turn queue and limits (`+Turns`), grant scopes, rate-limit detection |
+| `  Router/` | The router: its state, grants and access (`Router.swift`, `Access`, `AccessReport`), app connections, pairing and requests (`+Apps`), opening sessions (`+Sessions`), engine messages and permissions (`+Engines`), the turn queue and limits (`+Turns`), grant scopes, rate-limit detection |
 | `  Engine/` | `EngineAdapter` and one adapter per engine, `BuiltinTools` (the built-in tools each policy permits, the contract every engine is tested against), the supervisor, CLI discovery, usage readers, crash recovery |
 | `  Policy/` | `agneta/policy` parsing, Seatbelt profiles, the tool broker |
 | `  Pairing/` | Who is on the other end of a loopback connection |
 | `  SignIn/` | Plan sign-ins and token refresh |
 | `  Store/` | SQLite store, Keychain, Reset |
 | `  Diagnostics/` | Trace writer and normalizer, trace export, the diagnostics MCP server, the operational log |
-| `Sources/Agneta/` | The menu bar app: a thin SwiftUI and AppKit layer that opens the runtime, tells it which accounts to serve, and observes it |
+| `Sources/Agneta/` | The menu bar app: a thin SwiftUI and AppKit layer that opens the runtime, tells it which accounts to serve, and observes it. `AppModel` holds what the windows show, with the engines on this Mac (`EngineLibrary`), apps asking for access (`Approvals`) and signing in (`SignInFlow`) in types of their own; `Tests/AgnetaTests` tests them without windows |
 | `Sources/agneta-shell/` | The shell engines are given: forwards each command to the tool broker |
 | `Sources/agneta-diag/` | Command-line trace reader, shipped in the app |
 | `Sources/agneta-testclient/` | A stand-in client app, built as a sandboxed app with Mac App Store entitlements; the panel's Run a Test Task uses it |
