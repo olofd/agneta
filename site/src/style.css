@@ -1,4 +1,4 @@
-/* agneta.dahlbom.io. System fonts, the app icon's winter-sea blue, and the system's light or dark appearance. */
+/* agneta.dahlbom.io. System fonts, the app icon's evening rose and violet, and the system's light or dark appearance. */
 
 :root {
   color-scheme: light dark;
@@ -12,11 +12,11 @@
   --text-2: #6e6e73;
   --line: rgba(0, 0, 0, 0.1);
   --line-strong: rgba(0, 0, 0, 0.16);
-  --accent: #19648e;
-  --button: #1f5a7a;
-  --button-hover: #184a65;
+  --accent: #b4235a;
+  --button: #c4325f;
+  --button-hover: #ab2853;
   --button-text: #ffffff;
-  --code-key: #1f5a7a;
+  --code-key: #7a3db0;
   --code-dim: #8a8a8f;
   --shot-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 12px 40px rgba(0, 0, 0, 0.12);
   --bar: rgba(255, 255, 255, 0.78);
@@ -38,11 +38,11 @@
     --text-2: #a1a1a6;
     --line: rgba(255, 255, 255, 0.11);
     --line-strong: rgba(255, 255, 255, 0.18);
-    --accent: #72b7df;
-    --button: #2b6f96;
-    --button-hover: #357fa9;
+    --accent: #ff9bb3;
+    --button: #c4325f;
+    --button-hover: #d03e6b;
     --button-text: #ffffff;
-    --code-key: #8cc4e4;
+    --code-key: #d7a6f5;
     --code-dim: #7c7c82;
     --shot-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 40px rgba(0, 0, 0, 0.45);
     --bar: rgba(21, 21, 22, 0.78);

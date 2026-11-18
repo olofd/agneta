@@ -17,7 +17,9 @@
   h1 { font-size: 72px; font-weight: 700; letter-spacing: -0.035em; margin: 0; line-height: 1; }
   .tagline { margin: 0; font-size: 56px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.08; text-wrap: balance; }
   .meta { margin: 28px 0 0; font-size: 26px; color: #a1a1a6; letter-spacing: -0.012em; }
-  .panel { width: 400px; display: block; border-radius: 18px; clip-path: inset(0 0 0 6px round 18px); box-shadow: 0 2px 4px rgba(0,0,0,.4), 0 24px 60px rgba(0,0,0,.55); }
+  .shot { filter: drop-shadow(0 2px 4px rgba(0,0,0,.4)) drop-shadow(0 24px 50px rgba(0,0,0,.55)); }
+  /* The window alone: the capture's backdrop edge cut off at its hairline and corners (23 px in, radius 24, at 460/408). */
+  .panel { width: 460px; display: block; clip-path: inset(25.9px round 27px); }
 </style>
 </head>
 <body>
@@ -26,6 +28,6 @@
     <p class="tagline">Give Mac apps an AI agent you control.</p>
     <p class="meta">Open-source menu bar app for macOS</p>
   </div>
-  <img class="panel" src="../../docs/images/panel-dark.png" alt="">
+  <div class="shot"><img class="panel" src="../../docs/images/panel-dark.png" alt=""></div>
 </body>
 </html>
