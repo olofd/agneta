@@ -4,7 +4,7 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 ## Unreleased
 
-- **A 16 MB download.** Releases no longer bundle Codex's runtime (Node and codex-acp): it's a download of its own on each release, pinned and checked, fetched the first time a ChatGPT plan or an app set to Codex needs it. Settings shows the progress.
+- **A 19 MB download** (59 MB in 0.2.0). Releases no longer bundle Codex's runtime (Node and codex-acp): it's a download of its own on each release, pinned and checked, fetched the first time a ChatGPT plan or an app set to Codex needs it. Settings shows the progress.
 
 ## 0.2.0 (2026-11-18)
 

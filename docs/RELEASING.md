@@ -122,7 +122,7 @@ Measured on an Intel Mac with macOS 26.6.2, 2026-11-18, after OpenCode stopped b
 
 Where the size goes: Goose 19 MB, Agneta and its tools 18 MB, Sparkle 2.3 MB. OpenCode (227 MB unpacked, a 108–113 MB download) comes only when an account is set to it, like Claude Code's adapter, and so, in a release, does Codex's runtime: Node (118 MB) and codex-acp (21 MB), packed as `Agneta-codex-runtime-<version>-<arch>.zip` by `scripts/dev/release`, signed, checked to run, attached to the release and pinned by the app's `codex-runtime.lock`. Engines start only when a task needs them, so they don't change the app's start-up. Starting one (launch to its `initialize` answer, median of 5): Goose 17 ms, OpenCode 394 ms.
 
-Since 0.2.1 a release bundles Goose only: about a 16 MB download. Codex's runtime is about 45 MB more, fetched the first time a ChatGPT plan (or an app set to Codex) needs it.
+Since 0.2.1 a release bundles Goose only: a 19 MB DMG (measured on Intel, 2026-11-18, with Sparkle and the icon). Codex's runtime is 43 MB more, fetched the first time a ChatGPT plan (or an app set to Codex) needs it.
 
 ## Support
 
