@@ -7,6 +7,10 @@ import SwiftUI
 
 enum Palette {
     static let accent = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 0.55, green: 0.75, blue: 0.86, alpha: 1) : NSColor(red: 0.18, green: 0.37, blue: 0.48, alpha: 1) })
+    /// The accent as a fill behind white text (a prominent button): deep enough in both modes for the label to read
+    /// clearly (about 5:1 in dark mode, 6.5:1 in light). The accent itself, pale in dark mode, is for text and symbols
+    /// on dark backgrounds; as a fill it made a default button look disabled.
+    static let fill = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 0.20, green: 0.44, blue: 0.58, alpha: 1) : NSColor(red: 0.18, green: 0.37, blue: 0.48, alpha: 1) })
     static let running = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 0.53, green: 0.79, blue: 0.64, alpha: 1) : NSColor(red: 0.25, green: 0.49, blue: 0.36, alpha: 1) })
     static let attention = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 0.91, green: 0.71, blue: 0.42, alpha: 1) : NSColor(red: 0.66, green: 0.41, blue: 0.11, alpha: 1) })
 

@@ -258,7 +258,7 @@ struct SignInView: View {
                                 .padding(.horizontal, 14).frame(height: 38)
                                 .frostedCard(cornerRadius: 19)
                                 .onSubmit(submit)
-                            Button("Continue", action: submit).glassButton(prominent: true).tint(Palette.accent).controlSize(.large).disabled(code.isEmpty)
+                            Button("Continue", action: submit).glassButton(prominent: true).tint(Palette.fill).controlSize(.large).disabled(code.isEmpty)
                                 .keyboardShortcut(.defaultAction)
                         }
                         .padding(.horizontal, 30)
@@ -274,7 +274,7 @@ struct SignInView: View {
                     }
                     if signIn.finished || signIn.failed != nil {
                         Button { model.signIn.cancel() } label: { Text("Done").frame(maxWidth: .infinity) }
-                            .glassButton(prominent: true).tint(Palette.accent).keyboardShortcut(.defaultAction)
+                            .glassButton(prominent: true).tint(Palette.fill).keyboardShortcut(.defaultAction)
                     } else {
                         Button { model.signIn.cancel() } label: { Text("Cancel").frame(maxWidth: .infinity) }.glassButton().keyboardShortcut(.cancelAction)
                     }
@@ -433,7 +433,7 @@ struct ApprovalView: View {
                         .defaultAction(when: approval.verified)
                         .disabled(nothing)
                     Button { model.approvals.answer(remember: true) } label: { Text("Always Allow").frame(maxWidth: .infinity) }
-                        .glassButton(prominent: true).tint(Palette.accent)
+                        .glassButton(prominent: true).tint(Palette.fill)
                         .disabled(nothing)
                 }
                 .controlSize(.large)

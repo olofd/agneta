@@ -75,7 +75,7 @@ struct PanelView: View {
                 Text(message.detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
-            Button(message.action, action: message.run).glassButton(prominent: true).tint(Palette.accent).controlSize(.small)
+            Button(message.action, action: message.run).glassButton(prominent: true).tint(Palette.fill).controlSize(.small)
         }
         .padding(12)
         .frostedCard(tint: Palette.attention)
@@ -105,7 +105,7 @@ struct PanelView: View {
                 Text(message.detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
-            Button(message.action, action: message.run).glassButton(prominent: true).tint(Palette.accent).controlSize(.small)
+            Button(message.action, action: message.run).glassButton(prominent: true).tint(Palette.fill).controlSize(.small)
         }
         .padding(12)
         .frostedCard(tint: Palette.accent)
@@ -130,7 +130,7 @@ struct PanelView: View {
             }
             Spacer(minLength: 6)
             if failed {
-                Button("Try Again") { model.library.download(download.engine, reason: "retry") }.glassButton(prominent: true).tint(Palette.accent).controlSize(.small)
+                Button("Try Again") { model.library.download(download.engine, reason: "retry") }.glassButton(prominent: true).tint(Palette.fill).controlSize(.small)
                 Button { model.library.putAway(download.engine) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless).foregroundStyle(.secondary).help("Hide; it downloads again when it's needed")
                     .accessibilityLabel("Hide")
@@ -176,7 +176,7 @@ struct PanelView: View {
                 VStack(spacing: 10) {
                     Text("Connect the AI you already pay for, and the apps you allow can use it.")
                         .font(.system(size: 12.5)).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Button("Connect a Provider…") { open { WindowPresenter.shared.showWelcome(model) } }.glassButton(prominent: true).tint(Palette.accent)
+                    Button("Connect a Provider…") { open { WindowPresenter.shared.showWelcome(model) } }.glassButton(prominent: true).tint(Palette.fill)
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
