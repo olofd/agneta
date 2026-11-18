@@ -47,8 +47,8 @@ nonisolated(unsafe) var codeAlert: NSAlert?
     alert.addButton(withTitle: "OK")
     codeAlert = alert
     NSApp.activate(ignoringOtherApps: true)
-    // Modal, but the connection keeps going: Swift's main-actor work runs in the modal loop too, and hideCode()
-    // ends it once Agneta has the answer.
+    // Modal, but the connection keeps going: started from a run-loop block, the modal loop still runs main-actor work,
+    // and hideCode() ends it once Agneta has the answer.
     alert.runModal()
     codeAlert = nil
 }
@@ -112,7 +112,12 @@ final class Client: @unchecked Sendable {
         if method == "agneta/pairingCode", let code = params["code"] as? String {
             // Agneta couldn't verify this app: show the code the user compares with Agneta's window.
             say("pairing code: \(code)")
-            if sandboxed { DispatchQueue.main.async { showCode(code) } }
+            // From a run-loop block, not the main queue: a modal loop inside a main-queue job stops the main queue, and
+            // with it the main-actor work that closes the dialog once Agneta answers.
+            if sandboxed {
+                CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) { MainActor.assumeIsolated { showCode(code) } }
+                CFRunLoopWakeUp(CFRunLoopGetMain())
+            }
         } else if method == "session/update", let update = params["update"] as? [String: Any] {
             switch update["sessionUpdate"] as? String {
             case "agent_message_chunk": say("text: \((update["content"] as? [String: Any])?["text"] ?? "")")
