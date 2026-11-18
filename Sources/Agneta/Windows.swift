@@ -88,10 +88,8 @@ final class WindowPresenter {
 
     func quit(_ model: AppModel) {
         guard confirmStopping(model.tasks, verb: "quit", button: "Stop and Quit") else { return }
-        Task {
-            await model.stopEverything()
-            NSApp.terminate(nil)
-        }
+        // The app delegate stops everything (applicationShouldTerminate), as for every other way of quitting.
+        NSApp.terminate(nil)
     }
 
     /// Check for Updates in a build that has no updater: says why, and how this kind of build gets newer.

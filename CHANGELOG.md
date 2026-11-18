@@ -8,6 +8,7 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 - Settings and task details keep their title bar, so scrolled content no longer runs into the title.
 - Run a Test Task's pairing code opens as a normal, centred dialog that closes itself once you answer in Agneta.
 - Check for Updates is always in the panel's ⋯ menu; a build that doesn't update itself says why.
+- Quit Agneta from the panel's menu quits: in 0.1.0 it hung and left the app unresponsive until force-quit.
 
 ## 0.1.0 (2026-11-18)
 

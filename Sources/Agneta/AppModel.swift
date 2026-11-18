@@ -286,13 +286,19 @@ final class AppModel {
         }
     }
 
-    func stopEverything() async {
+    /// Quitting: stops listening now, and returns the rest (stopping engines and recording their tasks), which needs
+    /// nothing from the main actor. AppKit may wait for the quit's answer inside a main-queue job (when terminate
+    /// was called from one: a menu action, Sparkle), and there no main-actor work can run until it's answered.
+    func beginStopping() -> @Sendable () async -> Void {
         log.log("stop", ["runningTasks": .int(Int64(tasks.count))])
-        defer { log.flush() }
         diagnostics?.stop()
         server?.stop()
-        // Quitting stops running work; the runtime records it.
-        await runtime?.stopAll()
+        let runtime = runtime, log = log
+        return {
+            // Quitting stops running work; the runtime records it.
+            await runtime?.stopAll()
+            log.flush()
+        }
     }
 
     // MARK: Account settings

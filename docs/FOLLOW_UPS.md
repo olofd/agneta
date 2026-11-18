@@ -9,7 +9,9 @@ Changes the maintainer asked for after 0.1.0, collected as they come in and work
 | 3 | Run a Test Task: the code dialog appears off to the left and shows a spinning cursor | Done; checked in the running app (2026-11-18) |
 | 4 | The app is too big: download OpenCode only when it's chosen | In progress |
 | 5 | Which engine a connection runs on: should the user choose it? | Proposed, the maintainer's call |
-| 6 | No Check for Updates in the app | Fixed in code |
+| 6 | No Check for Updates in the app | Done (in the next build) |
+| 7 | Quit Agneta from the menu never quits (development and 0.1.0) | Fixed in code; proven in a standalone reproduction |
+| 8 | No app icon: a frosty, Nordic icon from the two rings | Next |
 
 ## 1. The panel is too transparent
 
@@ -63,4 +65,16 @@ Proposal: keep the choice per account, since that's where sign-in and credential
 > "I know we implement a check-for-updates flow, but I don't have the button here. I expect to be able to check for updates in the app." (2026-11-18, screenshot of Agneta Dev's ⋯ menu)
 
 The item existed only in builds that update themselves, so in Agneta Dev, built from source, the menu simply lacked it. Now **Check for Updates…** is always in the ⋯ menu. In a build without an updater it says why: a development build points to `scripts/dev/build-app` and offers to open the releases page. Settings → General already says the same. A release (GitHub or Homebrew) has the real update flow.
+
+## 7. Quit Agneta hangs
+
+> "When I use the menu to click 'Quit Agneta', the icon never quits, and the process never goes away." Then: "Same in the production build … the menu doesn't open. The process is still there and needs to be force quit." (2026-11-18)
+
+A sample of the hung 0.1.0 showed the main thread inside `NSApplication.terminate`, called from the menu's Quit, which ran in a Swift task on the main actor. `applicationShouldTerminate` answered "later" and started a second main-actor task to stop the engines and reply. AppKit waits for that reply in a loop nested inside the first task, where neither the main actor nor the main queue can run another job, so the reply never came: a deadlock, with the menu unresponsive. Quitting by AppleScript worked, because an Apple event doesn't arrive in a main-queue job.
+
+Now every quit goes through `applicationShouldTerminate` (`AgnetaApp.swift`). It stops listening at once, stops the engines off the main actor, and answers AppKit with a run-loop block, which a nested loop does run. If stopping hangs, Agneta quits after 10 s anyway. The menu's Quit only asks about running tasks, then calls `terminate`. A standalone app built with both handlers proved it: called from a main-actor task, the old one hung until killed, and the new one quit in a second.
+
+## 8. An app icon
+
+> "The development and the production version didn't have an app icon. We have an icon in the menu bar that's two rings interconnected. Use that and create an app icon … We like a Nordic theme, a frosty kind of theme." (2026-11-18)
 
