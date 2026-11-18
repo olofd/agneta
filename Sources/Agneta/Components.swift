@@ -17,19 +17,59 @@ private struct GlassButton: ViewModifier {
     @Environment(\.onDialogGlass) private var onDialogGlass
 
     func body(content: Content) -> some View {
-        if #available(macOS 26, *) {
-            if prominent {
-                content.buttonStyle(.glassProminent)
-            } else if onDialogGlass {
+        if prominent {
+            // The one prominent button per surface wears the app icon's evening, quietly.
+            content.buttonStyle(EveningButtonStyle())
+        } else if #available(macOS 26, *) {
+            if onDialogGlass {
                 // A faint tint keeps the button's shape visible on frosted glass, in front and behind.
                 content.buttonStyle(.glass(.regular.tint(Color.primary.opacity(0.14))))
             } else {
                 content.buttonStyle(.glass)
             }
-        } else if prominent {
-            content.buttonStyle(.borderedProminent)
         } else {
             content.buttonStyle(.bordered)
+        }
+    }
+}
+
+/// A prominent button: white text on the evening's rose, drifting coral to violet left to right, with a glass sheen
+/// on top and a hairline edge. Hover lifts it a little, a press settles it; disabled, it fades.
+struct EveningButtonStyle: ButtonStyle {
+    @Environment(\.controlSize) private var controlSize
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var scheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        EveningButton(configuration: configuration, controlSize: controlSize, isEnabled: isEnabled, dark: scheme == .dark)
+    }
+
+    private struct EveningButton: View {
+        let configuration: Configuration
+        let controlSize: ControlSize
+        let isEnabled: Bool
+        let dark: Bool
+        @State private var hovered = false
+
+        var body: some View {
+            let (horizontal, vertical, size): (CGFloat, CGFloat, CGFloat) = switch controlSize {
+            case .mini, .small: (10, 4, 11.5)
+            case .large, .extraLarge: (18, 8, 14)
+            default: (14, 5.5, 13)
+            }
+            let shape = Capsule()
+            configuration.label
+                .font(.system(size: size, weight: .medium))
+                .foregroundStyle(.white)
+                .padding(.horizontal, horizontal).padding(.vertical, vertical)
+                .background(shape.fill(LinearGradient(colors: Palette.buttonFill(dark: dark), startPoint: .leading, endPoint: .trailing)))
+                .overlay(shape.fill(LinearGradient(colors: [.white.opacity(dark ? 0.14 : 0.2), .white.opacity(0)], startPoint: .top, endPoint: .center)))
+                .overlay(shape.strokeBorder(.white.opacity(dark ? 0.18 : 0.3), lineWidth: 0.5))
+                .brightness(configuration.isPressed ? -0.08 : hovered ? 0.04 : 0)
+                .opacity(isEnabled ? 1 : 0.45)
+                .contentShape(shape)
+                .onHover { hovered = $0 }
+                .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
         }
     }
 }

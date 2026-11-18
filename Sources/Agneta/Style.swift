@@ -14,6 +14,12 @@ enum Palette {
     /// clearly (#B8466E, 5:1, in dark mode; #B0365F, 5.9:1, in light). The accent itself, pale in dark mode, is for text
     /// and symbols on dark backgrounds; as a fill it made a default button look disabled.
     static let fill = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 0.722, green: 0.275, blue: 0.431, alpha: 1) : NSColor(red: 0.690, green: 0.212, blue: 0.373, alpha: 1) })
+    /// A prominent button's fill: the evening deepened so white text reads across it (at least 4.8:1 at every stop),
+    /// coral-rose to rose to violet, left to right. Light: #C2475A, #B0365F, #8E3A92; dark: #BF4866, #B8466E, #9A48A6.
+    static func buttonFill(dark: Bool) -> [Color] {
+        dark ? [Color(red: 0.749, green: 0.282, blue: 0.400), Color(red: 0.722, green: 0.275, blue: 0.431), Color(red: 0.604, green: 0.282, blue: 0.651)]
+             : [Color(red: 0.761, green: 0.278, blue: 0.353), Color(red: 0.690, green: 0.212, blue: 0.373), Color(red: 0.557, green: 0.227, blue: 0.573)]
+    }
     /// The app icon's evening, corner to corner: coral, rose, violet (scripts/dev/app-icon.swift).
     static let evening: [NSColor] = [NSColor(red: 1.0, green: 0.604, blue: 0.353, alpha: 1), NSColor(red: 1.0, green: 0.373, blue: 0.494, alpha: 1),
                                      NSColor(red: 0.545, green: 0.239, blue: 1.0, alpha: 1)]
