@@ -492,7 +492,7 @@ struct EngineAccessList: View {
                         if let note = Self.note(engine, model) { Text(note).font(.system(size: 11)).foregroundStyle(.tertiary) }
                     }
                 }
-                .toggleStyle(.checkbox)
+                .toggleStyle(.checkbox).tint(Palette.fill)
             }
             ForEach(model.accounts.filter { allowed.contains($0.id) }) { account in
                 if let reason = model.library.cantRun(account, engines: engines) {
@@ -537,7 +537,7 @@ struct AppAccess: View {
                 })) {
                     Text(account.label).font(.system(size: 12.5))
                 }
-                .toggleStyle(.checkbox)
+                .toggleStyle(.checkbox).tint(Palette.fill)
                 // An app keeps at least one provider: Remove Access takes them all.
                 .disabled(accounts == [account.id])
             }
@@ -611,15 +611,15 @@ struct SettingsView: View {
 
     @ViewBuilder private var general: some View {
         Section {
-            Toggle("Open Agneta at login", isOn: $openAtLogin)
+            Toggle("Open Agneta at login", isOn: $openAtLogin).tint(Palette.fill)
                 .onChange(of: openAtLogin) { _, on in
                     do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } } catch { openAtLogin = !on }
                 }
         }
         Section {
             if model.updates.enabled {
-                Toggle("Check for updates automatically", isOn: Binding(get: { model.updates.checksAutomatically }, set: { model.updates.checksAutomatically = $0 }))
-                Toggle("Download and install automatically", isOn: Binding(get: { model.updates.downloadsAutomatically }, set: { model.updates.downloadsAutomatically = $0 }))
+                Toggle("Check for updates automatically", isOn: Binding(get: { model.updates.checksAutomatically }, set: { model.updates.checksAutomatically = $0 })).tint(Palette.fill)
+                Toggle("Download and install automatically", isOn: Binding(get: { model.updates.downloadsAutomatically }, set: { model.updates.downloadsAutomatically = $0 })).tint(Palette.fill)
                     .disabled(!model.updates.checksAutomatically)
                 Button("Check Now") { model.updates.check() }.disabled(!model.updates.canCheck)
             } else {
@@ -931,7 +931,7 @@ struct SettingsView: View {
         Section {
             Toggle("Allow diagnostic tools", isOn: Binding(get: { model.diagnosticsToken != nil }, set: { on in
                 if on { Task { await model.allowDiagnostics() } } else { model.stopDiagnostics() }
-            }))
+            })).tint(Palette.fill)
             if let token = model.diagnosticsToken {
                 LabeledContent("Address") { Text(verbatim: model.diagnosticsURL).textSelection(.enabled).foregroundStyle(.secondary) }
                 LabeledContent("Token") { Text(verbatim: token).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle) }
@@ -1033,7 +1033,8 @@ struct HistoryRow: View {
             AppIcon(name: record.app, identifier: record.appIdentifier, size: 32)
             VStack(alignment: .leading, spacing: 1) {
                 Text(record.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                // Two lines rather than cut short: the outcome and cost come last.
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             Text(record.started.formatted(.relative(presentation: .named))).font(.system(size: 12)).foregroundStyle(.tertiary)

@@ -62,7 +62,7 @@ struct TaskDetailsView: View {
             HStack {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.traceFile(task)]) }
                 Spacer()
-                Button("Export Diagnostics…") { model.exportDiagnostics(task, title: title) }.buttonStyle(.borderedProminent)
+                Button("Export Diagnostics…") { model.exportDiagnostics(task, title: title) }.glassButton(prominent: true)
             }
             .disabled(summary == nil)
             .padding(14)
