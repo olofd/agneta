@@ -6,6 +6,7 @@
 // `agneta-signin claude --home <folder>/Accounts/claude` and `agneta-signin codex --home <folder>/Accounts/chatgpt`.
 // AGNETA_REAL_PROBE_ACCOUNTS=claude-direct,codex picks accounts; AGNETA_REAL_PROBE_KEEP=<folder> keeps each trace;
 // AGNETA_REAL_PROBE_TOOLS=workspace and AGNETA_REAL_PROBE_PROMPT=<text> replace the policy's tools and the second prompt.
+import AgnetaFakes
 import Foundation
 import Testing
 @testable import AgnetaKit

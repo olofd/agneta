@@ -1,6 +1,7 @@
 // Two apps over the real WebSocket server, router and supervisor, with the
 // pinned goose-acp and the fake model. Checks routing, isolation between apps,
 // per-session engines for editing sessions, the tool broker, and steering.
+import AgnetaFakes
 import Foundation
 import Testing
 @testable import AgnetaKit

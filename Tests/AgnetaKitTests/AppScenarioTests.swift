@@ -3,6 +3,7 @@
 // stand-in app's MCP server that requires its bearer (FakeServer.mcp).
 // When this passes, an app's ACP backend has what it needs from Agneta
 // (docs/APP_PROTOCOL.md).
+import AgnetaFakes
 import Foundation
 import Testing
 @testable import AgnetaKit

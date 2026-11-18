@@ -37,7 +37,7 @@ extra=(--path "$runtime" --path "$bundle" --writable "$account/claude" --writabl
        --env "CLAUDE_CODE_EXECUTABLE=$cli" --env "GOOSE_MODEL=$model")
 run=$(mktemp -d "${TMPDIR:-/tmp}/agneta-sub-XXXX"); mkdir -p "$run/work"
 mcp_token=$(uuidgen)
-python3 scripts/dev/fake-mcp.py 47392 "$mcp_token" "$run/mcp.log" & mcp=$!
+.build/debug/agneta-fakes mcp 47392 "$mcp_token" "$run/mcp.log" >/dev/null & mcp=$!
 trap 'kill $mcp 2>/dev/null; rm -rf "$run"' EXIT
 sleep 0.5
 echo "== Session on $provider"

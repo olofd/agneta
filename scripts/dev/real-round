@@ -23,7 +23,7 @@ scripts/fetch-engines "$arch" >/dev/null
 swift build >/dev/null
 run=$(mktemp -d "${TMPDIR:-/tmp}/agneta-real-XXXX"); mkdir -p "$run/work" "$run/home"
 token=$(uuidgen)
-python3 scripts/dev/fake-mcp.py 47392 "$token" "$run/mcp.log" & mcp=$!
+.build/debug/agneta-fakes mcp 47392 "$token" "$run/mcp.log" >/dev/null & mcp=$!
 trap 'kill $mcp 2>/dev/null; rm -rf "$run"' EXIT
 sleep 0.5
 .build/debug/agneta-probe --goose "Engines/bin/$arch/goose-acp" --home "$run/home" --cwd "$run/work" \

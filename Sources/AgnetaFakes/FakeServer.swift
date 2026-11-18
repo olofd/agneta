@@ -1,17 +1,16 @@
-// The fake model provider and the stand-in app's tool server the integration tests run against, served from the
-// test process on loopback. They answer exactly as scripts/dev/fake-model.py and fake-mcp.py do (those stay for
-// the dev scripts and Project Chat's smoke test) and log each request as one JSON line in the same format.
+// The fake model provider and the stand-in app's tool server that tests run engines against, on loopback. The
+// Swift tests serve them from the test process; Project Chat's smoke test and the round scripts in scripts/dev
+// run them with `agneta-fakes`. Each request is logged as one JSON line. Development only: never in the app.
 //
-// Why not the Python scripts: on GitHub's macOS runners a Python server on 127.0.0.1 often never accepts a
+// Why not Python, as these were first: on GitHub's macOS runners a Python server on 127.0.0.1 often never accepts a
 // connection (measured 2026-11-18: /usr/local/bin/python3 on every runner, /opt/homebrew/bin/python3 on macOS 26,
-// curl hanging for its whole timeout), while listeners in the test process are reached every time (the sandbox
-// acceptance test, the app connections). In-process servers are also ready the moment start() returns: no sleep.
+// curl hanging for its whole timeout), while Swift listeners are reached every time (the sandbox acceptance test,
+// the app connections). They are also ready the moment start() returns: no sleep.
 import Foundation
 import Network
-@testable import AgnetaKit
 
 /// A small HTTP/1.1 server on 127.0.0.1: one request per connection, answered with a Content-Length body, then closed.
-final class FakeServer: @unchecked Sendable {
+public final class FakeServer: @unchecked Sendable {
     struct Request {
         var method: String
         var path: String
@@ -44,7 +43,7 @@ final class FakeServer: @unchecked Sendable {
     /// Starts listening; returns once the port accepts connections.
     static func start(port: Int, handler: @escaping Handler) async throws -> FakeServer {
         let server = try FakeServer(port: port, handler: handler)
-        let started = OnceFlag()
+        let started = Once()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             server.listener.stateUpdateHandler = { state in
                 switch state {
@@ -59,7 +58,14 @@ final class FakeServer: @unchecked Sendable {
         return server
     }
 
-    func stop() { listener.cancel() }
+    public func stop() { listener.cancel() }
+
+    /// True the first time only: the listener's state handler may report ready or failed more than once.
+    private final class Once: @unchecked Sendable {
+        private let lock = NSLock()
+        private var done = false
+        func take() -> Bool { lock.withLock { defer { done = true }; return !done } }
+    }
 
     private func serve(_ connection: NWConnection) {
         connection.stateUpdateHandler = { [weak connection] state in
@@ -125,14 +131,14 @@ final class FakeServer: @unchecked Sendable {
     }
 }
 
-// MARK: - The fake model provider (scripts/dev/fake-model.py)
+// MARK: - The fake model provider
 
 extension FakeServer {
     /// An OpenAI-compatible model that follows a tiny script. When the latest message is a tool result it answers in
     /// text; "CALL <tool> <json>" calls a tool with exact arguments; "use tool <name>" calls that tool once;
     /// "LONGREPLY <kilobytes>" streams a long reply; "slowly" delays the reply by 5 s and "PAUSE <ms>" by that long;
     /// "RATELIMIT" answers 429 as OpenAI does; anything else gets fixed text. Every request is logged to `log`.
-    static func model(port: Int, log: URL) async throws -> FakeServer {
+    public static func model(port: Int, log: URL) async throws -> FakeServer {
         let lock = NSLock()
         return try await start(port: port) { request in
             let body = (try? JSONSerialization.jsonObject(with: request.body.isEmpty ? Data("{}".utf8) : request.body)) as? [String: Any] ?? [:]
@@ -228,12 +234,12 @@ extension FakeServer {
     }
 }
 
-// MARK: - The stand-in app's tool server (scripts/dev/fake-mcp.py)
+// MARK: - The stand-in app's tool server
 
 extension FakeServer {
     /// An MCP server (Streamable HTTP, JSON responses) that requires `Authorization: Bearer <bearer>`. Its tools:
     /// `echo` returns text, `swatch` a small PNG. Every request is logged to `log`.
-    static func mcp(port: Int, bearer: String, log: URL) async throws -> FakeServer {
+    public static func mcp(port: Int, bearer: String, log: URL) async throws -> FakeServer {
         let lock = NSLock()
         return try await start(port: port) { request in
             switch request.method {
@@ -287,7 +293,7 @@ extension FakeServer {
         return ["jsonrpc": "2.0", "id": id ?? NSNull(), "result": result]
     }
 
-    /// An 8×8 fjord-blue PNG, as fake-mcp.py draws it.
+    /// An 8×8 fjord-blue PNG.
     static let swatchPNG: Data = {
         func chunk(_ type: String, _ data: Data) -> Data {
             var out = Data()

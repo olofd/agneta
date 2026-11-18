@@ -19,15 +19,22 @@ import Testing
     }
 
     /// A long line arriving in small chunks is scanned once: each push looks only at the bytes it brought.
-    /// (Rescanning the whole buffer per 64 KB chunk took 32 MB to ~9 s, quadratic in the line's length.)
+    /// (Rescanning the whole buffer per 64 KB chunk took 32 MB to ~9 s, quadratic in the line's length.) Judged by
+    /// growth, not a wall clock, so a slow machine can't fail it: four times the line may take about four times
+    /// as long, while a rescan would take sixteen.
     @Test func aLongLineIsFramedInLinearTime() throws {
-        var splitter = LineSplitter(limit: 128 << 20)
         let chunk = Data(repeating: UInt8(ascii: "x"), count: 64 << 10)
-        let started = ContinuousClock.now
-        for _ in 0..<512 { #expect(try splitter.push(chunk).isEmpty) }
-        let lines = try splitter.push(Data("y\nz\r\n".utf8))
-        #expect(lines.map(\.count) == [(32 << 20) + 1, 1] && lines.first?.last == UInt8(ascii: "y"))
-        #expect(ContinuousClock.now - started < .seconds(2))
+        func frame(chunks: Int) throws -> Duration {
+            var splitter = LineSplitter(limit: 128 << 20)
+            let started = ContinuousClock.now
+            for _ in 0..<chunks { #expect(try splitter.push(chunk).isEmpty) }
+            let lines = try splitter.push(Data("y\nz\r\n".utf8))
+            #expect(lines.map(\.count) == [chunks * (64 << 10) + 1, 1] && lines.first?.last == UInt8(ascii: "y"))
+            return ContinuousClock.now - started
+        }
+        let small = try frame(chunks: 128), large = try frame(chunks: 512)
+        #expect(large < small * 8, "framing 32 MB took \(large), 8 MB \(small): more than linear growth")
+        #expect(large < .seconds(20))
     }
 
     /// Many short lines in one chunk come out in order, with nothing copied twice.

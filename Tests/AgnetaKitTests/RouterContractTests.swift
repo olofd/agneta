@@ -264,6 +264,15 @@ actor FakeEngines: EngineSource {
             return try #require(result["sessionId"]?.stringValue)
         }
 
+        /// The task's meta record, once the trace writer (which writes off the caller's thread) has put it on disk.
+        func meta(_ task: String) async throws -> JSONValue {
+            for _ in 0..<250 {
+                if let meta = traces.meta(task: task) { return meta }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            throw RPCError(code: RPCError.internalError, message: "no meta record for \(task) after 5 s")
+        }
+
         func records(_ task: String) throws -> [JSONValue] {
             try String(contentsOf: traces.file(for: task), encoding: .utf8).split(separator: "\n").map { try JSONCoding.decode(Data($0.utf8)) }
         }
@@ -671,7 +680,7 @@ actor FakeEngines: EngineSource {
         defer { app.close() }
         try await app.pairAndInitialize("Revoked")
         let session = try await stack.session(app, account: "brokered")
-        let grant = try #require(try stack.records(session).first { $0["type"]?.stringValue == "meta" }?["app"]?["grant"]?.stringValue)
+        let grant = try #require(try await stack.meta(session)["app"]?["grant"]?.stringValue)
         await stack.router.revoke(grant: grant)
         await #expect(throws: (any Error).self) { _ = try await stack.session(app, account: "brokered") }
         await #expect(throws: (any Error).self) { _ = try await app.prompt(session, "hello") }

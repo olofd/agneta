@@ -93,7 +93,7 @@ swift build && swift test           # unit, contract and integration tests, with
 AGNETA_REAL_PROBE=1 AGNETA_REAL_PROBE_HOME=<folder> swift test --filter realProbe   # optional: a real round on your own accounts
 ```
 
-The integration tests run the real engines against a fake model and tool server inside the test process. Without the engines, those suites are skipped and say why. Project Chat's smoke test and the scripts in `scripts/dev` use `python3` (standard library only, as Xcode's command line tools provide) for the same fakes.
+The integration tests run the real engines against a fake model and tool server (`AgnetaFakes`, served from the test process; Project Chat's smoke test runs them with `agneta-fakes`). Without the engines, those suites are skipped and say why. The round scripts in `scripts/dev` use `python3` (standard library only, as Xcode's command line tools provide).
 
 ## For app developers
 

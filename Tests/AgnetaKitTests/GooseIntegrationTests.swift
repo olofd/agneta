@@ -1,6 +1,7 @@
 // End-to-end checks against the pinned goose-acp and the scripted fake model
 // (FakeServers.swift). No real provider is called. Skipped when the engine
 // hasn't been fetched (scripts/fetch-engines).
+import AgnetaFakes
 import Foundation
 import Testing
 @testable import AgnetaKit

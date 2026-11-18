@@ -7,7 +7,7 @@ import Testing
     let now = Date(timeIntervalSince1970: 1_794_928_000) // a fixed moment
     var calendar: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "Europe/Stockholm")!; return c }
 
-    /// Goose 1.59.2's exact text after OpenAI's 429 (measured with scripts/dev/fake-model.py).
+    /// Goose 1.59.2's exact text after OpenAI's 429 (measured with the fake model, AgnetaFakes).
     static let goose = "Ran into this error: Rate limit exceeded: Rate limit reached for requests. Please try again in 20s..\n\nPlease retry if you think this is a transient or recoverable error."
 
     @Test func readsGoosesRateLimitError() throws {

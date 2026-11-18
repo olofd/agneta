@@ -15,6 +15,7 @@ let package = Package(
         .executable(name: "agneta-signin", targets: ["agneta-signin"]),
         .executable(name: "Agneta", targets: ["Agneta"]),
         .executable(name: "agneta-diag", targets: ["agneta-diag"]),
+        .executable(name: "agneta-fakes", targets: ["agneta-fakes"]),
     ],
     dependencies: [
         // SQLite with migrations. Pinned exactly; updates are deliberate.
@@ -34,6 +35,10 @@ let package = Package(
         .executableTarget(name: "Agneta", dependencies: ["AgnetaKit"]),
         // Reads task traces for people and scripts (docs/DIAGNOSTICS.md); bundled in the app.
         .executableTarget(name: "agneta-diag", dependencies: ["AgnetaKit"]),
-        .testTarget(name: "AgnetaKitTests", dependencies: ["AgnetaKit"]),
+        // The fake model and tool server that tests run engines against; agneta-fakes runs them for tests outside
+        // Swift. Development only, never in the app.
+        .target(name: "AgnetaFakes"),
+        .executableTarget(name: "agneta-fakes", dependencies: ["AgnetaFakes"]),
+        .testTarget(name: "AgnetaKitTests", dependencies: ["AgnetaKit", "AgnetaFakes"]),
     ]
 )

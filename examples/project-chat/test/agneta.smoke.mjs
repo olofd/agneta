@@ -60,9 +60,11 @@ async function waitFor(condition, description, process) {
 
 test('Project Chat pairs, reads a brief, stages a draft, and stops a turn', { timeout: 35_000 }, async (t) => {
   const hostBinary = join(repo, '.build/debug/agnetad');
+  const fakes = join(repo, '.build/debug/agneta-fakes');
   const arch = process.arch === 'arm64' ? 'arm64' : 'x86_64';
   const goose = join(repo, 'Engines', 'bin', arch, 'goose-acp');
   await access(hostBinary, constants.X_OK).catch(() => assert.fail('Run swift build --product agnetad at the repository root.'));
+  await access(fakes, constants.X_OK).catch(() => assert.fail('Run swift build --product agneta-fakes at the repository root.'));
   await access(goose, constants.X_OK).catch(() => assert.fail('Run scripts/fetch-engines at the repository root.'));
 
   const root = await mkdtemp(join(tmpdir(), 'agneta-project-chat-'));
@@ -77,12 +79,11 @@ test('Project Chat pairs, reads a brief, stages a draft, and stops a turn', { ti
   const modelPort = await availablePort();
   const modelURL = `http://127.0.0.1:${modelPort}/v1`;
   const modelLog = join(root, 'model.jsonl');
-  // AGNETA_TEST_PYTHON: a Python whose loopback server answers (CI picks one, docs/CI.md); else the one on PATH.
-  const model = start(process.env.AGNETA_TEST_PYTHON || 'python3', ['scripts/dev/fake-model.py', String(modelPort), modelLog]);
+  const model = start(fakes, ['model', String(modelPort), modelLog]);
   children.push(model);
   await waitFor(
     () => fetch(`${modelURL}/models`, { signal: AbortSignal.timeout(1000) }).then((res) => res.ok, () => false),
-    'The fake provider did not start. Check that python3 is installed.',
+    'The fake provider did not start.',
     model
   );
 
