@@ -78,10 +78,20 @@ public actor RPCPeer {
         let id = nextID
         nextID += 1
         let data = try RPCMessage.request(id: .int(id), method: method, params: params).encoded()
-        return try await withCheckedThrowingContinuation { continuation in
-            pending[id] = continuation
-            Task { await self.write(data, failing: id) }
+        // Cancelling the calling task abandons the request: it throws CancellationError and a late answer is dropped.
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else { return continuation.resume(throwing: CancellationError()) }
+                pending[id] = continuation
+                Task { await self.write(data, failing: id) }
+            }
+        } onCancel: {
+            Task { await self.abandon(id) }
         }
+    }
+
+    private func abandon(_ id: Int64) {
+        pending.removeValue(forKey: id)?.resume(throwing: CancellationError())
     }
 
     public func notify(_ method: String, _ params: JSONValue? = nil) async throws {

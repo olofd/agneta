@@ -168,6 +168,9 @@ actor FakeEngines: EngineSource {
                                           "options": [["kind": "allow_once", "optionId": "allow", "name": "Allow"], ["kind": "reject_once", "optionId": "reject", "name": "Reject"]]]
                 if let meta = spec["_meta"] { request = request.setting("_meta", to: meta) }
                 permissionAnswers[label] = (try? await engine.request("session/request_permission", request)) ?? .null
+            } else if text == "deaf" {
+                // Ignores cancel and never finishes on its own: stuck in a tool, as far as Agneta can tell.
+                try? await Task.sleep(for: .seconds(60))
             } else if text == "stubborn" {
                 // Ignores cancel: finishes on its own after a while.
                 try? await Task.sleep(for: .milliseconds(1500))
@@ -478,6 +481,28 @@ actor FakeEngines: EngineSource {
         // The next turn starts clean.
         let next = try await app.prompt(session, "hello")
         #expect(next["_meta"]?["agneta/limit@1"] == nil)
+    }
+
+    /// A limit holds even when the engine ignores the cancel: after the grace the session ends, which stops a
+    /// dedicated engine, and the prompt comes back stopped by that limit, marked as having ended the session.
+    @Test func aLimitTheEngineIgnoresEndsTheSession() async throws {
+        let stack = try await Stack.start(port: 47647, concurrency: .init(limitGrace: .milliseconds(300)))
+        defer { stack.stop() }
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Deaf")
+        let created = try await app.request("session/new", [
+            "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
+            "_meta": [SessionPolicy.key: ["tools": "app-only", "approval": "never-ask", "limits": ["maxSeconds": 1]], "agneta": ["account": "brokered"]],
+        ])
+        let session = try #require(created["sessionId"]?.stringValue)
+        let started = ContinuousClock.now
+        let result = try await app.prompt(session, "deaf")
+        #expect(ContinuousClock.now - started < .seconds(4))
+        #expect(result["stopReason"]?.stringValue == "cancelled")
+        #expect(result["_meta"]?["agneta/limit@1"]?["limit"]?.stringValue == "maxSeconds")
+        #expect(result["_meta"]?["agneta/limit@1"]?["sessionEnded"]?.boolValue == true)
+        await #expect(throws: RPCError.self) { _ = try await app.prompt(session, "hello") }
     }
 
     /// turns beyond the limits wait in order, the app is told, cancel takes a waiting

@@ -167,7 +167,7 @@ The result:
   - `costKind` is `estimated` for API keys, and `plan-equivalent` for subscriptions, where the plan pays and nothing is charged per call.
   - Unknown values are `null`, never guessed.
   - `usage` is the engine's own figure for the turn, passed through.
-- **`agneta/limit@1`** appears only when a policy limit stopped the turn. `maxTurns` ends with ACP's `max_turn_requests`; time and cost end as `cancelled`, with this field saying why. Limits are checked twice a second.
+- **`agneta/limit@1`** appears only when a policy limit stopped the turn. `maxTurns` ends with ACP's `max_turn_requests`; time and cost end as `cancelled`, with this field saying why. Limits are checked twice a second. A limit is a hard limit: if the engine hasn't stopped the turn 10 s after Agneta cancels it (stuck in a tool, or ignoring the cancel), Agneta ends the session (which stops its engine), sends `agneta/sessionStopped` with `stoppedBy: "limit"`, and answers the prompt the same way with `"sessionEnded": true` in this field. Load the session again to go on.
 - **One turn at a time per session.** A prompt while one runs is refused with `-32011`. To add to a running turn, steer it.
 
 | Method | Effect |

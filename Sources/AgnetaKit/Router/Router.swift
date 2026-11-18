@@ -190,15 +190,22 @@ public actor Router {
         public var global: Int
         public var perAccount: Int
         public var queue: Int
-        public init(global: Int = 8, perAccount: Int = 3, queue: Int = 32) {
+        /// How long an engine has to stop a turn after a limit cancels it, before Agneta ends the session.
+        public var limitGrace: Duration
+        public init(global: Int = 8, perAccount: Int = 3, queue: Int = 32, limitGrace: Duration = .seconds(10)) {
             self.global = global
             self.perAccount = perAccount
             self.queue = queue
+            self.limitGrace = limitGrace
         }
     }
 
     let concurrency: Concurrency
     var runningTurns: [String: String] = [:] // session → account
+    /// Each running prompt's request to its engine, so a limit the engine ignores can abandon it.
+    var inFlight: [String: Task<JSONValue, Error>] = [:]
+    /// Limits Agneta enforced by ending the session, for the prompt they cut short to report.
+    var enforcedLimits: [String: (limit: String, value: JSONValue)] = [:]
     struct Waiter {
         var session: String
         var account: String
@@ -421,6 +428,13 @@ public actor Router {
         await engines.release(session.lease)
     }
 
+    /// The answer to a prompt whose limit Agneta enforced by ending the session: stopped by that limit, as when the
+    /// engine stops in time, and marked so the app knows the session is gone.
+    static func enforced(_ hit: (limit: String, value: JSONValue), session id: String) -> JSONValue {
+        ["sessionId": .string(id), "stopReason": hit.limit == "maxTurns" ? "max_turn_requests" : "cancelled",
+         "_meta": ["agneta/limit@1": ["limit": .string(hit.limit), "value": hit.value, "sessionEnded": true]]]
+    }
+
     static let notPaired = RPCError(code: -32001, message: "Pair with Agneta first", data: ["agneta": ["needsPairing": true]])
 
     /// What an app may call on one of its sessions, besides pairing, `initialize`, `session/new`,
@@ -581,10 +595,14 @@ public actor Router {
         }
         let watchdog = method == "session/prompt" ? Task { [weak self] in await self?.watch(id, generation: generation, limits: session.policy.limits) } : nil
         defer { watchdog?.cancel() }
+        let call = Task { try await session.lease.peer.request(engineMethod, engineParams) }
+        if method == "session/prompt" { inFlight[id] = call }
+        defer { if method == "session/prompt", inFlight[id] == call { inFlight[id] = nil } }
         do {
-            var result = try await session.lease.peer.request(engineMethod, engineParams)
+            var result = try await withTaskCancellationHandler { try await call.value } onCancel: { call.cancel() }
             if method == "session/prompt" {
                 watchdog?.cancel()
+                if let hit = enforcedLimits.removeValue(forKey: id) { return .success(Self.enforced(hit, session: id)) }
                 // The session may have ended (or been reopened) while the engine worked: the result goes back, but
                 // the router's state and the record of turns belong to the session as it is now.
                 guard current(id, generation) else { return .success(result.setting("sessionId", to: .string(id))) }
@@ -614,6 +632,7 @@ public actor Router {
             return .success(result["sessionId"] == nil ? result : result.setting("sessionId", to: .string(id)))
         } catch let error as RPCError {
             var error = error
+            if method == "session/prompt", let hit = enforcedLimits.removeValue(forKey: id) { return .success(Self.enforced(hit, session: id)) }
             if method == "session/prompt", current(id, generation) {
                 sessions[id]?.activeRun = nil
                 sessions[id]?.limitHit = nil // a stale flag would mislabel the next turn
@@ -628,6 +647,7 @@ public actor Router {
             record(method, params: params, result: .failure(error), in: trace)
             return .failure(error)
         } catch {
+            if method == "session/prompt", let hit = enforcedLimits.removeValue(forKey: id) { return .success(Self.enforced(hit, session: id)) }
             if method == "session/prompt", current(id, generation) {
                 sessions[id]?.activeRun = nil
                 sessions[id]?.limitHit = nil

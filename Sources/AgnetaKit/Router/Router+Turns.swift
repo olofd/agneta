@@ -95,6 +95,21 @@ extension Router {
             sessions[id]?.limitHit = hit
             traces?.session(id)?.writer.record("lifecycle", ["event": "limit", "limit": .string(hit.limit), "value": hit.value])
             try? await session.lease.peer.notify("session/cancel", ["sessionId": .string(session.engineSession)])
+            // A limit is a hard limit: an engine that hasn't stopped within the grace (stuck in a tool, not reading,
+            // or ignoring the cancel) gets its session ended, which stops a dedicated engine, and the prompt is
+            // answered as stopped by the limit.
+            try? await Task.sleep(for: concurrency.limitGrace)
+            guard !Task.isCancelled, let still = sessions[id], still.generation == generation, still.limitHit != nil else { return }
+            traces?.session(id)?.writer.record("lifecycle", ["event": "limit-enforced", "limit": .string(hit.limit)])
+            enforcedLimits[id] = hit
+            await Self.closeOnEngine(still)
+            if let app = apps[still.app] {
+                let peer = app.peer
+                Task { try? await peer.notify("agneta/sessionStopped", ["sessionId": .string(id), "stoppedBy": "limit"]) }
+            }
+            let call = inFlight[id]
+            await end(id, .stopped)
+            call?.cancel()
             return
         }
     }
