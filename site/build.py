@@ -173,8 +173,15 @@ class Markdown:
                 while j < len(lines) and lines[j].strip() and not self.starts_block(lines[j]):
                     text.append(lines[j].strip())
                     j += 1
-                body = self.inline(" ".join(text))
-                out.append(body if tight else f"<p>{body}</p>")
+                joined = " ".join(text)
+                step = None if tight else re.match(r"^\*\*(\d+)\. (.+?)\*\*", joined)
+                body = self.inline(joined)
+                if step:  # "**2. Pair, once.** …": a numbered step, which the contents list shows under its section
+                    anchor = self.anchor(f"step {step.group(1)} {plain(step.group(2))}")
+                    self.toc.append((3, anchor, esc(f"{step.group(1)}. {plain(step.group(2)).rstrip('.')}")))
+                    out.append(f'<p class="step" id="{anchor}">{body}</p>')
+                else:
+                    out.append(body if tight else f"<p>{body}</p>")
                 i = j
         return "\n".join(out)
 
@@ -228,20 +235,25 @@ class Markdown:
 
     def heading(self, level, text):
         level = min(level - self.shift, 6) if level > 1 else level
-        base = slugify(plain(text))
-        n = self.slug_counts.get(base, 0)
-        self.slug_counts[base] = n + 1
-        anchor = base if n == 0 else f"{base}-{n}"
-        self.ids.add(anchor)
+        anchor = self.anchor(plain(text))
         body = self.inline(text)
         if level == 1:
             if self.title is None:
                 self.title = re.sub(r"<[^>]+>", "", body)
             return f'<h1 id="{anchor}">{body}</h1>'
-        if level == 2:
-            self.toc.append((anchor, re.sub(r"<[^>]+>", "", body)))
+        if level in (2, 3):
+            self.toc.append((level, anchor, re.sub(r"<[^>]+>", "", body)))
         return (f'<h{level} id="{anchor}">{body}'
                 f'<a class="anchor" href="#{anchor}" aria-label="Link to this section"></a></h{level}>')
+
+    def anchor(self, text):
+        """A heading's id as GitHub makes it, numbered when it repeats."""
+        base = slugify(text)
+        n = self.slug_counts.get(base, 0)
+        self.slug_counts[base] = n + 1
+        anchor = base if n == 0 else f"{base}-{n}"
+        self.ids.add(anchor)
+        return anchor
 
     def table(self, head, rows):
         def cells(row):
@@ -341,6 +353,10 @@ class Site:
     def resolve(self, md, href):
         """A link in Markdown, as a URL on the site and that page's title if it's one of the site's pages."""
         if re.match(r"^[a-z][a-z0-9+.-]*:", href):
+            # The changelog links each document as it was at that release; it keeps the link, and the page's name.
+            pinned = re.match(re.escape(REPO) + r"/blob/[^/]+/([^#]+)", href)
+            if pinned and pinned.group(1) in WHOLE_FILES:
+                return href, self.page(WHOLE_FILES[pinned.group(1)])[3]
             return href, None
         target, _, fragment = href.partition("#")
         if not target:
@@ -437,6 +453,42 @@ def docs_nav(current):
     return "".join(groups)
 
 
+def contents(entries):
+    """The page's contents: its sections, each with its subsections and numbered steps; none for a short page."""
+    if len(entries) < 3:
+        return ""
+    items, open_sub = [], False
+    for level, anchor, text in entries:
+        if level == 2:
+            if open_sub:
+                items.append("</ul></li>")
+            elif items:
+                items.append("</li>")
+            items.append(f'<li><a href="#{anchor}">{text}</a>')
+            open_sub = False
+        else:
+            if not open_sub:
+                items.append('<ul>' if items else '<li><ul>')
+                open_sub = True
+            items.append(f'<li><a href="#{anchor}">{text}</a></li>')
+    items.append("</ul></li>" if open_sub else "</li>")
+    return (f'<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2>'
+            f'<ul>{"".join(items)}</ul></nav>')
+
+
+def pager(path):
+    """Links to the previous and next page, in the order of the documentation's navigation."""
+    order = [p for _, pages in GROUPS for _, _, p, _ in pages] + [CHANGELOG[2]]
+    titles = {p: t for _, pages in GROUPS + [("", [CHANGELOG])] for _, _, p, t in pages}
+    i = order.index(path)
+    links = []
+    if i > 0:
+        links.append(f'<a class="prev" href="/{order[i - 1]}/"><span>Previous</span>{esc(titles[order[i - 1]])}</a>')
+    if i + 1 < len(order):
+        links.append(f'<a class="next" href="/{order[i + 1]}/"><span>Next</span>{esc(titles[order[i + 1]])}</a>')
+    return f'<nav class="pager" aria-label="More documentation">{"".join(links)}</nav>'
+
+
 def doc_page(site, source, sect, path, nav_title):
     if sect:
         lines, level = section(read(source), sect)
@@ -456,15 +508,15 @@ def doc_page(site, source, sect, path, nav_title):
     description = re.sub(r"\s+", " ", html.unescape(description)).strip()
     if len(description) > 200:
         description = description[:197].rsplit(" ", 1)[0] + "…"
-    toc = "".join(f'<li><a href="#{a}">{t}</a></li>' for a, t in md.toc)
-    toc_html = (f'<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2>'
-                f"<ul>{toc}</ul></nav>") if len(md.toc) > 2 else ""
+    toc_html = contents(md.toc)
     nav = docs_nav(path)
     page = fill(read("site/src/doc.html"), {
         "nav": nav,
         "current": esc(nav_title),
         "article": body,
         "toc": toc_html,
+        "docs_class": "docs" if toc_html else "docs docs-no-toc",
+        "pager": pager(path),
         "source_url": source_url,
         "history_url": f"{REPO}/commits/main/{source}",
         "source_label": esc(source_label),
@@ -551,14 +603,14 @@ def landing(site):
     else:
         release_line = f'<a href="{REPO}/releases/latest">Latest release</a>'
 
-    # The demo video, once there is one: above the screenshots, which stay.
+    # The demo video, once there is one: its own section under the screenshots, which stay.
     demo = ""
     if os.path.exists(os.path.join(ROOT, DEMO)):
         poster = ' poster="/images/demo-poster.png"' if os.path.exists(os.path.join(ROOT, DEMO_POSTER)) else ""
-        demo = (f'<figure class="demo"><video src="/images/demo.mp4"{poster} controls muted playsinline '
+        demo = (f'<section class="demo-section wrap" aria-label="Demo"><figure class="demo"><video src="/images/demo.mp4"{poster} controls muted playsinline '
                 'preload="metadata" aria-describedby="demo-caption"></video>'
                 '<figcaption id="demo-caption">An app pairs with Agneta, its task runs in the menu bar panel, '
-                'and Stop ends it.</figcaption></figure>')
+                'and Stop ends it.</figcaption></figure></section>')
 
     body = fill(read("site/src/index.html"), {
         "demo": demo,

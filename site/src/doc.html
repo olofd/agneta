@@ -1,4 +1,4 @@
-<div class="docs">
+<div class="{{docs_class}}">
   <nav class="docs-nav" aria-label="Documentation">
     <details class="docs-nav-compact">
       <summary><span class="label">Documentation</span><span class="current">{{current}}</span></summary>
@@ -10,6 +10,7 @@
     <article class="prose">
 {{article}}
     </article>
+    {{pager}}
     <p class="source">This page is <a href="{{source_url}}" rel="noopener">{{source_label}}</a> in the repository, on <code>main</code>. <a href="{{history_url}}" rel="noopener">History</a></p>
   </main>
   {{toc}}

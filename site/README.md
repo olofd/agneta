@@ -13,7 +13,7 @@
 | On the start page: How it works, Providers and engines, What it is not, the status note, the pairing example | The README sections of those names |
 | The install steps | packaging/release-page.md |
 | The version, its date and each DMG's link and size | The latest published release, read from GitHub when the site is built |
-| Screenshots | docs/images/ and examples/project-chat/preview.png |
+| Screenshots | docs/images/ and examples/project-chat/preview.png; on the start page they sit on a copy of the showcase backdrop they were captured over (Sources/Agneta/Snapshots.swift) |
 
 The start page's own prose is in `src/index.html`; everything it says is taken from the README and docs/PRIVACY.md, so change it when they change. The rest of `src/` is the layout, the stylesheet, a small script (the screenshots' light and dark switch, copy buttons, the current section in a page's contents) and the icons, made from packaging/AppIcon.png by `site/icons` (run it after the app icon changes, then `site/social/render` for the social preview).
 
