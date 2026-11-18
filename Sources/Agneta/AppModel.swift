@@ -193,15 +193,21 @@ final class AppModel {
         }
     }
 
-    /// A downloaded engine's program, once it's installed and still what its pin says: checked once per launch and
-    /// after each download (RuntimeInstaller.verified), never trusted from the file being there.
-    private func verifiedProgram(_ engine: String) -> URL? {
-        if let known = verified[engine] { return known }
-        let program = download(for: engine).flatMap { $0.installer.verified($0.name, executable: $0.executable) }
-        verified[engine] = .some(program)
-        return program
-    }
+    /// A downloaded engine's program, once it's installed and still what its pin says: checked at launch
+    /// (`verifyDownloads`) and by each install, never trusted from the file being there.
+    private func verifiedProgram(_ engine: String) -> URL? { verified[engine] ?? nil }
     private var verified: [String: URL?] = [:]
+
+    /// Checks every downloaded engine against its pin, off the main thread: hashing Node takes over half a second.
+    private func verifyDownloads() async {
+        for engine in Self.engineOrder {
+            guard let download = download(for: engine) else { continue }
+            let program = await _Concurrency.Task.detached(priority: .userInitiated) {
+                download.installer.verified(download.name, executable: download.executable)
+            }.value
+            verified[engine] = .some(program)
+        }
+    }
 
     /// Node and codex-acp inside the bundle (a development build).
     private var codexBundled: Bool { FileManager.default.isExecutableFile(atPath: bundleFolder.appending(path: "node").path(percentEncoded: false)) }
@@ -266,11 +272,15 @@ final class AppModel {
         catalog = makeCatalog()
         catalogSink?.yield(catalog)
         for kind in Set(accounts.map(\.kind)) {
-            if let engine = catalog.defaultEngine(for: kind), case .downloadable? = catalog.entries[engine]?.state {
+            if let engine = catalog.defaultEngine(for: kind), case .downloadable? = catalog.entries[engine]?.state, !putAway.contains(engine) {
                 downloadEngine(engine, reason: "default")
             }
         }
     }
+
+    /// Failed downloads the user put away: not started again by themselves until a task asks for one, it's chosen as
+    /// a default, or Try Again.
+    private var putAway: Set<String> = []
 
     private func makeCatalog() -> EngineCatalog {
         if let sampleEngines { return EngineCatalog(ready: sampleEngines, defaults: defaults) }
@@ -282,7 +292,7 @@ final class AppModel {
         }
         // Claude Code and Codex are the user's own installs, each reached through an adapter Agneta brings.
         if let cli = chosen("claude", from: claudeCodeInstalls) {
-            if let adapter = claudeAdapterURL {
+            if let adapter = verifiedProgram("claude-code") {
                 entries.append(.init(ready: ClaudeCodeAdapter(executable: adapter, cli: cli)))
             } else {
                 entries.append(.init(id: "claude-code", name: "Claude Code", state: downloadState("claude-code") ?? .unavailable("Its adapter isn't pinned in this build")))
@@ -322,8 +332,14 @@ final class AppModel {
         ProviderEngines.supported(by: kind).compactMap { id in catalog.usable(id) ? catalog.entries[id] : nil }
     }
 
-    /// A kind of provider's default engine; nil when none can run here (a ChatGPT plan without Codex).
+    /// The engine a kind of provider's tasks run on by default now; nil when none can run here (a ChatGPT plan without
+    /// Codex). While the chosen default's download has failed, another that's ready.
     func engine(for kind: AccountKind) -> String? { catalog.defaultEngine(for: kind) }
+
+    /// The default the user chose for a kind of provider (Settings → Engines' picker), else the one in use.
+    func chosenEngine(for kind: AccountKind) -> String? {
+        defaults.selected[kind].flatMap { ProviderEngines.supported(by: kind).contains($0) && catalog.usable($0) ? $0 : nil } ?? engine(for: kind)
+    }
 
     /// An engine's name ("Codex").
     func engineName(_ engine: String?) -> String {
@@ -363,9 +379,6 @@ final class AppModel {
         if case .failed? = catalog.entries[engine]?.state { downloadEngine(engine, reason: "selected") }
         refreshCatalog()
     }
-
-    /// The installed claude-agent-acp, the version runtimes.lock pins.
-    var claudeAdapterURL: URL? { installer().installed("claude-agent-acp") }
 
     var shellToolURL: URL { bundleFolder.appending(path: "agneta-shell") }
     var runtimeLock: URL { Bundle.main.url(forResource: "runtimes", withExtension: "lock") ?? bundleFolder.appending(path: "runtimes.lock") }
@@ -411,6 +424,7 @@ final class AppModel {
         catalogSink?.finish()
         catalogSink = sink
         _Concurrency.Task { for await catalog in catalogs { await runtime.setCatalog(catalog) } }
+        await verifyDownloads()
         refreshCatalog()
         await runtime.observe { [weak self] event in _Concurrency.Task { @MainActor in self?.handle(event) } }
         reloadHistory()
@@ -501,7 +515,7 @@ final class AppModel {
         case .claude:
             let adapter = try? await installer().install("claude-agent-acp")
             guard current() else { return }
-            verified["claude-code"] = nil
+            if let adapter { verified["claude-code"] = .some(adapter) } // just checked by the install
             refreshCatalog()
             provider = ProviderSetup(kind: .claudeCode, model: account.model,
                                      subscription: SubscriptionAccount(route: .claudeCode, home: home, adapter: adapter,
@@ -543,6 +557,10 @@ final class AppModel {
             log.log("paired", ["grant": .string(grant.id), "app": .string(grant.app), "verified": .bool(grant.verified), "accounts": .int(Int64(grant.accounts.count)),
                                "tools": .string(grant.tools.rawValue), "folders": .int(Int64(grant.folders.count)), "remembered": .bool(grant.remembered)])
             // Saved by the router before the token went out; an "Allow Once" grant is never saved or listed.
+            if grant.remembered { grants[hash] = grant }
+        case .grantChanged(let hash, let grant):
+            log.log("app-access-changed", ["grant": .string(grant.id), "accounts": .int(Int64(grant.accounts.count)),
+                                           "engines": grant.engines == .all ? "all" : .int(Int64(grant.engines.json.arrayValue?.count ?? 0))])
             if grant.remembered { grants[hash] = grant }
         case .sessionStarted(let info):
             log.log("task-started", ["task": .string(info.id), "app": .string(info.app), "account": .string(info.account), "resumed": .bool(info.resumed)])
@@ -621,9 +639,15 @@ final class AppModel {
         engines.isSuperset(of: catalog.entries.keys) ? .all : .only(engines)
     }
 
-    /// The providers of `allowed` that can't run on any of these engines here, for the approval window and Apps to warn of.
-    func stranded(_ allowed: Set<String>, engines: Set<String>) -> [AccountRecord] {
-        accounts.filter { allowed.contains($0.id) && Access.engines(for: $0.kind, allowed: allowance(engines), catalog: catalog).isEmpty }
+    /// Why a provider can't run anything with these engines now, or nil when it can: none of the engines it supports is
+    /// ticked, or none of those is on this Mac (with what to install). Allowing it anyway is fine: it runs once it can.
+    func cantRun(_ account: AccountRecord, engines: Set<String>) -> String? {
+        let supported = ProviderEngines.supported(by: account.kind)
+        guard Access.engines(for: account.kind, allowed: allowance(engines), catalog: catalog).isEmpty else { return nil }
+        let ticked = supported.filter(engines.contains)
+        if ticked.isEmpty { return "\(account.label) can't run on any engine ticked here" }
+        if ticked.count == 1, case .unavailable(let reason)? = catalog.entries[ticked[0]]?.state { return "Needs \(engineName(ticked[0])): \(reason.prefix(1).lowercased() + reason.dropFirst())" }
+        return "Needs \(ticked.map(engineName).joined(separator: " or ")), which isn't on this Mac"
     }
 
     /// Answers a pairing request, shown or waiting; nil is Don't Allow. Answering one already answered does nothing.
@@ -639,6 +663,7 @@ final class AppModel {
     /// and windows see it downloading, then ready (or failed). Downloads asked for meanwhile share this one.
     private func downloadEngine(_ engine: String, reason: String) {
         guard let download = download(for: engine), let asset = download.asset else { return }
+        if reason != "default" { putAway.remove(engine) }
         // A download already going is joined (RuntimeInstaller shares it); one that failed starts again.
         guard downloads[engine].map({ $0.problem != nil }) ?? true else { return }
         downloads[engine] = EngineDownload(engine: engine, title: download.title, total: asset.size.map(Int64.init))
@@ -647,12 +672,12 @@ final class AppModel {
         let started = Date()
         _Concurrency.Task {
             do {
-                _ = try await download.installer.install(download.name, executable: download.executable, received: { received, total in
+                let program = try await download.installer.install(download.name, executable: download.executable, received: { received, total in
                     _Concurrency.Task { @MainActor [weak self] in self?.progressed(engine, received: received, total: total) }
                 })
                 log.log("engine-downloaded", ["engine": .string(engine), "seconds": .int(Int64(Date().timeIntervalSince(started)))])
                 downloads[engine] = nil
-                verified[engine] = nil
+                verified[engine] = .some(program) // just checked by the install
             } catch {
                 log.error("engine-download-failed", ["engine": .string(engine), "reason": .string("\(error)")])
                 downloads[engine]?.problem = "\(download.title) couldn't be downloaded: \(error.localizedDescription)"
@@ -669,6 +694,7 @@ final class AppModel {
     /// Puts a failed download away (its card's close button); the engine downloads again when it's next needed.
     func dismissDownload(_ engine: String) {
         guard downloads[engine]?.problem != nil else { return }
+        putAway.insert(engine)
         downloads[engine] = nil
         refreshCatalog()
     }
@@ -691,8 +717,11 @@ final class AppModel {
     func setAccess(_ grant: Router.Grant, accounts allowed: Set<String>, engines: Set<String>) {
         guard let runtime, !allowed.isEmpty else { return }
         let accountIDs = accounts.map(\.id).filter(allowed.contains), allowance = allowance(engines)
-        log.log("app-access", ["grant": .string(grant.id), "accounts": .int(Int64(accountIDs.count)),
-                               "engines": allowance == .all ? "all" : .int(Int64(engines.count))])
+        // Shown at once; the router's grantChanged confirms it (or Remove Access wins meanwhile).
+        for (hash, shown) in grants where shown.id == grant.id {
+            grants[hash]?.accounts = accountIDs
+            grants[hash]?.engines = allowance
+        }
         let log = log
         _Concurrency.Task {
             do { try await runtime.setAccess(grant: grant.id, accounts: accountIDs, engines: allowance) } catch {
@@ -955,7 +984,7 @@ final class AppModel {
         server = nil
         await runtime?.shutdown()
         runtime = nil
-        accounts = []; grants = [:]; tasks = []; history = []; needsSignIn = []; downloads = [:]; verified = [:]
+        accounts = []; grants = [:]; tasks = []; history = []; needsSignIn = []; downloads = [:]; verified = [:]; putAway = []
         approvals.refuseAll()
         WindowPresenter.shared.closeApproval()
         abandonSignIn()

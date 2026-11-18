@@ -357,7 +357,12 @@ struct ApprovalView: View {
                                     ProviderIcon(kind: account.kind, size: 28)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(account.label).font(.system(size: 13, weight: .semibold))
-                                        Text(account.kind.plan).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                        // What it needs before it can run, where something's missing; its plan otherwise.
+                                        if on, let reason = model.cantRun(account, engines: approval.engines) {
+                                            Text(reason).font(.system(size: 11.5)).foregroundStyle(Palette.attention).lineLimit(2)
+                                        } else {
+                                            Text(account.kind.plan).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                        }
                                     }
                                     Spacer()
                                     Image(systemName: on ? "checkmark.circle.fill" : "circle").font(.system(size: 18))
@@ -416,8 +421,8 @@ struct ApprovalView: View {
                     Button { model.answerApproval(remember: nil) } label: { Text("Don't Allow").frame(maxWidth: .infinity) }
                         .glassButton().keyboardShortcut(.cancelAction)
                     // Once: for this connection only, nothing kept. Return chooses it, and only for a verified app.
-                    // Nothing to allow while no ticked provider can run on a ticked engine.
-                    let nothing = approval.allowed.isEmpty || model.stranded(approval.allowed, engines: approval.engines).count == approval.allowed.count
+                    // A provider that can't run yet (Codex not installed) may still be allowed: it runs once it can.
+                    let nothing = approval.allowed.isEmpty
                     Button { model.answerApproval(remember: false) } label: { Text("Allow Once").frame(maxWidth: .infinity) }
                         .glassButton()
                         .defaultAction(when: approval.verified)
@@ -484,9 +489,10 @@ struct EngineAccessList: View {
                 }
                 .toggleStyle(.checkbox)
             }
-            ForEach(model.stranded(allowed, engines: engines)) { account in
-                Label("\(account.label) can't run on any engine ticked here", systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11.5)).foregroundStyle(Palette.attention)
+            ForEach(model.accounts.filter { allowed.contains($0.id) }) { account in
+                if let reason = model.cantRun(account, engines: engines) {
+                    Label(reason, systemImage: "exclamationmark.triangle.fill").font(.system(size: 11.5)).foregroundStyle(Palette.attention)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -741,7 +747,7 @@ struct SettingsView: View {
             ForEach(AccountKind.allCases, id: \.self) { kind in
                 let options = model.engines(for: kind)
                 if options.count > 1 {
-                    Picker(Self.providerName(kind), selection: Binding(get: { model.engine(for: kind) ?? "" }, set: { model.select($0, for: kind) })) {
+                    Picker(Self.providerName(kind), selection: Binding(get: { model.chosenEngine(for: kind) ?? "" }, set: { model.select($0, for: kind) })) {
                         ForEach(options, id: \.id) { engine in Text(model.engineChoice(engine, for: kind)).tag(engine.id) }
                     }
                 } else {

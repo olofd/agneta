@@ -46,19 +46,14 @@ public enum Access {
     /// can run now or after a download. The default first.
     public static func engines(for kind: AccountKind, allowed: EngineAllowance, catalog: EngineCatalog) -> [String] {
         let usable = ProviderEngines.supported(by: kind).filter { allowed.allows($0) && catalog.usable($0) }
-        guard let first = defaultEngine(among: usable, kind: kind, catalog: catalog) else { return usable }
+        guard let first = defaultEngine(for: kind, allowed: allowed, catalog: catalog) else { return usable }
         return [first] + usable.filter { $0 != first }
     }
 
     /// The engine a task on a provider runs on when it doesn't ask: the provider's default when the app may use it,
-    /// else the most preferred one it may.
+    /// else the most preferred one it may (EngineCatalog.pick: a failed download only when nothing else can run).
     public static func defaultEngine(for kind: AccountKind, allowed: EngineAllowance, catalog: EngineCatalog) -> String? {
-        defaultEngine(among: ProviderEngines.supported(by: kind).filter { allowed.allows($0) && catalog.usable($0) }, kind: kind, catalog: catalog)
-    }
-
-    private static func defaultEngine(among usable: [String], kind: AccountKind, catalog: EngineCatalog) -> String? {
-        if let chosen = catalog.defaultEngine(for: kind), usable.contains(chosen) { return chosen }
-        return usable.first
+        catalog.pick(ProviderEngines.supported(by: kind).filter(allowed.allows), preferring: catalog.defaults.selected[kind])
     }
 
     /// The engine a new task runs on: the one it asks for, checked, or the default.

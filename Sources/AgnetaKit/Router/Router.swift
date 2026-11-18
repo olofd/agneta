@@ -74,6 +74,8 @@ public actor Router {
     public enum Event: Sendable {
         /// A new grant; persist `tokenHash` → grant. The token itself is never stored.
         case paired(tokenHash: String, grant: Grant)
+        /// A grant's providers or engines changed (Settings → Apps), already saved.
+        case grantChanged(tokenHash: String, grant: Grant)
         case sessionStarted(SessionInfo)
         case turnStarted(String)
         case turnEnded(String, stopReason: String)
@@ -266,7 +268,7 @@ public actor Router {
             guard tokens[hash]?.id == id else { continue }
             tokens[hash] = changed
             for (appID, app) in apps where app.grant?.id == id { apps[appID]?.grant = changed }
-            onEvent(.paired(tokenHash: hash, grant: changed))
+            onEvent(.grantChanged(tokenHash: hash, grant: changed))
         }
         for (session, entry) in sessions where apps[entry.app]?.grant?.id == id
             && (!allowed.contains(entry.account) || !engines.allows(entry.lease.engine.id)) {
@@ -286,7 +288,10 @@ public actor Router {
                     "paused": .bool(paused.contains(id)), "needsSignIn": .bool(needsSignIn.contains(id)),
                     "engines": .array(engines.map(JSONValue.string)), "defaultEngine": engines.first.map(JSONValue.string) ?? .null]
         }
-        let engines = catalog.entries.keys.filter(grant.engines.allows).sorted().map(catalog.json)
+        // Those the app may use that one of its providers can run.
+        let kinds = Set(grant.accounts.compactMap { accounts[$0]?.kind })
+        let engines = catalog.entries.keys.filter { id in grant.engines.allows(id) && kinds.contains { ProviderEngines.supported(by: $0).contains(id) } }
+            .sorted().map(catalog.json)
         return ["providers": .array(providers), "engines": .array(engines), "allowedEngines": grant.engines.json,
                 "scope": ["tools": .string(grant.tools.rawValue), "folders": .array(grant.folders.map(JSONValue.string))],
                 "workspace": Self.workspace(of: grant, in: context).map { .string($0.path(percentEncoded: false)) } ?? .null]

@@ -72,10 +72,18 @@ public struct EngineCatalog: Sendable {
         }
     }
 
-    /// The engine a kind of provider runs on by default: the user's choice while it's usable, else the most preferred
-    /// usable one; nil when none is (a ChatGPT plan without Codex).
+    /// The engine a kind of provider runs on by default (`pick` among the engines it supports).
     public func defaultEngine(for kind: AccountKind) -> String? {
-        defaults.engine(for: kind, available: Set(entries.keys.filter(usable)))
+        pick(ProviderEngines.supported(by: kind), preferring: defaults.selected[kind])
+    }
+
+    /// The engine to run on among `candidates` (most preferred first): `preferred` when it's usable, else the first
+    /// usable one, but never a failed download while another engine is ready or on its way: a default whose download
+    /// failed (offline, say) leaves tasks running on another rather than waiting. With nothing else, the failed one,
+    /// which a task's asking downloads again. Nil when none is usable (a ChatGPT plan without Codex).
+    public func pick(_ candidates: [String], preferring preferred: String?) -> String? {
+        let choices = ((preferred.map { [$0] } ?? []) + candidates).filter { candidates.contains($0) && usable($0) }
+        return choices.first { if case .failed? = entries[$0]?.state { false } else { true } } ?? choices.first
     }
 
     /// What an app sees of an engine: its name, its state (with progress, size or reason) and, once it's here, what
