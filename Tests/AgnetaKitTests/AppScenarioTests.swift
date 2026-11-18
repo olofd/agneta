@@ -1,6 +1,6 @@
 // Everything an app does in a long agent task, in order, through the real
 // WebSocket server, router, supervisor, pinned goose-acp, the fake model and a
-// stand-in app's MCP server that requires its bearer (scripts/dev/fake-mcp.py).
+// stand-in app's MCP server that requires its bearer (FakeServer.mcp).
 // When this passes, an app's ACP backend has what it needs from Agneta
 // (docs/APP_PROTOCOL.md).
 import Foundation
@@ -107,10 +107,8 @@ struct AppScenarioTests {
         let stack = try await RouterIntegrationTests.Stack.start(port: UInt16(47451 + Self.offset(account)), modelPort: 47461 + Self.offset(account))
         let mcpPort = 47471 + Self.offset(account)
         let bearer = "app-mcp-\(UUID().uuidString)"
-        let mcp = try GooseHarness.fake("fake-mcp.py", [String(mcpPort), bearer, stack.root.appending(path: "mcp.log").path(percentEncoded: false)],
-                                        root: stack.root, name: "mcp")
-        defer { killpg(mcp.pid, SIGKILL) }
-        try await Task.sleep(for: .milliseconds(400))
+        let mcp = try await FakeServer.mcp(port: mcpPort, bearer: bearer, log: stack.root.appending(path: "mcp.log"))
+        defer { mcp.stop() }
         do {
             let client = AppClient(port: stack.port)
             try await client.pairAndInitialize("Example App")

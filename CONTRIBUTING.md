@@ -4,7 +4,7 @@ Thanks for helping. Agneta is small and opinionated, so a short note first saves
 
 ## Building and testing
 
-You need Xcode 26 or later (Swift 6.2, the macOS 26 SDK), and `python3` for the integration tests' fake servers.
+You need Xcode 26 or later (Swift 6.2, the macOS 26 SDK), and `python3` for Project Chat's smoke test and the scripts in `scripts/dev`.
 
 ```bash
 scripts/dev/build-app        # the app bundle, with the pinned engines

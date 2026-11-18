@@ -147,7 +147,7 @@ final class AppClient: @unchecked Sendable {
 struct RouterIntegrationTests {
     struct Stack {
         let root: URL
-        let model: ChildProcess
+        let model: FakeServer
         let runtime: AgnetaRuntime
         let server: WebSocketServer
         let port: UInt16
@@ -157,19 +157,18 @@ struct RouterIntegrationTests {
         static func start(port: UInt16, modelPort: Int) async throws -> Stack {
             let root = FileManager.default.temporaryDirectory.appending(path: "agneta-router-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            let model = try GooseHarness.fake("fake-model.py", [String(modelPort), root.appending(path: "model.log").path(percentEncoded: false)], root: root, name: "model")
+            let model = try await FakeServer.model(port: modelPort, log: root.appending(path: "model.log"))
             // Anything failing from here (a port in use) stops the fake model: a leaked one holds its port for later runs.
             do {
                 return try await assemble(root: root, model: model, port: port, modelPort: modelPort)
             } catch {
-                await model.stop()
+                model.stop()
                 try? FileManager.default.removeItem(at: root)
                 throw error
             }
         }
 
-        private static func assemble(root: URL, model: ChildProcess, port: UInt16, modelPort: Int) async throws -> Stack {
-            try await Task.sleep(for: .milliseconds(400))
+        private static func assemble(root: URL, model: FakeServer, port: UInt16, modelPort: Int) async throws -> Stack {
             let goose = GooseAdapter(executable: GooseHarness.goose)
             let opencode = OpenCodeAdapter(executable: GooseHarness.opencode)
             let fake = ProviderSetup(kind: .openAI, model: "gpt-4o", apiKey: "fake", baseURL: "http://127.0.0.1:\(modelPort)/v1")
@@ -200,7 +199,7 @@ struct RouterIntegrationTests {
         func stop() async {
             server.stop()
             await runtime.shutdown()
-            await model.stop()
+            model.stop()
             GooseHarness.discard(root)
         }
     }

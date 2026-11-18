@@ -1,6 +1,6 @@
 // End-to-end checks against the pinned goose-acp and the scripted fake model
-// (scripts/dev/fake-model.py). No real provider is called. Skipped when the
-// engine hasn't been fetched (scripts/fetch-engines) or python3 is missing.
+// (FakeServers.swift). No real provider is called. Skipped when the engine
+// hasn't been fetched (scripts/fetch-engines).
 import Foundation
 import Testing
 @testable import AgnetaKit
@@ -15,19 +15,8 @@ struct GooseHarness {
     }
     static let goose = repo.appending(path: "Engines/bin/\(arch)/goose-acp")
     static let opencode = repo.appending(path: "Engines/bin/\(arch)/opencode")
-    static var openCodeAvailable: Bool { FileManager.default.isExecutableFile(atPath: opencode.path(percentEncoded: false)) && python != nil }
-    /// `AGNETA_TEST_PYTHON` picks another Python, to run the fake servers on the version a CI runner has.
-    static let python = [ProcessInfo.processInfo.environment["AGNETA_TEST_PYTHON"], "/usr/local/bin/python3", "/opt/homebrew/bin/python3", "/usr/bin/python3"]
-        .compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0) }
-    static var available: Bool { FileManager.default.isExecutableFile(atPath: goose.path(percentEncoded: false)) && python != nil }
-
-    /// Starts one of the fake servers in scripts/dev on Python, everything it prints going to `<root>/<name>.out`, so a
-    /// failing test's folder shows what the server said (a pipe nobody reads would also stall it once full).
-    static func fake(_ script: String, _ arguments: [String], root: URL, name: String) throws -> ChildProcess {
-        let script = repo.appending(path: "scripts/dev/\(script)").path(percentEncoded: false)
-        return try ChildProcess(executable: "/bin/sh", arguments: ["-c", #"exec "$0" -u "$@" >>"$AGNETA_FAKE_OUT" 2>&1"#, python!, script] + arguments,
-                                environment: ["PATH": "/usr/bin:/bin", "AGNETA_FAKE_OUT": root.appending(path: "\(name).out").path(percentEncoded: false)])
-    }
+    static var openCodeAvailable: Bool { FileManager.default.isExecutableFile(atPath: opencode.path(percentEncoded: false)) }
+    static var available: Bool { FileManager.default.isExecutableFile(atPath: goose.path(percentEncoded: false)) }
 
     /// Removes a test's folder, unless `AGNETA_KEEP_TEST_FILES` is set: CI keeps them to upload when a run fails.
     static func discard(_ folder: URL) {
@@ -36,7 +25,7 @@ struct GooseHarness {
     }
 
     let root: URL
-    let model: ChildProcess
+    let model: FakeServer
     let engine: ChildProcess
     let peer: RPCPeer
     let updates: UpdateLog
@@ -58,18 +47,17 @@ struct GooseHarness {
     static func start(port: Int) async throws -> GooseHarness {
         let root = FileManager.default.temporaryDirectory.appending(path: "agneta-goose-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root.appending(path: "work"), withIntermediateDirectories: true)
-        let model = try fake("fake-model.py", [String(port), root.appending(path: "model.log").path(percentEncoded: false)], root: root, name: "model")
-        try await Task.sleep(for: .milliseconds(400))
+        let model = try await FakeServer.model(port: port, log: root.appending(path: "model.log"))
         // The fake model stops if the engine can't start: a leaked one holds its port for later runs.
         do {
             return try await start(root: root, model: model, port: port)
         } catch {
-            await model.stop()
+            model.stop()
             throw error
         }
     }
 
-    private static func start(root: URL, model: ChildProcess, port: Int) async throws -> GooseHarness {
+    private static func start(root: URL, model: FakeServer, port: Int) async throws -> GooseHarness {
         let launch = GooseLaunch(executable: goose, home: root.appending(path: "home", directoryHint: .isDirectory), provider: [
             "GOOSE_PROVIDER": "openai", "GOOSE_MODEL": "gpt-4o",
             "OPENAI_BASE_URL": "http://127.0.0.1:\(port)/v1", "OPENAI_API_KEY": "fake",
@@ -111,7 +99,7 @@ struct GooseHarness {
 
     func stop() async {
         await engine.stop()
-        await model.stop()
+        model.stop()
         Self.discard(root)
     }
 }

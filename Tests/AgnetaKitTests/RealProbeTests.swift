@@ -18,8 +18,8 @@ import Testing
     let root = FileManager.default.temporaryDirectory.appending(path: "agneta-real-\(UUID().uuidString.prefix(6))", directoryHint: .isDirectory).realFileURL
     try FileManager.default.createDirectory(at: root.appending(path: "work"), withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let mcp = try GooseHarness.fake("fake-mcp.py", ["47489", "realprobe-bearer-123", root.appending(path: "mcp.log").path(percentEncoded: false)], root: root, name: "mcp")
-    defer { killpg(mcp.pid, SIGKILL) }
+    let mcp = try await FakeServer.mcp(port: 47489, bearer: "realprobe-bearer-123", log: root.appending(path: "mcp.log"))
+    defer { mcp.stop() }
     // The pinned adapter version, installed (and verified) where the app would keep it.
     let adapterPath = try await RuntimeInstaller(lockFile: GooseHarness.repo.appending(path: "Engines/runtimes.lock"),
                                                  runtimes: AgnetaStore(root: home).runtimesFolder).install("claude-agent-acp")
