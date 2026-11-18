@@ -124,11 +124,12 @@ import Testing
         #expect(GooseAdapter(executable: URL(filePath: "/x")).capabilities.reportsCost)
     }
 
-    /// Closing waits at most the bound.
+    /// Closing waits at most the bound: work that would take 30 s gives up at the 0.2 s bound. Judged against 10 s, far
+    /// from both, since a busy CI runner has stretched the 0.2 s to 2.5 s.
     @Test func boundedWorkGivesUp() async {
         let started = ContinuousClock.now
         await Router.bounded(seconds: 0.2) { try? await Task.sleep(for: .seconds(30)) }
-        #expect(ContinuousClock.now - started < .seconds(2))
+        #expect(ContinuousClock.now - started < .seconds(10))
     }
 }
 

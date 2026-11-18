@@ -104,7 +104,7 @@ test('Project Chat pairs, reads a brief, stages a draft, and stops a turn', { ti
   chat = new ProjectChat(port, { tokens, openAgneta });
   await chat.connect();
   assert.equal(chat.view.phase, 'disconnected');
-  assert.match(chat.view.status, /Open Agneta and try again/);
+  assert.match(chat.view.status, /Agneta isn't running\. Open it, then connect\./);
   assert.equal(asked, 1);
 
   open = true;
