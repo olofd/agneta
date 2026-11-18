@@ -1,8 +1,8 @@
 #!/bin/bash
 # Redraws Agneta's app icons after a design change (scripts/dev/app-icon.swift): the release's, and the development
-# build's, which is the same icon with a small amber hammer, so Agneta and Agneta Dev side by side tell apart.
-# - packaging/AppIcon.icon/Assets/rings.png, the glass layer of the Liquid Glass icon (packaging/AppIcon.icon, Icon
-#   Composer's format; its icon.json holds the background colour and the glass settings), and
+# build's, which is the same icon with a small hammer, so Agneta and Agneta Dev side by side tell apart.
+# - packaging/AppIcon.icon/Assets/rings.png and background.png: the glass layer of the Liquid Glass icon and the evening
+#   beneath it (packaging/AppIcon.icon, Icon Composer's format; its icon.json holds the layers' glass settings), and
 #   packaging/AppIconDev.icon, the same with the hammer's layer added (Assets/hammer.png).
 # - packaging/AppIcon/ and packaging/AppIconDev/: Assets.car (macOS 26) and the .icns (older macOS), compiled from them
 #   with actool and committed, which build-app copies into the bundle. Compiled here, not in every build: actool
@@ -14,8 +14,9 @@ cd "$(dirname "$0")/../.."
 work=$(mktemp -d "${TMPDIR:-/tmp}/agneta-icon-XXXX")
 trap 'rm -rf "$work"' EXIT
 swift scripts/dev/app-icon.swift packaging/AppIcon.icon/Assets/rings.png 1024 rings >/dev/null
+swift scripts/dev/app-icon.swift packaging/AppIcon.icon/Assets/background.png 1024 background >/dev/null
 mkdir -p packaging/AppIconDev.icon/Assets
-cp packaging/AppIcon.icon/Assets/rings.png packaging/AppIconDev.icon/Assets/rings.png
+cp packaging/AppIcon.icon/Assets/rings.png packaging/AppIcon.icon/Assets/background.png packaging/AppIconDev.icon/Assets/
 swift scripts/dev/app-icon.swift packaging/AppIconDev.icon/Assets/hammer.png 1024 hammer >/dev/null
 
 cat > "$work/preview.swift" <<'SWIFT'

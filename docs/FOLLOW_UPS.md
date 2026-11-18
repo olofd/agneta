@@ -111,6 +111,11 @@ The icon ([packaging/AppIcon.png](../packaging/AppIcon.png), as macOS 26 renders
 - **Checked:** Finder shows the rebuilt Agneta Dev with it.
 - **Set aside:** a shaded frosted-ice version with an aurora sky, a pale one, and a flat one without glass. All are in the history of `scripts/dev/app-icon.swift`.
 
+**Redesigned (2026-11-18):** "I think the one we have is too boring and bland." Of three directions (Aurora: warm and cool rings on a night sky; Sunset; Ocean: icy rings on bright blue), the maintainer chose Sunset ("The red purple is best"):
+- **Design:** the same linked rings in warm white, now the glass layer over a Swedish summer evening: coral to rose to violet corner to corner, with the low sun's glow behind the rings and a faint sheen from above. The evening is its own image layer (`background.png`) beneath the glass, drawn by `scripts/dev/app-icon.swift`; the rings' translucency is low (0.15) so they stay crisp white on macOS 26.
+- **Agneta Dev** has the same icon with a small white hammer in the violet corner (`packaging/AppIconDev.icon`), so the two tell apart side by side.
+- **Checked:** the compiled icons as macOS renders them, at 1024 down to 32 points, on light and dark.
+
 ## Bug sweep before 0.2.0
 
 An independent review of everything since 0.1.0 (2026-11-18) found six real defects, all fixed before the release, each in its own commit:

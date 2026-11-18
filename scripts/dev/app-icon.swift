@@ -1,9 +1,11 @@
-// Draws Agneta's app icon: the menu bar's two linked rings, ice white on the blue of a Swedish winter sea. Flat and
-// quiet: two colours, the over-and-under crossings drawn as clean gaps. On macOS 26 the rings are the glass layer of a
-// Liquid Glass icon (packaging/AppIcon.icon), which the system lights and tints; older macOS gets these drawings.
+// Draws Agneta's app icon: the menu bar's two linked rings, warm white on a Swedish summer evening (coral sky going
+// pink, then violet, with the low sun's glow behind the rings). The over-and-under crossings are clean gaps. On macOS 26
+// the rings are the glass layer of a Liquid Glass icon (packaging/AppIcon.icon) over the evening as its background
+// layer, which the system lights; older macOS gets these drawings, flattened by actool.
 // Written as code so the design can be tuned and every size redrawn from one place.
-//   swift scripts/dev/app-icon.swift <out.png> [size]       the whole icon, flat (default 1024)
-//   swift scripts/dev/app-icon.swift <out.png> 1024 rings   only the rings, full-bleed, for the Liquid Glass layer
+//   swift scripts/dev/app-icon.swift <out.png> [size]           the whole icon, flat (default 1024)
+//   swift scripts/dev/app-icon.swift <out.png> 1024 rings       only the rings, full-bleed, for the Liquid Glass layer
+//   swift scripts/dev/app-icon.swift <out.png> 1024 background  only the evening, full-bleed, for the layer beneath
 //   swift scripts/dev/app-icon.swift <out.png> 1024 hammer  only the development build's hammer, for its own layer
 //   scripts/dev/app-icon                                     everything, see there
 import AppKit
@@ -18,9 +20,12 @@ let small = size <= 32
 let ringsOnly = args.count > 3 && args[3] == "rings"
 /// Only the hammer that marks a development build (Agneta Dev), on the same canvas: low on the right, clear of the rings.
 let hammerOnly = args.count > 3 && args[3] == "hammer"
+/// Only the background, filling the canvas (the icon's body in Icon Composer's layout).
+let backgroundOnly = args.count > 3 && args[3] == "background"
 
-/// The two colours: winter-sea blue (the Baltic in winter, a deeper shade of Agneta's accent) and lake-ice white.
-let sea: UInt32 = 0x1f4b66, ice: UInt32 = 0xeef6fa
+/// The evening, top left to bottom right: coral, rose, violet; the sun's warm glow; the rings' warm white.
+let evening: [(UInt32, CGFloat)] = [(0xff9a5a, 0), (0xff5f7e, 0.55), (0x8b3dff, 1)]
+let sun: UInt32 = 0xfff1d6, ice: UInt32 = 0xfffaf6
 
 func color(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
     CGColor(srgbRed: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255, blue: CGFloat(hex & 0xff) / 255, alpha: alpha)
@@ -45,12 +50,22 @@ if hammerOnly {
     write()
     exit(0)
 }
+if backgroundOnly {
+    drawEvening(in: CGRect(x: 0, y: 0, width: 1024, height: 1024))
+    write()
+    exit(0)
+}
 if !ringsOnly {
     ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 28, color: color(0x0b2233, 0.3))
+    ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 28, color: color(0x3a0f3f, 0.3))
     ctx.addPath(shape)
-    ctx.setFillColor(color(sea))
+    ctx.setFillColor(color(evening[1].0))
     ctx.fillPath()
+    ctx.restoreGState()
+    ctx.saveGState()
+    ctx.addPath(shape)
+    ctx.clip()
+    drawEvening(in: body)
     ctx.restoreGState()
 }
 // The rings layer fills Icon Composer's whole canvas, which is the body, so it's drawn larger by the body's ratio.
@@ -107,15 +122,29 @@ ctx.restoreGState()
 
 write()
 
-/// The development build's mark: a small claw hammer in warm amber, tilted as if mid-swing, in the lower right corner
-/// where the rings leave room. Amber against the winter-sea blue reads at a glance, even at Dock size.
+/// The evening sky across `rect`: the gradient corner to corner, the sun's glow behind where the rings sit, and a faint
+/// sheen from above, as on glass.
+func drawEvening(in rect: CGRect) {
+    let space = CGColorSpace(name: CGColorSpace.sRGB)!
+    let sky = CGGradient(colorsSpace: space, colors: evening.map { color($0.0) } as CFArray, locations: evening.map(\.1))!
+    ctx.drawLinearGradient(sky, start: CGPoint(x: rect.minX + 0.02 * rect.width, y: rect.maxY - 0.02 * rect.height),
+                           end: CGPoint(x: rect.maxX - 0.03 * rect.width, y: rect.minY), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+    let glow = CGGradient(colorsSpace: space, colors: [color(sun, 0.45), color(sun, 0)] as CFArray, locations: [0, 1])!
+    let centre = CGPoint(x: rect.midX, y: rect.midY - 0.015 * rect.height)
+    ctx.drawRadialGradient(glow, startCenter: centre, startRadius: 0, endCenter: centre, endRadius: 0.52 * rect.width, options: [])
+    let sheen = CGGradient(colorsSpace: space, colors: [color(0xffffff, 0.18), color(0xffffff, 0)] as CFArray, locations: [0, 1])!
+    ctx.drawLinearGradient(sheen, start: CGPoint(x: rect.midX, y: rect.maxY), end: CGPoint(x: rect.midX, y: rect.maxY - 0.44 * rect.height), options: [])
+}
+
+/// The development build's mark: a small claw hammer in the rings' warm white, tilted as if mid-swing, in the lower right
+/// corner where the rings leave room, against the evening's violet, so it reads at a glance, even at Dock size.
 func drawHammer() {
-    let amber: UInt32 = 0xf4a93c
+    let paint: UInt32 = ice
     ctx.saveGState()
     ctx.translateBy(x: 806, y: 132)
     ctx.scaleBy(x: 0.66, y: 0.66)
     ctx.rotate(by: -0.4)
-    ctx.setFillColor(color(amber))
+    ctx.setFillColor(color(paint))
     // The handle, then the head across its top: a square face on the left, a short claw on the right.
     ctx.addPath(CGPath(roundedRect: CGRect(x: -34, y: -190, width: 68, height: 270), cornerWidth: 30, cornerHeight: 30, transform: nil))
     ctx.fillPath()
