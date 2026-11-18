@@ -2,18 +2,25 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
-## Unreleased
+## 0.3.1 (2026-11-18)
 
-Fixes from a review of 0.3.0's access rules.
+Fixes from an outside review of 0.3.0's access rules: what an app may do now follows your choices at every moment, and less is left behind on disk.
 
-- **Pairing again is stricter.** An app Agneta can't verify gets new access when it pairs again with Always Allow, with a new workspace and none of the earlier tasks: it's known only by its name, which another program could give. A verified app keeps its access, and its other open connections get what you just allowed at once ([APP_PROTOCOL.md](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md)).
+**Updating from 0.3.0** keeps your providers, apps and history. From 0.2.0, Agneta asks you to reset, as 0.3.0 does; from this version on, an update across a minor version is always shown with its notes, never installed silently, even when Agneta downloads updates automatically.
+
+**For you**
+
+- **Pairing again is stricter.** An app Agneta can't verify gets new access when it pairs again with Always Allow, with a new workspace and none of its earlier tasks: it's known only by its name, which another program could give. A verified app keeps its access, and its other open connections get what you just allowed at once.
 - **Remove Access cuts the app off first.** If Agneta then can't delete the saved access, the app stays listed and Agneta says so.
-- **A task that starts while access changes** is checked against the access as it is now.
-- **Tool requests Agneta can't classify are refused** on Claude Code and Codex. An app's "always" is declined where the engine has no "once" option.
-- **Stuck engines:** a limit's 10 s grace starts even when the engine isn't reading; an engine that doesn't answer within 60 s of starting is stopped.
-- **Clear History deletes Claude Code's transcripts and Codex's rollouts** of the tasks it removes, which were kept in the account's folder until sign-out.
-- **Stricter input:** a policy field of the wrong type is refused instead of taken as left out, and connections that haven't paired get small limits (16 at once, 256 KB messages, 10 minutes).
-- **Updating from an earlier minor version is always shown**, never installed silently, since until 1.0 those versions carry no data over.
+- **Clear History deletes Claude Code's transcripts and Codex's session files** of the tasks it removes, which were kept in the provider's folder until sign-out ([PRIVACY.md](https://github.com/olofd/agneta/blob/v0.3.1/docs/PRIVACY.md)).
+- **Stuck engines stop.** A limit's 10 s grace starts even when the engine isn't reading, and an engine that doesn't answer within 60 s of starting is stopped instead of keeping its task waiting.
+
+**For apps** ([APP_PROTOCOL.md](https://github.com/olofd/agneta/blob/v0.3.1/docs/APP_PROTOCOL.md))
+
+- A session that opens while the app's access changes is checked against the access as it is then; one that no longer fits is refused with `-32602` and `data.agneta.accessChanged`.
+- On Claude Code and Codex, a permission request with no tool kind, or one ACP doesn't define, is refused. An app's "always" answer is declined where the engine offers no "once" option, instead of being kept.
+- A policy field of the wrong type (`"tools": 5`) is refused instead of read as left out.
+- Until a connection has a grant, it gets small limits: 16 such connections at once, messages up to 256 KB, and 10 minutes to pair.
 
 ## 0.3.0 (2026-11-18)
 
