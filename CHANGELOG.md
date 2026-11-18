@@ -7,6 +7,7 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 - The menu bar panel is frosted glass: what's behind it no longer reads through its text.
 - Settings and task details keep their title bar, so scrolled content no longer runs into the title.
 - Run a Test Task's pairing code opens as a normal, centred dialog that closes itself once you answer in Agneta.
+- Check for Updates is always in the panel's ⋯ menu; a build that doesn't update itself says why.
 
 ## 0.1.0 (2026-11-18)
 

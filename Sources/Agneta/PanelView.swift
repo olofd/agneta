@@ -48,9 +48,9 @@ struct PanelView: View {
             Menu {
                 Button("Run a Test Task") { model.runTestTask() }.disabled(model.testClientURL == nil || model.accounts.isEmpty)
                 Divider()
-                if model.updates.enabled {
-                    Button("Check for Updates…") { open { model.updates.check() } }.disabled(!model.updates.canCheck)
-                }
+                // Always here: a build that doesn't update itself says why instead of leaving the item missing.
+                Button("Check for Updates…") { open { model.updates.enabled ? model.updates.check() : WindowPresenter.shared.explainNoUpdates(model) } }
+                    .disabled(model.updates.enabled && !model.updates.canCheck)
                 Button("Settings…") { open { WindowPresenter.shared.showSettings(model) } }.keyboardShortcut(",")
                 Button("About Agneta") { open { WindowPresenter.shared.showSettings(model, section: .about) } }
                 Divider()

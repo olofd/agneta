@@ -9,6 +9,7 @@ Changes the maintainer asked for after 0.1.0, collected as they come in and work
 | 3 | Run a Test Task: the code dialog appears off to the left and shows a spinning cursor | Done; checked in the running app (2026-11-18) |
 | 4 | The app is too big: download OpenCode only when it's chosen | In progress |
 | 5 | Which engine a connection runs on: should the user choose it? | Proposed, the maintainer's call |
+| 6 | No Check for Updates in the app | Fixed in code |
 
 ## 1. The panel is too transparent
 
@@ -56,4 +57,10 @@ Proposal: keep the choice per account, since that's where sign-in and credential
 - Adding an account asks which engine when there's more than one, with the recommended one preselected and a line on how they differ.
 - An account's Settings row gets a plain Engine picker, not one buried in the ⋯ menu.
 - Not now: a different engine per app for the same account. It can be added later as a per-grant setting if a real need appears. Apps already see each engine's abilities in `initialize`.
+
+## 6. Check for Updates is missing
+
+> "I know we implement a check-for-updates flow, but I don't have the button here. I expect to be able to check for updates in the app." (2026-11-18, screenshot of Agneta Dev's ⋯ menu)
+
+The item existed only in builds that update themselves, so in Agneta Dev, built from source, the menu simply lacked it. Now **Check for Updates…** is always in the ⋯ menu. In a build without an updater it says why: a development build points to `scripts/dev/build-app` and offers to open the releases page. Settings → General already says the same. A release (GitHub or Homebrew) has the real update flow.
 

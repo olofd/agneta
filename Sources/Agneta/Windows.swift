@@ -94,6 +94,21 @@ final class WindowPresenter {
         }
     }
 
+    /// Check for Updates in a build that has no updater: says why, and how this kind of build gets newer.
+    func explainNoUpdates(_ model: AppModel) {
+        let alert = NSAlert()
+        alert.messageText = "This build doesn't update itself"
+        alert.informativeText = model.isDevelopment
+            ? "Agneta Dev is built from source. To get the latest, pull and run scripts/dev/build-app again. Releases from GitHub or Homebrew update themselves."
+            : model.updates.unavailableReason
+        alert.addButton(withTitle: "OK")
+        if model.isDevelopment { alert.addButton(withTitle: "Open Releases") }
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertSecondButtonReturn, let url = URL(string: "https://github.com/olofd/agneta/releases/latest") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// Installs the update that waits for the running tasks, after asking to stop them. Sparkle then quits Agneta
     /// (which stops the engines) and opens the new version.
     func installUpdate(_ model: AppModel) {
