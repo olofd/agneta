@@ -11,7 +11,7 @@ Changes the maintainer asked for after 0.1.0, collected as they come in and work
 | 5 | Which engine a connection runs on: should the user choose it? | Proposed, the maintainer's call |
 | 6 | No Check for Updates in the app | Done (in the next build) |
 | 7 | Quit Agneta from the menu never quits (development and 0.1.0) | Fixed in code; proven in a standalone reproduction |
-| 8 | No app icon: a frosty, Nordic icon from the two rings | Next |
+| 8 | No app icon: a frosty, Nordic icon from the two rings | Done (in the next build); the design is open to taste |
 
 ## 1. The panel is too transparent
 
@@ -87,4 +87,12 @@ Now every quit goes through `applicationShouldTerminate` (`AgnetaApp.swift`). It
 ## 8. An app icon
 
 > "The development and the production version didn't have an app icon. We have an icon in the menu bar that's two rings interconnected. Use that and create an app icon … We like a Nordic theme, a frosty kind of theme." (2026-11-18)
+
+The icon ([packaging/AppIcon.png](../packaging/AppIcon.png)):
+- **Rings:** the menu bar mark's two linked rings, in the mark's own geometry, interlocked like chain links (the left ring passes over at the top, the right one at the bottom). They're frosted ice: white where the light falls, a cold blue below, with a thin bright edge.
+- **Background:** a deep fjord-blue winter sky, with a faint green-cyan aurora high up, a fine snow grain and light along the top edge.
+- **Shape:** macOS's grid, an 824-point body with continuous corners and the standard shadow. macOS 26 shows it as is, without a fallback frame.
+- **Small sizes:** at 32 pixels and below the rings are bolder and the fine detail drops out, so it still reads at Finder list size.
+- **How it's made:** drawn by `scripts/dev/app-icon.swift`, so the design is code to tune. `scripts/dev/app-icon` redraws every size into `packaging/AppIcon.icns`, which `build-app` bundles. A first, paler variant (fjord-blue rings on frosted ice) was set aside: it read clinical and faded into light Docks.
+- **Later:** a Liquid Glass version for macOS 26 (Icon Composer, layered, so the system can light and tint it).
 

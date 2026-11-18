@@ -1,0 +1,18 @@
+#!/bin/bash
+# Writes Agneta's app icon, every size macOS uses, from scripts/dev/app-icon.swift: packaging/AppIcon.icns
+# (bundled by build-app) and packaging/AppIcon.png (1024, for docs and review). Run it after changing the design.
+#   scripts/dev/app-icon
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+work=$(mktemp -d "${TMPDIR:-/tmp}/agneta-icon-XXXX")
+trap 'rm -rf "$work"' EXIT
+swiftc -O -o "$work/draw" scripts/dev/app-icon.swift
+set=$work/AppIcon.iconset
+mkdir -p "$set"
+for size in 16 32 128 256 512; do
+  "$work/draw" "$set/icon_${size}x${size}.png" "$size" >/dev/null
+  "$work/draw" "$set/icon_${size}x${size}@2x.png" $((size * 2)) >/dev/null
+done
+iconutil -c icns -o packaging/AppIcon.icns "$set"
+cp "$set/icon_512x512@2x.png" packaging/AppIcon.png
+echo "packaging/AppIcon.icns ($(du -h packaging/AppIcon.icns | cut -f1))"
