@@ -8,7 +8,7 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
 
 ## Connecting
 
-- **Address:** `ws://127.0.0.1:47331/acp` for development builds, the only kind there is today; signed releases will use `47321`. Loopback only, one JSON-RPC message per text frame, frames up to 16 MB.
+- **Address:** `ws://127.0.0.1:47321/acp` for releases, `47331` for development builds. Loopback only, one JSON-RPC message per text frame, frames up to 16 MB.
 - **Browsers can't connect:** a WebSocket upgrade with an `Origin` header is refused, so a web page can't drive Agneta.
 - **Sandboxed (Mac App Store) apps** need `com.apple.security.network.client` to connect to Agneta, and `com.apple.security.network.server` as well if they serve their own MCP server on loopback.
 - **Folders for sandboxed apps.** A folder inside an app container (`~/Library/Containers`, `~/Library/Group Containers`) can't be a session's folder: Agneta keeps apps' private storage out of reach. Ask in the pairing scope for folders the user chose (an open panel or a security-scoped bookmark gives the real path, outside the container), or let tasks work in the workspace Agneta makes for the app and hand results back through the app's MCP tools: the sandbox keeps the app itself out of that workspace.

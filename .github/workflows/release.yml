@@ -173,7 +173,7 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
-          scripts/dev/release-notes "$VERSION" > "$RUNNER_TEMP/notes.md"
+          scripts/dev/release-notes "$VERSION" --page > "$RUNNER_TEMP/notes.md"
           prerelease=(); [[ "$VERSION" == *-* ]] && prerelease=(--prerelease)
           cd build/release
           gh release create "v$VERSION" --draft --verify-tag ${prerelease[@]+"${prerelease[@]}"} \

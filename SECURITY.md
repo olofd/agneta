@@ -8,6 +8,8 @@ Use GitHub's private vulnerability reporting: the **Security** tab of this repos
 
 If that form isn't available, open an issue titled "Security contact" with no details. A maintainer will reply with a private way to send the report.
 
+Fixes go into the latest release, which installed copies update to; older versions aren't patched.
+
 Please include what you did, what you expected, what happened, and the Agneta version or commit. A trace exported with `agneta-diag export <task> --out <file> --redact-content` often helps. That export removes content, names and paths and keeps structure and timing ([docs/PRIVACY.md](docs/PRIVACY.md#sharing-a-trace)); look it over before you send it.
 
 You'll get an acknowledgement within a week. Fixes are released as soon as they're ready, and you're credited unless you'd rather not be.

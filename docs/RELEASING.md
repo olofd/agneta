@@ -8,6 +8,24 @@ The maintainer pushes a tag such as `v0.1.0`. GitHub Actions builds Agneta on Gi
 
 It follows what open-source Mac apps that release from CI do (Stats, AltTab, CodeEdit, Ollama, UTM): a Developer ID certificate in a temporary keychain on the runner, `notarytool`, and `gh release create`. Ollama, which also ships helper programs inside its app, is the closest model: every bundled program is signed before the app, and both the app and the DMG are notarized and stapled.
 
+## Making a release
+
+1. **Write the notes.** In `CHANGELOG.md`, rename the section at the top to `## <version> (<date>)`, for example `## 0.2.0 (2026-12-01)`, and say what changed for people and for apps. Links are absolute (`https://github.com/olofd/agneta/blob/v<version>/…`), so they work on the release page and in the update window. Commit and push to `main`.
+2. **Wait for CI.** A release can only be made from a commit on `main` that CI has passed.
+3. **Tag it:**
+   ```bash
+   git tag -a v0.2.0 -m "Agneta 0.2.0" && git push origin v0.2.0 && git push nuc v0.2.0
+   ```
+   Only the maintainer can create `v*` tags (the "Release tags" ruleset). A version with a hyphen, such as `0.2.0-rc.1`, becomes a prerelease: it isn't offered as an update or put in the tap.
+4. **Approve.** The Release run waits on the `release` environment twice, once for the builds and once for the draft: on the run's page, **Review deployments** → `release` → **Approve and deploy**. The builds take about 20 minutes.
+5. **Check the draft.** On the [releases page](https://github.com/olofd/agneta/releases), the draft holds both DMGs, both update zips, both update feeds and `SHA256SUMS.txt`. Its text is the changelog section followed by [packaging/release-page.md](../packaging/release-page.md) (install steps, updates, app developers, checking a download), filled in with the version. Edit the text there if needed; the files are signed and must not be replaced by hand.
+6. **Publish.** Publishing makes the release public. Within minutes installed copies see the update, since the feeds are served from `releases/latest`. It also starts the Homebrew run: approve it once more, and it bumps the tap and checks that both feeds offer the new version.
+7. **Check it as a user.** Download a DMG from the release page and open it. On a Mac with the previous version, use Check for Updates…. Then run `brew upgrade --cask agneta`, or `brew install olofd/tap/agneta` on a clean Mac.
+
+Dry run: **Actions → Release → Run workflow**, with a version such as `0.2.0-rc.1`. It builds, signs and notarizes from `main` after approval, and keeps the files as a workflow artifact for 14 days. Nothing is published.
+
+If a build fails, nothing has been published. Fix the cause on `main`, delete the tag (`git push origin :v0.2.0`, and `git tag -d v0.2.0`), and tag the new commit. Once a release is published, never move or reuse its tag: release a new version instead.
+
 ## The parts
 
 ### 0. Accounts and secrets (once, by the maintainer)
@@ -59,15 +77,17 @@ Status: built (2026-11-18), with Sparkle 2.10.1 in `Contents/Frameworks` (2.3 MB
 - A cask in `olofd/homebrew-tap` (`brew install olofd/tap/agneta`), one per architecture through `arch arm: "arm64", intel: "x86_64"`, marked `auto_updates true` so `brew` leaves updating to Sparkle. The publish workflow bumps its version and checksums; the tap's CI runs `brew audit --cask --strict` and installs it.
 - Homebrew's own cask repository needs public interest first (for a project submitted by its author: 225 stars, 90 forks or 90 watchers; [policy](https://docs.brew.sh/Package-Acceptance-Policy)). Once it's there, Homebrew's bots keep it current.
 
-Status: the cask is in `packaging/homebrew/agneta.rb`; the workflow that fills it in and pushes it is drafted with the release workflow.
+Status: the tap exists (2026-11-18), and `homebrew.yml` writes the cask from `packaging/homebrew/agneta.rb` when a release is published. The tap has no CI of its own yet.
 
 ### 5. The first release
 
 A dry run, installed on an Intel and an Apple silicon Mac: it opens without a Gatekeeper warning and runs tasks on real accounts. Then `v0.1.0` is tagged, approved, checked and published; `brew install olofd/tap/agneta` is tried on a clean Mac; and `v0.1.1` proves the update from 0.1.0.
 
+Status (2026-11-18): the dry run's Intel DMG, downloaded and opened on an Intel Mac with macOS 26, passed Gatekeeper and started without a prompt; the Apple silicon DMG has passed CI's smoke test, not yet a hand check. `v0.1.0` is tagged, built and drafted.
+
 ## Building a release by hand
 
-Until the workflow exists, on each architecture, from a commit tagged `v<version>`:
+Releases come from the workflow. To build one on a maintainer's Mac instead (to test signing, say), on each architecture, from a commit tagged `v<version>`:
 
 ```bash
 AGNETA_SIGN_IDENTITY="Developer ID Application: …" AGNETA_NOTARY_PROFILE=agneta AGNETA_SPARKLE_PUBLIC_KEY=<public key> scripts/dev/release --previous <last release's zip>

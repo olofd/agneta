@@ -116,7 +116,7 @@ Your app is an ACP **client** and Agneta is the ACP **agent**. If your app alrea
 
 | | Plain ACP | With Agneta |
 | --- | --- | --- |
-| Transport | Usually stdio to an agent process the client starts | A WebSocket on loopback (`ws://127.0.0.1:47331/acp` for development builds), one JSON-RPC 2.0 message per text frame. Agneta is already running; your app never starts an agent |
+| Transport | Usually stdio to an agent process the client starts | A WebSocket on loopback (`ws://127.0.0.1:47321/acp`, or 47331 for development builds), one JSON-RPC 2.0 message per text frame. Agneta is already running; your app never starts an agent |
 | Who may connect | Whoever starts the process | Apps the user approved. Pairing gives your app a token, sent in `initialize` |
 | Which account and model | The agent's own configuration | Accounts the user granted your app, chosen per session; models through the engine's own config options |
 | What the agent may touch | Whatever the agent process can reach | A policy you send with each session (tools, folders, network, approval, limits), enforced by sandboxes, or refused |
@@ -126,7 +126,7 @@ No SDK is needed. Any WebSocket and JSON-RPC 2.0 code will do, including in a sa
 
 ### The conversation, step by step
 
-**1. Connect.** Open `ws://127.0.0.1:47331/acp`, the port of development builds, which are the only kind there is today. Signed releases will listen on 47321. If the connection is refused, Agneta isn't running: ask the user to open it, and don't try to start it yourself.
+**1. Connect.** Open `ws://127.0.0.1:47321/acp`, the port of releases; development builds listen on 47331. If the connection is refused, Agneta isn't running: ask the user to open it, and don't try to start it yourself.
 
 **2. Pair, the first time only.** Ask to be let in, and show the user that you're waiting:
 
@@ -254,9 +254,9 @@ It has these tools:
 - `read_trace` and `tail`;
 - `engine_log` and `agneta_log`.
 
-It listens on loopback only, two ports above the apps' port (47333 for development builds), and refuses browsers.
+It listens on loopback only, two ports above the apps' port (47323 for releases, 47333 for development builds), and refuses browsers.
 
-**`agneta-diag`** is bundled in the app: `"build/Agneta Dev.app/Contents/MacOS/agneta-diag"` when you built it from source. Or run `swift run agneta-diag` in the repository.
+**`agneta-diag`** is bundled in the app: `/Applications/Agneta.app/Contents/MacOS/agneta-diag` for a release, or `"build/Agneta Dev.app/Contents/MacOS/agneta-diag"` when you built it from source. Or run `swift run agneta-diag` in the repository.
 
 ```bash
 agneta-diag tasks                                         # recent tasks, newest first

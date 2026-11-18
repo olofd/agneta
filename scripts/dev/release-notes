@@ -1,12 +1,17 @@
 #!/bin/bash
 # Prints a version's section of CHANGELOG.md, without its heading: the release's notes. Fails if the changelog has
-# no section headed "## <version>" (a released version, not "Unreleased").
-#   scripts/dev/release-notes <version>
+# no section headed "## <version>" (a released version, not "Unreleased"). Sparkle's update window shows these.
+# --page adds the release page's install, update and verification help (packaging/release-page.md).
+#   scripts/dev/release-notes <version> [--page]
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-version=${1:?usage: release-notes <version>}
+version=${1:?usage: release-notes <version> [--page]}
 awk -v version="$version" '
   /^## / { if (found) exit; heading = substr($0, 4); split(heading, words, /[ ]/); if (words[1] == version) { found = 1; next } }
   found { print }
   END { if (!found) exit 1 }
 ' CHANGELOG.md | sed -e '/./,$!d' || { echo "CHANGELOG.md has no section \"## $version\"" >&2; exit 1; }
+if [[ "${2:-}" == --page ]]; then
+  echo
+  sed "s/@VERSION@/$version/g" packaging/release-page.md
+fi
