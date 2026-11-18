@@ -2,14 +2,20 @@
 
 **Give Mac apps an AI agent you control.**
 
-Agneta is an open-source macOS menu bar app. You connect the AI accounts you already have once: a ChatGPT or Claude plan, or an OpenAI or Anthropic API key. Then you decide which apps may use them. When an allowed app needs an AI agent to do some work, it asks Agneta. Agneta runs the agent on your Mac, in a sandbox, on your account, and shows you every task with a stop button.
+Agneta is an open-source macOS menu bar app. You connect the AI you already pay for once: a ChatGPT or Claude plan, or an OpenAI or Anthropic API key. Then you decide which apps may use them. When an allowed app needs an AI agent to do some work, it asks Agneta. Agneta runs the agent on your Mac, in a sandbox, on your account, and shows you every task with a stop button.
 
 For app developers, this means agent features without running an agent loop, building sign-in for every provider, or putting a model bill on your own credit card. Your app speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) to Agneta over a local WebSocket, and Agneta does the rest.
 
 <p align="center">
-  <img src="docs/images/panel.png" width="340" alt="Agneta's menu bar panel: two running tasks from Example App, and three connected accounts">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/panel-dark.png">
+    <img src="docs/images/panel.png" width="340" alt="Agneta's menu bar panel: two running tasks from Example App, and three connected providers with the engine each runs on">
+  </picture>
   &nbsp;&nbsp;
-  <img src="docs/images/approval.png" width="400" alt="An app asks to use Agneta; the user picks which accounts it may use">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/approval-dark.png">
+    <img src="docs/images/approval.png" width="400" alt="An app asks to use Agneta; the user ticks which providers it may use, with engines under Advanced">
+  </picture>
 </p>
 
 > **Status: early.** Agneta runs real tasks on real ChatGPT and Claude plans. Before you rely on it, know that:
@@ -20,7 +26,7 @@ For app developers, this means agent features without running an agent loop, bui
 ## What it is
 
 - **A local agent runtime that apps share.** An app sends a task: a workspace folder, its own tools (an MCP server), instructions and limits. Agneta runs an agent engine on it and streams back ACP updates, usage and a full trace.
-- **An account manager.** It handles sign-in for ChatGPT and Claude plans through your own Codex's and Claude Code's logins, so Agneta never holds a plan's tokens. API keys stay in your Keychain. One account can serve several apps, and every task shows which app it belongs to, which account it runs on and what it costs.
+- **One place for your providers.** It handles sign-in for ChatGPT and Claude plans through your own Codex's and Claude Code's logins, so Agneta never holds a plan's tokens. API keys stay in your Keychain. One provider can serve several apps, and every task shows which app it belongs to, which provider it runs on and what it costs.
 - **A consent layer.** An app has to pair before it can do anything. You approve it in a window that shows whether its code signature checks out and what it will be able to do (its tools and folders), and you choose which of your providers (plans and API keys) it may use, once or always. Engines are all allowed unless you narrow them under Advanced; the app picks the engine for each task. You can see and stop every task, and remove an app's access at any time.
 - **A sandbox.** Every engine runs under a macOS sandbox profile. It can read the task's workspace, the folders the policy names and what the engine itself needs, and nothing else in your home folder. The engine itself can reach any HTTPS host, which is how it reaches its provider. Shell commands run under an even stricter profile, confined to the workspace with no network (engines that run their own shells aren't allowed to run commands while a task has no network). [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#sandbox-profiles) lists exactly what each part can reach.
 - **A flight recorder.** Every task leaves a structured trace: prompts, tool calls, model calls, permission decisions and timing. You read it with the `agneta-diag` command-line tool or an optional local MCP server. Apps can read their own tasks' traces live.
@@ -65,7 +71,7 @@ Plain ACP works unchanged. Agneta's own extensions (`agneta/policy`, `agneta/usa
 | OpenAI API key | Goose, OpenCode, Codex | Key in the Keychain |
 | Anthropic API key | Goose, OpenCode, Claude Code | Key in the Keychain |
 
-**Without Claude Code or Codex,** Agneta still works with an OpenAI or Anthropic API key, on Goose (bundled) or OpenCode (downloaded when you choose it). A Claude plan needs Claude Code (the Claude desktop app includes it), and a ChatGPT plan needs Codex 0.166 or later.
+**Without Claude Code or Codex,** Agneta still works with an OpenAI or Anthropic API key, on Goose (bundled) or OpenCode (downloaded when first needed). A Claude plan needs Claude Code (the Claude desktop app includes it), and a ChatGPT plan needs Codex 0.166 or later.
 
 Goose comes bundled; OpenCode, which would be over half of Agneta's size, is downloaded the first time it's needed. Both are pinned by version and SHA-256. Claude Code and Codex are your own installs: Agneta finds them, including the copy inside the Claude desktop app, and never redistributes them. Engines differ in what they can do (steering, forking, cost reporting), and Agneta exposes each one's extras instead of hiding them behind a common subset. See [docs/ENGINES.md](docs/ENGINES.md).
 
@@ -110,7 +116,7 @@ The integration tests run the real engines against a fake model and tool server 
 
 ## For app developers
 
-**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app pairs with Agneta, streams a conversation, and lets the agent propose a note for you to review.
+**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app pairs with Agneta, keeps its access and reconnects by itself, offers to open Agneta when it isn't running, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review.
 
 Your app is an ACP **client** and Agneta is the ACP **agent**. If your app already speaks ACP, most of what follows is familiar. What Agneta adds is how you reach it, how the user lets your app in, and the rules a task runs under.
 
@@ -118,25 +124,25 @@ Your app is an ACP **client** and Agneta is the ACP **agent**. If your app alrea
 | --- | --- | --- |
 | Transport | Usually stdio to an agent process the client starts | A WebSocket on loopback (`ws://127.0.0.1:47321/acp`, or 47331 for development builds), one JSON-RPC 2.0 message per text frame. Agneta is already running; your app never starts an agent |
 | Who may connect | Whoever starts the process | Apps the user approved. Pairing gives your app a token, sent in `initialize` |
-| Which account and model | The agent's own configuration | Accounts the user granted your app, chosen per session; models through the engine's own config options |
+| Which provider, engine and model | The agent's own configuration | The providers and engines the user allowed your app, picked per session (`agneta/access` lists them); model and effort through the engine's own config options |
 | What the agent may touch | Whatever the agent process can reach | A policy you send with each session (tools, folders, network, approval, limits), enforced by sandboxes, or refused |
 | Afterwards | Nothing standard | Usage in every prompt result, and the task's full trace, live or later |
 
-No SDK is needed. Any WebSocket and JSON-RPC 2.0 code will do, including in a sandboxed Mac App Store app. That needs `com.apple.security.network.client` to connect, plus `com.apple.security.network.server` if the app serves its own MCP tools; its folders come from the user (an open panel or a security-scoped bookmark), since Agneta keeps app containers out of reach ([details](docs/APP_PROTOCOL.md#connecting)). To see the whole exchange in Swift, read [`Sources/agneta-testclient/main.swift`](Sources/agneta-testclient/main.swift), the maintainers' test client: it pairs, opens a session with a policy and an MCP server, prompts and prints the stream in about 170 lines. It's a demonstration, not a client library: a real app keeps its token in the Keychain and handles reconnects.
+No SDK is needed. Any WebSocket and JSON-RPC 2.0 code will do, including in a sandboxed Mac App Store app. That needs `com.apple.security.network.client` to connect, plus `com.apple.security.network.server` if the app serves its own MCP tools; its folders come from the user (an open panel or a security-scoped bookmark), since Agneta keeps app containers out of reach ([details](docs/APP_PROTOCOL.md#connecting)). To see the whole exchange in Swift, read [`Sources/agneta-testclient/main.swift`](Sources/agneta-testclient/main.swift), the maintainers' test client: it pairs, opens a session with a policy and an MCP server, prompts and prints the stream in about 170 lines. It's a demonstration, not a client library: a real app keeps its token in the Keychain and reconnects with it, as Project Chat does.
 
 ### The conversation, step by step
 
-**1. Connect.** Open `ws://127.0.0.1:47321/acp`, the port of releases; development builds listen on 47331. If the connection is refused, Agneta isn't running: ask the user to open it, and don't try to start it yourself.
+**1. Connect.** Open `ws://127.0.0.1:47321/acp`, the port of releases; development builds listen on 47331. If the connection is refused, Agneta isn't running: ask the user whether to open it, and on a yes open `agneta://open` (`agneta-dev://open` for development builds), wait for the port and connect. Never open it without asking.
 
-**2. Pair, the first time only.** Ask to be let in, and show the user that you're waiting:
+**2. Pair, once.** Ask to be let in, and show the user that you're waiting:
 
 ```json
 → {"jsonrpc": "2.0", "id": 1, "method": "agneta/pair",
    "params": {"name": "Example App", "scope": {"tools": "workspace", "folders": ["/Users/me/Documents/Example Project"]}}}
-← {"jsonrpc": "2.0", "id": 1, "result": {"token": "…", "accounts": ["acct-1"], "workspace": "…"}}
+← {"jsonrpc": "2.0", "id": 1, "result": {"token": "…", "remembered": true, "access": {…}}}
 ```
 
-The `scope` says what your app will need: the most built-in tools, and the user's folders its sessions will work in. Without one, your app gets its own tools only, in a workspace Agneta makes for it (`workspace`). Agneta opens its approval window, which shows the scope; the user picks accounts and chooses Allow Once or Always Allow. Every later session must fit the scope. If your app is signed with a Developer ID or App Store certificate, Agneta checks the signature and shows the app as verified. If it isn't (ad hoc or development builds), Agneta first sends you `agneta/pairingCode {"code": "123456"}`. Show that code; the user allows your app only if it matches the one in Agneta's window. Store the token in your Keychain. A refusal comes back as error `-32002`.
+The `scope` says what your app will need: the most built-in tools, and the user's folders its sessions will work in. Without one, your app gets its own tools only, in a workspace Agneta makes for it (`workspace`). Agneta opens its approval window, which shows the scope; the user ticks the providers your app may use (engines are all allowed unless they narrow them) and chooses Allow Once or Always Allow. Every later session must fit the scope. If your app is signed with a Developer ID or App Store certificate, Agneta checks the signature and shows the app as verified. If it isn't (ad hoc or development builds), Agneta first sends you `agneta/pairingCode {"code": "123456"}`. Show that code; the user allows your app only if it matches the one in Agneta's window. When `remembered` is true (Always Allow), store the token in your Keychain and connect with it next time, without pairing; Allow Once ends with the connection. Pairing again with Always Allow renews your app's access rather than adding to it. A refusal comes back as error `-32002`.
 
 **3. Initialize, on every connection.**
 
@@ -144,11 +150,14 @@ The `scope` says what your app will need: the most built-in tools, and the user'
 → {"jsonrpc": "2.0", "id": 2, "method": "initialize",
    "params": {"protocolVersion": 1, "clientCapabilities": {}, "_meta": {"agneta": {"token": "…"}}}}
 ← {"jsonrpc": "2.0", "id": 2, "result": {"protocolVersion": 1, "agentCapabilities": {…},
-   "_meta": {"agneta": {"extensions": ["agneta/policy", "agneta/usage", …],
-                        "accounts": [{"id": "acct-1", "label": "Claude", "paused": false, "capabilities": {…}}]}}}}
+   "_meta": {"agneta": {"extensions": ["agneta/policy", "agneta/access", "agneta/usage", …],
+                        "access": {"providers": [{"id": "acct-1", "label": "Claude", "kind": "claude", "paused": false,
+                                                  "engines": ["claude-code", "goose"], "defaultEngine": "claude-code"}],
+                                   "engines": [{"id": "claude-code", "name": "Claude Code", "state": "ready", "capabilities": {…}}, …],
+                                   "allowedEngines": "all", "scope": {…}, "workspace": "…"}}}}}
 ```
 
-Error `-32001` with `needsPairing` means the user removed your app, or the token is unknown. Pair again.
+`access` is what your app may use: each provider with the engines its tasks there may run on (default first), and each engine's state on this Mac (`ready`, `downloading`, `downloadable`, `failed` or `unavailable`, with why). `agneta/access` returns it again at any time, and `agneta/accessChanged` arrives when it changes. Error `-32001` with `needsPairing` means the user removed your app, or the token is unknown: forget the token, and pair again when the user asks to connect.
 
 **4. Start a session** in a workspace folder, with your own tools and a policy:
 
@@ -158,7 +167,7 @@ Error `-32001` with `needsPairing` means the user removed your app, or the token
      "mcpServers": [{"type": "http", "name": "app", "url": "http://127.0.0.1:52011/mcp",
                      "headers": [{"name": "Authorization", "value": "Bearer <per-session secret>"}]}],
      "_meta": {
-       "agneta": {"account": "acct-1"},
+       "agneta": {"account": "acct-1", "engine": "claude-code"},
        "agneta/policy": {"tools": "workspace", "network": "none", "approval": "never-ask",
                            "limits": {"maxTurns": 100, "maxSeconds": 900}},
        "agneta/task": {"title": "Tidying the project notes"},
@@ -171,6 +180,8 @@ Error `-32001` with `needsPairing` means the user removed your app, or the token
 - **Your tools** are an MCP server (Streamable HTTP) that your app runs on loopback, with a fresh bearer per session. Agneta accepts only loopback HTTP servers and masks the bearer in traces. A session with its own engine may reach exactly those ports; app-only sessions on Goose share one engine per account, and OpenCode runs a private server, so those may reach any loopback port. Your tools run in your app, with your app's permissions, not inside Agneta's sandbox.
 - **`tools`** is `app-only` (only your MCP tools), `read` (plus reading files) or `workspace` (plus editing and a shell confined to `cwd`).
 - **A policy Agneta can't enforce is refused** with `-32602` and `data.agneta.unenforceable` naming the field. Examples: an unknown field, a folder containing the home folder, or a cost limit on an engine that can't report cost while a turn runs.
+- **`engine`** is optional: without it, the provider's `defaultEngine`. One that's still downloading answers `-32015` with its progress; try again shortly.
+- **`configOptions`** are the engine's own settings. Find the model and reasoning effort by their ACP categories, `model` and `thought_level` (each engine names them differently), and change them with `session/set_config_option`.
 - **`capabilities`** tells you what this session's engine can do. Offer steering, forking or cost limits only where it says so.
 
 **5. Prompt, and stream.**
@@ -205,14 +216,16 @@ The engine's standard ACP `session/update` notifications arrive unchanged, under
 
 | From Agneta | Meaning, and what to show |
 | --- | --- |
-| `agneta/queued {"sessionId", "position"}` | The account is busy; the turn waits its place and runs later |
+| `agneta/accessChanged {"access"}` | What your app may use changed: providers or engines added, removed, paused, downloading or ready. Update your pickers |
+| `agneta/queued {"sessionId", "position"}` | The provider is busy; the turn waits its place and runs later |
 | `agneta/sessionStopped {"stoppedBy": "user"}` | The user pressed Stop in Agneta. Show it as stopped, not as an error |
 | `agneta/sessionStopped {"stoppedBy": "engine"}` | The engine ended on its own; resume the task with `session/load` |
-| `agneta/rateLimited {"account", "resetsAt"}` | The provider's limit stopped the turn. Retry after `resetsAt`, or use another account |
-| Error with `data.agneta.needsSignIn` | The account must sign in again; ask the user to open Agneta |
+| `agneta/rateLimited {"account", "resetsAt"}` | The provider's limit stopped the turn. Retry after `resetsAt`, or use another provider |
+| Error with `data.agneta.needsSignIn` | The provider must sign in again; ask the user to open Agneta |
 | `-32011` | A turn is already running in this session: steer it, or wait |
 | `-32012` | Too many turns are waiting; try again shortly |
-| `-32013` | The user paused this account |
+| `-32013` | The user paused this provider |
+| `-32015` | The engine is still downloading (`data.agneta.engineDownloading`, with progress); try again shortly |
 | `-32014` | This engine can't do that; check `capabilities` |
 
 The full reference, with every field, limit and error, is **[docs/APP_PROTOCOL.md](docs/APP_PROTOCOL.md)**. Every step there is exercised by `Tests/AgnetaKitTests/AppScenarioTests.swift` against a real engine.

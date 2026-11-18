@@ -454,15 +454,18 @@ final class EngineLibrary {
 
     // MARK: Design review
 
-    /// Every engine, as if installed, with a download going and one failed, for the showcase.
+    /// Every engine, as if installed, with a download going and one failed, for the showcase; AGNETA_SHOWCASE_DOWNLOADS=0
+    /// leaves the downloads out (the README's screenshots).
     func useSample() {
         let none = URL(filePath: "/usr/bin/false")
         sample = [GooseAdapter(executable: none), OpenCodeAdapter(executable: none),
                   ClaudeCodeAdapter(executable: none, cli: InstalledCLI(path: none, version: "2.1.0", source: "path")),
                   CodexAdapter(node: none, script: none, cli: InstalledCLI(path: none, version: "0.166.0", source: "path"))]
-        downloads = ["opencode": EngineDownload(engine: "opencode", title: "OpenCode", received: 52_400_000, total: 113_407_057),
-                     "codex": EngineDownload(engine: "codex", title: "Codex's runtime",
-                                             problem: "Codex's runtime couldn't be downloaded: The Internet connection appears to be offline.")]
+        if ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_DOWNLOADS"] != "0" {
+            downloads = ["opencode": EngineDownload(engine: "opencode", title: "OpenCode", received: 52_400_000, total: 113_407_057),
+                         "codex": EngineDownload(engine: "codex", title: "Codex's runtime",
+                                                 problem: "Codex's runtime couldn't be downloaded: The Internet connection appears to be offline.")]
+        }
         catalog = makeCatalog()
     }
 }

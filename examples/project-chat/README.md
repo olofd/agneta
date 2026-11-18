@@ -2,7 +2,7 @@
 
 Project Chat is a small Electron app that runs an agent through Agneta. The agent can read the fictional Field Notes project brief and propose a release note. The proposal appears in Project Chat for a person to save or dismiss.
 
-![Project Chat showing streamed replies, project tool calls, and a release note awaiting review](preview.png)
+![Project Chat on a ChatGPT plan with Codex: streamed replies, project tool calls, a release note awaiting review, and the provider, engine, model and effort pickers](preview.png)
 
 ## Run it
 

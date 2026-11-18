@@ -50,7 +50,11 @@ enum Snapshots {
             DispatchQueue.main.asyncAfter(deadline: .now() + first + Double(index) * step) {
                 guard let window = presenter.window(key) else { return }
                 window.makeKeyAndOrderFront(nil)
+                // The others step aside while it's captured, so the capture over the backdrop holds no edge of them.
+                let others = keys.compactMap { presenter.window($0) }.filter { $0 !== window }
+                others.forEach { $0.alphaValue = 0 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + settle) {
+                    defer { others.forEach { $0.alphaValue = 1 } }
                     var line = "\(key) \(window.windowNumber)"
                     if let out {
                         line += "  " + capture(window, to: out.appending(path: "\(key)-\(suffix).png"))
