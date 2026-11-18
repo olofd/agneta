@@ -37,6 +37,12 @@ final class WindowPresenter {
             window.titleVisibility = .hidden
             window.standardWindowButton(.miniaturizeButton)?.isHidden = true
             window.standardWindowButton(.zoomButton)?.isHidden = true
+            // An empty toolbar gives the title bar a toolbar's height, which places the close button further in from
+            // the dialog's large rounded corner, as macOS lays it out (not moved by hand).
+            let toolbar = NSToolbar(identifier: "dialog")
+            toolbar.showsBaselineSeparator = false
+            window.toolbar = toolbar
+            window.toolbarStyle = .unifiedCompact
             window.isOpaque = false
             window.backgroundColor = .clear
             window.contentView = GlassBackground.make(content: host, cornerRadius: 26, surface: .dialog)
@@ -73,6 +79,8 @@ final class WindowPresenter {
         windows["approval"]?.level = .floating
     }
     func closeApproval() { close("approval") }
+    /// The approval window stops floating, so a sign-in or Settings opened from it comes in front of it.
+    func lowerApproval() { windows["approval"]?.level = .normal }
     func showSettings(_ model: AppModel, section: SettingsView.Pane = .providers) {
         model.refreshInstalls()
         close("settings")
@@ -328,8 +336,11 @@ struct ApprovalView: View {
                 }
             } content: {
                 VStack(spacing: 12) {
+                    if model.accounts.isEmpty {
+                        NoProviderYet(model: model, app: approval.app)
+                    } else {
                     VStack(spacing: 2) {
-                        ForEach(approval.choices) { account in
+                        ForEach(model.accounts) { account in
                             let on = approval.allowed.contains(account.id)
                             Button {
                                 if on { model.approval?.allowed.remove(account.id) } else { model.approval?.allowed.insert(account.id) }
@@ -372,6 +383,7 @@ struct ApprovalView: View {
                     }
                     .font(.system(size: 12))
                     .padding(.horizontal, 32)
+                    }
 
                     ApprovalScope(app: approval.app, tools: approval.tools, folders: approval.folders)
                         .padding(.horizontal, 32)
@@ -409,6 +421,36 @@ struct ApprovalView: View {
                 .controlSize(.large)
             }
         }
+    }
+}
+
+/// An app asks for access before any provider is connected: connect one here (the request waits), and it's ticked.
+struct NoProviderYet: View {
+    var model: AppModel
+    var app: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Text("Connect the AI you already pay for, and \(app) can use it.")
+                .font(.system(size: 12.5)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            GlassGroup(spacing: 8) {
+                VStack(spacing: 8) {
+                    ProviderButton(kind: .chatGPT, title: "Continue with ChatGPT", detail: "Your ChatGPT plan, through Codex") { connect(.chatGPT) }
+                    ProviderButton(kind: .claude, title: "Continue with Claude", detail: "Your Claude plan, through Claude Code") { connect(.claude) }
+                }
+            }
+            Button("Use an API key instead") {
+                WindowPresenter.shared.lowerApproval()
+                WindowPresenter.shared.showSettings(model, section: .providers)
+            }
+            .buttonStyle(.link).font(.system(size: 12))
+        }
+        .padding(.horizontal, 30)
+    }
+
+    private func connect(_ kind: AccountKind) {
+        WindowPresenter.shared.lowerApproval()
+        model.startSignIn(kind)
     }
 }
 

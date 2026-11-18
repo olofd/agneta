@@ -32,7 +32,6 @@ final class AppModel {
         var identifier: String?
         var verified: Bool
         var code: String
-        var choices: [AccountRecord]
         var allowed: Set<String>
         /// The engines the app may use (Advanced): every one to start with.
         var engines: Set<String>
@@ -596,7 +595,7 @@ final class AppModel {
         await withCheckedContinuation { continuation in
             // One provider to start with (the user adds more deliberately), and every engine: the app picks per task.
             let request = Approval(id: pairing.id, app: pairing.app, identifier: pairing.peer?.identifier, verified: pairing.code == nil,
-                                   code: pairing.code ?? "", choices: accounts, allowed: Set(accounts.first { !$0.paused }.map { [$0.id] } ?? []),
+                                   code: pairing.code ?? "", allowed: Set(accounts.first { !$0.paused }.map { [$0.id] } ?? []),
                                    engines: Set(catalog.entries.keys), tools: pairing.tools, folders: pairing.folders)
             if approvals.add(id: pairing.id, request, answer: { continuation.resume(returning: $0) }) {
                 WindowPresenter.shared.showApproval(self, request: pairing.id)
@@ -750,7 +749,7 @@ final class AppModel {
                 }
                 guard signInAttempt == attempt, !_Concurrency.Task.isCancelled else { return }
                 log.log("signed-in", ["account": .string(record.id), "kind": .string(kind.rawValue)])
-                if let index = accounts.firstIndex(where: { $0.id == record.id }) { accounts[index] = record } else { accounts.append(record) }
+                if let index = accounts.firstIndex(where: { $0.id == record.id }) { accounts[index] = record } else { added(record) }
                 needsSignIn.remove(record.id)
                 try? database?.save(record)
                 await configure(record)
@@ -835,9 +834,15 @@ final class AppModel {
     func addAPIKey(_ kind: AccountKind, key: String) async throws {
         let record = AccountRecord(kind: kind, label: kind == .anthropicKey ? "Claude API" : "OpenAI API")
         try keychain.set(key, for: record.id)
-        accounts.append(record)
+        added(record)
         try database?.save(record)
         await configure(record)
+    }
+
+    /// A new provider. An app asking for access while there was none to offer gets it ticked.
+    private func added(_ record: AccountRecord) {
+        accounts.append(record)
+        if approval?.allowed.isEmpty == true { approval?.allowed.insert(record.id) }
     }
 
     func signOut(_ account: AccountRecord) {
@@ -1108,7 +1113,7 @@ final class AppModel {
                                              problem: "Codex's runtime couldn't be downloaded: The Internet connection appears to be offline.")]
         let sample = UUID()
         _ = approvals.add(id: sample, Approval(id: sample, app: "Example App", identifier: "com.example.app", verified: true, code: "123456",
-                                               choices: accounts, allowed: ["a", "c"], engines: Set(catalog.entries.keys), tools: .workspace,
+                                               allowed: ["a", "c"], engines: Set(catalog.entries.keys), tools: .workspace,
                                                folders: [FileManager.default.homeDirectoryForCurrentUser.appending(path: "Documents/Example Project")]),
                           answer: { _ in })
         signIn = SignIn(kind: .claude, text: "When Claude shows you a code, paste it here.", page: URL(string: "https://claude.com"), needsCode: true)
