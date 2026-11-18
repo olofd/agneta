@@ -73,7 +73,8 @@ Proposal: keep the choice per account, since that's where sign-in and credential
 **Built (2026-11-18), as proposed and agreed:**
 - **Where the engine shows:** in the panel's account rows ("ChatGPT plan · Codex") and in the approval window's account choices. `AppModel.engineName(of:)` names it, even for an engine that isn't installed right now.
 - **Settings → Accounts:** each account row shows its engine in plain sight: a picker when the account has a choice (with OpenCode's download size), otherwise just the name. The picker is no longer in the ⋯ menu.
-- **Adding an API key:** you choose its engine, with Goose preselected as recommended. Choosing OpenCode downloads it, then switches the new account. A line under the form says how the engines differ.
+- **Adding an account asks nothing about engines** (the maintainer: "Why is it connected to adding an API key? You should be able to add a provider and then, when it's time to do work, choose the engine. And we should have good defaults."). A new account starts on its kind's default, `AppModel.defaultEngine(for:)`: Codex for a ChatGPT plan; Claude Code for a Claude plan when it's installed, else Goose; Goose for an API key, since it's bundled and needs nothing else. The Settings picker marks the default. A first version had an engine picker in the add-key form; it's gone.
+- **Open question:** where else "when it's time to do work" should offer the choice. The candidate is the approval window: an engine per app, for the accounts it may use.
 - **Checked** in rendered snapshots of the panel, the approval window and Settings. The design-review sample accounts now sit on the engines they would really use (a ChatGPT plan on Codex, a Claude plan on Claude Code).
 
 ## 6. Check for Updates is missing

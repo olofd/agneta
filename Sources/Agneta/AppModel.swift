@@ -232,6 +232,17 @@ final class AppModel {
         }
     }
 
+    /// The engine a new account starts on: the one its sign-in belongs to for a plan (Codex for ChatGPT; Claude Code for
+    /// Claude when it's installed, else Goose, which runs that Claude Code's sign-in too), and the bundled Goose, which
+    /// needs nothing else, for an API key.
+    func defaultEngine(for kind: AccountKind) -> String {
+        switch kind {
+        case .chatGPT: "codex"
+        case .claude: availableEngines.contains { $0.id == "claude-code" } ? "claude-code" : "goose"
+        case .openAIKey, .anthropicKey: "goose"
+        }
+    }
+
     /// The engine an account runs on, by name ("Codex"), as the panel, the approval window and Settings show it.
     func engineName(of account: AccountRecord) -> String {
         engines(for: account).first { $0.id == account.engine }?.displayName ?? Self.engineNames[account.engine] ?? account.engine
@@ -585,8 +596,8 @@ final class AppModel {
                 }
                 guard signInAttempt == attempt, !_Concurrency.Task.isCancelled else { return }
                 log.log("signed-in", ["account": .string(record.id), "kind": .string(kind.rawValue)])
-                // A new Claude plan runs on the user's own Claude Code when it's on this Mac (model choice, exact usage).
-                if existing == nil, kind == .claude, availableEngines.contains(where: { $0.id == "claude-code" }) { record.engine = "claude-code" }
+                // A new account starts on its kind's default engine: Claude Code for a Claude plan when it's on this Mac.
+                if existing == nil { record.engine = defaultEngine(for: kind) }
                 if let index = accounts.firstIndex(where: { $0.id == record.id }) { accounts[index] = record } else { accounts.append(record) }
                 needsSignIn.remove(record.id)
                 try? database?.save(record)
@@ -668,15 +679,14 @@ final class AppModel {
         signIn = nil
     }
 
-    /// Adds an API-key account on the engine the user picked (Goose unless they chose another). An engine that isn't
-    /// here yet (OpenCode) downloads first, and the account switches to it once it's installed.
-    func addAPIKey(_ kind: AccountKind, key: String, engine: String = "goose") async throws {
-        let record = AccountRecord(kind: kind, label: kind == .anthropicKey ? "Claude API" : "OpenAI API")
+    /// Adds an API-key account. Adding a provider asks nothing about engines: the account starts on its kind's default
+    /// (defaultEngine), and the user can change it later.
+    func addAPIKey(_ kind: AccountKind, key: String) async throws {
+        let record = AccountRecord(kind: kind, label: kind == .anthropicKey ? "Claude API" : "OpenAI API", engine: defaultEngine(for: kind))
         try keychain.set(key, for: record.id)
         accounts.append(record)
         try database?.save(record)
         await configure(record)
-        if engine != record.engine { setEngine(record, engine) }
     }
 
     func signOut(_ account: AccountRecord) {

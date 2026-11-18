@@ -419,7 +419,6 @@ struct SettingsView: View {
     var model: AppModel
     @State var section: Pane
     @State private var keyKind: AccountKind = .anthropicKey
-    @State private var keyEngine = "goose"
     @State private var key = ""
     @State private var keyError: String?
     @State private var openAtLogin = SMAppService.mainApp.status == .enabled
@@ -497,7 +496,8 @@ struct SettingsView: View {
                     if model.engines(for: account).count > 1 {
                         Picker("Engine", selection: Binding(get: { account.engine }, set: { model.setEngine(account, $0) })) {
                             ForEach(model.engines(for: account), id: \.id) { engine in
-                                Text(model.downloadNote(for: engine.id).map { "\(engine.displayName) (\($0))" } ?? engine.displayName).tag(engine.id)
+                                let notes = [engine.id == model.defaultEngine(for: account.kind) ? "default" : nil, model.downloadNote(for: engine.id)].compactMap { $0 }
+                                Text(notes.isEmpty ? engine.displayName : "\(engine.displayName) (\(notes.joined(separator: ", ")))").tag(engine.id)
                             }
                         }
                         .labelsHidden().fixedSize().disabled(model.engineDownload != nil)
@@ -535,20 +535,13 @@ struct SettingsView: View {
                 Text("Anthropic (Claude)").tag(AccountKind.anthropicKey)
                 Text("OpenAI").tag(AccountKind.openAIKey)
             }
-            .onChange(of: keyKind) { _, kind in
-                if !model.engines(for: kind).contains(where: { $0.id == keyEngine }) { keyEngine = "goose" }
-            }
-            Picker("Engine", selection: $keyEngine) {
-                ForEach(model.engines(for: keyKind), id: \.id) { engine in
-                    Text((engine.id == "goose" ? "Goose (recommended)" : engine.displayName) + (model.downloadNote(for: engine.id).map { " (\($0))" } ?? "")).tag(engine.id)
-                }
-            }
+
             HStack {
                 SecureField("API key", text: $key)
                 Button("Add") {
-                    let kind = keyKind, value = key, engine = keyEngine
+                    let kind = keyKind, value = key
                     key = ""
-                    Task { do { try await model.addAPIKey(kind, key: value, engine: engine); keyError = nil } catch { keyError = "Couldn't store the key in the Keychain." } }
+                    Task { do { try await model.addAPIKey(kind, key: value); keyError = nil } catch { keyError = "Couldn't store the key in the Keychain." } }
                 }
                 .disabled(key.count < 20)
             }
@@ -556,7 +549,7 @@ struct SettingsView: View {
         } header: {
             Text("API key")
         } footer: {
-            Text("Pay as you go on your provider account. Keys stay in your Keychain and reach Agneta's engine only while a task runs. Goose is built in; OpenCode downloads when you choose it; Codex and Claude Code run your own installs. You can change an account's engine at any time.")
+            Text("Pay as you go on your provider account. Keys stay in your Keychain and reach Agneta's engine only while a task runs.")
         }
     }
 
