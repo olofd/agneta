@@ -65,9 +65,9 @@ Plain ACP works unchanged. Agneta's own extensions (`agneta/policy@1`, `agneta/u
 | OpenAI API key | Goose, OpenCode, Codex | Key in the Keychain |
 | Anthropic API key | Goose, OpenCode, Claude Code | Key in the Keychain |
 
-**Without Claude Code or Codex,** Agneta still works with an OpenAI or Anthropic API key, on the bundled Goose and OpenCode. A Claude plan needs Claude Code (the Claude desktop app includes it), and a ChatGPT plan needs Codex 0.166 or later.
+**Without Claude Code or Codex,** Agneta still works with an OpenAI or Anthropic API key, on Goose (bundled) or OpenCode (downloaded when you choose it). A Claude plan needs Claude Code (the Claude desktop app includes it), and a ChatGPT plan needs Codex 0.166 or later.
 
-Goose and OpenCode come bundled, pinned by version and SHA-256. Claude Code and Codex are your own installs: Agneta finds them, including the copy inside the Claude desktop app, and never redistributes them. Engines differ in what they can do (steering, forking, cost reporting), and Agneta exposes each one's extras instead of hiding them behind a common subset. See [docs/ENGINES.md](docs/ENGINES.md).
+Goose comes bundled; OpenCode, which would be over half of Agneta's size, is downloaded the first time you set an account to it. Both are pinned by version and SHA-256. Claude Code and Codex are your own installs: Agneta finds them, including the copy inside the Claude desktop app, and never redistributes them. Engines differ in what they can do (steering, forking, cost reporting), and Agneta exposes each one's extras instead of hiding them behind a common subset. See [docs/ENGINES.md](docs/ENGINES.md).
 
 ## Install
 

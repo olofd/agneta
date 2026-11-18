@@ -7,7 +7,7 @@ Changes the maintainer asked for after 0.1.0, collected as they come in and work
 | 1 | The menu bar panel is too transparent | Done; checked in the running app (2026-11-18) |
 | 2 | Settings: scrolled content runs into the window title | Done; checked in the running app (2026-11-18) |
 | 3 | Run a Test Task: the code dialog appears off to the left and shows a spinning cursor | Done; checked in the running app (2026-11-18) |
-| 4 | The app is too big: download OpenCode only when it's chosen | In progress |
+| 4 | The app is too big: download OpenCode only when it's chosen | OpenCode done (download 177 → 59 MB); Node and codex-acp next |
 | 5 | Which engine a connection runs on: should the user choose it? | Proposed, the maintainer's call |
 | 6 | No Check for Updates in the app | Done (in the next build) |
 | 7 | Quit Agneta from the menu never quits (development and 0.1.0) | Fixed in code; proven in a standalone reproduction |
@@ -46,6 +46,16 @@ Claude Code's adapter already works this way: pinned in `Engines/runtimes.lock` 
 - The release then ships Goose only: a download of about 16 MB instead of about 175.
 - Each download is pinned and checked, shows progress in the panel and Settings, can be retried, works for isolated instances, and lands in Agneta's data folder. Reset removes it, and an update keeps it if the pin hasn't changed. The SBOM marks these as "downloaded on first use", and PRIVACY.md lists the hosts.
 - Hardened runtime: a downloaded OpenCode or Node isn't covered by the app's signature. It keeps its vendor signature, or Agneta signs it ad hoc with the same entitlements, and the sandbox profile still applies. This has to be proven on Apple silicon before it ships.
+
+**OpenCode, done (2026-11-18).** The bundle no longer carries OpenCode, only its pin (`Resources/opencode.lock`).
+- `RuntimeInstaller` reads an engine lock as well as `runtimes.lock`, with the archive's size.
+- Settings → Accounts → ⋯ → Engine lists "OpenCode (downloads 108 MB)". Choosing it downloads, checks and installs OpenCode, showing progress or the error under the account, then switches the account.
+- An account already set to OpenCode (from an older build, or after Reset) gets it the next time Agneta configures the account.
+- It runs with its vendor signature from `Runtimes/opencode/<version>/`, which the engine sandbox allows, the same way as Claude Code's adapter.
+- An ad hoc release build: 180 MB unpacked instead of 404, a 59 MB zip instead of 177. The smoke test passes, and the SBOM lists OpenCode as downloaded on first use.
+- Not yet tried: a real download in the app (113 MB from GitHub) followed by a task on OpenCode. The installer and the engine-lock format are covered by `RuntimeInstallerTests`.
+
+**Node and codex-acp, next.** codex-acp is an npm package with 22 dependencies, so it isn't one release file like OpenCode. The likely way is to build one archive per architecture, Node plus the installed codex-acp, and attach it to each Agneta release, pinned by the app. That needs a decision on hosting, and on how development builds get it.
 
 ## 5. Choosing the engine
 

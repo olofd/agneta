@@ -7,7 +7,7 @@ The app bundle carries each component's licence text in `Contents/Resources/Lice
 | Component | Version | Licence | How Agneta uses it |
 | --- | --- | --- | --- |
 | [Goose](https://github.com/aaif-goose/goose) (`goose-acp`) | 1.59.2 | [Apache 2.0](https://github.com/aaif-goose/goose/blob/main/LICENSE) | Agent engine, bundled in the app |
-| [OpenCode](https://github.com/anomalyco/opencode) | 2.3.0 | [MIT](https://github.com/anomalyco/opencode/blob/dev/LICENSE) | Agent engine, bundled in the app |
+| [OpenCode](https://github.com/anomalyco/opencode) | 2.3.0 | [MIT](https://github.com/anomalyco/opencode/blob/dev/LICENSE) | Agent engine. Not bundled: downloaded from its GitHub release the first time an account is set to it, and checked against `Engines/opencode.lock` |
 | [codex-acp](https://github.com/agentclientprotocol/codex-acp) | 2.7.0 | Apache 2.0 | ACP adapter for the user's own Codex, bundled |
 | codex-acp's npm dependencies | As locked | MIT (18), ISC (2), BSD-3-Clause (1), Apache 2.0 (1) | Bundled with codex-acp: `@agentclientprotocol/sdk`, `bundle-name`, `cross-spawn`, `default-browser`, `default-browser-id`, `define-lazy-prop`, `diff`, `is-docker`, `is-in-ssh`, `is-inside-container`, `is-wsl`, `isexe`, `open`, `path-key`, `powershell-utils`, `run-applescript`, `shebang-command`, `shebang-regex`, `vscode-jsonrpc`, `which`, `wsl-utils`, `zod` |
 | [Node.js](https://nodejs.org) | 24.19.0 | [MIT, with bundled notices](https://github.com/nodejs/node/blob/main/LICENSE) | Runs codex-acp; the `node` binary is bundled |

@@ -43,7 +43,7 @@ Status: done (2026-11-18).
 ### 1. A correct release build (`scripts/dev/build-app --release`, `scripts/dev/release`)
 
 - **Version from the tag.** `CFBundleShortVersionString` is the tag's version; `CFBundleVersion` is the commit count, so it only rises. Sparkle compares it to decide what's newer.
-- **Each bundled program is signed with what it needs**, from an explicit list, inside out, with the hardened runtime and a secure timestamp. OpenCode is a Bun-compiled binary and Node compiles JavaScript, so both may make executable memory ([Bun's guide](https://bun.com/docs/guides/runtime/codesign-macos-executable)). The build fails if any Mach-O file is left unsigned.
+- **Each bundled program is signed with what it needs**, from an explicit list, inside out, with the hardened runtime and a secure timestamp. Node compiles JavaScript, so it may make executable memory. OpenCode, a Bun-compiled binary that needs the same ([Bun's guide](https://bun.com/docs/guides/runtime/codesign-macos-executable)), isn't bundled: the app downloads it when an account is set to it, and it runs with its own vendor signature. The build fails if any Mach-O file is left unsigned.
 - **Notarization by App Store Connect API key** (`AGNETA_NOTARY_KEY`, `AGNETA_NOTARY_KEY_ID`, `AGNETA_NOTARY_ISSUER`), or a stored `notarytool` profile on a maintainer's Mac. A rejection prints Apple's log.
 - **The DMG**, made with `hdiutil` (no new dependency): the app is signed, notarized and stapled, then put in a DMG with a link to Applications; the DMG is signed, notarized and stapled too, so the first launch works offline.
 - **The smoke test runs on what a user gets:** the app is copied out of the mounted DMG and marked as downloaded (quarantined), Gatekeeper must accept it, Agneta must start and serve apps, and every bundled engine must start and answer `initialize` under the hardened runtime.
@@ -112,17 +112,17 @@ Agneta's log (`<folder>/Logs/agneta.jsonl` for an isolated instance) records `up
 
 ## What a release weighs
 
-Measured on an Intel Mac with macOS 26.6.2, 2026-11-17:
+Measured on an Intel Mac with macOS 26.6.2, 2026-11-18, after OpenCode stopped being bundled (0.1.0, which bundled it, was 404 MB, a 172–177 MB download):
 
-| | Every engine (`--engines all`) | Goose only (`--engines goose`) |
+| | A release (`--engines all`: Goose, Node and codex-acp) | Goose only (`--engines goose`) |
 | --- | --- | --- |
-| App bundle | 404 MB | 38 MB |
-| Zip (the download) | 177 MB | 16 MB |
-| Cold start, launch to listening for apps (median of 5) | 271 ms | 271 ms |
+| App bundle | 180 MB | 38 MB |
+| Zip (the download) | 59 MB | 16 MB |
+| Cold start, launch to listening for apps (median of 5, 2026-11-17) | 271 ms | 271 ms |
 
-Where the size goes, with every engine: OpenCode 227 MB, Node (for Codex's adapter) 118 MB, codex-acp 21 MB, Goose 19 MB, Agneta and its tools 18 MB. Engines start only when a task needs them, so they don't change the app's start-up. Starting one (launch to its `initialize` answer, median of 5): Goose 17 ms, OpenCode 394 ms.
+Where the size goes: Node (for Codex's adapter) 118 MB, codex-acp 21 MB, Goose 19 MB, Agneta and its tools 18 MB, Sparkle 2.3 MB. OpenCode (227 MB unpacked, a 108–113 MB download) comes only when an account is set to it, like Claude Code's adapter. Engines start only when a task needs them, so they don't change the app's start-up. Starting one (launch to its `initialize` answer, median of 5): Goose 17 ms, OpenCode 394 ms.
 
-Releases ship every engine: a ChatGPT plan needs Codex's adapter and Node. Shipping Goose alone and downloading the others when an account needs them, as Claude Code's adapter is, would cut the download tenfold; that is a later step.
+Releases still ship Node and codex-acp, which a ChatGPT plan needs. Downloading them too when a ChatGPT plan is added would bring the download to 16 MB ([FOLLOW_UPS.md](FOLLOW_UPS.md#4-a-smaller-download-engines-on-demand)).
 
 ## Support
 

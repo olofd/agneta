@@ -484,6 +484,11 @@ struct SettingsView: View {
                         Text(account.label).font(.system(size: 13, weight: .semibold))
                         Text(([account.kind.plan, account.email].compactMap { $0 } + (account.engine == "goose" ? [] : ["runs on \(model.engines(for: account).first { $0.id == account.engine }?.displayName ?? account.engine)"])).joined(separator: " · "))
                             .font(.system(size: 12)).foregroundStyle(.secondary)
+                        if let download = model.engineDownload, download.account == account.id {
+                            HStack(spacing: 6) { ProgressView().controlSize(.mini); Text(download.text) }.font(.system(size: 12)).foregroundStyle(.secondary)
+                        } else if let problem = model.engineDownloadProblem, problem.account == account.id {
+                            Text(problem.text).font(.system(size: 12)).foregroundStyle(Palette.attention).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer()
                     if account.paused { StatusPill(text: "Paused", color: .secondary) }
@@ -493,8 +498,11 @@ struct SettingsView: View {
                         Button("Default Model…") { askDefaultModel(account) }
                         if model.engines(for: account).count > 1 {
                             Picker("Engine", selection: Binding(get: { account.engine }, set: { model.setEngine(account, $0) })) {
-                                ForEach(model.engines(for: account), id: \.id) { engine in Text(engine.displayName).tag(engine.id) }
+                                ForEach(model.engines(for: account), id: \.id) { engine in
+                                    Text(model.downloadNote(for: engine.id).map { "\(engine.displayName) (\($0))" } ?? engine.displayName).tag(engine.id)
+                                }
                             }
+                            .disabled(model.engineDownload != nil)
                         }
                         Divider()
                         Button("Sign Out…", role: .destructive) { confirmSignOut(account) }
@@ -797,7 +805,7 @@ struct SettingsView: View {
             .padding(.vertical, 6)
         }
         Section {
-            LabeledContent("Agent engines", value: "Goose \(lockedVersion("goose")), OpenCode \(lockedVersion("opencode"))")
+            LabeledContent("Agent engines", value: "Goose \(lockedVersion("goose")); OpenCode \(lockedVersion("opencode")), downloaded when an account uses it")
             LabeledContent("Codex adapter", value: "codex-acp \(lockedVersion("codex", runtime: "adapter")) on Node.js \(lockedVersion("codex", runtime: "node"))")
             LabeledContent("Claude Code adapter", value: "claude-agent-acp \(lockedVersion("runtimes", runtime: "claude-agent-acp")), downloaded on first use")
             LabeledContent("Apps connect at", value: "127.0.0.1:\(model.port)")

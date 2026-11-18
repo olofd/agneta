@@ -12,7 +12,8 @@ import CryptoKit
 import Foundation
 
 public struct RuntimeInstaller: Sendable {
-    public struct Asset: Sendable { public var url: URL; public var sha256: String; public var version: String }
+    /// `size`: the archive's size in bytes, when the lock records it (to say how big a download is before it starts).
+    public struct Asset: Sendable { public var url: URL; public var sha256: String; public var version: String; public var size: Int? }
 
     public let lockFile: URL
     public let runtimes: URL
@@ -29,12 +30,14 @@ public struct RuntimeInstaller: Sendable {
         return machine == "arm64" ? "arm64" : "x86_64"
     }
 
+    /// The pin for `name`: an entry of a runtimes lock (`runtimes.lock`), or a whole engine lock whose `engine` is
+    /// `name` (`opencode.lock`).
     public func asset(_ name: String) throws -> Asset {
         let lock = try JSONCoding.decode(Data(contentsOf: lockFile))
-        guard let entry = lock[name], let version = entry["version"]?.stringValue,
+        guard let entry = lock["engine"]?.stringValue == name ? lock : lock[name], let version = entry["version"]?.stringValue,
               let asset = entry["assets"]?[Self.architecture], let url = asset["url"]?.stringValue.flatMap(URL.init(string:)),
               let sha = asset["sha256"]?.stringValue else { throw SignInError.provider("\(name) isn't pinned for \(Self.architecture)") }
-        return Asset(url: url, sha256: sha, version: version)
+        return Asset(url: url, sha256: sha, version: version, size: asset["size"]?.intValue.map(Int.init))
     }
 
     /// The installed executable, downloading and verifying it first if needed. One install per version runs at a

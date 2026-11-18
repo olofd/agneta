@@ -63,6 +63,22 @@ import Testing
         #expect(try FileManager.default.contentsOfDirectory(atPath: folder.deletingLastPathComponent().path(percentEncoded: false)) == ["1"])
     }
 
+    /// OpenCode's pin is its whole engine lock (`opencode.lock`), with the archive's size.
+    @Test func installsFromAnEngineLock() async throws {
+        let (_, root, zip) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sha = RuntimeInstaller.sha256(try Data(contentsOf: zip))
+        let lock = root.appending(path: "tool.lock")
+        let asset: JSONValue = ["url": .string(zip.absoluteString), "sha256": .string(sha), "size": 1234]
+        try JSONCoding.encode(["engine": "tool", "version": "2", "assets": .object([RuntimeInstaller.architecture: asset])] as JSONValue).write(to: lock)
+        let installer = RuntimeInstaller(lockFile: lock, runtimes: root.appending(path: "Runtimes", directoryHint: .isDirectory))
+        #expect(try installer.asset("tool").size == 1234)
+        #expect(throws: SignInError.self) { _ = try installer.asset("other") }
+        let tool = try await installer.install("tool")
+        #expect(tool.path(percentEncoded: false).hasSuffix("Runtimes/tool/2/tool"))
+        #expect(FileManager.default.isExecutableFile(atPath: tool.path(percentEncoded: false)))
+    }
+
     @Test func aDownloadThatDoesntMatchItsPinIsRefused() async throws {
         let (installer, root, zip) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }

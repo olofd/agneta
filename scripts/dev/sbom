@@ -3,7 +3,8 @@
 
 Usage: scripts/dev/sbom <arch> <app bundle> <output.json> [all|goose]
 
-`goose`: the bundle carries only the default engine (no OpenCode, Node or codex-acp).
+`goose`: the bundle carries only the default engine (no Node or codex-acp). OpenCode is never bundled; it's listed
+as downloaded on first use, like the Claude Code adapter.
 
 Reads the pins (Engines/*.lock, Package.resolved) and the codex-acp packages
 actually installed in the bundle; nothing is fetched. Standard library only.
@@ -43,10 +44,10 @@ components = []
 goose = load("goose.lock")
 components.append(component("goose-acp", goose["version"], "Apache-2.0", f"pkg:github/aaif-goose/goose@v{goose['version']}",
                             [("SHA-256", goose["assets"][arch]["sha256"])]))
+opencode = load("opencode.lock")
+components.append(component("opencode", opencode["version"], "MIT", f"pkg:github/anomalyco/opencode@v{opencode['version']}",
+                            [("SHA-256", opencode["assets"][arch]["sha256"])], delivery="downloaded on first use"))
 if every_engine:
-    opencode = load("opencode.lock")
-    components.append(component("opencode", opencode["version"], "MIT", f"pkg:github/anomalyco/opencode@v{opencode['version']}",
-                                [("SHA-256", opencode["assets"][arch]["sha256"])]))
     codex = load("codex.lock")
     components.append(component("node", codex["node"]["version"], "MIT", f"pkg:generic/node@{codex['node']['version']}",
                                 [("SHA-256", codex["node"]["assets"][arch]["sha256"])]))

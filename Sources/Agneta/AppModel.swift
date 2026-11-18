@@ -67,6 +67,9 @@ final class AppModel {
     private(set) var resetProblem: String?
     /// The database couldn't be opened (for example, written by a newer Agneta).
     private(set) var storeProblem: String?
+    /// An engine being downloaded for an account (OpenCode), and the last such download that failed: Settings shows both.
+    private(set) var engineDownload: (account: String, text: String)?
+    private(set) var engineDownloadProblem: (account: String, text: String)?
     /// What the last launch cleaned up after a crash, for one quiet line in Activity.
     private(set) var recovered: (engines: Int, tasks: Int) = (0, 0)
     /// The pairing request on screen; edits change its allowed accounts.
@@ -148,7 +151,14 @@ final class AppModel {
 
     private var bundleFolder: URL { Bundle.main.bundleURL.appending(path: "Contents/MacOS", directoryHint: .isDirectory) }
     var gooseURL: URL { bundleFolder.appending(path: "goose-acp") }
-    var openCodeURL: URL { bundleFolder.appending(path: "opencode") }
+    /// OpenCode isn't bundled (most people never use it, and it's over half the app's size): it's downloaded, pinned
+    /// by the bundled `opencode.lock`, the first time an account is set to run on it.
+    private var openCodeInstaller: RuntimeInstaller? {
+        Bundle.main.url(forResource: "opencode", withExtension: "lock").map { RuntimeInstaller(lockFile: $0, runtimes: store.runtimesFolder) }
+    }
+    var openCodeAsset: RuntimeInstaller.Asset? { try? openCodeInstaller?.asset("opencode") }
+    var openCodeURL: URL? { openCodeAsset.map { store.runtimesFolder.appending(path: "opencode/\($0.version)/opencode") } }
+    var openCodeInstalled: Bool { openCodeURL.map { FileManager.default.isExecutableFile(atPath: $0.path(percentEncoded: false)) } ?? false }
     /// The installed claude-agent-acp (downloaded on first use, version from the bundled runtimes.lock).
     var claudeAdapterURL: URL? {
         guard let data = try? Data(contentsOf: runtimeLock), let version = (try? JSONCoding.decode(data))?["claude-agent-acp"]?["version"]?.stringValue else { return nil }
@@ -192,10 +202,13 @@ final class AppModel {
         _Concurrency.Task { for engine in availableEngines { await supervisor?.register(engine) } }
     }
 
-    /// The engines this Agneta can run now: its own, plus Claude Code when the user has it.
-    var availableEngines: [any EngineAdapter] {
+    /// The engines this Agneta can run now: its own, plus OpenCode once downloaded and Claude Code when the user has it.
+    var availableEngines: [any EngineAdapter] { engines(downloadable: false) }
+
+    /// With `downloadable`, also the engines an account can be set to and that download then (OpenCode).
+    private func engines(downloadable: Bool) -> [any EngineAdapter] {
         var engines: [any EngineAdapter] = [GooseAdapter(executable: gooseURL)]
-        if FileManager.default.isExecutableFile(atPath: openCodeURL.path(percentEncoded: false)) { engines.append(OpenCodeAdapter(executable: openCodeURL)) }
+        if let openCodeURL, downloadable || openCodeInstalled { engines.append(OpenCodeAdapter(executable: openCodeURL)) }
         if let adapter = claudeAdapterURL, let cli = chosen("claude", from: claudeCodeInstalls) { engines.append(ClaudeCodeAdapter(executable: adapter, cli: cli)) }
         let node = bundleFolder.appending(path: "node"), script = Bundle.main.bundleURL.appending(path: "Contents/Resources/codex-acp/dist/index.js")
         if FileManager.default.isExecutableFile(atPath: node.path(percentEncoded: false)), FileManager.default.fileExists(atPath: script.path(percentEncoded: false)),
@@ -205,19 +218,50 @@ final class AppModel {
         return engines
     }
 
-    /// Engines an account can use: API keys run on any engine; plans on the engine their sign-in belongs to.
+    /// Engines an account can be set to: API keys run on any engine; plans on the engine their sign-in belongs to.
+    /// OpenCode is among them before it's downloaded.
     func engines(for account: AccountRecord) -> [any EngineAdapter] {
-        switch account.kind {
-        case .openAIKey: availableEngines.filter { $0.id != "claude-code" }
-        case .anthropicKey: availableEngines.filter { $0.id != "codex" }
-        case .chatGPT: availableEngines.filter { $0.id == "codex" }
-        case .claude: availableEngines.filter { ["goose", "claude-code"].contains($0.id) }
+        let all = engines(downloadable: true)
+        return switch account.kind {
+        case .openAIKey: all.filter { $0.id != "claude-code" }
+        case .anthropicKey: all.filter { $0.id != "codex" }
+        case .chatGPT: all.filter { $0.id == "codex" }
+        case .claude: all.filter { ["goose", "claude-code"].contains($0.id) }
         }
     }
 
-    /// New tasks on this account run on this engine; running ones keep theirs.
+    /// What choosing this engine would download first, e.g. "downloads 108 MB"; nil when it's here already.
+    func downloadNote(for engine: String) -> String? {
+        guard engine == "opencode", !openCodeInstalled, let asset = openCodeAsset else { return nil }
+        return asset.size.map { "downloads \(ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file))" } ?? "downloads first"
+    }
+
+    /// New tasks on this account run on this engine; running ones keep theirs. An engine that isn't here yet
+    /// (OpenCode) is downloaded and checked first; the account switches once it's installed.
     func setEngine(_ account: AccountRecord, _ engine: String) {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }), engines(for: account).contains(where: { $0.id == engine }) else { return }
+        if engine == "opencode", !openCodeInstalled {
+            guard engineDownload == nil, let installer = openCodeInstaller, let version = openCodeAsset?.version else { return }
+            engineDownloadProblem = nil
+            engineDownload = (account.id, "Downloading OpenCode \(version)…")
+            log.log("engine-download", ["engine": .string(engine), "version": .string(version)])
+            let started = Date()
+            _Concurrency.Task {
+                do {
+                    _ = try await installer.install("opencode")
+                    log.log("engine-downloaded", ["engine": .string(engine), "seconds": .int(Int64(Date().timeIntervalSince(started)))])
+                    engineDownload = nil
+                    for adapter in availableEngines { await supervisor?.register(adapter) }
+                    if let current = accounts.first(where: { $0.id == account.id }) { setEngine(current, engine) }
+                } catch {
+                    log.error("engine-download-failed", ["engine": .string(engine), "reason": .string("\(error)")])
+                    engineDownload = nil
+                    engineDownloadProblem = (account.id, "OpenCode couldn't be downloaded: \(error.localizedDescription)")
+                }
+            }
+            return
+        }
+        engineDownloadProblem = nil
         accounts[index].engine = engine
         log.log("engine-changed", ["account": .string(account.id), "engine": .string(engine)])
         save(accounts[index])
@@ -365,6 +409,17 @@ final class AppModel {
             provider = ProviderSetup(kind: .anthropic, model: account.model, apiKey: keychain.get(account.id))
         case .openAIKey:
             provider = ProviderSetup(kind: .openAI, model: account.model, apiKey: keychain.get(account.id))
+        }
+        // An account set to OpenCode before it was here (an account from an older build, a reset data folder) gets it now.
+        if account.engine == "opencode", !openCodeInstalled, let installer = openCodeInstaller {
+            do {
+                _ = try await installer.install("opencode")
+                guard current() else { return }
+                for engine in availableEngines { await runtime.supervisor.register(engine) }
+            } catch {
+                log.error("engine-download-failed", ["engine": .string("opencode"), "reason": .string("\(error)")])
+                engineDownloadProblem = (account.id, "OpenCode couldn't be downloaded: \(error.localizedDescription)")
+            }
         }
         guard current() else { return }
         for secret in provider.secrets { runtime.traces.mask.register(secret) }

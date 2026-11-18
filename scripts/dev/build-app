@@ -4,8 +4,9 @@
 # Development (the default): build/Agneta Dev.app, bundle ID com.objectivecoder.agneta.dev, apps connect on
 #   port 47331, data in ~/Library/Application Support/com.objectivecoder.agneta.dev.
 # --release: build/Agneta.app, bundle ID com.objectivecoder.agneta, port 47321 (scripts/dev/release signs it).
-# --engines goose: only the default engine (no OpenCode, and no Node and codex-acp for Codex), about a tenth
-#   of the size (docs/RELEASING.md).
+# --engines goose: only the default engine (no Node and codex-acp for Codex), about a tenth of the size
+#   (docs/RELEASING.md). OpenCode is never bundled: the app downloads it, pinned by Resources/opencode.lock, when an
+#   account is set to run on it.
 # Contents/MacOS holds the app, the pinned engines, agneta-shell and agneta-diag; Contents/Frameworks holds Sparkle;
 # Contents/Resources holds the locks, the sandboxed test client, the licences and the bill of materials. Signed ad
 # hoc here.
@@ -25,7 +26,7 @@ done
 [[ "$engines" == all || "$engines" == goose ]] || { echo "--engines is all or goose" >&2; exit 2; }
 if $release; then id=com.objectivecoder.agneta name=Agneta app="build/Agneta.app"; else id=com.objectivecoder.agneta.dev name="Agneta Dev" app="build/Agneta Dev.app"; fi
 arch=$(uname -m); [[ "$arch" == aarch64 ]] && arch=arm64
-if [[ "$engines" == all ]]; then scripts/fetch-engines "$arch" --engine all >/dev/null; else scripts/fetch-engines "$arch" --engine goose >/dev/null; fi
+scripts/fetch-engines "$arch" --engine goose >/dev/null
 swift build -c release -q --product Agneta
 swift build -c release -q --product agneta-shell
 swift build -c release -q --product agneta-diag
@@ -41,8 +42,6 @@ cp "$bin/agneta-shell" "$app/Contents/MacOS/agneta-shell"
 cp "$bin/agneta-diag" "$app/Contents/MacOS/agneta-diag"
 cp "Engines/bin/$arch/goose-acp" "$app/Contents/MacOS/goose-acp"
 if [[ "$engines" == all ]]; then
-  cp "Engines/bin/$arch/opencode" "$app/Contents/MacOS/opencode"
-  cp Engines/opencode.lock "$app/Contents/Resources/opencode.lock"
   # Codex engine: the pinned Node (just the binary) and codex-acp; Codex itself is the user's own.
   scripts/fetch-codex "$arch" >/dev/null
   cp "Engines/bin/$arch/node-runtime/bin/node" "$app/Contents/MacOS/node"
@@ -50,6 +49,7 @@ if [[ "$engines" == all ]]; then
   cp Engines/codex.lock "$app/Contents/Resources/codex.lock"
 fi
 cp Engines/runtimes.lock "$app/Contents/Resources/runtimes.lock"
+cp Engines/opencode.lock "$app/Contents/Resources/opencode.lock"
 cp Engines/goose.lock "$app/Contents/Resources/goose.lock"
 cp -R .build/AgnetaTestClient.app "$app/Contents/Resources/AgnetaTestClient.app"
 # The version is AGNETA_VERSION, or the v* tag on this commit, or 0.0.0 for an untagged build. The build number is
