@@ -23,6 +23,20 @@ import Testing
         #expect(Self.catalog(["goose": .failed("x"), "opencode": .ready]).defaultEngine(for: .openAIKey) == "opencode")
     }
 
+    /// Each provider's default: the user's choice while its provider supports it and it's here, else the most
+    /// preferred one that is; nil for a ChatGPT plan without Codex.
+    @Test func eachProviderDefaultsToASupportedEngineThatsHere() {
+        let all = Self.catalog(["goose": .ready, "opencode": .ready, "claude-code": .ready, "codex": .ready],
+                               selected: [.openAIKey: "opencode", .claude: "opencode"])
+        #expect(all.defaultEngine(for: .chatGPT) == "codex")
+        #expect(all.defaultEngine(for: .claude) == "claude-code") // OpenCode can't serve a Claude plan: ignored
+        #expect(all.defaultEngine(for: .openAIKey) == "opencode")
+        let gooseOnly = Self.catalog(["goose": .ready], selected: [.openAIKey: "opencode"])
+        #expect(gooseOnly.defaultEngine(for: .openAIKey) == "goose") // chosen but not here: the next one
+        #expect(gooseOnly.defaultEngine(for: .claude) == "goose")
+        #expect(gooseOnly.defaultEngine(for: .chatGPT) == nil) // a ChatGPT plan needs Codex
+    }
+
     /// A provider's engines for an app: what it supports, the grant allows and this Mac can run, the default first.
     @Test func aProvidersEnginesAreWhatAllThreeAllow() {
         let catalog = Self.catalog(["goose": .ready, "opencode": .downloadable(size: 1), "codex": .unavailable("Install Codex"), "claude-code": .ready],

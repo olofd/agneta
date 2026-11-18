@@ -1116,25 +1116,6 @@ final class Recorder: @unchecked Sendable {
     var all: [String] { lock.withLock { items } }
 }
 
-/// The one link between providers and engines.
-@Suite struct ProviderEngineTests {
-    @Test func eachProviderRunsOnASupportedAvailableEngine() {
-        var routing = ProviderEngines()
-        let all: Set<String> = ["goose", "opencode", "claude-code", "codex"]
-        #expect(routing.engine(for: .chatGPT, available: all) == "codex")
-        #expect(routing.engine(for: .chatGPT, available: ["goose"]) == nil) // a ChatGPT plan needs Codex
-        #expect(routing.engine(for: .claude, available: all) == "claude-code")
-        #expect(routing.engine(for: .claude, available: ["goose", "opencode"]) == "goose")
-        #expect(routing.engine(for: .openAIKey, available: all) == "goose")
-        routing.selected[.openAIKey] = "opencode"
-        routing.selected[.claude] = "opencode" // not supported: ignored
-        #expect(routing.engine(for: .openAIKey, available: all) == "opencode")
-        #expect(routing.engine(for: .openAIKey, available: ["goose"]) == "goose") // selected but gone: the next one
-        #expect(routing.engine(for: .claude, available: all) == "claude-code")
-        #expect(!ProviderEngines.supported(by: .openAIKey).contains("claude-code") && !ProviderEngines.supported(by: .anthropicKey).contains("codex"))
-    }
-}
-
 /// Every check of a shared engine goes through one test of the key, old key shape included.
 @Suite struct EngineKeyTests {
     @Test func sharedKeysAreRecognisedInEveryShape() {

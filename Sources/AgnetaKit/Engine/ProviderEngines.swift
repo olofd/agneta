@@ -17,19 +17,11 @@ public struct ProviderEngines: Sendable, Equatable {
         }
     }
 
-    /// The engine the user selected for a kind of provider, where they selected one.
+    /// The engine the user selected for a kind of provider, where they selected one. Which engine runs is
+    /// EngineCatalog's to decide (`defaultEngine`), from this and what's on this Mac.
     public var selected: [AccountKind: String]
 
     public init(selected: [AccountKind: String] = [:]) { self.selected = selected }
-
-    /// The engine serving a kind of provider: the selected one while it's supported and available, otherwise the most
-    /// preferred one that is. Nil when none is (a ChatGPT plan without Codex installed).
-    /// - Parameter available: the engines this Agneta can run now or download when needed.
-    public func engine(for kind: AccountKind, available: Set<String>) -> String? {
-        let candidates = Self.supported(by: kind).filter(available.contains)
-        if let chosen = selected[kind], candidates.contains(chosen) { return chosen }
-        return candidates.first
-    }
 
     /// The settings key a kind's selection is saved under.
     public static func settingKey(_ kind: AccountKind) -> String { "engine.\(kind.rawValue)" }
