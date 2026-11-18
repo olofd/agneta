@@ -317,7 +317,7 @@ final class AppModel {
             if grant.remembered { grants[hash] = grant }
         case .grantChanged(let hash, let grant):
             log.log("app-access-changed", ["grant": .string(grant.id), "accounts": .int(Int64(grant.accounts.count)),
-                                           "engines": grant.engines == .all ? "all" : .int(Int64(grant.engines.json.arrayValue?.count ?? 0))])
+                                           "engines": { if case .only(let some) = grant.engines { .int(Int64(some.count)) } else { "all" } }()])
             if grant.remembered { grants[hash] = grant }
         case .sessionStarted(let info):
             log.log("task-started", ["task": .string(info.id), "app": .string(info.app), "account": .string(info.account), "resumed": .bool(info.resumed)])

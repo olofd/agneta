@@ -277,24 +277,21 @@ public actor Router {
         accessChanged(grant: id)
     }
 
-    /// What an app may use, as it sees it (`agneta/access`, and `initialize`'s `_meta.agneta.access`).
-    /// - `providers`: each provider (account) it may use, with the engines its tasks there may run on (default first).
-    /// - `engines`: each engine it may use, with its state on this Mac and, once it's here, its capabilities.
+    /// What an app may use, as it sees it (AccessReport): each provider it may use, with the engines its tasks there
+    /// may run on (default first), and each engine it may use that one of those providers can run, with its state.
     func access(_ grant: Grant) -> JSONValue {
-        let providers: [JSONValue] = grant.accounts.compactMap { id in
+        let providers: [AccessReport.Provider] = grant.accounts.compactMap { id in
             guard let account = accounts[id] else { return nil }
             let engines = Access.engines(for: account.kind, allowed: grant.engines, catalog: catalog)
-            return ["id": .string(id), "label": .string(account.label), "kind": .string(account.kind.rawValue),
-                    "paused": .bool(paused.contains(id)), "needsSignIn": .bool(needsSignIn.contains(id)),
-                    "engines": .array(engines.map(JSONValue.string)), "defaultEngine": engines.first.map(JSONValue.string) ?? .null]
+            return AccessReport.Provider(id: id, label: account.label, kind: account.kind.rawValue, paused: paused.contains(id),
+                                         needsSignIn: needsSignIn.contains(id), engines: engines, defaultEngine: engines.first)
         }
-        // Those the app may use that one of its providers can run.
         let kinds = Set(grant.accounts.compactMap { accounts[$0]?.kind })
         let engines = catalog.entries.keys.filter { id in grant.engines.allows(id) && kinds.contains { ProviderEngines.supported(by: $0).contains(id) } }
-            .sorted().map(catalog.json)
-        return ["providers": .array(providers), "engines": .array(engines), "allowedEngines": grant.engines.json,
-                "scope": ["tools": .string(grant.tools.rawValue), "folders": .array(grant.folders.map(JSONValue.string))],
-                "workspace": Self.workspace(of: grant, in: context).map { .string($0.path(percentEncoded: false)) } ?? .null]
+            .sorted().map(catalog.report)
+        return AccessReport(providers: providers, engines: engines, allowedEngines: grant.engines,
+                            scope: .init(tools: grant.tools.rawValue, folders: grant.folders),
+                            workspace: Self.workspace(of: grant, in: context)?.path(percentEncoded: false)).json
     }
 
     /// Tells connected apps (those holding `grant`, or every one) that what they may use changed, with what it is now.
@@ -795,11 +792,9 @@ public actor Router {
         RPCError(code: engineCantDoThat, message: "\(engine.displayName) can't \(what)", data: ["agneta": ["engine": .string(engine.id)]])
     }
 
-    /// What a session can do beyond plain ACP, so the app can offer it.
+    /// What a session can do beyond plain ACP, so the app can offer it (SessionCapabilities).
     static func capabilities(_ engine: any EngineAdapter) -> JSONValue {
-        let c = engine.capabilities
-        return ["engine": .string(engine.id), "steer": .bool(c.steer), "fork": .bool(c.fork),
-                "instructionsBetweenTurns": .bool(c.instructionsBetweenTurns), "reportsCost": .bool(c.reportsCost)]
+        (try? JSONCoding.decode(JSONCoding.encode(SessionCapabilities(engine)))) ?? [:]
     }
 
     /// `agneta/trace/read`: a page of one of this app's own tasks, running or finished.

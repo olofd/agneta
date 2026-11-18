@@ -88,22 +88,16 @@ public struct EngineCatalog: Sendable {
 
     /// What an app sees of an engine: its name, its state (with progress, size or reason) and, once it's here, what
     /// its sessions can do.
-    func json(_ id: String) -> JSONValue {
-        guard let entry = entries[id] else { return ["id": .string(id), "name": .string(id), "state": "unavailable"] }
-        var value: [String: JSONValue] = ["id": .string(id), "name": .string(entry.name), "state": .string(entry.state.name)]
+    func report(_ id: String) -> AccessReport.Engine {
+        guard let entry = entries[id] else { return AccessReport.Engine(id: id, name: id, state: "unavailable") }
+        var engine = AccessReport.Engine(id: id, name: entry.name, state: entry.state.name, capabilities: entry.adapter.map(SessionCapabilities.init))
         switch entry.state {
-        case .downloading(let received, let total):
-            value["received"] = .int(received)
-            value["total"] = total.map(JSONValue.int) ?? .null
-        case .downloadable(let size):
-            value["size"] = size.map(JSONValue.int) ?? .null
-        case .failed(let reason), .unavailable(let reason):
-            value["reason"] = .string(reason)
-        case .ready:
-            break
+        case .downloading(let received, let total): (engine.received, engine.total) = (received, total)
+        case .downloadable(let size): engine.size = size
+        case .failed(let reason), .unavailable(let reason): engine.reason = reason
+        case .ready: break
         }
-        if let adapter = entry.adapter { value["capabilities"] = Router.capabilities(adapter) }
-        return .object(value)
+        return engine
     }
 
     /// What decides what apps can do, without download progress: apps hear `agneta/accessChanged` when it changes.

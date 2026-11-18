@@ -332,13 +332,13 @@ actor FakeEngines: EngineSource {
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Contract")
-        let access = try await app.request("agneta/access", [:])
-        let brokered = access["providers"]?.arrayValue?.first { $0["id"]?.stringValue == "brokered" }
-        #expect(brokered?["engines"]?.arrayValue?.compactMap(\.stringValue) == ["goose", "opencode"]) // Codex isn't here
-        #expect(brokered?["defaultEngine"]?.stringValue == "goose" && brokered?["kind"]?.stringValue == "openai-key")
-        let states = Dictionary(uniqueKeysWithValues: (access["engines"]?.arrayValue ?? []).map { ($0["id"]?.stringValue ?? "", $0["state"]?.stringValue ?? "") })
-        #expect(states == ["goose": "ready", "opencode": "ready", "codex": "unavailable"])
-        #expect(access["allowedEngines"]?.stringValue == "all")
+        // Read as the typed report, so what the router sends is what Swift clients decode.
+        let access = try AccessReport(json: try await app.request("agneta/access", [:]))
+        let brokered = try #require(access.providers.first { $0.id == "brokered" })
+        #expect(brokered.engines == ["goose", "opencode"] && brokered.defaultEngine == "goose" && brokered.kind == "openai-key") // Codex isn't here
+        #expect(Dictionary(uniqueKeysWithValues: access.engines.map { ($0.id, $0.state) }) == ["goose": "ready", "opencode": "ready", "codex": "unavailable"])
+        #expect(access.engines.first { $0.id == "codex" }?.reason == "Install Codex" && access.engines.first { $0.id == "goose" }?.capabilities?.fork == true)
+        #expect(access.allowedEngines == .all)
 
         func meta(_ account: String, _ engine: String) -> [String: JSONValue] { ["agneta": ["account": .string(account), "engine": .string(engine)]] }
         _ = try await stack.session(app, account: "brokered", meta: meta("brokered", "opencode"))

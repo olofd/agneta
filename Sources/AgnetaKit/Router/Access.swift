@@ -4,8 +4,9 @@
 // agneta/access, the approval window, Settings) asks this.
 import Foundation
 
-/// The engines a grant allows: all of them (including ones Agneta adds later), or only these.
-public enum EngineAllowance: Sendable, Equatable, Hashable {
+/// The engines a grant allows: all of them (including ones Agneta adds later), or only these. Saved and sent as
+/// `"all"`, or the engine ids, sorted.
+public enum EngineAllowance: Sendable, Equatable, Hashable, Codable {
     case all
     case only(Set<String>)
 
@@ -16,16 +17,22 @@ public enum EngineAllowance: Sendable, Equatable, Hashable {
         }
     }
 
-    /// As saved and as apps see it: `"all"`, or the engine ids, sorted.
-    public var json: JSONValue {
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
         switch self {
-        case .all: "all"
-        case .only(let engines): .array(engines.sorted().map(JSONValue.string))
+        case .all: try container.encode("all")
+        case .only(let engines): try container.encode(engines.sorted())
         }
     }
 
-    public init(json: JSONValue?) {
-        if let list = json?.arrayValue { self = .only(Set(list.compactMap(\.stringValue))) } else { self = .all }
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let engines = try? container.decode([String].self) { self = .only(Set(engines)) } else {
+            guard try container.decode(String.self) == "all" else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Engines are \"all\" or a list of engine ids")
+            }
+            self = .all
+        }
     }
 }
 

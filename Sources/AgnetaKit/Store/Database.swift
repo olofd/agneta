@@ -191,7 +191,7 @@ public final class AgnetaDatabase: Sendable {
             for row in try Row.fetchAll(db, sql: "SELECT * FROM grants") {
                 let accounts = (try? JSONDecoder().decode([String].self, from: Data((row["accounts"] as String).utf8))) ?? []
                 let folders = (try? JSONDecoder().decode([String].self, from: Data((row["folders"] as String).utf8))) ?? []
-                let engines = EngineAllowance(json: try? JSONCoding.decode(Data((row["engines"] as String).utf8)))
+                let engines = (try? JSONDecoder().decode(EngineAllowance.self, from: Data((row["engines"] as String).utf8))) ?? .only([])
                 grants[row["tokenHash"]] = Router.Grant(id: row["id"], app: row["app"], identifier: row["identifier"], team: row["team"],
                                                         verified: row["verified"], accounts: accounts, engines: engines, created: row["created"],
                                                         tools: SessionPolicy.Tools(rawValue: row["tools"]) ?? .appOnly, folders: folders)
@@ -207,7 +207,7 @@ public final class AgnetaDatabase: Sendable {
     private static func insert(_ grant: Router.Grant, hash: String, _ db: GRDB.Database) throws {
         let accounts = String(decoding: try JSONEncoder().encode(grant.accounts), as: UTF8.self)
         let folders = String(decoding: try JSONEncoder().encode(grant.folders), as: UTF8.self)
-        let engines = String(decoding: try JSONCoding.encode(grant.engines.json), as: UTF8.self)
+        let engines = String(decoding: try JSONCoding.encode(grant.engines), as: UTF8.self)
         try db.execute(sql: """
             INSERT OR REPLACE INTO grants (tokenHash, id, app, identifier, team, verified, accounts, created, tools, folders, engines)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

@@ -44,11 +44,14 @@ import Testing
     }
 
     /// "all" includes engines added later; a list is saved sorted and read back as given.
-    @Test func allowancesRoundTrip() {
+    @Test func allowancesRoundTrip() throws {
         #expect(EngineAllowance.all.allows("future-engine"))
-        #expect(EngineAllowance(json: EngineAllowance.only(["goose", "codex"]).json) == .only(["codex", "goose"]))
-        #expect(EngineAllowance(json: "all") == .all)
-        #expect(EngineAllowance.only(["goose", "codex"]).json == ["codex", "goose"])
+        func coded(_ allowance: EngineAllowance) throws -> String { String(decoding: try JSONCoding.encode(allowance), as: UTF8.self) }
+        #expect(try coded(.all) == "\"all\"" && coded(.only(["goose", "codex"])) == #"["codex","goose"]"#)
+        for allowance in [EngineAllowance.all, .only(["goose", "codex"]), .only([])] {
+            #expect(try JSONDecoder().decode(EngineAllowance.self, from: JSONCoding.encode(allowance)) == allowance)
+        }
+        #expect(throws: (any Error).self) { try JSONDecoder().decode(EngineAllowance.self, from: Data("\"some\"".utf8)) }
     }
 
     /// The table and the adapters agree: every pair ProviderEngines allows starts, and every other pair is refused by
