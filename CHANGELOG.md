@@ -2,17 +2,19 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
-## Unreleased
+## 0.2.0 (2026-11-18)
 
-- The menu bar panel is frosted glass: what's behind it no longer reads through its text.
-- Settings and task details keep their title bar, so scrolled content no longer runs into the title.
+A smaller download, a choice of engine per app, an app icon, and fixes. Agneta is now about 60 MB to download instead of about 175.
+
+**Updating from 0.1.0:** 0.1.0 can hang when it quits, and installing an update quits it. If the update seems stuck, quit Agneta from Activity Monitor (Force Quit): the update then installs, and 0.2.0 quits normally from then on.
+
+- **Choose the engine per app.** When an app asks for access, each account you allow can run that app's tasks on another engine than the account's default, and Settings → Apps changes it later. Every account shows the engine it runs on, in the panel, the approval window and Settings. New accounts start on a sensible default (Codex for a ChatGPT plan, Claude Code for a Claude plan when it's installed, Goose for an API key), and adding one asks nothing about engines. Apps see the abilities of the engine they actually run on in `initialize`; if that engine can't run, `session/new` says so (`engineUnavailable`) ([APP_PROTOCOL.md](https://github.com/olofd/agneta/blob/v0.2.0/docs/APP_PROTOCOL.md)).
+- **OpenCode downloads when you choose it** (pinned and checked), instead of being bundled. If an account used OpenCode in 0.1.0, it downloads in the background after the update, and Settings shows the progress.
+- **An app icon:** the two linked rings in ice white on winter-sea blue, a Liquid Glass icon on macOS 26.
+- **Quit Agneta quits.** In 0.1.0 it could hang and leave the app unresponsive until force-quit.
+- **Check for Updates** is always in the panel's ⋯ menu; a build that doesn't update itself says why.
+- The menu bar panel is frosted glass, so what's behind it no longer reads through its text; Settings and task details keep their title bar, so scrolled content no longer runs into the title.
 - Run a Test Task's pairing code opens as a normal, centred dialog that closes itself once you answer in Agneta.
-- Check for Updates is always in the panel's ⋯ menu; a build that doesn't update itself says why.
-- Every account shows the engine it runs on, in the panel, the approval window and Settings. New accounts start on a sensible default engine, and adding one asks nothing about engines.
-- Choose the engine per app: when an app asks for access, each account you allow can run that app's tasks on another engine than its default, changeable later in Settings → Apps. Apps see that engine's abilities in `initialize`.
-- An app icon: the two linked rings in ice white on winter-sea blue, a Liquid Glass icon on macOS 26.
-- OpenCode is no longer bundled: it downloads (pinned and checked) the first time an account is set to it. The download of Agneta itself falls from about 175 MB to about 60 MB.
-- Quit Agneta from the panel's menu quits: in 0.1.0 it hung and left the app unresponsive until force-quit.
 
 ## 0.1.0 (2026-11-18)
 

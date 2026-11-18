@@ -107,3 +107,16 @@ The icon ([packaging/AppIcon.png](../packaging/AppIcon.png), as macOS 26 renders
 - **Checked:** Finder shows the rebuilt Agneta Dev with it.
 - **Set aside:** a shaded frosted-ice version with an aurora sky, a pale one, and a flat one without glass. All are in the history of `scripts/dev/app-icon.swift`.
 
+## Bug sweep before 0.2.0
+
+An independent review of everything since 0.1.0 (2026-11-18) found six real defects, all fixed before the release, each in its own commit:
+
+1. **A sandbox gap (security).** Per-app engines added shared engine keys like `<account>/shared-goose`, which the check keeping built-in tools off shared engines missed. An app could have reloaded an app-only task with workspace tools on the shared, unbrokered engine. Every check now goes through `EngineKeys.isShared`, and a contract test proves the refusal.
+2. **Startup waited for a download.** An account on OpenCode without it downloaded it before Agneta listened for apps. Downloads now run in the background, with progress shown.
+3. **Apps set to OpenCode** never got it again after a new pin or a failed download. Launch now fetches missing engines that apps use.
+4. **Two shared Goose processes on one account home** were possible. Shared keys now always name their engine.
+5. **The test client's code dialog** still didn't close by itself: a modal loop inside a main-queue job stops the main actor. It now starts from a run-loop block, proven in a standalone reproduction.
+6. **Remove Access racing an engine change** could bring access back. The router re-checks, and the runtime deletes the row again.
+
+The sweep also caught a CI failure: `actool` crashes on GitHub's macOS 15 Apple silicon runner. The compiled icon is now committed instead of built in every build.
+
