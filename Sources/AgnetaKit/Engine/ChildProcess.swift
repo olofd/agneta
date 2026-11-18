@@ -87,10 +87,11 @@ public final class ChildProcess: @unchecked Sendable {
         let reaper = Thread { [weak self] in
             // Seen exited but not yet reaped: the leader is a zombie that still holds its number, so the group can't be
             // anyone else's. Whatever it left running in its group ends now, and only then is it reaped.
-            var info = siginfo_t()
-            while waitid(P_PID, id_t(leader), &info, WEXITED | WNOWAIT) < 0 && errno == EINTR {}
+            // The exit, seen with kqueue: it neither reaps the leader nor fires for a stop (macOS's waitid with WNOWAIT
+            // reports a stopped child over and over, spinning). If it can't tell, the group is left alone.
+            let exited = ChildProcess.waitForExitUnreaped(leader)
             group.lock.withLock {
-                killpg(leader, SIGKILL)
+                if exited { killpg(leader, SIGKILL) }
                 group.reaped = true
             }
             var raw: Int32 = 0
@@ -99,6 +100,23 @@ public final class ChildProcess: @unchecked Sendable {
         }
         reaper.name = "agneta.reaper.\(leader)"
         reaper.start()
+    }
+
+    /// Blocks until `pid` has exited, without reaping it. True once it has; false if that can't be known.
+    static func waitForExitUnreaped(_ pid: pid_t) -> Bool {
+        let queue = kqueue()
+        guard queue >= 0 else { return false }
+        defer { close(queue) }
+        var change = kevent(ident: UInt(pid), filter: Int16(EVFILT_PROC), flags: UInt16(EV_ADD | EV_ONESHOT), fflags: UInt32(NOTE_EXIT), data: 0, udata: nil)
+        var event = kevent()
+        while true {
+            let count = kevent(queue, &change, 1, &event, 1, nil)
+            if count < 0 { if errno == EINTR { continue }; return errno == ESRCH }
+            if count == 0 { continue }
+            // Exited before the watch began: still a zombie, since only this reaper reaps it.
+            if event.flags & UInt16(EV_ERROR) != 0 { return event.data == Int(ESRCH) }
+            return event.fflags & UInt32(NOTE_EXIT) != 0
+        }
     }
 
     private func finish(_ raw: Int32) {
