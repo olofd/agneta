@@ -106,6 +106,7 @@ actor FakeEngines: EngineSource {
     func open(account: String, engine: String?, policy: SessionPolicy, mcpPorts: [Int], key: String?, session: EngineSessionSpec?) async throws -> EngineLease {
         opened += 1
         askedEngines.append(engine)
+        let chosen = engine
         if openDelay > .zero { try? await Task.sleep(for: openDelay) }
         let gate = Gate()
         gates.append(gate)
@@ -122,7 +123,7 @@ actor FakeEngines: EngineSource {
         })
         // Speaks Goose's dialect, so Goose's adapter describes it.
         // App-only sessions get the shared key, as the real supervisor gives them.
-        return EngineLease(key: key ?? (policy.tools == .appOnly ? "\(account)/shared" : "\(account)/fake-\(n)"), peer: agneta, pid: getpid(), dedicated: true, engine: adapters[account] ?? GooseAdapter(executable: URL(filePath: "/usr/bin/false")), startMs: 12.5,
+        return EngineLease(key: key ?? (policy.tools == .appOnly ? EngineKeys.shared(account: account, engine: chosen ?? "goose") : "\(account)/fake-\(n)"), peer: agneta, pid: getpid(), dedicated: true, engine: adapters[account] ?? GooseAdapter(executable: URL(filePath: "/usr/bin/false")), startMs: 12.5,
                            engineInfo: ["name": "fake", "version": "1"])
     }
 
@@ -337,6 +338,18 @@ actor FakeEngines: EngineSource {
         _ = try await stack.session(app, account: "brokered")
         #expect(await stack.engines.askedEngines.last == .some("opencode"))
         await #expect(throws: RPCError.self) { _ = try await stack.session(app, account: "native") }
+
+        // A task from a shared engine named for its engine resumes only without built-in tools, like any shared task:
+        // built-ins there would run outside the broker's confinement.
+        let shared = try await stack.session(app, account: "brokered")
+        _ = try await app.request("session/close", ["sessionId": .string(shared)])
+        do {
+            _ = try await app.request("session/load", ["sessionId": .string(shared), "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)),
+                                                       "mcpServers": [], "_meta": [SessionPolicy.key: ["tools": "workspace", "network": "none", "approval": "never-ask"]]])
+            Issue.record("a shared task resumed with built-in tools")
+        } catch let error as RPCError {
+            #expect(error.message.contains("without built-in tools"), "\(error.message)")
+        }
 
         // Back to the account's own engine: saved, and the next session asks for no other.
         let grant = try #require(saved.withLock { $0.last })
@@ -982,3 +995,13 @@ final class Recorder: @unchecked Sendable {
     func add(_ item: String) { lock.withLock { items.append(item) } }
     var all: [String] { lock.withLock { items } }
 }
+
+/// Every check of a shared engine goes through one test of the key, old key shape included.
+@Suite struct EngineKeyTests {
+    @Test func sharedKeysAreRecognisedInEveryShape() {
+        #expect(EngineKeys.shared(account: "acct", engine: "goose") == "acct/shared-goose")
+        #expect(EngineKeys.isShared("acct/shared-goose") && EngineKeys.isShared("acct/shared-opencode") && EngineKeys.isShared("acct/shared"))
+        #expect(!EngineKeys.isShared("acct/1f0c-shared") && !EngineKeys.isShared("acct/0e9b2c") && !EngineKeys.isShared("shared-acct/abc"))
+    }
+}
+

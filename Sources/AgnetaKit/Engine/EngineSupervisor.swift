@@ -139,9 +139,8 @@ public actor EngineSupervisor: EngineSource {
 
     public func open(account: String, engine chosen: String?, policy: SessionPolicy, mcpPorts: [Int], key resume: String?, session: EngineSessionSpec?) async throws -> EngineLease {
         guard var setup = accounts[account] else { throw RPCError(code: RPCError.invalidParams, message: "Unknown account \(account)") }
-        // An app set to another engine runs that engine with the account's provider; its shared engine is its own.
-        let other = chosen.flatMap { $0 == setup.engine ? nil : $0 }
-        if let other { setup.engine = other }
+        // An app set to another engine runs that engine with the account's provider.
+        if let chosen { setup.engine = chosen }
         guard let adapter = engines[setup.engine] else {
             throw RPCError(code: RPCError.internalError, message: "This Agneta doesn't include the \(setup.engine) engine")
         }
@@ -149,9 +148,12 @@ public actor EngineSupervisor: EngineSource {
         // tools (the sandbox profile is per process), and on the Claude Code route (it reads its working folder).
         // A resumed session returns to its earlier engine home, where the engine keeps its sessions.
         let resumable = resume.flatMap { $0.hasPrefix(account + "/") && !$0.contains("..") ? $0 : nil }
-        let dedicated = resumable.map { !$0.contains("/shared") }
+        let dedicated = resumable.map { !EngineKeys.isShared($0) }
             ?? (adapter.capabilities.processPerSession || policy.tools != .appOnly || setup.provider.kind == .claudeCode)
-        let key = resumable ?? (dedicated ? "\(account)/\(UUID().uuidString.lowercased())" : "\(account)/shared" + (other.map { "-\($0)" } ?? ""))
+        // A shared engine's key names its engine, so an app set to the account's engine and one set to it explicitly
+        // share one process; a task from a shared engine (any key shape) resumes on today's shared engine, in the
+        // same account home.
+        let key = dedicated ? (resumable ?? "\(account)/\(UUID().uuidString.lowercased())") : EngineKeys.shared(account: account, engine: setup.engine)
         if dedicated, resumable != nil {
             // A task's own engine is never shared. A load (or a fork copying a closed task) waits until no other process
             // is on that engine home, whether still stopping or held by another lease (a fork's helper), so one home

@@ -265,7 +265,7 @@ extension Router {
         }
         // A task that ran on the shared engine (no built-in tools) resumes there: built-ins would run unconfined
         // by the broker.
-        if engineKey.hasSuffix("/shared"), plan.policy.tools != .appOnly {
+        if EngineKeys.isShared(engineKey), plan.policy.tools != .appOnly {
             return .failure(PolicyRejection(field: "tools", reason: "this task ran without built-in tools; resume it the same way").rpcError)
         }
         if let refusal = savedStateRefusal(meta, account: plan.account, grant: grant) { return .failure(refusal) }

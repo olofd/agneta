@@ -4,6 +4,19 @@
 // account at sign-out, and swept when nothing refers to them any more.
 import Foundation
 
+/// Lease keys: `<account>/<id>` for a dedicated engine, `<account>/shared-<engine>` for an account's shared one. Every
+/// check of "is this a shared engine" goes through `isShared`, so a new key shape can't slip past one of them.
+public enum EngineKeys {
+    /// The shared engine of an account for one engine: one process per account and engine, never two on one state.
+    public static func shared(account: String, engine: String) -> String { "\(account)/shared-\(engine)" }
+
+    /// Whether a key names a shared engine, including `<account>/shared` from before keys named the engine.
+    public static func isShared(_ key: String) -> Bool {
+        guard let last = key.split(separator: "/").last else { return false }
+        return last == "shared" || last.hasPrefix("shared-")
+    }
+}
+
 public enum EngineHomes {
     public static func folder(root: URL) -> URL { root.appending(path: "Engines", directoryHint: .isDirectory) }
 

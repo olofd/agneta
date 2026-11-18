@@ -138,7 +138,7 @@ public final class DiagnosticsMCP: @unchecked Sendable {
             }
         case "engine_log":
             let task = try resolve(arguments)
-            guard let key = traces.meta(task: task)?["engine"]?["key"]?.stringValue, !key.hasSuffix("/shared"), !key.contains("..") else {
+            guard let key = traces.meta(task: task)?["engine"]?["key"]?.stringValue, !EngineKeys.isShared(key), !key.contains("..") else {
                 return "This task ran on a shared engine; its log is shared with other tasks and not shown here."
             }
             let log = EngineHomes.home(root: root, key: key).appending(path: "engine.log")
