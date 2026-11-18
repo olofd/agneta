@@ -593,6 +593,8 @@ struct SettingsView: View {
     @State private var key = ""
     @State private var keyError: String?
     @State private var openAtLogin = SMAppService.mainApp.status == .enabled
+    /// The provider whose default model and effort are being chosen.
+    @State private var defaultsFor: AccountRecord?
 
     var body: some View {
         NavigationSplitView {
@@ -615,6 +617,7 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .navigationTitle(section.rawValue)
+            .sheet(item: $defaultsFor) { DefaultsSheet(model: model, account: $0) }
         }
         .frame(minWidth: 720, minHeight: 480)
     }
@@ -670,7 +673,7 @@ struct SettingsView: View {
                     Menu {
                         Button("Rename…") { askRename(account) }
                         Button(account.paused ? "Resume" : "Pause") { model.setPaused(account, !account.paused) }
-                        Button("Default Model…") { askDefaultModel(account) }
+                        Button("Model and Effort…") { defaultsFor = account }
                         Divider()
                         Button("Sign Out…", role: .destructive) { confirmSignOut(account) }
                     } label: {
@@ -728,20 +731,6 @@ struct SettingsView: View {
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
         if alert.runModal() == .alertFirstButtonReturn { model.rename(account, to: field.stringValue) }
-    }
-
-    private func askDefaultModel(_ account: AccountRecord) {
-        let alert = NSAlert()
-        alert.messageText = "Default model for \(account.label)"
-        alert.informativeText = "New tasks start with this model unless the app picks one. Leave it empty for \(account.kind.provider)'s default."
-        let field = NSTextField(string: account.model ?? "")
-        field.placeholderString = "\(account.kind.provider)'s default"
-        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        if alert.runModal() == .alertFirstButtonReturn { model.setDefaultModel(account, field.stringValue) }
     }
 
     private func confirmSignOut(_ account: AccountRecord) {
@@ -1071,3 +1060,97 @@ struct HistoryRow: View {
         }
     }
 }
+
+/// A provider's default model and effort for new tasks, picked from what its engine offers (AppModel.Defaults). The
+/// choices are the engine's own, remembered from the last session it opened; with none yet, it's asked once without a
+/// prompt. "The engine's default" leaves the choice to the engine.
+struct DefaultsSheet: View {
+    var model: AppModel
+    var account: AccountRecord
+    @Environment(\.dismiss) private var dismiss
+    @State private var chosen = AppModel.Defaults()
+    @State private var loading = false
+    @State private var problem: String?
+
+    private var engine: String? { model.library.engine(for: account.kind) }
+    private var engineName: String { model.library.name(engine) }
+    private var options: [JSONValue] {
+        _ = model.optionsChanged
+        return engine.map { model.options(account: account.id, engine: $0) } ?? []
+    }
+
+    /// An option's values and names, grouped or not; the chosen value stays listed even if the engine no longer offers it.
+    private func choices(_ category: String, keeping chosen: String?) -> [(value: String, name: String)] {
+        let option = options.first { $0["category"]?.stringValue == category }
+        var list: [(value: String, name: String)] = (option?["options"]?.arrayValue ?? []).flatMap { item -> [(value: String, name: String)] in
+            if let value = item["value"]?.stringValue { return [(value, item["name"]?.stringValue ?? value)] }
+            return (item["options"]?.arrayValue ?? []).compactMap { inner in inner["value"]?.stringValue.map { ($0, inner["name"]?.stringValue ?? $0) } }
+        }
+        if let chosen, !list.contains(where: { $0.value == chosen }) { list.append((chosen, chosen)) }
+        return list
+    }
+
+    var body: some View {
+        let models = choices("model", keeping: chosen.model), efforts = choices("thought_level", keeping: chosen.effort)
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Model and effort for \(account.label)").font(.system(size: 15, weight: .semibold))
+                Text("New tasks on \(account.label) start with these, unless the app picks its own.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            if models.isEmpty && efforts.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Agneta hasn't seen what \(engineName) offers on this provider yet. It can ask now; nothing is sent to the model.")
+                        .font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Button(loading ? "Asking \(engineName)…" : "Show the Choices", action: load).disabled(loading)
+                        if loading { ProgressView().controlSize(.small) }
+                    }
+                    if let problem { Text(problem).font(.system(size: 12)).foregroundStyle(Palette.attention) }
+                }
+            } else {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                    GridRow {
+                        Text("Model").gridColumnAlignment(.trailing)
+                        Picker("Model", selection: $chosen.model) {
+                            Text("\(engineName)'s default").tag(String?.none)
+                            ForEach(models, id: \.value) { Text($0.name).tag(String?.some($0.value)) }
+                        }
+                        .labelsHidden()
+                    }
+                    GridRow {
+                        Text("Effort")
+                        Picker("Effort", selection: $chosen.effort) {
+                            Text("\(engineName)'s default").tag(String?.none)
+                            ForEach(efforts, id: \.value) { Text($0.name).tag(String?.some($0.value)) }
+                        }
+                        .labelsHidden()
+                        .disabled(efforts.isEmpty)
+                    }
+                }
+                .font(.system(size: 13))
+                if efforts.isEmpty { Text("\(engineName) doesn't offer a choice of effort here.").font(.system(size: 11.5)).foregroundStyle(.secondary) }
+            }
+            HStack(spacing: 8) {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Save") { model.setDefaults(account, chosen); dismiss() }
+                    .glassButton(prominent: true).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(22)
+        .frame(width: 420)
+        .tint(Palette.fill)
+        .onAppear { chosen = model.defaults(of: account) }
+    }
+
+    private func load() {
+        loading = true
+        problem = nil
+        _Concurrency.Task {
+            problem = await model.loadOptions(account)
+            loading = false
+        }
+    }
+}
+

@@ -99,6 +99,16 @@ actor FakeEngines: EngineSource {
 
     /// The engine each open was for.
     private(set) var askedEngines: [String] = []
+    /// What the engine was asked to set (`session/set_config_option`): config id = value, in order.
+    private(set) var configSets: [String] = []
+    /// The model and effort it offers, and what's current, as a real engine lists them (Router+Settings).
+    private var current = ["model": "m1", "effort": "low"]
+    func configOptions() -> JSONValue {
+        [["id": "model", "category": "model", "type": "select", "currentValue": .string(current["model"]!),
+          "options": [["value": "m1", "name": "Model One"], ["value": "m2", "name": "Model Two"]]],
+         ["id": "effort", "category": "thought_level", "type": "select", "currentValue": .string(current["effort"]!),
+          "options": [["group": "levels", "options": [["value": "low", "name": "Low"], ["value": "high", "name": "High"]]]]]]
+    }
 
     func open(account: String, engine adapter: any EngineAdapter, policy: SessionPolicy, mcpPorts: [Int], key: String?, session: EngineSessionSpec?) async throws -> EngineLease {
         opened += 1
@@ -132,7 +142,8 @@ actor FakeEngines: EngineSource {
         case "session/new":
             // As real engines may: an update for the new session before the answer that names it.
             try? await engine.notify("session/update", ["sessionId": .string("e\(n)"), "update": ["sessionUpdate": "available_commands_update", "availableCommands": [["name": "review"]]]])
-            return .success(["sessionId": .string("e\(n)"), "models": ["currentModelId": "fake-model"], "configOptions": []])
+            current = ["model": "m1", "effort": "low"]
+            return .success(["sessionId": .string("e\(n)"), "models": ["currentModelId": "fake-model"], "configOptions": configOptions()])
         case "_goose/unstable/session/system-prompt/set":
             instructions.append(params ?? .null)
             return .success([:])
@@ -186,7 +197,13 @@ actor FakeEngines: EngineSource {
                 await update(["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "hi"]])
             }
             return .success(["stopReason": cancelled ? "cancelled" : "end_turn", "usage": ["inputTokens": 5, "outputTokens": 1]])
-        case "session/set_mode", "session/set_config_option":
+        case "session/set_config_option":
+            if let id = params?["configId"]?.stringValue, let value = params?["value"]?.stringValue {
+                configSets.append("\(id)=\(value)")
+                current[id] = value
+            }
+            return .success(["configOptions": configOptions()])
+        case "session/set_mode":
             return .success([:])
         case "session/load":
             try? await Task.sleep(for: loadDelay)
@@ -495,6 +512,37 @@ actor FakeEngines: EngineSource {
 
         try await Task.sleep(for: .milliseconds(800))
         #expect(await refused(first)) // never paired: closed once its time was up
+    }
+
+    /// A provider's default model and effort are set on each new session, by category, before the app sees it, and
+    /// the app sees them as current; a value the engine doesn't offer is left alone, other providers aren't touched,
+    /// and asking an engine what it offers sends no prompt and reports what it saw.
+    @Test func aProvidersDefaultsApplyToNewSessions() async throws {
+        let stack = try await Stack.start(port: 47694)
+        defer { stack.stop() }
+        let seen = SeenOptions()
+        await stack.router.observe { if case .settingsSeen(let account, _, let options) = $0 { Task { await seen.add(account, options) } } }
+        await stack.router.setDefaults(account: "brokered", model: "m2", effort: "high")
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Defaults")
+        let result = try await app.request("session/new", ["cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
+                                                           "_meta": [SessionPolicy.key: ["tools": "app-only", "network": "none", "approval": "never-ask"],
+                                                                     "agneta": ["account": "brokered"]]])
+        #expect(await stack.engines.configSets == ["model=m2", "effort=high"])
+        let current = result["configOptions"]?.arrayValue?.map { $0["currentValue"]?.stringValue ?? "" }
+        #expect(current == ["m2", "high"])
+
+        // Nothing the engine doesn't offer, and nothing already current, is set.
+        await stack.router.setDefaults(account: "brokered", model: "gone", effort: "low")
+        _ = try await stack.session(app, account: "brokered")
+        #expect(await stack.engines.configSets == ["model=m2", "effort=high"])
+
+        let probed = try await stack.router.probeSettings(account: "brokered", engine: "goose")
+        #expect(probed.arrayValue?.count == 2)
+        try await Task.sleep(for: .milliseconds(50))
+        let reported = await seen.accounts
+        #expect(reported.count >= 3 && reported.allSatisfy { $0 == "brokered" })
     }
 
     /// While the engine a session needs is downloading, the app hears that, with the progress, instead of that
@@ -1221,6 +1269,12 @@ actor SavedGrants {
         }
     }
     func revoking(_ router: Router, _ id: String) { revoke = (router, id) }
+}
+
+/// What the router reported engines offering, by account.
+actor SeenOptions {
+    private(set) var accounts: [String] = []
+    func add(_ account: String, _ options: JSONValue) { accounts.append(account) }
 }
 
 /// Engines the router asked the host for.

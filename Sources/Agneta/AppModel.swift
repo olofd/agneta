@@ -227,6 +227,55 @@ final class AppModel {
         save(accounts[index])
     }
 
+    // MARK: Default model and effort
+
+    /// A provider's default model and effort for new tasks, chosen in Settings from what its engine offers; nil
+    /// leaves it to the engine. Applied when a session opens, the same way on every engine (Router+Settings).
+    struct Defaults: Codable, Equatable { var model: String?; var effort: String? }
+
+    func defaults(of account: AccountRecord) -> Defaults {
+        guard let text = try? database?.setting("defaults.\(account.id)"), let data = text.data(using: .utf8) else { return Defaults() }
+        return (try? JSONDecoder().decode(Defaults.self, from: data)) ?? Defaults()
+    }
+
+    func setDefaults(_ account: AccountRecord, _ chosen: Defaults) {
+        let text = (try? JSONEncoder().encode(chosen)).map { String(decoding: $0, as: UTF8.self) }
+        try? database?.set(chosen == Defaults() ? nil : text, for: "defaults.\(account.id)")
+        log.log("defaults-set", ["account": .string(account.id), "model": .bool(chosen.model != nil), "effort": .bool(chosen.effort != nil)])
+        guard let runtime else { return }
+        _Concurrency.Task { await runtime.router.setDefaults(account: account.id, model: chosen.model, effort: chosen.effort) }
+    }
+
+    /// The config options an engine last offered on an account (its models and efforts), kept between launches so
+    /// Settings can list them before any task runs again.
+    func options(account: String, engine: String) -> [JSONValue] {
+        guard let text = try? database?.setting("options.\(account).\(engine)"), let data = text.data(using: .utf8),
+              let value = try? JSONCoding.decode(data) else { return [] }
+        return value.arrayValue ?? []
+    }
+
+    private func remember(_ options: JSONValue, account: String, engine: String) {
+        guard options.arrayValue?.isEmpty == false, let data = try? JSONCoding.encode(options) else { return }
+        try? database?.set(String(decoding: data, as: UTF8.self), for: "options.\(account).\(engine)")
+        optionsChanged += 1
+    }
+
+    /// Bumped when an engine's options arrive, so Settings lists them.
+    var optionsChanged = 0
+
+    /// Asks the provider's default engine what it offers, without a prompt; nil when it answered, else why not.
+    func loadOptions(_ account: AccountRecord) async -> String? {
+        guard let runtime, let engine = library.engine(for: account.kind) else { return "No engine to ask" }
+        do {
+            _ = try await runtime.router.probeSettings(account: account.id, engine: engine)
+            return nil
+        } catch let error as RPCError {
+            return error.message
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     private func save(_ account: AccountRecord) {
         try? database?.save(account)
         _Concurrency.Task { await configure(account) }
@@ -266,6 +315,8 @@ final class AppModel {
         // task picks its engine (Router.runner(account:engine:)).
         await runtime.serve(account: account.id, label: account.label, provider: provider, runner: runner, kind: account.kind,
                             billing: billing, paused: account.paused)
+        let wanted = defaults(of: account)
+        await runtime.router.setDefaults(account: account.id, model: wanted.model, effort: wanted.effort)
         // Its default engine downloads now if it isn't here.
         library.refresh()
     }
@@ -329,6 +380,8 @@ final class AppModel {
         case .engineWanted(let engine):
             // A task asked for an engine that downloads first: it's told to try again shortly while this runs.
             library.download(engine, reason: "task")
+        case .settingsSeen(let account, let engine, let options):
+            remember(options, account: account, engine: engine)
         }
     }
 

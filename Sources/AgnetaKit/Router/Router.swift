@@ -92,6 +92,9 @@ public actor Router {
         case pairingWithdrawn(UUID)
         /// A task asked for an engine that isn't here yet but can be downloaded (or failed to): the host downloads it.
         case engineWanted(String)
+        /// What an engine offered on an account when a session opened (its config options: models, efforts), for
+        /// Settings to list (Router+Settings).
+        case settingsSeen(account: String, engine: String, options: JSONValue)
     }
 
     /// How an account's engine runs tools. Goose's own tools go through Agneta's broker;
@@ -182,6 +185,8 @@ public actor Router {
     var catalog = EngineCatalog()
     /// Paused accounts start nothing new (see `setPaused`).
     var paused: Set<String> = []
+    /// Each account's default model and effort, by config option category (Router+Settings).
+    var settingDefaults: [String: [String: String]] = [:]
     var apps: [UUID: App] = [:]
     var tokens: [String: Grant] = [:] // token hash → grant
     var infos: [String: SessionInfo] = [:]

@@ -177,6 +177,7 @@ A session's settings are the engine's own ACP config options, in `session/new`'s
 
 - Change one with `session/set_config_option {"sessionId", "configId", "value"}`, before the first prompt or between turns. The answer is the options as they are now: another model may offer other efforts, or none.
 - To let people choose before they type, open the session first (it starts the engine but calls no model). Choices may come in groups; a current value may be missing from the choices (Goose reports its configured model without always listing it).
+- **The user's defaults come first.** Where the user chose a default model or effort for the provider (Settings → Providers → Model and Effort), a new session already has it: `configOptions` in the result shows it as current. A loaded or forked session keeps what it had. The app can still set its own.
 - Changing provider or engine means a new session.
 
 ## Turns
