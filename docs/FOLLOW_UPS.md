@@ -88,11 +88,13 @@ Now every quit goes through `applicationShouldTerminate` (`AgnetaApp.swift`). It
 
 > "The development and the production version didn't have an app icon. We have an icon in the menu bar that's two rings interconnected. Use that and create an app icon … We like a Nordic theme, a frosty kind of theme." (2026-11-18)
 
-The icon ([packaging/AppIcon.png](../packaging/AppIcon.png)):
-- **Rings:** the menu bar mark's two linked rings, in the mark's own geometry, interlocked like chain links (the left ring passes over at the top, the right one at the bottom). They're frosted ice: white where the light falls, a cold blue below, with a thin bright edge.
-- **Background:** a deep fjord-blue winter sky, with a faint green-cyan aurora high up, a fine snow grain and light along the top edge.
-- **Shape:** macOS's grid, an 824-point body with continuous corners and the standard shadow. macOS 26 shows it as is, without a fallback frame.
-- **Small sizes:** at 32 pixels and below the rings are bolder and the fine detail drops out, so it still reads at Finder list size.
-- **How it's made:** drawn by `scripts/dev/app-icon.swift`, so the design is code to tune. `scripts/dev/app-icon` redraws every size into `packaging/AppIcon.icns`, which `build-app` bundles. A first, paler variant (fjord-blue rings on frosted ice) was set aside: it read clinical and faded into light Docks.
+The icon ([packaging/AppIcon.png](../packaging/AppIcon.png)) is flat, as the maintainer asked after a first, shaded version:
+- **Rings:** the menu bar mark's two linked rings, in the mark's own geometry, in ice white (`#EEF6FA`).
+- **Background:** fjord blue (`#1F4B66`), a deeper shade of Agneta's accent. Two colours, no gradients or texture.
+- **Crossings:** in flat colour a crossing only reads with a gap, so each over-and-under crossing is cut as one (the left ring passes over at the top, the right one at the bottom), and the rings read as chain links.
+- **Shape:** macOS's grid, an 824-point body with continuous corners and the standard soft shadow. Finder shows it as designed.
+- **Small sizes:** at 32 pixels and below the rings are bolder.
+- **How it's made:** drawn by `scripts/dev/app-icon.swift`, so the colours and proportions are code to tune. `scripts/dev/app-icon` redraws every size into `packaging/AppIcon.icns`, which `build-app` bundles.
+- **Set aside:** a frosted-ice version with an aurora sky, and a pale one (blue rings on frosted ice). Both are in the history of `scripts/dev/app-icon.swift`.
 - **Later:** a Liquid Glass version for macOS 26 (Icon Composer, layered, so the system can light and tint it).
 
