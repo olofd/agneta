@@ -46,21 +46,29 @@ public struct SandboxProfile: Sendable {
         self.remotePorts = remotePorts
     }
 
-    static func quote(_ url: URL) -> String {
-        let path = url.realFileURL.path(percentEncoded: false).trimmingSuffix("/")
+    /// Paths checked when the session was authorized (already resolved, inside the grant, clear of protected places):
+    /// written exactly as checked, never resolved again. Resolving here would let a folder swapped for a symlink
+    /// since then widen the profile to wherever the link points, past every check. The sandbox matches real paths,
+    /// so a path that has become a symlink grants nothing beyond its original folder.
+    public var verbatim: Set<String> = []
+
+    /// A path for a rule: verbatim when it was checked, else resolved (Agneta's own folders, system locations).
+    func quote(_ url: URL) -> String {
+        let given = url.path(percentEncoded: false).trimmingSuffix("/")
+        let path = verbatim.contains(given) ? given : url.realFileURL.path(percentEncoded: false).trimmingSuffix("/")
         let escaped = path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         return "\"\(escaped)\""
     }
 
     public func render() -> String {
-        let writableRules = writable.map { "(subpath \(Self.quote($0)))" }
+        let writableRules = writable.map { "(subpath \(quote($0)))" }
         // Reading a folder's contents needs it to be allowed; listing the way there needs its ancestors.
         let allowedReads = (writable + readable + readOnly + Self.systemReadable)
-            .flatMap { ["(require-not (subpath \(Self.quote($0))))", "(require-not (path-ancestors \(Self.quote($0))))"] }
+            .flatMap { ["(require-not (subpath \(quote($0))))", "(require-not (path-ancestors \(quote($0))))"] }
             .joined(separator: " ")
         // Programs run only from where reading is allowed: one in a folder it can't read (another project's tools,
         // the user's own scripts) stays out of reach too (measured: exec didn't need read access).
-        let allowedExec = (writable + readable + readOnly + Self.systemReadable).map { "(require-not (subpath \(Self.quote($0))))" }.joined(separator: " ")
+        let allowedExec = (writable + readable + readOnly + Self.systemReadable).map { "(require-not (subpath \(quote($0))))" }.joined(separator: " ")
         var rules = [
             "(version 1)",
             "(allow default)",
@@ -71,13 +79,13 @@ public struct SandboxProfile: Sendable {
             "(deny process-exec* (require-all \(allowedExec)))",
             ]
         for folder in readOnly {
-            rules.append("(deny file-write* (subpath \(Self.quote(folder))))")
+            rules.append("(deny file-write* (subpath \(quote(folder))))")
         }
         for folder in denied {
-            rules.append("(deny file-read* file-write* (subpath \(Self.quote(folder))))")
+            rules.append("(deny file-read* file-write* (subpath \(quote(folder))))")
         }
         for folder in exceptions {
-            rules.append("(allow file-read* file-write* (subpath \(Self.quote(folder))))")
+            rules.append("(allow file-read* file-write* (subpath \(quote(folder))))")
         }
         rules.append("(allow file-read-metadata)")
         // Network: deny, then allow only what the session needs.
@@ -85,7 +93,7 @@ public struct SandboxProfile: Sendable {
         if allLoopback { rules.append("(allow network-outbound (remote tcp \"localhost:*\"))") }
         for port in loopbackPorts { rules.append("(allow network-outbound (remote tcp \"localhost:\(port)\"))") }
         for port in remotePorts { rules.append("(allow network-outbound (remote tcp \"*:\(port)\"))") }
-        for socket in unixSockets { rules.append("(allow network-outbound (remote unix-socket (path-literal \(Self.quote(socket)))))") }
+        for socket in unixSockets { rules.append("(allow network-outbound (remote unix-socket (path-literal \(quote(socket)))))") }
         if ownLoopbackServer {
             rules.append("(allow network-bind (local tcp \"localhost:*\"))")
             rules.append("(allow network-inbound (local tcp \"localhost:*\"))")

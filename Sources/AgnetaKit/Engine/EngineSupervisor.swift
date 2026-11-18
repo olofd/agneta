@@ -223,6 +223,7 @@ public actor EngineSupervisor: EngineSource {
                                             + [configuration.shellTool.deletingLastPathComponent()] + launch.readable,
                                          loopbackPorts: ports, remotePorts: [443])
             profile.readOnly = policy.readOnly
+            profile.verbatim = policy.checkedPaths
             profile.ownLoopbackServer = launch.ownLoopbackServer
             profile.exceptions = launch.exceptions
             if dedicated, let broker { profile.unixSockets = [URL(filePath: broker.socketPath)] }

@@ -40,6 +40,25 @@ import Testing
         #expect((try? SessionPolicy.parse(["limits": ["maxTurns": .double(12), "maxSeconds": 600, "maxCostUSD": .double(0.5)]], cwd: workspace, context: context))?.limits.maxTurns == 12)
     }
 
+    /// A folder checked when the session was authorized and swapped for a symlink before the sandbox profile is written
+    /// stays the folder that was checked: the profile never follows the new link past the checks.
+    @Test func aFolderSwappedForASymlinkAfterTheCheckGainsNothing() throws {
+        let notes = URL(filePath: workspace).appending(path: "notes", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
+        let secret = root.appending(path: "home/Library/Containers/com.example.app/Data", directoryHint: .isDirectory)
+        let policy = try SessionPolicy.parse(["tools": "workspace", "writable": [.string(notes.path(percentEncoded: false))]], cwd: workspace, context: context)
+        try FileManager.default.removeItem(at: notes)
+        try FileManager.default.createSymbolicLink(at: notes, withDestinationURL: secret)
+        for profile in [policy.toolProfile(scratch: root.appending(path: "scratch")).render(), {
+            var engine = SandboxProfile(kind: .engine, writable: [policy.workspace] + policy.writable, denied: [])
+            engine.verbatim = policy.checkedPaths
+            return engine.render()
+        }()] {
+            #expect(!profile.contains(secret.realFileURL.path(percentEncoded: false)), "the profile followed the swapped-in link")
+            #expect(profile.contains("\"\(policy.writable[0].path(percentEncoded: false).trimmingSuffix("/"))\""))
+        }
+    }
+
     @Test func projectPackageRequirements() throws {
         // Read-only folders inside the workspace, and the one port and Unix socket its tools may reach.
         let tests = home.appending(path: "Documents/Example/Project.example/Workspace/tests").path(percentEncoded: false)

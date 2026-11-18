@@ -56,6 +56,9 @@ public struct SessionPolicy: Sendable, Equatable {
     public var toolSockets: [URL] = []
     public var approval: Approval
     public var limits: Limits
+    /// The policy's folders as they were checked when it was parsed (resolved, refused if protected), recorded then:
+    /// sandbox profiles write these without resolving them again. Empty for a policy built in code.
+    public var checkedPaths: Set<String> = []
 
     public static let key = "agneta/policy@1"
 
@@ -101,13 +104,21 @@ extension SessionPolicy {
                                      loopbackPorts: toolPorts)
         profile.readOnly = readOnly
         profile.unixSockets = toolSockets
+        profile.verbatim = checkedPaths
         return profile
+    }
+
+    func recordingChecked() -> SessionPolicy {
+        var policy = self
+        // As resolved, nothing more: standardizedFileURL would turn /private/var into /var, which the sandbox never matches.
+        policy.checkedPaths = Set(([workspace] + readable + writable + readOnly + denied).map { $0.path(percentEncoded: false).trimmingSuffix("/") })
+        return policy
     }
 
     /// Parses and validates the extension from `session/new` params.
     public static func parse(_ value: JSONValue?, cwd: String, context: PolicyContext) throws -> SessionPolicy {
         let workspace = try canonical(cwd, field: "cwd", context: context)
-        guard let value else { return .fallback(workspace: workspace) }
+        guard let value else { return SessionPolicy.fallback(workspace: workspace).recordingChecked() }
         guard let fields = value.objectValue else { throw PolicyRejection(field: "policy", reason: "must be an object") }
         // A field Agneta doesn't know may be a rule the app expects enforced: refuse it.
         if let unknown = Set(fields.keys).subtracting(knownFields).sorted().first {
@@ -200,7 +211,7 @@ extension SessionPolicy {
         policy.readOnly = readOnly
         policy.toolPorts = toolPorts
         policy.toolSockets = toolSockets
-        return policy
+        return policy.recordingChecked()
     }
 
     static let knownFields: Set<String> = ["tools", "network", "approval", "limits", "readable", "writable", "readOnly", "denied", "toolPorts", "toolSockets"]
