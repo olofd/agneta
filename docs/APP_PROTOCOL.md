@@ -12,7 +12,7 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
 - **Browsers can't connect:** a WebSocket upgrade with an `Origin` header is refused, so a web page can't drive Agneta.
 - **Sandboxed (Mac App Store) apps** need `com.apple.security.network.client` to connect to Agneta, and `com.apple.security.network.server` as well if they serve their own MCP server on loopback.
 - **Folders for sandboxed apps.** A folder inside an app container (`~/Library/Containers`, `~/Library/Group Containers`) can't be a session's folder: Agneta keeps apps' private storage out of reach. Ask in the pairing scope for folders the user chose (an open panel or a security-scoped bookmark gives the real path, outside the container), or let tasks work in the workspace Agneta makes for the app and hand results back through the app's MCP tools: the sandbox keeps the app itself out of that workspace.
-- **When Agneta isn't running,** the connection is refused. Tell the user to open Agneta; don't start it yourself.
+- **When Agneta isn't running,** the connection is refused. Ask the user whether to open it, and when they say yes, open `agneta://open` (`agneta-dev://open` for a development build), wait for its port, and connect. Never open it without asking: quitting Agneta is how the user stops all of it. Opening the URL only launches Agneta; nothing in the URL is acted on.
 
 ## Pairing, once per app
 

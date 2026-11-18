@@ -32,6 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// `agneta://` (`agneta-dev://` for a development build): an app opened Agneta because its user asked to. Opening it
+    /// is all a URL does: any page or program can open one, so nothing in it is acted on.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        model.log.log("opened-by-url", ["scheme": .string(urls.first?.scheme ?? "")])
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Every quit comes here (the menu, Sparkle, a logout, AppleScript). The engines stop off the main actor, and
         // the answer goes back as a run-loop block: AppKit waits for it in a nested loop that may sit inside a
