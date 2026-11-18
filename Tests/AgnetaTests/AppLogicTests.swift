@@ -154,6 +154,23 @@ import Testing
         for _ in 0..<100 where !condition() { try await Task.sleep(for: .milliseconds(50)) }
     }
 
+    /// A sign-in's install (Claude Code's adapter, for a Claude plan) is a download like any other while it runs, so the
+    /// sign-in window and the panel show its progress; once installed it leaves no card, and installing again
+    /// downloads nothing.
+    @Test func aSignInsInstallIsShownAsADownload() async throws {
+        let (library, root) = try library()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let going = Task { try await library.install("opencode") }
+        try await waitUntil { library.downloads["opencode"] != nil }
+        #expect(library.downloads["opencode"]?.total == 100)
+        _ = try await going.value
+        #expect(library.downloads.isEmpty && state(library) == "ready")
+        _ = try await library.install("opencode")
+        #expect(library.downloads.isEmpty)
+        let log = try String(contentsOf: root.appending(path: "agneta.jsonl"), encoding: .utf8)
+        #expect(log.components(separatedBy: "\"reason\":\"sign-in\"").count == 2) // one download, not two
+    }
+
     /// An engine nobody needs isn't fetched; choosing it as a provider's default fetches it, and it becomes ready.
     @Test func choosingADefaultDownloadsIt() async throws {
         let (library, root) = try library()

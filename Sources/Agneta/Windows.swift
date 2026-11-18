@@ -263,7 +263,17 @@ struct SignInView: View {
                         }
                         .padding(.horizontal, 30)
                     } else if !signIn.finished {
-                        ProgressView().controlSize(.small)
+                        // Claude Code's adapter downloading first: how far along, as the panel shows it.
+                        if signIn.kind == .claude, let download = model.library.downloads["claude-code"], download.problem == nil {
+                            VStack(spacing: 6) {
+                                if let fraction = download.fraction { ProgressView(value: fraction) } else { ProgressView().progressViewStyle(.linear) }
+                                Text(download.amount).font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
+                            }
+                            .tint(Palette.fill)
+                            .frame(width: 240)
+                        } else {
+                            ProgressView().controlSize(.small)
+                        }
                     }
                 }
             } actions: {

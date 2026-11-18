@@ -379,15 +379,34 @@ final class EngineLibrary {
     }
 
     /// Installs what an engine downloads now, and waits for it: a Claude plan's sign-in needs Claude Code's adapter
-    /// before it can finish. Shares a download already going.
+    /// before it can finish. Shares a download already going. While bytes arrive it's a download like any other
+    /// (`downloads`), so the sign-in window, the panel and Settings all show how far along it is.
     func install(_ engine: String, progress: SignInProgress? = nil) async throws -> URL {
         guard let download = sources.first(where: { $0.id == engine })?.download(self) else {
             throw SignInError.provider("\(name(engine)) isn't pinned in this build")
         }
-        let program = try await download.installer.install(download.name, executable: download.executable, progress: progress)
-        checked[engine] = .some(program)
-        refresh()
-        return program
+        let tracked = download.asset != nil && downloads[engine] == nil
+            && download.installer.installed(download.name, executable: download.executable) == nil
+        if tracked, let asset = download.asset {
+            downloads[engine] = EngineDownload(engine: engine, title: download.title, total: asset.size.map(Int64.init))
+            log.log("engine-download", ["engine": .string(engine), "version": .string(asset.version), "reason": "sign-in"])
+            refresh()
+        }
+        let report: @Sendable (Int64, Int64?) -> Void = { received, total in
+            _Concurrency.Task { @MainActor [weak self] in self?.progressed(engine, received: received, total: total) }
+        }
+        let received = tracked ? report : nil
+        do {
+            let program = try await download.installer.install(download.name, executable: download.executable, progress: progress, received: received)
+            if tracked { downloads[engine] = nil }
+            checked[engine] = .some(program)
+            refresh()
+            return program
+        } catch {
+            // The sign-in window says what went wrong; no card is left behind for a download it started.
+            if tracked { downloads[engine] = nil; refresh() }
+            throw error
+        }
     }
 
     /// Puts a failed download away (its card's close button); the engine downloads again when it's next needed.
