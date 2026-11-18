@@ -23,7 +23,7 @@ public struct CodexAdapter: EngineAdapter {
     public var id: String { "codex" }
     public var displayName: String { "Codex" }
     public var capabilities: EngineCapabilities {
-        EngineCapabilities(steer: true, fork: false, instructionsBetweenTurns: false, processPerSession: true, reportsCost: false)
+        EngineCapabilities(steer: true, fork: false, instructionsBetweenTurns: false, processPerSession: true, reportsCost: false, runsOwnTools: true)
     }
 
     /// The account's Codex home: its sign-in and sessions.

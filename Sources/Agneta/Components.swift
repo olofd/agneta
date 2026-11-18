@@ -270,7 +270,7 @@ struct SectionTitle: View {
 
 /// A download an engine needs: how far along, or why it failed with a way to try again.
 struct DownloadStatus: View {
-    var download: AppModel.EngineDownload
+    var download: EngineDownload
     var retry: () -> Void
 
     var body: some View {

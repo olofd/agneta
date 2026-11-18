@@ -361,12 +361,10 @@ public actor Router {
 
     static let engineDownloading: Int64 = -32015
 
-    /// Engines that run their own tools; Agneta answers their permission requests from the policy.    /// Engines that run their own tools; Agneta answers their permission requests from the policy.
-    static let nativeEngines: Set<String> = ["claude-code", "codex"]
-
-    /// Whether a session's tools are run by the engine itself (Agneta gating each call) or brokered by Agneta.
+    /// Whether a session's tools are run by the engine itself (Agneta gating each call from its permission requests) or
+    /// brokered by Agneta: the account's provider may say (a Claude plan runs Claude Code), else the engine does.
     func runner(account: String, engine: (any EngineAdapter)?) -> ToolRunner {
-        accounts[account]?.runner == .native || engine.map { Self.nativeEngines.contains($0.id) } == true ? .native : .brokered
+        accounts[account]?.runner == .native || engine?.capabilities.runsOwnTools == true ? .native : .brokered
     }
 
     /// Pausing an account starts nothing more on it: no session opens (new, load or fork) and no turn begins,

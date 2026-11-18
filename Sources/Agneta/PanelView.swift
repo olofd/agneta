@@ -18,7 +18,7 @@ struct PanelView: View {
                 VStack(spacing: 12) {
                     if let problem = model.attentionMessage { attention(problem) }
                     if let update = updateMessage { notice(update) }
-                    ForEach(model.downloads.values.sorted { $0.engine < $1.engine }, id: \.engine) { download in downloadCard(download) }
+                    ForEach(model.library.downloads.values.sorted { $0.engine < $1.engine }, id: \.engine) { download in downloadCard(download) }
                     if !model.tasks.isEmpty { tasksCard }
                     accountsCard
                 }
@@ -114,7 +114,7 @@ struct PanelView: View {
     // MARK: Downloads
 
     /// What an engine needs, downloading (with its progress) or failed (with Try Again), whatever started it.
-    private func downloadCard(_ download: AppModel.EngineDownload) -> some View {
+    private func downloadCard(_ download: EngineDownload) -> some View {
         let failed = download.problem != nil
         return HStack(spacing: 12) {
             Image(systemName: failed ? "exclamationmark.circle.fill" : "arrow.down.circle.fill").font(.system(size: 20))
@@ -130,8 +130,8 @@ struct PanelView: View {
             }
             Spacer(minLength: 6)
             if failed {
-                Button("Try Again") { model.retryDownload(download.engine) }.glassButton(prominent: true).tint(Palette.accent).controlSize(.small)
-                Button { model.dismissDownload(download.engine) } label: { Image(systemName: "xmark") }
+                Button("Try Again") { model.library.download(download.engine, reason: "retry") }.glassButton(prominent: true).tint(Palette.accent).controlSize(.small)
+                Button { model.library.putAway(download.engine) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless).foregroundStyle(.secondary).help("Hide; it downloads again when it's needed")
                     .accessibilityLabel("Hide")
             }
@@ -181,7 +181,7 @@ struct PanelView: View {
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
             ForEach(model.accounts) { account in
-                AccountRow(account: account, engine: model.engineName(model.engine(for: account.kind)), needsSignIn: model.needsSignIn.contains(account.id),
+                AccountRow(account: account, engine: model.library.name(model.library.engine(for: account.kind)), needsSignIn: model.needsSignIn.contains(account.id),
                            limitedUntil: model.limited[account.id], planUsage: model.planUsage[account.id]) {
                     open { WindowPresenter.shared.showSettings(model, section: .providers) }
                 }

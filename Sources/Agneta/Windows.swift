@@ -88,7 +88,7 @@ final class WindowPresenter {
     /// The approval window stops floating, so a sign-in or Settings opened from it comes in front of it.
     func lowerApproval() { windows["approval"]?.level = .normal }
     func showSettings(_ model: AppModel, section: SettingsView.Pane = .providers) {
-        model.refreshInstalls()
+        model.library.refreshInstalls()
         close("settings")
         show("settings", title: "Agneta Settings", size: NSSize(width: 780, height: 540), glass: false, resizable: true) { SettingsView(model: model, section: section) }
     }
@@ -389,7 +389,7 @@ struct ApprovalView: View {
                                                  engines: Binding(get: { model.approval?.engines ?? [] }, set: { model.approval?.engines = $0 }))
                                     .padding(16).frame(width: 320)
                             }
-                        if model.allowance(approval.engines) != .all {
+                        if model.library.allowance(approval.engines) != .all {
                             Text(approval.engines.count == 1 ? "1 engine" : "\(approval.engines.count) engines").foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -478,7 +478,7 @@ struct EngineAccessList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("The app chooses an engine for each task from the ones ticked here.").font(.system(size: 11.5)).foregroundStyle(.secondary)
-            ForEach(model.allEngines, id: \.id) { engine in
+            ForEach(model.library.all, id: \.id) { engine in
                 Toggle(isOn: Binding(get: { engines.contains(engine.id) }, set: { on in
                     if on { engines.insert(engine.id) } else { engines.remove(engine.id) }
                 })) {
@@ -502,7 +502,7 @@ struct EngineAccessList: View {
         switch engine.state {
         case .ready: nil
         case .downloading: "downloading"
-        case .downloadable: model.downloadNote(for: engine.id)
+        case .downloadable: model.library.downloadNote(for: engine.id)
         case .failed: "download failed"
         case .unavailable(let reason): reason
         }
@@ -517,7 +517,7 @@ struct AppAccess: View {
     private var accounts: Set<String> { Set(grant.accounts) }
     private var engines: Set<String> {
         switch grant.engines {
-        case .all: Set(model.catalog.entries.keys)
+        case .all: Set(model.library.catalog.entries.keys)
         case .only(let some): some
         }
     }
@@ -642,14 +642,14 @@ struct SettingsView: View {
                         Text(account.label).font(.system(size: 13, weight: .semibold))
                         Text([account.kind.plan, account.email].compactMap { $0 }.joined(separator: " · "))
                             .font(.system(size: 12)).foregroundStyle(.secondary)
-                        if let engine = model.engine(for: account.kind), let download = model.downloads[engine] {
-                            DownloadStatus(download: download) { model.retryDownload(download.engine) }.padding(.top, 3)
+                        if let engine = model.library.engine(for: account.kind), let download = model.library.downloads[engine] {
+                            DownloadStatus(download: download) { model.library.download(download.engine, reason: "retry") }.padding(.top, 3)
                         }
                     }
                     Spacer()
                     if account.paused { StatusPill(text: "Paused", color: .secondary) }
                     // Its provider's default engine (Settings → Engines), for reference.
-                    let engine = model.engineName(model.engine(for: account.kind))
+                    let engine = model.library.name(model.library.engine(for: account.kind))
                     Text(engine).font(.system(size: 12)).foregroundStyle(.secondary)
                         .help("Tasks run on \(engine) unless the app picks another; the default is set in Engines")
                     Menu {
@@ -745,14 +745,14 @@ struct SettingsView: View {
     @ViewBuilder private var enginesPane: some View {
         Section {
             ForEach(AccountKind.allCases, id: \.self) { kind in
-                let options = model.engines(for: kind)
+                let options = model.library.engines(for: kind)
                 if options.count > 1 {
-                    Picker(Self.providerName(kind), selection: Binding(get: { model.chosenEngine(for: kind) ?? "" }, set: { model.select($0, for: kind) })) {
-                        ForEach(options, id: \.id) { engine in Text(model.engineChoice(engine, for: kind)).tag(engine.id) }
+                    Picker(Self.providerName(kind), selection: Binding(get: { model.library.chosenEngine(for: kind) ?? "" }, set: { model.library.select($0, for: kind) })) {
+                        ForEach(options, id: \.id) { engine in Text(model.library.choice(engine, for: kind)).tag(engine.id) }
                     }
                 } else {
                     LabeledContent(Self.providerName(kind)) {
-                        Text(model.engine(for: kind).map { model.engineName($0) } ?? (kind == .chatGPT ? "Needs Codex" : "Needs Claude Code")).foregroundStyle(.secondary)
+                        Text(model.library.engine(for: kind).map { model.library.name($0) } ?? (kind == .chatGPT ? "Needs Codex" : "Needs Claude Code")).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -762,13 +762,10 @@ struct SettingsView: View {
             Text("Apps choose the engine for each task; these are used when they don't. A ChatGPT plan works only with Codex; a Claude plan with Claude Code, or Goose running that Claude Code.")
         }
         Section {
-            engineRow("goose", detail: "Built in · \(lockedVersion("goose"))")
-            engineRow("opencode", detail: "OpenCode \(lockedVersion("opencode")) · " + (model.needsDownload("opencode") ? "\(model.downloadNote(for: "opencode") ?? "downloads") when first used" : "downloaded"))
-            engineRow("claude-code", detail: "Your Claude Code, through claude-agent-acp \(lockedVersion("runtimes", runtime: "claude-agent-acp"))") {
-                cliPicker("Claude Code install", name: "claude", installs: model.claudeCodeInstalls, missing: "Install the Claude app or Claude Code to use it.")
-            }
-            engineRow("codex", detail: "Your Codex, through codex-acp on Node.js · " + (model.download(for: "codex") == nil ? "built in" : model.needsDownload("codex") ? "\(model.downloadNote(for: "codex") ?? "downloads") when first used" : "downloaded")) {
-                cliPicker("Codex install", name: "codex", installs: model.codexInstalls, missing: "Install Codex to use it.")
+            // Each engine as its source describes it (EngineSource.all), with the install it runs through, if any.
+            ForEach(model.library.sources) { source in
+                engineRow(source)
+                if let program = source.program { programPicker(program) }
             }
         } header: {
             Text("Engines")
@@ -779,20 +776,20 @@ struct SettingsView: View {
 
     /// One engine: its name, where it comes from, which providers it serves, its download if one is going, and any
     /// extra controls (the install it uses).
-    @ViewBuilder private func engineRow(_ id: String, detail: String, @ViewBuilder extra: () -> some View = { EmptyView() }) -> some View {
+    @ViewBuilder private func engineRow(_ source: EngineSource) -> some View {
+        let id = source.id
         VStack(alignment: .leading, spacing: 2) {
-            Text(model.engineName(id)).font(.system(size: 13, weight: .semibold))
-            Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+            Text(source.name).font(.system(size: 13, weight: .semibold))
+            Text(source.origin(model.library)).font(.system(size: 12)).foregroundStyle(.secondary)
             Text("Serves " + AccountKind.allCases.filter { ProviderEngines.supported(by: $0).contains(id) }.map { Self.providerName($0) }.joined(separator: ", "))
                 .font(.system(size: 11)).foregroundStyle(.tertiary)
-            if let download = model.downloads[id] {
-                DownloadStatus(download: download) { model.retryDownload(id) }.padding(.top, 3)
-            } else if case .unavailable(let reason)? = model.catalog.entries[id]?.state {
+            if let download = model.library.downloads[id] {
+                DownloadStatus(download: download) { model.library.download(id, reason: "retry") }.padding(.top, 3)
+            } else if case .unavailable(let reason)? = model.library.catalog.entries[id]?.state {
                 Text(reason).font(.system(size: 11.5)).foregroundStyle(Palette.attention)
             }
         }
         .padding(.vertical, 2)
-        extra()
     }
 
     static func providerName(_ kind: AccountKind) -> String {
@@ -958,14 +955,16 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder private func cliPicker(_ title: String, name: String, installs: [InstalledCLI], missing: String) -> some View {
+    /// Which of the user's installs an engine runs through, when they have more than one.
+    @ViewBuilder private func programPicker(_ program: EngineSource.UserProgram) -> some View {
+        let installs = model.library.installs[program.key] ?? []
         if installs.isEmpty {
-            LabeledContent(title) { Text(missing).foregroundStyle(.secondary) }
+            LabeledContent(program.title) { Text(program.missing).foregroundStyle(.secondary) }
         } else if installs.count == 1 {
-            LabeledContent(title, value: installs[0].label)
+            LabeledContent(program.title, value: installs[0].label)
         } else {
-            Picker(title, selection: Binding(get: { model.chosen(name, from: installs)?.id ?? "" },
-                                             set: { id in if let install = installs.first(where: { $0.id == id }) { model.choose(name, install: install) } })) {
+            Picker(program.title, selection: Binding(get: { model.library.program(program.key)?.id ?? "" },
+                                                     set: { id in if let install = installs.first(where: { $0.id == id }) { model.library.choose(program.key, install: install) } })) {
                 ForEach(installs) { install in Text(install.label).tag(install.id).selectionDisabled(!install.supported) }
             }
         }
@@ -984,13 +983,6 @@ struct SettingsView: View {
 
     private func confirmReset() { model.confirmReset() }
 
-    /// A version from a bundled lock file (`goose.lock`: top-level `version`; `runtimes.lock`: per runtime).
-    private func lockedVersion(_ file: String, runtime: String? = nil) -> String {
-        guard let url = Bundle.main.url(forResource: file, withExtension: "lock"), let data = try? Data(contentsOf: url),
-              let lock = try? JSONCoding.decode(data) else { return "–" }
-        return (runtime.map { lock[$0]?["version"] } ?? lock["version"])??.stringValue ?? "–"
-    }
-
     @ViewBuilder private var about: some View {
         Section {
             HStack(spacing: 16) {
@@ -1005,9 +997,9 @@ struct SettingsView: View {
             .padding(.vertical, 6)
         }
         Section {
-            LabeledContent("Agent engines", value: "Goose \(lockedVersion("goose")); OpenCode \(lockedVersion("opencode")), downloaded when an account uses it")
-            LabeledContent("Codex adapter", value: "codex-acp \(lockedVersion("codex", runtime: "adapter")) on Node.js \(lockedVersion("codex", runtime: "node"))")
-            LabeledContent("Claude Code adapter", value: "claude-agent-acp \(lockedVersion("runtimes", runtime: "claude-agent-acp")), downloaded on first use")
+            LabeledContent("Agent engines", value: "Goose \(model.library.lockedVersion("goose")); OpenCode \(model.library.lockedVersion("opencode")), downloaded when first needed")
+            LabeledContent("Codex adapter", value: "codex-acp \(model.library.lockedVersion("codex", entry: "adapter")) on Node.js \(model.library.lockedVersion("codex", entry: "node"))")
+            LabeledContent("Claude Code adapter", value: "claude-agent-acp \(model.library.lockedVersion("runtimes", entry: "claude-agent-acp")), downloaded on first use")
             LabeledContent("Apps connect at", value: "127.0.0.1:\(model.port)")
         } header: {
             Text("Components")

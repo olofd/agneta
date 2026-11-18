@@ -27,13 +27,17 @@ public struct EngineCapabilities: Sendable, Equatable {
     public var processPerSession: Bool
     /// Each model call's cost is known, so a cost limit can be enforced.
     public var reportsCost: Bool
+    /// The engine runs its built-in tools itself, inside its sandbox, rather than through Agneta's broker: Agneta
+    /// checks each call from its permission requests instead (Router.runner).
+    public var runsOwnTools: Bool
 
-    public init(steer: Bool, fork: Bool, instructionsBetweenTurns: Bool, processPerSession: Bool, reportsCost: Bool = true) {
+    public init(steer: Bool, fork: Bool, instructionsBetweenTurns: Bool, processPerSession: Bool, reportsCost: Bool = true, runsOwnTools: Bool = false) {
         self.steer = steer
         self.fork = fork
         self.instructionsBetweenTurns = instructionsBetweenTurns
         self.processPerSession = processPerSession
         self.reportsCost = reportsCost
+        self.runsOwnTools = runsOwnTools
     }
 }
 

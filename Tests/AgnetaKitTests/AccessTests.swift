@@ -50,4 +50,33 @@ import Testing
         #expect(EngineAllowance(json: "all") == .all)
         #expect(EngineAllowance.only(["goose", "codex"]).json == ["codex", "goose"])
     }
+
+    /// The table and the adapters agree: every pair ProviderEngines allows starts, and every other pair is refused by
+    /// the adapter itself, so a change to one can't leave the other behind.
+    @Test func theTableIsWhatTheAdaptersAccept() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "agneta-pairs-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let none = Self.none
+        let adapters: [any EngineAdapter] = [GooseAdapter(executable: none), OpenCodeAdapter(executable: none),
+                                             ClaudeCodeAdapter(executable: none, cli: InstalledCLI(path: none, version: "2.1.0", source: "path")),
+                                             CodexAdapter(node: none, script: none, cli: InstalledCLI(path: none, version: "0.166.0", source: "path"))]
+        #expect(Set(adapters.map(\.id)) == Set(AccountKind.allCases.flatMap(ProviderEngines.supported(by:))))
+        for kind in AccountKind.allCases {
+            let home = root.appending(path: kind.rawValue, directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            let provider = switch kind {
+            case .chatGPT: ProviderSetup(kind: .chatGPT, subscription: SubscriptionAccount(route: .chatGPT, home: home))
+            case .claude: ProviderSetup(kind: .claudeCode, subscription: SubscriptionAccount(route: .claudeCode, home: home, adapter: none, claudeCode: none))
+            case .openAIKey: ProviderSetup(kind: .openAI, apiKey: "k")
+            case .anthropicKey: ProviderSetup(kind: .anthropic, apiKey: "k")
+            }
+            for adapter in adapters {
+                let engineHome = home.appending(path: adapter.id, directoryHint: .isDirectory)
+                try FileManager.default.createDirectory(at: engineHome, withIntermediateDirectories: true)
+                let context = EngineLaunchContext(home: engineHome, provider: provider, shell: nil, session: nil, loopbackPorts: [])
+                let starts = (try? adapter.launch(context)) != nil
+                #expect(starts == ProviderEngines.supported(by: kind).contains(adapter.id), "\(kind.rawValue) on \(adapter.id)")
+            }
+        }
+    }
 }
