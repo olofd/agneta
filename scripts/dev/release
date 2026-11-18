@@ -75,6 +75,11 @@ if [[ "$engines" == all ]]; then
   mkdir -p "$stage/codex-runtime"
   cp "Engines/bin/$arch/node-runtime/bin/node" "$stage/codex-runtime/node"
   cp -R "Engines/bin/$arch/codex-acp" "$stage/codex-runtime/codex-acp"
+  # What the runtime is made of, before signing (a signature differs every build): its version names it, so a release
+  # that changes any of it (Node, codex-acp, a dependency, Node's entitlements) is downloaded again, and one that
+  # doesn't isn't.
+  node_entitlements=$(shasum -a 256 "$entitlements/node.plist" | cut -d' ' -f1)
+  contents=$( (cd "$stage/codex-runtime" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256; echo "$node_entitlements") | shasum -a 256 | cut -c1-12)
   sign --entitlements "$entitlements/node.plist" "$stage/codex-runtime/node"
   runtime_zip="$out/Agneta-codex-runtime-$AGNETA_VERSION-$arch.zip"
   (cd "$stage" && /usr/bin/ditto -c -k --keepParent codex-runtime "$OLDPWD/$runtime_zip")
@@ -84,7 +89,7 @@ if [[ "$engines" == all ]]; then
   [[ "$(env -i HOME="$check" "$check/codex-runtime/node" -e 'console.log([1, 2, 3].map(n => n * 2).join(","))')" == 2,4,6 ]] || { echo "Codex's runtime: Node doesn't run" >&2; exit 1; }
   env -i HOME="$check" "$check/codex-runtime/node" --check "$check/codex-runtime/codex-acp/dist/index.js" || { echo "Codex's runtime: codex-acp doesn't parse" >&2; exit 1; }
   rm -rf "$stage" "$check"
-  runtime_version="node-$(/usr/bin/plutil -extract node.version raw -o - Engines/codex.lock)-codex-acp-$(/usr/bin/plutil -extract adapter.version raw -o - Engines/codex.lock)"
+  runtime_version="node-$(/usr/bin/plutil -extract node.version raw -o - Engines/codex.lock)-codex-acp-$(/usr/bin/plutil -extract adapter.version raw -o - Engines/codex.lock)-$contents"
   runtime_sha=$(shasum -a 256 "$runtime_zip" | cut -d' ' -f1)
   runtime_size=$(stat -f %z "$runtime_zip")
   cat > "$app/Contents/Resources/codex-runtime.lock" <<LOCK
