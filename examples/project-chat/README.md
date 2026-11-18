@@ -16,6 +16,8 @@ npm start
 
 To open it from Finder or the Dock like any app, run `npm run bundle` once and open `build/Project Chat.app` (keep that in the Dock, not the Electron icon `npm start` shows, which opens bare Electron once Project Chat has quit). Closing its window leaves it running; its Dock icon opens it again.
 
+Project Chat opens its session as soon as it's connected, so the **Model** and **Effort** pickers show the engine's own choices before the first message (found by their ACP categories, `model` and `thought_level`; Effort only where the model has one). Changing either applies between turns and carries over to the next chat.
+
 When Agneta isn't running, Project Chat asks whether to open it (**Open Agneta Dev**), opens it through `agneta-dev://open` (`agneta://open` for a release), waits for it, and connects. It never opens Agneta without asking.
 
 Project Chat connects to dev builds on port `47331`. For a release build, use `AGNETA_PORT=47321 npm start` (or `AGNETA_PORT=47321 npm run bundle`, which the bundle keeps). For an [isolated dev instance](../../README.md#build-and-run), use the port you gave Agneta, for example `AGNETA_PORT=47341 npm start`.

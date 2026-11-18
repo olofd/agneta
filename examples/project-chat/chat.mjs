@@ -35,6 +35,33 @@ export function memoryTokens() {
   };
 }
 
+/**
+ * The engine's model and reasoning-effort settings, from the session's `configOptions` (ACP): found by their standard
+ * category (`model`, `thought_level`) rather than each engine's own ids, the model also by the id `model`. Choices
+ * may come in groups; they're flattened. Either is absent when the engine doesn't offer it.
+ */
+export function settings(configOptions) {
+  const list = Array.isArray(configOptions) ? configOptions : [];
+  const model = list.find((option) => option.category === 'model') ?? list.find((option) => option.id === 'model');
+  const effort = list.find((option) => option.category === 'thought_level');
+  const choices = (option) => {
+    const list = (option?.options ?? [])
+      .flatMap((entry) => Array.isArray(entry.options) ? entry.options : [entry])
+      .filter((entry) => typeof entry?.value === 'string')
+      .map((entry) => ({ value: entry.value, name: entry.name ?? entry.value }));
+    // The current one may not be among them (Goose reports its configured model without listing it): shown first.
+    const current = option?.currentValue;
+    return typeof current === 'string' && current && !list.some((entry) => entry.value === current) ? [{ value: current, name: current }, ...list] : list;
+  };
+  return {
+    ids: { model: model?.id, effort: effort?.id },
+    view: { models: choices(model), model: model?.currentValue ?? '', efforts: choices(effort), effort: effort?.currentValue ?? '' }
+  };
+}
+
+/** No session, so no settings to show. */
+const noSettings = { models: [], model: '', efforts: [], effort: '' };
+
 /** Waits until something listens on the port (Agneta, just opened), up to `seconds`. */
 async function listening(port, seconds) {
   for (const started = Date.now(); Date.now() - started < seconds * 1000; ) {
@@ -62,6 +89,13 @@ export class ProjectChat extends EventEmitter {
   #access;
   #tokens;
   #openAgneta;
+  /** The session being opened ahead of the first message, so the model and effort can be chosen before it. */
+  #opening = null;
+  /** Counts chats: a session that finishes opening after its chat was closed or switched is closed, not used. */
+  #chat = 0;
+  /** The engine's ids for the model and effort settings, and what the user picked, kept for the next chat. */
+  #settingIds = {};
+  #wanted = {};
   /** Connected with a kept token: when the connection drops, a quiet reconnect finds out whether access was removed. */
   #remembered = false;
 
@@ -84,6 +118,11 @@ export class ProjectChat extends EventEmitter {
       providers: [],
       account: '',
       engine: '',
+      // The engine's models and reasoning efforts, once the chat's session is open, and the current ones.
+      models: [],
+      model: '',
+      efforts: [],
+      effort: '',
       messages: [],
       draft: null,
       notes: [],
@@ -166,6 +205,7 @@ export class ProjectChat extends EventEmitter {
       this.#setAccess(access);
       if (!this.view.account) throw new Error('No active provider was granted. Connect one in Agneta and pair again.');
       this.#update({ phase: 'ready', status: 'Ready', code: '' });
+      this.#prepare();
     } catch (error) {
       if (this.#connection !== connection) return;
       this.disconnect(describeError(error));
@@ -219,11 +259,50 @@ export class ProjectChat extends EventEmitter {
     if (!provider) return;
     const chosen = provider.engines.some((entry) => entry.id === engine) ? engine : provider.engines[0]?.id ?? '';
     if (provider.id === this.view.account && chosen === this.view.engine) return;
-    if (this.#session) await this.newChat();
     this.#update({ account: provider.id, engine: chosen });
+    await this.newChat();
+  }
+
+  /** Opens the chat's session ahead of its first message, in the background, so its settings can be shown. */
+  #prepare() {
+    if (this.#session || this.#opening || this.view.phase !== 'ready') return;
+    const connection = this.#connection, chat = this.#chat;
+    this.#opening = this.#openSession(connection)
+      .catch((error) => {
+        if (this.#connection === connection && this.#chat === chat) this.#update({ status: describeError(error) });
+      })
+      .finally(() => { if (this.#chat === chat) this.#opening = null; });
+  }
+
+  /**
+   * Sets the model or reasoning effort (`session/set_config_option`) between turns; the engine answers with its
+   * options as they are now (another model may offer other efforts). Kept for the next chat.
+   */
+  async configure({ model, effort } = {}) {
+    if (this.view.phase !== 'ready' || !this.#session) return;
+    const connection = this.#connection, session = this.#session;
+    for (const [key, value] of [['model', model], ['effort', effort]]) {
+      if (typeof value !== 'string' || !this.#settingIds[key] || value === this.view[key]) continue;
+      this.#wanted[key] = value;
+      try {
+        const result = await connection.request('session/set_config_option', { sessionId: session, configId: this.#settingIds[key], value });
+        if (this.#session !== session) return;
+        if (Array.isArray(result?.configOptions)) this.#showSettings(result.configOptions); else this.#update({ [key]: value });
+      } catch (error) {
+        if (this.#session === session) this.#update({ status: describeError(error) });
+        return;
+      }
+    }
+  }
+
+  #showSettings(configOptions) {
+    const { ids, view } = settings(configOptions);
+    this.#settingIds = ids;
+    this.#update(view);
   }
 
   async #openSession(connection) {
+    const chat = this.#chat;
     const tools = await startProjectTools({
       readBrief: () => {
         if (this.#tools === tools && this.view.phase === 'running') this.#message('tool', 'Read the project brief');
@@ -266,7 +345,19 @@ export class ProjectChat extends EventEmitter {
     }
     if (this.#connection !== connection) return;
     if (typeof opened?.sessionId !== 'string') throw new Error('Agneta returned no session ID.');
+    if (this.#chat !== chat) {
+      // Its chat was closed or switched meanwhile: not this chat's session.
+      tools.close();
+      connection.request('session/close', { sessionId: opened.sessionId }, 8000).catch(() => {});
+      return;
+    }
     this.#session = opened.sessionId;
+    this.#showSettings(opened.configOptions);
+    // What the user picked in an earlier chat, where this engine offers it.
+    const keep = Object.fromEntries(['model', 'effort'].filter((key) =>
+      this.#wanted[key] && this.view[`${key === 'model' ? 'models' : 'efforts'}`].some((entry) => entry.value === this.#wanted[key])
+    ).map((key) => [key, this.#wanted[key]]));
+    if (Object.keys(keep).length) await this.configure(keep);
   }
 
   async send(text) {
@@ -279,7 +370,9 @@ export class ProjectChat extends EventEmitter {
     this.#message('user', text, { phase: 'opening', status: 'Starting the turn…', usage: null });
     try {
       if (!session) {
-        await this.#openSession(connection);
+        // The session opening ahead, or a new one if that failed.
+        await this.#opening;
+        if (!this.#session) await this.#openSession(connection);
         session = this.#session;
         if (this.#connection !== connection || !session) return;
       }
@@ -326,7 +419,8 @@ export class ProjectChat extends EventEmitter {
     }
     if (this.#connection !== connection) return;
     this.#dropSession();
-    this.#update({ phase: 'ready', status: 'Ready', messages: [], draft: null, usage: null });
+    this.#update({ phase: 'ready', status: 'Ready', messages: [], draft: null, usage: null, ...noSettings });
+    this.#prepare();
   }
 
   disconnect(status = 'Disconnected. Connect to start a new chat.') {
@@ -334,10 +428,13 @@ export class ProjectChat extends EventEmitter {
     this.#connection = undefined;
     this.#dropSession();
     connection?.close();
-    this.#update({ phase: 'disconnected', status, code: '', providers: [], account: '', engine: '' });
+    this.#update({ phase: 'disconnected', status, code: '', providers: [], account: '', engine: '', ...noSettings });
   }
 
   #dropSession() {
+    this.#chat += 1;
+    this.#opening = null;
+    this.#settingIds = {};
     this.#session = undefined;
     this.#reply = null;
     this.#tools?.close();

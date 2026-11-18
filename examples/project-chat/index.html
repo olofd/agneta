@@ -44,6 +44,10 @@
           <button class="quiet"
             data-prompt="Read the project brief, then draft a short release announcement and propose it as a note.">Draft a release announcement</button>
         </div>
+        <div class="composer-options">
+          <label class="picker" id="model-picker" hidden>Model <select id="model"></select></label>
+          <label class="picker" id="effort-picker" hidden>Effort <select id="effort"></select></label>
+        </div>
         <form id="form">
           <label class="sr-only" for="prompt">Message</label>
           <input id="prompt" maxlength="4000" placeholder="Ask about the project…" autocomplete="off">

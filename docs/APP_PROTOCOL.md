@@ -165,7 +165,16 @@ Features differ by engine on purpose. Each engine's extras are offered where it 
 
 ## Model and thinking
 
-`session/set_config_option {"sessionId", "configId", "value"}` with the engine's own option ids (for example `model` or `thinking_effort`), before the first prompt or between turns. Changing account means a new session.
+A session's settings are the engine's own ACP config options, in `session/new`'s result (`configOptions`), each with its choices and current value. Find them by their standard category rather than an engine's own ids, which differ:
+
+| Category | What | Seen |
+| --- | --- | --- |
+| `model` | The model (on Goose and OpenCode also the id `model`) | Codex, Goose, OpenCode |
+| `thought_level` | Reasoning effort | Codex; Goose and OpenCode for models that have it |
+
+- Change one with `session/set_config_option {"sessionId", "configId", "value"}`, before the first prompt or between turns. The answer is the options as they are now: another model may offer other efforts, or none.
+- To let people choose before they type, open the session first (it starts the engine but calls no model). Choices may come in groups; a current value may be missing from the choices (Goose reports its configured model without always listing it).
+- Changing provider or engine means a new session.
 
 ## Turns
 

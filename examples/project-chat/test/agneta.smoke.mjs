@@ -115,6 +115,10 @@ test('Project Chat pairs, reads a brief, stages a draft, and stops a turn', { ti
   assert.deepEqual(chat.view.providers.map((provider) => provider.id), ['dev']);
   assert.equal(chat.view.account, 'dev');
   assert.equal(chat.view.engine, 'goose');
+  // The session opens ahead of the first message, so the engine's models can be chosen first: Goose's, gpt-4o current.
+  await waitFor(() => chat.view.models.length > 0, 'Goose\'s models never showed.', children[0]);
+  assert.equal(chat.view.model, 'gpt-4o');
+  assert.ok(chat.view.models.some(({ value }) => value === 'gpt-4o'));
 
   // The fake provider recognizes CALL so this checks the wire flow without
   // depending on a live model's tool choices.

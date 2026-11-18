@@ -27,6 +27,12 @@ function render(state) {
   element('provider-picker').hidden = !connected || state.providers.length === 0;
   element('engine-picker').hidden = !connected || !provider;
   element('provider').disabled = element('engine').disabled = !canSend;
+  // The engine's own models and reasoning efforts, once the chat's session is open; changeable between turns.
+  fill(element('model'), state.models.map((entry) => [entry.value, entry.name]), state.model);
+  fill(element('effort'), state.efforts.map((entry) => [entry.value, entry.name]), state.effort);
+  element('model-picker').hidden = !connected || state.models.length === 0;
+  element('effort-picker').hidden = !connected || state.efforts.length === 0;
+  element('model').disabled = element('effort').disabled = !canSend;
   if (status.textContent !== state.status) status.textContent = state.status;
   element('pairing').hidden = !state.code;
   element('pairing-code').textContent = state.code;
@@ -93,6 +99,8 @@ connectionButton.addEventListener('click', () => run(phase === 'disconnected' ? 
 element('new-chat').addEventListener('click', () => run(chat.newChat()));
 element('provider').addEventListener('change', (event) => run(chat.choose({ account: event.target.value })));
 element('engine').addEventListener('change', (event) => run(chat.choose({ account: element('provider').value, engine: event.target.value })));
+element('model').addEventListener('change', (event) => run(chat.configure({ model: event.target.value })));
+element('effort').addEventListener('change', (event) => run(chat.configure({ effort: event.target.value })));
 element('stop').addEventListener('click', () => run(chat.stop()));
 element('save').addEventListener('click', () => run(chat.save()));
 element('dismiss').addEventListener('click', () => run(chat.dismiss()));

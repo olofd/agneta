@@ -105,6 +105,7 @@ function setUp() {
     stop: () => chat.stop(),
     newChat: () => chat.newChat(),
     choose: (value) => chat.choose(value),
+    configure: (value) => chat.configure(value),
     disconnect: () => chat.disconnect(),
     save: () => chat.review(true),
     dismiss: () => chat.review(false)
