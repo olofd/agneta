@@ -141,7 +141,9 @@ extension RouterIntegrationTests {
             try await app.pairAndInitialize("Reader")
             let session = try await app.newSession(cwd: try stack.workspace("Reader"), tools: "app-only")
             try await Task.sleep(for: .milliseconds(500))
-            let result = try await within(.seconds(5)) { try await app.prompt(session, "hello") }
+            // A hang never ends; a busy engine does. The shared engine is still working through the 3 MB reply, which
+            // on GitHub's 2-core Intel runner took the other turn past 5 s (2026-11-18), so the bound is generous.
+            let result = try await within(.seconds(15)) { try await app.prompt(session, "hello") }
             #expect(result["stopReason"]?.stringValue == "end_turn")
             #expect(app.text(session) == "Hello from the fake model.")
             #expect(await stack.runtime.router.sessionCount == 2) // the stalled app's session waits for it
