@@ -12,3 +12,4 @@ xcuserdata/
 !.env.example
 Engines/bin/
 .vscode/
+site/_build/

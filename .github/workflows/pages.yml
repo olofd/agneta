@@ -1,0 +1,68 @@
+# Builds agneta.dahlbom.io from the repository's own documents (site/build.py) and publishes it with GitHub Pages
+# (site/README.md). A failed link or an unknown Markdown construct fails the build, and nothing is published.
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - docs/**
+      - README.md
+      - CHANGELOG.md
+      - packaging/release-page.md
+      - examples/project-chat/preview.png
+      - .github/workflows/pages.yml
+  # A published release changes the download links. Its Homebrew run starts when it's published; once that run
+  # ends, the site is rebuilt from main. (A workflow_run event runs on main, which Pages may deploy from; the
+  # release's own event runs on its tag, which the github-pages environment refuses.)
+  workflow_run:
+    workflows: [Homebrew and update feeds]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - name: Read the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$RUNNER_TEMP/release.json" \
+            || { echo "::warning::No published release: the page links the releases list"; : > "$RUNNER_TEMP/release.json"; }
+
+      - name: Build
+        run: python3 site/build.py --out "$RUNNER_TEMP/site" --release "$RUNNER_TEMP/release.json" --commit "$(git rev-parse HEAD)"
+
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+
+  deploy:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -84,7 +84,7 @@ An app must be paired before anything else. `agneta/pair` opens Agneta's approva
 
 ### The session policy
 
-Each session's policy is parsed strictly: an unknown field, a malformed limit, or a folder that would reach somewhere protected is refused, never ignored ([APP_PROTOCOL.md](APP_PROTOCOL.md#agnetapolicy1)). Paths are resolved through symlinks before checking. Protected places are the root and the home folder (and anything containing them), other apps' containers and group containers, Agneta's own data, `~/Library/LaunchAgents`, `~/Library/Keychains` and `~/.ssh`.
+Each session's policy is parsed strictly: an unknown field, a malformed limit, or a folder that would reach somewhere protected is refused, never ignored ([APP_PROTOCOL.md](APP_PROTOCOL.md#agnetapolicy)). Paths are resolved through symlinks before checking. Protected places are the root and the home folder (and anything containing them), other apps' containers and group containers, Agneta's own data, `~/Library/LaunchAgents`, `~/Library/Keychains` and `~/.ssh`.
 
 ### Sandbox profiles
 

@@ -1,0 +1,36 @@
+name: Bug report
+description: Agneta itself misbehaves, its windows, settings, pairing or the app protocol. For a task that fails on one engine or provider, use "Engine or provider problem".
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A security problem (a sandbox escape, an app reaching more than it was allowed, a leaked credential) goes through [private reporting](https://github.com/olofd/agneta/security/advisories/new), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. For the app protocol, the JSON-RPC messages involved, with tokens and bearers removed.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Agneta version
+      description: In Settings → About (it names the build and commit too), or the commit you built.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac
+      placeholder: "macOS 26.1, Apple silicon"
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Agneta's log
+      description: The relevant lines of `agneta-diag log --errors`. It holds events, ids and timing, never content or keys.
+      render: text

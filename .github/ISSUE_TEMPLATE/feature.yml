@@ -1,0 +1,16 @@
+name: Feature request
+description: Something Agneta should do, or do differently. Describe the problem before the solution.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you, or your app, can't do today, and why it matters.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would solve it
+      description: Optional. For anything beyond a bug fix, agree on the problem here before writing the change (CONTRIBUTING.md).

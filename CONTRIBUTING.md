@@ -16,6 +16,11 @@ swift build && swift test    # everything, with fake models; no accounts needed
 - `swift test --filter <Suite>` runs one suite. `RouterContractTests` covers the router's decisions against a scripted fake engine, `AppScenarioTests` the whole app flow against the real Goose, and `ToolBrokerTests` the sandbox.
 - `AGNETA_REAL_PROBE=1 AGNETA_REAL_PROBE_HOME=<folder> swift test --filter realProbe` runs a short real round on your own accounts. The folder holds the probe's sign-ins, laid out like Agneta's data: sign in once with `swift run agneta-signin claude --home <folder>/Accounts/claude` (and `codex --home <folder>/Accounts/chatgpt`). It never reads the app's own data. It's optional, and it uses your plan's limits or credit.
 - Run test instances of the app with their own `AGNETA_HOME` and `AGNETA_PORT`, so nothing touches your own accounts.
+- `python3 site/build.py` builds the website from the docs and fails on a broken link between them ([site/README.md](site/README.md)). Run it when you change a document.
+
+## Reporting a bug
+
+Open an issue with the bug template, or the engine or provider template when a task fails on one of them: the Agneta version (Settings → About), your macOS and Mac, and for a task a redacted trace (`agneta-diag export <task> --out trace.jsonl --redact-content`). Security problems go privately, as [SECURITY.md](SECURITY.md) says, and conduct is covered by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## What a change should come with
 

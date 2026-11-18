@@ -1,0 +1,60 @@
+name: Engine or provider problem
+description: A task fails, hangs or behaves oddly on one engine (Codex, Claude Code, Goose, OpenCode) or one provider (a ChatGPT or Claude plan, an API key).
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Agneta runs your own Codex and Claude Code and pinned Goose and OpenCode releases ([Engines](https://agneta.dahlbom.io/docs/engines/)). A fault in an engine that Agneta's sandbox contains belongs upstream as well; say here if you reported it there.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What the task was asked to do, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options:
+        - ChatGPT plan
+        - Claude plan
+        - OpenAI API key
+        - Anthropic API key
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      options:
+        - Codex
+        - Claude Code
+        - Goose
+        - OpenCode
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Agneta (Settings → About), the engine's version (Settings → Engines), and macOS.
+      placeholder: "Agneta 0.3.0, Codex 0.166.0, macOS 26.1 on Apple silicon"
+    validations:
+      required: true
+  - type: dropdown
+    id: policy
+    attributes:
+      label: The session's tools policy
+      options:
+        - app-only
+        - read
+        - workspace
+        - Don't know
+  - type: textarea
+    id: trace
+    attributes:
+      label: Redacted trace
+      description: |
+        `agneta-diag export <task> --out trace.jsonl --redact-content`, or Export Diagnostics in the task's details with "Leave out content, names and paths" on. It keeps structure, timing and token counts and removes content, names and paths ([what it keeps](https://agneta.dahlbom.io/docs/privacy/#sharing-a-trace)). Look it over, then attach the file.

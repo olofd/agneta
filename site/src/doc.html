@@ -1,0 +1,16 @@
+<div class="docs">
+  <nav class="docs-nav" aria-label="Documentation">
+    <details class="docs-nav-compact">
+      <summary><span class="label">Documentation</span><span class="current">{{current}}</span></summary>
+      <div class="docs-nav-list">{{nav}}</div>
+    </details>
+    <div class="docs-nav-wide docs-nav-list">{{nav}}</div>
+  </nav>
+  <main id="main" class="doc-main">
+    <article class="prose">
+{{article}}
+    </article>
+    <p class="source">This page is <a href="{{source_url}}" rel="noopener">{{source_label}}</a> in the repository, on <code>main</code>. <a href="{{history_url}}" rel="noopener">History</a></p>
+  </main>
+  {{toc}}
+</div>
