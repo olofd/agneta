@@ -75,8 +75,13 @@ public struct RuntimeInstaller: Sendable {
         defer { try? FileManager.default.removeItem(at: staging) }
         let unzip = try ChildProcess(executable: "/usr/bin/ditto", arguments: ["-x", "-k", download.path(percentEncoded: false), staging.path(percentEncoded: false)], environment: [:])
         guard await unzip.waitForExit() == 0 else { throw SignInError.provider("couldn't unpack \(name)") }
-        guard let found = FileManager.default.enumerator(at: staging, includingPropertiesForKeys: nil)?
-            .compactMap({ $0 as? URL }).first(where: { $0.lastPathComponent == program }) else {
+        // The program is the executable file of that name nearest the archive's top: a folder of the same name deeper
+        // down (codex-acp's dependencies have one called "node") isn't it.
+        guard let found = FileManager.default.enumerator(at: staging, includingPropertiesForKeys: [.isRegularFileKey])?
+            .compactMap({ $0 as? URL })
+            .filter({ $0.lastPathComponent == program && (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+                      && FileManager.default.isExecutableFile(atPath: $0.path(percentEncoded: false)) })
+            .min(by: { $0.pathComponents.count < $1.pathComponents.count }) else {
             throw SignInError.provider("\(name) wasn't in its archive")
         }
         // The markers go in before the folder is published: archive and content hashes, checked on every later use.

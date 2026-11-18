@@ -88,6 +88,9 @@ import Testing
         try "#!/bin/sh\necho ok\n".write(to: payload.appending(path: "node"), atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: payload.appending(path: "node").path(percentEncoded: false))
         try "// adapter".write(to: payload.appending(path: "codex-acp/dist/index.js"), atomically: true, encoding: .utf8)
+        // A folder deeper down with the program's name, as codex-acp's dependencies have: not the program.
+        try FileManager.default.createDirectory(at: payload.appending(path: "codex-acp/node_modules/a/node"), withIntermediateDirectories: true)
+        try "x".write(to: payload.appending(path: "codex-acp/node_modules/a/node/index.js"), atomically: true, encoding: .utf8)
         let zip = root.appending(path: "runtime.zip")
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/ditto")
