@@ -1,0 +1,56 @@
+name: Something doesn't work
+description: Agneta, an engine or the app protocol behaves differently than it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A security problem (a sandbox escape, an app reaching more than it was allowed, a leaked credential) goes through [private reporting](https://github.com/olofd/agneta/security/advisories/new), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Agneta version
+      description: In Settings → About (it names the build and commit too), or the commit you built.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac
+      placeholder: "macOS 26.1, Apple silicon"
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options:
+        - Not about a task
+        - ChatGPT plan
+        - Claude plan
+        - OpenAI API key
+        - Anthropic API key
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      options:
+        - Not about a task
+        - Codex
+        - Claude Code
+        - Goose
+        - OpenCode
+  - type: textarea
+    id: trace
+    attributes:
+      label: Trace or log
+      description: |
+        For a task, a redacted trace helps most: `agneta-diag export <task> --out trace.jsonl --redact-content`, or Export Diagnostics in the task's details with "Leave out content, names and paths" on. It keeps structure and timing and removes content, names and paths ([what it keeps](https://agneta.dahlbom.io/docs/privacy/#sharing-a-trace)). Look it over before you attach it. For Agneta itself, `agneta-diag log --errors`.

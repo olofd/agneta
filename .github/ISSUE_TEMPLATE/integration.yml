@@ -1,0 +1,22 @@
+name: Integrating an app
+description: A question or problem with the app protocol, pairing, policies, tools or traces.
+labels: [question]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you're trying to do
+      description: What your app does with Agneta, and where it stops working or the docs stop answering.
+    validations:
+      required: true
+  - type: textarea
+    id: exchange
+    attributes:
+      label: The exchange
+      description: The JSON-RPC messages involved, with tokens and bearers removed. Agneta's error codes and `data.agneta` fields help most.
+      render: json
+  - type: input
+    id: version
+    attributes:
+      label: Agneta version, engine and app platform
+      placeholder: "0.3.0, Claude Code, a sandboxed Swift app"

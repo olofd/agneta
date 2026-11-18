@@ -1,6 +1,24 @@
-# Agneta
+<p align="center">
+  <img src="packaging/AppIcon.png" width="128" height="128" alt="">
+</p>
 
-**Give Mac apps an AI agent you control.**
+<h1 align="center">Agneta</h1>
+
+<p align="center"><strong>Give Mac apps an AI agent you control.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/olofd/agneta/releases/latest"><img src="https://img.shields.io/github/v/release/olofd/agneta?color=1f5a7a" alt="Latest release"></a>
+  <a href="https://github.com/olofd/agneta/actions/workflows/ci.yml"><img src="https://github.com/olofd/agneta/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="docs/CONTAINMENT.md#supported-macos-versions"><img src="https://img.shields.io/badge/macOS-14%2B%20%C2%B7%20Apple%20silicon%20and%20Intel-1f5a7a" alt="macOS 14 or later, Apple silicon and Intel"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/olofd/agneta?color=1f5a7a" alt="Apache License 2.0"></a>
+</p>
+
+<p align="center">
+  <a href="https://agneta.dahlbom.io">Website</a> ·
+  <a href="https://github.com/olofd/agneta/releases/latest">Download</a> ·
+  <a href="https://agneta.dahlbom.io/docs/">Documentation</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
 Agneta is an open-source macOS menu bar app. You connect the AI you already pay for once: a ChatGPT or Claude plan, or an OpenAI or Anthropic API key. Then you decide which apps may use them. When an allowed app needs an AI agent to do some work, it asks Agneta. Agneta runs the agent on your Mac, in a sandbox, on your account, and shows you every task with a stop button.
 
@@ -17,6 +35,8 @@ For app developers, this means agent features without running an agent loop, bui
     <img src="docs/images/approval.png" width="400" alt="An app asks to use Agneta; the user ticks which providers it may use, with engines under Advanced">
   </picture>
 </p>
+
+**[Download Agneta](https://github.com/olofd/agneta/releases/latest)** for Apple silicon or Intel, or run `brew install olofd/tap/agneta`. It needs macOS 14 or later. More on [the website](https://agneta.dahlbom.io).
 
 > **Status: early.** Agneta runs real tasks on real ChatGPT and Claude plans. Before you rely on it, know that:
 > - the app protocol may still change before 1.0;
@@ -113,6 +133,12 @@ AGNETA_REAL_PROBE=1 AGNETA_REAL_PROBE_HOME=<folder> swift test --filter realProb
 ```
 
 The integration tests run the real engines against a fake model and tool server (`AgnetaFakes`, served from the test process; Project Chat's smoke test runs them with `agneta-fakes`). Without the engines, those suites are skipped and say why. The round scripts in `scripts/dev` use `python3` (standard library only, as Xcode's command line tools provide).
+
+**The website,** [agneta.dahlbom.io](https://agneta.dahlbom.io), is built from this repository's documents by `site/build.py` and published by GitHub Pages ([site/README.md](site/README.md)). To build it and look at it locally:
+
+```bash
+python3 site/build.py && python3 -m http.server 8642 --bind 127.0.0.1 --directory site/_build
+```
 
 ## For app developers
 
@@ -289,6 +315,8 @@ A task can be named by any unique prefix of its id. The same summary and timelin
 The trace format and every record type are in **[docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md)**.
 
 ## Documentation
+
+The documents below are also on [agneta.dahlbom.io/docs](https://agneta.dahlbom.io/docs/), rendered from this repository.
 
 | Document | For |
 | --- | --- |
