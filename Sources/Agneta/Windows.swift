@@ -175,7 +175,7 @@ struct WelcomeView: View {
 
     var body: some View {
         DialogLayout(title: "Bring your AI to your apps",
-                     message: "Sign in with the account you already pay for. Agneta keeps it safe, and lets the apps you allow use it, with you in control.") {
+                     message: "Sign in with the plan you already pay for. Agneta keeps it safe, and lets the apps you allow use it, with you in control.") {
             MarkTile(size: 72)
         } content: {
             GlassGroup(spacing: 10) {
@@ -705,7 +705,7 @@ struct SettingsView: View {
     private func askRename(_ account: AccountRecord) {
         let alert = NSAlert()
         alert.messageText = "Rename \(account.label)"
-        alert.informativeText = "Apps show this name when you choose an account."
+        alert.informativeText = "Apps show this name when they list your providers."
         let field = NSTextField(string: account.label)
         field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
         alert.accessoryView = field
@@ -732,7 +732,7 @@ struct SettingsView: View {
     private func confirmSignOut(_ account: AccountRecord) {
         let alert = NSAlert()
         alert.messageText = "Sign out of \(account.label)?"
-        alert.informativeText = "Running tasks on this account stop, and Agneta forgets its sign-in on this Mac. Your \(account.kind.provider) account itself isn't changed."
+        alert.informativeText = "Running tasks on it stop, and Agneta forgets its sign-in on this Mac. Your \(account.kind.provider) account itself isn't changed."
         // Cancel is the Return default; the destructive choice takes a click.
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Sign Out")
@@ -878,14 +878,14 @@ struct SettingsView: View {
 
     @ViewBuilder private var privacyPane: some View {
         Section {
-            LabeledContent("Accounts and app access", value: "On this Mac only")
+            LabeledContent("Providers and app access", value: "On this Mac only")
             LabeledContent("Sign-ins and API keys", value: "Your Keychain and private folders")
             LabeledContent("Task history", value: "App, title, times and usage")
             LabeledContent("Conversations", value: "Kept by the engine to resume tasks")
         } header: {
             Text("What Agneta keeps")
         } footer: {
-            Text("Agneta sends nothing to its makers. What apps ask goes only to the AI account you chose, under that provider's terms.")
+            Text("Agneta sends nothing to its makers. What apps ask goes only to the provider each task runs on, under that provider's terms.")
         }
         Section {
             Picker("Keep task history", selection: Binding(get: { model.historyDays }, set: { model.setHistoryDays($0) })) {
@@ -906,7 +906,7 @@ struct SettingsView: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Reset Agneta").font(.system(size: 13, weight: .semibold))
-                    Text("Signs out of every account, removes app access, history, logs and downloads, and starts over.")
+                    Text("Signs out of every provider, removes app access, history, logs and downloads, and starts over.")
                         .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
@@ -946,12 +946,12 @@ struct SettingsView: View {
             Text("Tools you give this token, such as Claude Code, can read every task's trace on this Mac: prompts, tool calls and results included. Turn it off or make a new token to stop them.")
         }
         Section {
-            LabeledContent("Running at once", value: "8 tasks, 3 per account")
+            LabeledContent("Running at once", value: "8 tasks, 3 per provider")
             LabeledContent("Waiting", value: "Up to 32 tasks")
         } header: {
             Text("Limits")
         } footer: {
-            Text("More tasks wait their turn; one busy account never holds up another.")
+            Text("More tasks wait their turn; one busy provider never holds up another.")
         }
     }
 
@@ -973,7 +973,7 @@ struct SettingsView: View {
     private func confirmClearHistory() {
         let alert = NSAlert()
         alert.messageText = "Clear task history?"
-        alert.informativeText = "Agneta forgets the tasks listed in Activity. Running tasks and your accounts aren't affected."
+        alert.informativeText = "Agneta forgets the tasks listed in Activity. Running tasks and your providers aren't affected."
         // Cancel is the Return default; the destructive choice takes a click.
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Clear History")
@@ -991,7 +991,7 @@ struct SettingsView: View {
                     Text("Agneta").font(.system(size: 18, weight: .semibold))
                     Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") (build \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"), \(Bundle.main.object(forInfoDictionaryKey: "AgnetaCommit") as? String ?? "–"))" + (model.isDevelopment ? " · Development" : ""))
                         .foregroundStyle(.secondary)
-                    Text("Open source under the Apache License 2.0. Your AI accounts stay on this Mac.").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("Open source under the Apache License 2.0. Your sign-ins and keys stay on this Mac.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
             .padding(.vertical, 6)

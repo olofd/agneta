@@ -6,7 +6,7 @@ Project Chat is a small Electron app that runs an agent through Agneta. The agen
 
 ## Run it
 
-Open a recent [Agneta build](../../README.md#build-and-run). For the tested setup, add an API-key account and select **Goose** in Agneta’s Accounts settings. See [which engines work with each account](../../README.md#accounts-and-engines). From the repository root, run the example with Node.js 24 or newer.
+Open a recent [Agneta build](../../README.md#build-and-run). For the tested setup, connect a provider (a plan or an API key) in Agneta. Project Chat offers the engines that provider can run on and picks its default; any of them works. See [which engines work with each provider](../../README.md#providers-and-engines). From the repository root, run the example with Node.js 24 or newer.
 
 ```sh
 cd examples/project-chat
@@ -20,7 +20,7 @@ Project Chat connects to dev builds on port `47331`. For a release build, use `A
 
 ### Try the workflow
 
-1. Click **Connect to Agneta**. Compare the pairing codes if they appear, select one account in Agneta, and choose **Allow Once**. Project Chat requests app-only tools and no folders. Pairing itself makes no model calls.
+1. Click **Connect to Agneta**. Compare the pairing codes if they appear, tick a provider in Agneta, and choose **Allow Once**. Project Chat requests app-only tools and no folders. Pairing itself makes no model calls.
 2. Click **What’s ready to announce?**, then **Send**. A **Read the project brief** tool event should appear. The reply should mention offline search and PDF export, with shared folders still in testing.
 3. Click **Draft a release announcement**, then **Send**. Check the **Proposed note** in the sidebar and choose **Save note** or **Dismiss**. The tool can stage text, and only the app’s **Save note** action puts it in **Saved notes**.
 4. Open Agneta’s menu and find **Field Notes · Project Chat**. Use **Stop** in Project Chat to cancel a turn, or **Stop** in Agneta to end the session. **New chat** closes the session and clears the transcript and any unreviewed proposal. Saved demo notes stay in the app until it quits.

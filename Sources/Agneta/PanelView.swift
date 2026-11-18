@@ -174,7 +174,7 @@ struct PanelView: View {
             SectionTitle(text: "Providers").padding(.top, 8)
             if model.accounts.isEmpty {
                 VStack(spacing: 10) {
-                    Text("Connect the AI account you already pay for, and the apps you allow can use it.")
+                    Text("Connect the AI you already pay for, and the apps you allow can use it.")
                         .font(.system(size: 12.5)).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     Button("Connect a Provider…") { open { WindowPresenter.shared.showWelcome(model) } }.glassButton(prominent: true).tint(Palette.accent)
                 }

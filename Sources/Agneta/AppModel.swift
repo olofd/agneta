@@ -611,12 +611,12 @@ final class AppModel {
         let running = tasks.filter(\.running).count
         if running > 0 { return running == 1 ? "1 task running" : "\(running) tasks running" }
         if !tasks.isEmpty { return tasks.count == 1 ? "1 task open" : "\(tasks.count) tasks open" }
-        return accounts.isEmpty ? "Connect an AI account" : "All set"
+        return accounts.isEmpty ? "Connect a provider" : "All set"
     }
 
     var subtitle: String {
         let apps = Set(grants.values.map(\.app)).count
-        let accountsText = accounts.count == 1 ? "1 account" : "\(accounts.count) accounts"
+        let accountsText = accounts.count == 1 ? "1 provider" : "\(accounts.count) providers"
         return apps == 0 ? accountsText : "\(accountsText) · \(apps == 1 ? "1 app" : "\(apps) apps")"
     }
 
@@ -643,7 +643,7 @@ final class AppModel {
             let kind = account.kind
             // The engine's own sign-in when the account runs on Codex; Agneta's otherwise.
             let action: () -> Void = { self.startSignIn(kind, again: account) }
-            return ("Sign in to \(account.label) again", "Its sign-in expired. Tasks on this account wait until you sign in.", "Sign In", action)
+            return ("Sign in to \(account.label) again", "Its sign-in expired. Tasks on it wait until you sign in.", "Sign In", action)
         }
         return nil
     }

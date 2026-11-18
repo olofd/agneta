@@ -9,7 +9,7 @@ Not sure which you have? Choose Apple menu → About This Mac: **Chip: Apple M�
 
 1. Open the DMG and drag **Agneta** into **Applications**.
 2. Open Agneta from Applications. It lives in the menu bar (the linked rings beside the clock), not in the Dock.
-3. Click the menu bar icon and connect an account: a ChatGPT plan (needs [Codex](https://github.com/openai/codex) 0.166 or later), a Claude plan (needs Claude Code; the Claude desktop app includes it), or an OpenAI or Anthropic API key.
+3. Click the menu bar icon and connect a provider: a ChatGPT plan (needs [Codex](https://github.com/openai/codex) 0.166 or later), a Claude plan (needs Claude Code; the Claude desktop app includes it), or an OpenAI or Anthropic API key.
 4. To see what an app does with it, choose **Run a Test Task** from the panel's ⋯ menu.
 
 Or install with [Homebrew](https://brew.sh):

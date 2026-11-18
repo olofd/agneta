@@ -16,7 +16,7 @@ struct TaskDetailsView: View {
             if let summary {
                 Section {
                     LabeledContent("App", value: summary.app ?? "Unknown")
-                    LabeledContent("Account", value: [summary.account, summary.billing.map { $0 == "subscription" ? "plan" : "API key" }].compactMap { $0 }.joined(separator: " · "))
+                    LabeledContent("Provider", value: [summary.account, summary.billing.map { $0 == "subscription" ? "plan" : "API key" }].compactMap { $0 }.joined(separator: " · "))
                     LabeledContent("Tools", value: [summary.tools, summary.network.map { $0 == "none" ? "no network" : $0 }].compactMap { $0 }.joined(separator: " · "))
                     if let cost = summary.cost {
                         LabeledContent("Cost", value: String(format: "about $%.2f", cost) + (summary.billing == "subscription" ? " at API prices" : ""))
