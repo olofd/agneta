@@ -120,3 +120,16 @@ An independent review of everything since 0.1.0 (2026-11-18) found six real defe
 
 The sweep also caught a CI failure: `actool` crashes on GitHub's macOS 15 Apple silicon runner. The compiled icon is now committed instead of built in every build.
 
+## Cold review before 0.2.0
+
+The maintainer brought a second, cold review (2026-11-18) with five findings. All five were checked against the code and are real.
+
+- **Fixed in 0.2.0:**
+  - **The symlink race.** Folders are written into sandbox profiles exactly as they were checked (`SessionPolicy.checkedPaths`), never resolved again.
+  - **Soft limits.** After a 10 s grace, a limit ends the session.
+  - **The `Int(1e300)` crash.** Limits outside the range are refused with -32602.
+  - **Signalling a reused process group.** The reaper sees the exit with kqueue, ends the group while the zombie leader still holds its number, and only then reaps it; nothing signals the group after that. A first version used `waitid(WNOWAIT)`, which on macOS reports a stopped child over and over (631,242 calls in 3 s); measured and replaced.
+- **Open, next:** a Codex session can read its account's ChatGPT sign-in (`auth.json`) and the account's other Codex sessions, because the whole `CODEX_HOME` is in its sandbox, and Codex reads files with its own tools.
+  - Codex 0.167 can keep the sign-in in the Keychain (`cli_auth_credentials_store = "keyring"`), as Claude Code already does. That would end the file exposure, but every ChatGPT account would have to sign in again, and it needs testing with a real account.
+  - The other sessions need their own design, since Codex must keep them to resume tasks.
+

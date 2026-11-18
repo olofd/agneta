@@ -15,6 +15,11 @@ A smaller download, a choice of engine per app, an app icon, and fixes. Agneta i
 - **Check for Updates** is always in the panel's ⋯ menu; a build that doesn't update itself says why.
 - The menu bar panel is frosted glass, so what's behind it no longer reads through its text; Settings and task details keep their title bar, so scrolled content no longer runs into the title.
 - Run a Test Task's pairing code opens as a normal, centred dialog that closes itself once you answer in Agneta.
+- **Security and robustness:**
+  - A session's folders go into its sandbox exactly as they were checked, so a folder an app swaps for a symlink afterwards can't widen it.
+  - Policy limits are hard limits: an engine that ignores the cancel has its session ended after 10 s ([APP_PROTOCOL.md](https://github.com/olofd/agneta/blob/v0.2.0/docs/APP_PROTOCOL.md)).
+  - A limit outside the range of whole numbers is refused instead of crashing Agneta.
+  - Agneta never signals a process group once its engine's process number could belong to another program.
 
 ## 0.1.0 (2026-11-18)
 
