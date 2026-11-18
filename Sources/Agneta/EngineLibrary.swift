@@ -82,6 +82,24 @@ struct EngineDownload: Equatable {
     }
 }
 
+/// Where the app's own pieces are: the programs it bundles, its resources, and the locks pinning what it downloads.
+/// The app's bundle in use; a folder of a test's making in tests.
+struct Bundled: Sendable {
+    let programs: URL
+    let resources: URL
+
+    static var app: Bundled {
+        Bundled(programs: Bundle.main.bundleURL.appending(path: "Contents/MacOS", directoryHint: .isDirectory),
+                resources: Bundle.main.resourceURL ?? Bundle.main.bundleURL.appending(path: "Contents/Resources", directoryHint: .isDirectory))
+    }
+
+    /// A lock this build carries (`opencode.lock`), if it does.
+    func lock(_ name: String) -> URL? {
+        let url = resources.appending(path: "\(name).lock")
+        return FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) ? url : nil
+    }
+}
+
 @MainActor @Observable
 final class EngineLibrary {
     /// What an engine downloads, pinned by a lock the app carries, installed under Runtimes/.
@@ -102,6 +120,7 @@ final class EngineLibrary {
     private(set) var installs: [String: [InstalledCLI]] = [:]
 
     private let runtimes: URL
+    private let bundled: Bundled
     private let log: OperationalLog
     /// Where choices are saved (the runtime's database), once it's open.
     private var database: AgnetaDatabase?
@@ -123,8 +142,9 @@ final class EngineLibrary {
     /// The showcase's engines: every one, as if installed. Nil in use.
     private var sample: [any EngineAdapter]?
 
-    init(runtimes: URL, log: OperationalLog) {
+    init(runtimes: URL, log: OperationalLog, bundled: Bundled = .app) {
         self.runtimes = runtimes
+        self.bundled = bundled
         self.log = log
     }
 
@@ -140,8 +160,12 @@ final class EngineLibrary {
         for source in sources {
             if let key = source.program?.key, let path = try? runtime.database.setting("cli.\(key)") { chosenPrograms[key] = path }
         }
-        installs = await lookUpInstalls()
-        await checkDownloads()
+        // Both before the first catalog (until then nothing is known to be here, and a download not yet checked would
+        // look missing and start again), and at once: finding the user's installs runs their `--version`, checking the
+        // downloads hashes them.
+        async let found = lookUpInstalls()
+        async let checked = checkDownloads()
+        (installs, self.checked) = await (found, checked)
         let (catalogs, sink) = AsyncStream<EngineCatalog>.makeStream(bufferingPolicy: .bufferingNewest(1))
         self.sink?.finish()
         self.sink = sink
@@ -161,13 +185,17 @@ final class EngineLibrary {
         chosenPrograms = [:]
     }
 
-    /// Checks every downloaded engine against its pin, off the main thread: hashing Node takes over half a second.
-    private func checkDownloads() async {
-        for source in sources {
-            guard let download = source.download(self) else { continue }
-            checked[source.id] = .some(await _Concurrency.Task.detached(priority: .userInitiated) {
-                download.installer.verified(download.name, executable: download.executable)
-            }.value)
+    /// Checks every downloaded engine against its pin, off the main thread and all at once: hashing Node's runtime
+    /// takes most of a second.
+    private func checkDownloads() async -> [String: URL?] {
+        let downloads = sources.compactMap { source in source.download(self).map { (source.id, $0) } }
+        return await withTaskGroup(of: (String, URL?).self) { group in
+            for (id, download) in downloads {
+                group.addTask(priority: .userInitiated) { (id, download.installer.verified(download.name, executable: download.executable)) }
+            }
+            var checked: [String: URL?] = [:]
+            for await (id, program) in group { checked[id] = .some(program) }
+            return checked
         }
     }
 
@@ -386,12 +414,11 @@ final class EngineLibrary {
 
     // MARK: Where things are
 
-    private var bundleFolder: URL { Bundle.main.bundleURL.appending(path: "Contents/MacOS", directoryHint: .isDirectory) }
-    func bundled(_ program: String) -> URL { bundleFolder.appending(path: program) }
+    func bundled(_ program: String) -> URL { bundled.programs.appending(path: program) }
 
     /// A download pinned by a lock the app carries, if this build carries it.
     func download(lock: String, name: String, executable: String, title: String) -> Download? {
-        Bundle.main.url(forResource: lock, withExtension: "lock").map {
+        bundled.lock(lock).map {
             Download(installer: RuntimeInstaller(lockFile: $0, runtimes: runtimes), name: name, executable: executable, title: title)
         }
     }
@@ -404,14 +431,14 @@ final class EngineLibrary {
     var codexBundled: Bool { FileManager.default.isExecutableFile(atPath: bundled("node").path(percentEncoded: false)) }
     /// Node and codex-acp: bundled, or downloaded and checked.
     var codexRuntime: (node: URL, script: URL)? {
-        if codexBundled { return (bundled("node"), Bundle.main.bundleURL.appending(path: "Contents/Resources/codex-acp/dist/index.js")) }
+        if codexBundled { return (bundled("node"), bundled.resources.appending(path: "codex-acp/dist/index.js")) }
         guard let node = verified("codex") else { return nil }
         return (node, node.deletingLastPathComponent().appending(path: "codex-acp/dist/index.js"))
     }
 
     /// A version from a lock the app carries (`goose.lock`: its `version`; `runtimes.lock`: an entry's).
     func lockedVersion(_ lock: String, entry: String? = nil) -> String {
-        guard let url = Bundle.main.url(forResource: lock, withExtension: "lock"), let data = try? Data(contentsOf: url),
+        guard let url = bundled.lock(lock), let data = try? Data(contentsOf: url),
               let value = try? JSONCoding.decode(data) else { return "–" }
         return (entry.map { value[$0]?["version"] } ?? value["version"])??.stringValue ?? "–"
     }

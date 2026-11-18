@@ -1,4 +1,5 @@
 import AgnetaKit
+import CryptoKit
 import Foundation
 import Testing
 @testable import Agneta
@@ -112,5 +113,74 @@ import Testing
         #expect(library.cantRun(chatGPT, engines: ["goose"]) == "ChatGPT can't run on any engine ticked here")
         #expect(library.engines(for: .claude).map(\.id) == ["claude-code", "goose"])
         #expect(library.all.map(\.id) == ["goose", "opencode", "claude-code", "codex"])
+    }
+}
+
+/// The library's download decisions, with a real pinned download from a local archive: what starts by itself, what a
+/// failure does to the default, and what putting a failure away means.
+@MainActor @Suite struct EngineDownloadTests {
+    /// A build's folders with `opencode.lock` pinning a local zip of a tiny `opencode`; `pinned: false` pins the wrong
+    /// hash, so the download fails its check.
+    func library(pinned: Bool = true) throws -> (EngineLibrary, URL) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "agneta-downloads-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
+        let payload = root.appending(path: "payload/opencode", directoryHint: .isDirectory)
+        let resources = root.appending(path: "Resources", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: payload, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+        let program = payload.appending(path: "opencode")
+        try "#!/bin/sh\necho ok\n".write(to: program, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: program.path(percentEncoded: false))
+        let zip = root.appending(path: "opencode.zip")
+        let ditto = Process()
+        ditto.executableURL = URL(filePath: "/usr/bin/ditto")
+        ditto.arguments = ["-c", "-k", payload.path(percentEncoded: false), zip.path(percentEncoded: false)]
+        try ditto.run()
+        ditto.waitUntilExit()
+        let digest = SHA256.hash(data: try Data(contentsOf: zip)).map { String(format: "%02x", $0) }.joined()
+        let sha = pinned ? digest : String(repeating: "0", count: 64)
+        let asset: JSONValue = ["url": .string(zip.absoluteString), "sha256": .string(sha), "size": 100]
+        try JSONCoding.encode(["engine": "opencode", "version": "1", "assets": .object([RuntimeInstaller.architecture: asset])] as JSONValue)
+            .write(to: resources.appending(path: "opencode.lock"))
+        let library = EngineLibrary(runtimes: root.appending(path: "Runtimes", directoryHint: .isDirectory), log: OperationalLog(folder: root),
+                                    bundled: Bundled(programs: root.appending(path: "MacOS", directoryHint: .isDirectory), resources: resources))
+        library.kindsInUse = { [.openAIKey] }
+        library.refresh()
+        return (library, root)
+    }
+
+    func state(_ library: EngineLibrary) -> String? { library.catalog.entries["opencode"]?.state.name }
+
+    func waitUntil(_ condition: @MainActor () -> Bool) async throws {
+        for _ in 0..<100 where !condition() { try await Task.sleep(for: .milliseconds(50)) }
+    }
+
+    /// An engine nobody needs isn't fetched; choosing it as a provider's default fetches it, and it becomes ready.
+    @Test func choosingADefaultDownloadsIt() async throws {
+        let (library, root) = try library()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(state(library) == "downloadable" && library.downloads.isEmpty)
+        #expect(library.engine(for: .openAIKey) == "goose")
+        library.select("opencode", for: .openAIKey)
+        try await waitUntil { self.state(library) == "ready" }
+        #expect(state(library) == "ready" && library.downloads.isEmpty && library.engine(for: .openAIKey) == "opencode")
+    }
+
+    /// A default whose download fails: tasks run on another engine meanwhile. Put away, it isn't fetched again by
+    /// itself; a task asking for it fetches it again.
+    @Test func aFailedDownloadFallsBackAndStaysPutAway() async throws {
+        let (library, root) = try library(pinned: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        library.select("opencode", for: .openAIKey)
+        try await waitUntil { self.state(library) == "failed" }
+        #expect(state(library) == "failed" && library.engine(for: .openAIKey) == "goose")
+        #expect(library.chosenEngine(for: .openAIKey) == "opencode") // Settings still shows the choice
+
+        library.putAway("opencode")
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(state(library) == "downloadable" && library.downloads.isEmpty)
+
+        library.download("opencode", reason: "task")
+        try await waitUntil { self.state(library) == "failed" }
+        #expect(state(library) == "failed")
     }
 }
