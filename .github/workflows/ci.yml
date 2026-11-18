@@ -39,18 +39,27 @@ jobs:
           sw_vers
           swift --version
 
-      # Whether the runner lets a Python server on loopback be reached: the fake model and tool servers are Python.
-      - name: Loopback check
+      # The fake model and tool servers are Python, and on GitHub's runners a server started by some Pythons
+      # (/usr/local/bin/python3, measured 2026-11-18 on all three) never accepts a connection on 127.0.0.1, while
+      # one from /opt/homebrew/bin/python3 answers at once. Use the first Python whose server answers.
+      - name: Pick a Python whose loopback server answers
         run: |
-          fw=/usr/libexec/ApplicationFirewall/socketfilterfw
-          "$fw" --getglobalstate; "$fw" --getblockall; "$fw" --getstealthmode; "$fw" --getallowsigned
-          for python in /usr/local/bin/python3 /opt/homebrew/bin/python3 /usr/bin/python3; do
+          for python in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
             [ -x "$python" ] || continue
             "$python" -m http.server 47390 --bind 127.0.0.1 >/dev/null 2>&1 & server=$!
-            sleep 1
-            curl -s -o /dev/null -m 10 -w "$python: %{http_code} after %{time_total} s (connect %{time_connect} s)\n" http://127.0.0.1:47390/ || echo "$python: no answer in 10 s"
+            answered=false
+            for _ in $(seq 1 20); do
+              if curl -s -o /dev/null -m 1 http://127.0.0.1:47390/; then answered=true; break; fi
+              sleep 0.25
+            done
             kill $server; wait $server 2>/dev/null || true
+            if $answered; then
+              echo "AGNETA_TEST_PYTHON=$python" >> "$GITHUB_ENV"
+              echo "fake servers run on $python ($("$python" --version))"; exit 0
+            fi
+            echo "$python: its server on 127.0.0.1 didn't answer"
           done
+          echo "::error::No Python here serves on loopback; the integration tests need one"; exit 1
 
       - name: Fetch the pinned engines
         run: scripts/fetch-engines --engine all
@@ -65,11 +74,7 @@ jobs:
         env:
           AGNETA_REQUIRE_ENGINES: "1"
           AGNETA_KEEP_TEST_FILES: "1"
-        run: |
-          for python in /usr/local/bin/python3 /opt/homebrew/bin/python3 /usr/bin/python3; do
-            [ -x "$python" ] && { echo "fake servers run on $python: $("$python" --version)"; break; }
-          done
-          swift test
+        run: swift test
 
       # Foundation's temporary folder is the user's Darwin temp folder, whatever TMPDIR says.
       - name: Collect the test folders
