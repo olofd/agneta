@@ -15,7 +15,7 @@ It follows what open-source Mac apps that release from CI do (Stats, AltTab, Cod
 - A Developer ID Application certificate for Agneta alone, so revoking it never affects another app. Exported as a `.p12` with macOS-compatible encryption (`openssl pkcs12 -export -legacy`, or Keychain Access): newer OpenSSL defaults don't import into a macOS keychain.
 - An App Store Connect API key for notarization, Agneta's own.
 - A GitHub environment `release`, usable only from `v*` tags and waiting for the maintainer's approval, holding the secrets `DEVELOPER_ID_P12`, `DEVELOPER_ID_P12_PASSWORD`, `ASC_KEY_P8`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `SPARKLE_ED_PRIVATE_KEY` and `HOMEBREW_TAP_TOKEN` (a fine-grained token that may write only to the tap), and the variables `AGNETA_SIGN_IDENTITY` and `AGNETA_SPARKLE_PUBLIC_KEY` (Sparkle's public key, built into the app). A ruleset lets only the maintainer create `v*` tags. Pull requests never see these secrets.
-- Sparkle's EdDSA key, made once with Sparkle's `generate_keys`. The private key is kept offline as well as in the secret: without it, installed copies can't be updated again.
+- Sparkle's EdDSA key, made once with Sparkle's `generate_keys` (`generate_keys -x <file>` exports the private key for the secret; the public key it prints is the variable). The private key is kept offline as well as in the secret: without it, installed copies can't be updated again.
 - The repository `olofd/homebrew-tap`.
 
 Status: not done.
@@ -40,17 +40,17 @@ Status: built and run without a Developer ID (2026-11-18): the version, the DMG,
 - On publishing, a second workflow bumps the Homebrew tap and checks that the update feed serves the new version.
 - Every action is pinned by commit, and each job has only the permissions it needs.
 
-Status: drafted, not yet in the repository: the update feeds need Sparkle's tools, which wait for the maintainer's go-ahead to download.
+Status: in the repository (2026-11-18). The feed script has run with Sparkle's tools on a real build (see [Testing an update](#testing-an-update)); the workflows themselves haven't run yet: they need step 0.
 
 ### 3. Updates in the app (Sparkle 2)
 
 - Sparkle, pinned to an exact version, with a "Check for Updates…" item in the panel's ⋯ menu and, in Settings, "Check for updates automatically" and "Download and install automatically". Sparkle asks before its first check; automatic installation is off until the user turns it on. Reminders are the gentle kind meant for menu bar apps.
 - An update installs only when no task is running, or when Agneta quits. Apps reconnect and resume their tasks with `session/load`.
 - Each architecture has its own feed, `https://github.com/olofd/agneta/releases/latest/download/appcast-<arch>.xml`. `latest` never points at a draft, so publishing is what offers an update. Updates are verified with the EdDSA key built into the app, as well as by their Developer ID signature.
-- Development builds and isolated instances (`AGNETA_HOME`) have no feed and never update themselves.
+- Development builds have no feed and never update themselves. Nor do isolated instances (`AGNETA_HOME`), unless whoever starts one gives it a feed with `AGNETA_UPDATE_FEED`, to test the update path; such an instance installs when it quits and isn't relaunched, since macOS would relaunch it without its environment.
 - [PRIVACY.md](PRIVACY.md) then says exactly what an update check contacts; Sparkle's system profiling stays off.
 
-Status: not done. Today there are no automatic updates: a new release replaces the app, and data and sign-ins carry over.
+Status: built (2026-11-18), with Sparkle 2.10.1 in `Contents/Frameworks` (2.3 MB, without the XPC services only sandboxed apps need), signed inside out by `build-app` and `release`. Tested on an Intel Mac with ad hoc signing and a throwaway key: a 0.0.1 build, started isolated against a local feed, found 0.0.2, downloaded it without asking (automatic installs on), checked its EdDSA signature and replaced itself, and the updated copy passed the smoke test. Not tested yet: Install and Relaunch from Sparkle's window, the reminder in the panel, and an update between two Developer ID–signed builds, which the first real releases prove (part 5).
 
 ### 4. Homebrew
 
@@ -68,7 +68,7 @@ A dry run, installed on an Intel and an Apple silicon Mac: it opens without a Ga
 Until the workflow exists, on each architecture, from a commit tagged `v<version>`:
 
 ```bash
-AGNETA_SIGN_IDENTITY="Developer ID Application: …" AGNETA_NOTARY_PROFILE=agneta scripts/dev/release --previous <last release's zip>
+AGNETA_SIGN_IDENTITY="Developer ID Application: …" AGNETA_NOTARY_PROFILE=agneta AGNETA_SPARKLE_PUBLIC_KEY=<public key> scripts/dev/release --previous <last release's zip>
 ```
 
 It builds `build/Agneta.app` with the release identity (`com.objectivecoder.agneta`, port 47321) and does part 1 above, leaving the DMG, the zip and `SHA256SUMS-<arch>.txt` in `build/release/`. It refuses an uncommitted checkout. `AGNETA_NOTARY_PROFILE` is a profile stored once with `xcrun notarytool store-credentials`; `AGNETA_NOTARY_KEY`, `AGNETA_NOTARY_KEY_ID` and `AGNETA_NOTARY_ISSUER` use an API key instead. Without `AGNETA_SIGN_IDENTITY` everything is signed ad hoc and nothing is notarized: fine for testing, refused by Gatekeeper on other Macs.
@@ -76,6 +76,17 @@ It builds `build/Agneta.app` with the release identity (`com.objectivecoder.agne
 ## The smoke test
 
 `scripts/dev/smoke-test <Agneta.app|Agneta.dmg> [--gatekeeper] [--previous <zip>]` installs the app into a temporary folder and checks it as a user gets it: given a DMG, the app is copied out of the mounted image; with `--gatekeeper`, the DMG and the app (marked as downloaded) must pass Gatekeeper and carry stapled tickets; the signature holds; each bundled engine starts as signed (`goose-acp` and `opencode` answer ACP `initialize`, Node runs JavaScript); Agneta starts and listens for apps, writes its database and log without errors, `agneta-diag` reads that data, and it starts again on the same data. With `--previous`, the previous release runs first on the same data folder, so the new build starts on what an older one left: the upgrade path. Every run is an isolated instance (its own data folder, Keychain service and port) and stops what it started. Database migrations are also tested on their own (`StoreTests`).
+
+## Testing an update
+
+Without a release, on one Mac, with any key pair (an ed25519 key made with `openssl genpkey -algorithm ed25519`: the last 32 bytes of its DER private key and of its DER public key, each base64-encoded, are Sparkle's private and public key):
+
+1. Build the old version, `AGNETA_SPARKLE_PUBLIC_KEY=<public> AGNETA_VERSION=0.0.1 scripts/dev/build-app --release`, and copy `build/Agneta.app` aside. Commit anything, then build the new version the same way with `AGNETA_VERSION=0.0.2`: Sparkle compares build numbers, which are commit counts.
+2. Zip the new app (`ditto -c -k --keepParent`) as `Agneta-0.0.2-<arch>.zip` in a folder, with a copy under the other architecture's name, and run `SPARKLE_ED_PRIVATE_KEY=<private> scripts/dev/appcast 0.0.2 <folder>` from a checkout whose `CHANGELOG.md` has a `## 0.0.2` section.
+3. Point the feed's enclosure at a local server (`python3 -m http.server --bind 127.0.0.1`), and start the old copy isolated: `AGNETA_HOME=<folder> AGNETA_PORT=<port> AGNETA_UPDATE_FEED=http://127.0.0.1:<port>/appcast-<arch>.xml <old>/Agneta.app/Contents/MacOS/Agneta`. Sparkle's settings are the release bundle ID's preferences: `SUEnableAutomaticChecks` and `SUAutomaticallyUpdate` on and an old `SULastCheckTime` make it check, download and get ready at once; quitting it installs the update.
+4. Afterwards, delete what the test left in the release ID's preferences and caches (`defaults delete com.objectivecoder.agneta`, `~/Library/Caches/com.objectivecoder.agneta`, `~/Library/HTTPStorages/com.objectivecoder.agneta`), and Sparkle's `~/Library/Caches/Sparkle_generate_appcast`.
+
+Agneta's log (`<folder>/Logs/agneta.jsonl` for an isolated instance) records `updates-started`, `update-found`, `update-waiting`, `update-installing` and `update-failed`.
 
 ## What a release weighs
 
