@@ -47,18 +47,24 @@ jobs:
 
       # The real-engine suites (Goose and OpenCode against the fake model, the sandbox acceptance test) must run:
       # AGNETA_REQUIRE_ENGINES turns a missing engine into a failure instead of a skip.
-      # Tests keep their folders (fake model and tool server logs, engine logs, traces) in one place, uploaded if a test fails.
+      # Tests keep their folders (fake model and tool server logs, engine logs, traces), uploaded if a test fails.
       - name: Test
         env:
           AGNETA_REQUIRE_ENGINES: "1"
           AGNETA_KEEP_TEST_FILES: "1"
         run: |
-          export TMPDIR="$RUNNER_TEMP/agneta-tests/"
-          mkdir -p "$TMPDIR"
           for python in /usr/local/bin/python3 /opt/homebrew/bin/python3 /usr/bin/python3; do
             [ -x "$python" ] && { echo "fake servers run on $python: $("$python" --version)"; break; }
           done
           swift test
+
+      # Foundation's temporary folder is the user's Darwin temp folder, whatever TMPDIR says.
+      - name: Collect the test folders
+        if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/agneta-tests"
+          cp -R "$(getconf DARWIN_USER_TEMP_DIR)"agneta-* "$RUNNER_TEMP/agneta-tests/" 2>/dev/null || true
+          du -sh "$RUNNER_TEMP/agneta-tests"
 
       - name: Upload the test folders
         if: failure()
