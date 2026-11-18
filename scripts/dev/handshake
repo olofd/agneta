@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""Starts an engine the way Agneta does and waits for its answer to ACP `initialize`.
+
+It proves the program runs as signed (a missing hardened-runtime entitlement kills a JIT engine at start) and
+speaks ACP. The engine gets an empty home of its own and is stopped, with everything it started, at the end.
+Usage: handshake <seconds> <program> [arguments...]
+"""
+import json, os, signal, subprocess, sys, tempfile, time, select
+
+limit = float(sys.argv[1])
+# The engine runs in its own empty folder, so paths given relative to here are made absolute.
+command = [os.path.abspath(a) if os.path.exists(a) else a for a in sys.argv[2:]]
+home = tempfile.mkdtemp(prefix="agneta-handshake-")
+environment = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": home, "TMPDIR": home + "/"}
+engine = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          env=environment, cwd=home, start_new_session=True)
+request = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+           "params": {"protocolVersion": 1, "clientCapabilities": {}, "clientInfo": {"name": "agneta-smoke", "version": "0"}}}
+answer, buffered, started = None, b"", time.monotonic()
+try:
+    engine.stdin.write((json.dumps(request) + "\n").encode())
+    engine.stdin.flush()
+    while answer is None and time.monotonic() - started < limit:
+        ready, _, _ = select.select([engine.stdout], [], [], 0.2)
+        if not ready:
+            if engine.poll() is not None:
+                break
+            continue
+        chunk = os.read(engine.stdout.fileno(), 65536)
+        if not chunk:
+            break
+        buffered += chunk
+        while b"\n" in buffered:
+            line, buffered = buffered.split(b"\n", 1)
+            try:
+                message = json.loads(line)
+            except ValueError:
+                continue
+            if message.get("id") == 1:
+                answer = message
+finally:
+    # A group whose leader already exited answers EPERM on macOS; then only the leader is left to reap.
+    try:
+        os.killpg(engine.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        engine.poll() is None and engine.kill()
+    engine.wait()
+    errors = engine.stderr.read().decode(errors="replace")[-2000:]
+    subprocess.run(["rm", "-rf", home])
+
+if answer is None or "result" not in answer:
+    print(f"no initialize answer from {os.path.basename(command[0])} (exit {engine.returncode}): {answer or ''}\n{errors}", file=sys.stderr)
+    sys.exit(1)
+info = answer["result"].get("agentInfo") or {}
+print(f"{os.path.basename(command[0])} answered initialize in {time.monotonic() - started:.1f} s "
+      f"(protocol {answer['result'].get('protocolVersion')}, {info.get('name', '?')} {info.get('version', '')})".rstrip())

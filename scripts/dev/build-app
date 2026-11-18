@@ -45,7 +45,11 @@ fi
 cp Engines/runtimes.lock "$app/Contents/Resources/runtimes.lock"
 cp Engines/goose.lock "$app/Contents/Resources/goose.lock"
 cp -R .build/AgnetaTestClient.app "$app/Contents/Resources/AgnetaTestClient.app"
-# The build number is numeric and only grows (macOS compares it); the commit goes in a key of its own.
+# The version is AGNETA_VERSION, or the v* tag on this commit, or 0.0.0 for an untagged build. The build number is
+# numeric and only grows (macOS and Sparkle compare it); the commit goes in a key of its own.
+version=${AGNETA_VERSION:-$(git describe --tags --exact-match --match 'v[0-9]*' 2>/dev/null | sed 's/^v//' || true)}
+version=${version:-0.0.0}
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "version $version isn't major.minor.patch[-pre]" >&2; exit 2; }
 build=$(git rev-list --count HEAD 2>/dev/null || echo 0)
 commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 cat > "$app/Contents/Info.plist" <<PLIST
@@ -57,7 +61,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>$name</string>
   <key>CFBundleExecutable</key><string>Agneta</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$build</string>
   <key>AgnetaCommit</key><string>$commit</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>

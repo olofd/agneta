@@ -1,18 +1,30 @@
 #!/bin/bash
-# Installs a built Agneta into a temporary folder and checks it as a user would get it: its signature holds, it
-# starts, listens for apps, writes its data and log, agneta-diag reads that data, and it starts again on the same
-# data. With --previous <Agneta.zip>, that release runs first on the same data folder, so the new one starts on
-# what an older one left (an upgrade). Every run is an isolated instance (its own data folder, Keychain service
-# and port): nothing touches your own Agneta. It stops what it started.
-#   scripts/dev/smoke-test <Agneta.app> [--previous <Agneta.zip>]
+# Installs a built Agneta into a temporary folder and checks it as a user would get it: its signature holds, its
+# bundled engines start as signed, it starts, listens for apps, writes its data and log, agneta-diag reads that
+# data, and it starts again on the same data. Given a DMG, the app is copied out of the mounted image, as a user
+# drags it to Applications. With --gatekeeper, the copy is marked as downloaded and Gatekeeper must accept it (a
+# notarized release). With --previous <Agneta.zip>, that release runs first on the same data folder, so the new one
+# starts on what an older one left (an upgrade). Every run is an isolated instance (its own data folder, Keychain
+# service and port): nothing touches your own Agneta. It stops what it started.
+#   scripts/dev/smoke-test <Agneta.app|Agneta.dmg> [--gatekeeper] [--previous <Agneta.zip>]
 set -euo pipefail
-app=${1:?usage: smoke-test <Agneta.app> [--previous <Agneta.zip>]}
-previous=""
-[[ "${2:-}" == --previous ]] && previous=${3:?--previous needs a zip}
+cd "$(dirname "$0")/../.."
+source=${1:?usage: smoke-test <Agneta.app|Agneta.dmg> [--gatekeeper] [--previous <Agneta.zip>]}
+shift
+previous="" gatekeeper=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --gatekeeper) gatekeeper=true ;;
+    --previous) shift; previous=${1:?--previous needs a zip} ;;
+    *) echo "usage: smoke-test <Agneta.app|Agneta.dmg> [--gatekeeper] [--previous <Agneta.zip>]" >&2; exit 2 ;;
+  esac
+  shift
+done
 work=$(mktemp -d "${TMPDIR:-/tmp}/agneta-smoke-XXXX")
-pid=""
+pid="" mounted=""
 cleanup() {
   [[ -n "$pid" ]] && kill "$pid" 2>/dev/null && wait "$pid" 2>/dev/null
+  [[ -n "$mounted" ]] && hdiutil detach -quiet "$mounted" 2>/dev/null
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -36,19 +48,53 @@ run() {
   kill "$pid"; wait "$pid" 2>/dev/null || true; pid=""
 }
 
-mkdir -p "$work/install"
-ditto "$app" "$work/install/Agneta.app"
-codesign --verify --deep --strict "$work/install/Agneta.app" || fail "the installed copy's signature doesn't hold"
+mkdir -p "$work/install" "$work/mount"
+app="$work/install/Agneta.app"
+if [[ "$source" == *.dmg ]]; then
+  if $gatekeeper; then
+    xcrun stapler validate -q "$source" || fail "the DMG has no stapled notarization ticket"
+    spctl --assess --type open --context context:primary-signature "$source" 2>/dev/null || fail "Gatekeeper refuses the DMG"
+    echo "ok: Gatekeeper accepts the DMG"
+  fi
+  hdiutil attach -quiet -nobrowse -readonly -mountpoint "$work/mount" "$source"
+  mounted="$work/mount"
+  [[ -L "$work/mount/Applications" ]] || fail "the DMG has no link to Applications"
+  ditto "$work/mount/Agneta.app" "$app"
+  hdiutil detach -quiet "$mounted"; mounted=""
+else
+  ditto "$source" "$app"
+fi
+codesign --verify --deep --strict "$app" || fail "the installed copy's signature doesn't hold"
 echo "ok: signature holds"
+if $gatekeeper; then
+  # As if it came from a browser: Gatekeeper checks a quarantined app on its first launch.
+  xattr -w com.apple.quarantine "0081;$(printf %x "$(date +%s)");Safari;" "$app"
+  spctl --assess --type execute "$app" 2>/dev/null || fail "Gatekeeper refuses the app"
+  xcrun stapler validate -q "$app" || fail "the app has no stapled notarization ticket"
+  echo "ok: Gatekeeper accepts the downloaded app"
+fi
+
+# Each bundled engine, as signed: a missing hardened-runtime entitlement stops a JIT engine at its first step.
+contents="$app/Contents"
+scripts/dev/handshake 30 "$contents/MacOS/goose-acp" || fail "goose-acp doesn't start"
+if [[ -x "$contents/MacOS/opencode" ]]; then
+  scripts/dev/handshake 60 "$contents/MacOS/opencode" acp || fail "opencode doesn't start"
+fi
+if [[ -x "$contents/MacOS/node" ]]; then
+  # codex-acp needs the user's own Codex to answer, so Node is checked by running JavaScript, which its JIT compiles.
+  [[ "$(env -i HOME="$work" "$contents/MacOS/node" -e 'console.log([1, 2, 3].map(n => n * 2).join(","))')" == 2,4,6 ]] || fail "Node doesn't run"
+  env -i HOME="$work" "$contents/MacOS/node" --check "$contents/Resources/codex-acp/dist/index.js" || fail "codex-acp doesn't parse"
+  echo "ok: Node runs JavaScript and codex-acp parses"
+fi
 
 if [[ -n "$previous" ]]; then
   mkdir -p "$work/previous"
   ditto -x -k "$previous" "$work/previous"
   run "$(ls -d "$work"/previous/*.app | head -1)" "the previous release"
 fi
-run "$work/install/Agneta.app" "the new build"
+run "$app" "the new build"
 [[ -f "$home/agneta.sqlite" ]] || fail "no database in the data folder"
-"$work/install/Agneta.app/Contents/MacOS/agneta-diag" tasks --home "$home" >/dev/null || fail "agneta-diag couldn't read the data"
+"$contents/MacOS/agneta-diag" tasks --home "$home" >/dev/null || fail "agneta-diag couldn't read the data"
 echo "ok: agneta-diag reads the data"
-run "$work/install/Agneta.app" "a second start on the same data"
+run "$app" "a second start on the same data"
 echo "smoke test passed"
