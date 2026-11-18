@@ -17,6 +17,7 @@ struct PanelView: View {
             GlassGroup(spacing: 12) {
                 VStack(spacing: 12) {
                     if let problem = model.attentionMessage { attention(problem) }
+                    if let update = updateMessage { notice(update) }
                     if !model.tasks.isEmpty { tasksCard }
                     accountsCard
                 }
@@ -47,6 +48,9 @@ struct PanelView: View {
             Menu {
                 Button("Run a Test Task") { model.runTestTask() }.disabled(model.testClientURL == nil || model.accounts.isEmpty)
                 Divider()
+                if model.updates.enabled {
+                    Button("Check for Updates…") { open { model.updates.check() } }.disabled(!model.updates.canCheck)
+                }
                 Button("Settings…") { open { WindowPresenter.shared.showSettings(model) } }.keyboardShortcut(",")
                 Button("About Agneta") { open { WindowPresenter.shared.showSettings(model, section: .about) } }
                 Divider()
@@ -74,6 +78,36 @@ struct PanelView: View {
         }
         .padding(12)
         .frostedCard(tint: Palette.attention)
+    }
+
+    // MARK: Updates
+
+    /// An update a scheduled check found, or one that waits for the running tasks to end.
+    private var updateMessage: (title: String, detail: String, action: String, run: () -> Void)? {
+        let updates = model.updates
+        if let version = updates.waitingToInstall {
+            let count = model.tasks.count
+            return ("Agneta \(version) is ready", count == 1 ? "It installs when the running task ends." : "It installs when the \(count) running tasks end.",
+                    "Install Now", { open { WindowPresenter.shared.installUpdate(model) } })
+        }
+        if let version = updates.available {
+            return ("Agneta \(version) is available", "Running tasks finish before it installs.", "Update…", { open { updates.check() } })
+        }
+        return nil
+    }
+
+    private func notice(_ message: (title: String, detail: String, action: String, run: () -> Void)) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "arrow.down.circle.fill").font(.system(size: 20)).foregroundStyle(Palette.accent)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(message.title).font(.system(size: 13, weight: .semibold))
+                Text(message.detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 6)
+            Button(message.action, action: message.run).glassButton(prominent: true).tint(Palette.accent).controlSize(.small)
+        }
+        .padding(12)
+        .frostedCard(tint: Palette.accent)
     }
 
     // MARK: Tasks

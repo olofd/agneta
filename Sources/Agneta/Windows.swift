@@ -85,20 +85,30 @@ final class WindowPresenter {
     }
 
     func quit(_ model: AppModel) {
-        let running = model.tasks
-        if !running.isEmpty {
-            let alert = NSAlert()
-            alert.messageText = running.count == 1 ? "Stop 1 task and quit?" : "Stop \(running.count) tasks and quit?"
-            alert.informativeText = running.map { "• \($0.title) (\($0.app))" }.joined(separator: "\n")
-            alert.addButton(withTitle: "Stop and Quit")
-            alert.addButton(withTitle: "Cancel")
-            NSApp.activate(ignoringOtherApps: true)
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        }
+        guard confirmStopping(model.tasks, verb: "quit", button: "Stop and Quit") else { return }
         Task {
             await model.stopEverything()
             NSApp.terminate(nil)
         }
+    }
+
+    /// Installs the update that waits for the running tasks, after asking to stop them. Sparkle then quits Agneta
+    /// (which stops the engines) and opens the new version.
+    func installUpdate(_ model: AppModel) {
+        guard confirmStopping(model.tasks, verb: "install the update", button: "Stop and Install") else { return }
+        model.updates.installNow()
+    }
+
+    /// Asks before stopping running tasks; true when there are none or the user agreed.
+    private func confirmStopping(_ running: [AppModel.Task], verb: String, button: String) -> Bool {
+        guard !running.isEmpty else { return true }
+        let alert = NSAlert()
+        alert.messageText = running.count == 1 ? "Stop 1 task and \(verb)?" : "Stop \(running.count) tasks and \(verb)?"
+        alert.informativeText = running.map { "• \($0.title) (\($0.app))" }.joined(separator: "\n")
+        alert.addButton(withTitle: button)
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }
 
@@ -371,7 +381,7 @@ struct ApprovalView: View {
 struct SettingsView: View {
     /// What the app bundles or downloads, as THIRD_PARTY.md lists it; the texts are in Resources/Licenses.
     static let licenses: [(String, String)] = [
-        ("Goose", "Apache 2.0"), ("OpenCode", "MIT"), ("codex-acp", "Apache 2.0"), ("Node.js", "MIT"), ("GRDB.swift", "MIT"),
+        ("Goose", "Apache 2.0"), ("OpenCode", "MIT"), ("codex-acp", "Apache 2.0"), ("Node.js", "MIT"), ("GRDB.swift", "MIT"), ("Sparkle", "MIT"),
         ("claude-agent-acp", "Apache 2.0"), ("codex-acp's npm packages", "MIT, ISC, BSD-3-Clause, Apache 2.0"),
     ]
 
@@ -428,6 +438,20 @@ struct SettingsView: View {
                 .onChange(of: openAtLogin) { _, on in
                     do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } } catch { openAtLogin = !on }
                 }
+        }
+        Section {
+            if model.updates.enabled {
+                Toggle("Check for updates automatically", isOn: Binding(get: { model.updates.checksAutomatically }, set: { model.updates.checksAutomatically = $0 }))
+                Toggle("Download and install automatically", isOn: Binding(get: { model.updates.downloadsAutomatically }, set: { model.updates.downloadsAutomatically = $0 }))
+                    .disabled(!model.updates.checksAutomatically)
+                Button("Check Now") { model.updates.check() }.disabled(!model.updates.canCheck)
+            } else {
+                LabeledContent("Updates") { Text(model.updates.unavailableReason).foregroundStyle(.secondary) }
+            }
+        } header: {
+            Text("Updates")
+        } footer: {
+            if model.updates.enabled { Text("Updates come from Agneta's GitHub releases and install only when no task is running.") }
         }
         Section {
             LabeledContent("Apps connect at") { Text(verbatim: "ws://127.0.0.1:\(model.port)/acp").textSelection(.enabled).foregroundStyle(.secondary) }

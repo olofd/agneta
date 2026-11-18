@@ -32,7 +32,7 @@ For app developers, this means agent features without running an agent loop, bui
 - **Not a chat app.** There's no chat window. The apps you use are the interface.
 - **Not a way around provider terms.** Agneta uses your own accounts and your own installed Claude Code and Codex. Whether a given use fits a provider's terms is between you and that provider. See [docs/TERMS.md](docs/TERMS.md).
 - **Not a coding agent of its own.** It hosts proven open-source and vendor agents ([Goose](https://github.com/aaif-goose/goose), [OpenCode](https://github.com/anomalyco/opencode), Claude Code and Codex) behind one boundary.
-- **Not a service.** Everything listens on loopback only and browsers are refused. Agneta has no servers of its own and sends no telemetry; engines talk to their AI provider, with their own analytics and update checks turned off where they allow it.
+- **Not a service.** Everything listens on loopback only and browsers are refused. Agneta has no servers of its own and sends no telemetry (release builds check GitHub for updates, once you allow it); engines talk to their AI provider, with their own analytics and update checks turned off where they allow it.
 
 ## What it's for
 

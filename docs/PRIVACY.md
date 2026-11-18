@@ -9,7 +9,8 @@ What leaves your Mac when an app runs a task through Agneta, what stays on it an
 | The task's prompts and instructions, the conversation so far, and what its tools returned (including the files an engine read) | Your AI provider (OpenAI or Anthropic), through the engine, over HTTPS | That is how the model sees the task |
 | Tool calls to the app's own tools | The app, on this Mac (loopback) | The app's tools run in the app |
 | A request for the public model catalog, with nothing of yours in it | models.dev, from Goose when it starts | Goose looks up model names and limits there and has no setting to stop it ([ENGINES.md](ENGINES.md#goose)) |
-| Nothing else from Agneta | | Agneta has no servers, sends no telemetry and checks for no updates |
+| Update checks, once you allow them: a request for the update feed, which carries Agneta's version and nothing of yours; and the update itself, when one installs | GitHub (`github.com` and its download host), from release builds only | Agneta asks before its first check and checks about once a day; Settings → General turns checks off. Sparkle's system profile, which would send the Mac's model and macOS version, stays off ([RELEASING.md](RELEASING.md#3-updates-in-the-app-sparkle-2)) |
+| Nothing else from Agneta | | Agneta has no servers and sends no telemetry |
 
 Engines are run with their own telemetry, update checks, analytics and feedback turned off where they allow it ([ENGINES.md](ENGINES.md)). On Codex, web search (which runs on OpenAI's servers) and the features that bring tools of their own (the ChatGPT account's connectors, plugins, browser and computer use) are off. What your provider keeps, and for how long, is set by your account with them.
 
@@ -21,6 +22,7 @@ Engines are run with their own telemetry, update checks, analytics and feedback 
 | Each task's trace: prompts, tool calls and results, model calls, decisions, timing | `Traces/`, one owner-only file per task | As long as its history |
 | An engine's own record of the conversation, so the task can resume | The engine's home (`Engines/`), Claude Code's transcripts in the account's folder, Codex's sessions in the account's `CODEX_HOME` | As long as its history; an account's go when it's signed out |
 | Agneta's own log: events, ids, names, counts and timing, never content, tokens or keys | `~/Library/Logs/Agneta/` | 7 days |
+| Update settings, the last check's time, and an update downloaded but not yet installed | Agneta's preferences; `~/Library/Caches/com.objectivecoder.agneta/` | Until the update installs, or Reset |
 | API keys and the diagnostics token | Agneta's Keychain items | Until removed |
 | Plan sign-ins | Codex's `auth.json` in the account's folder; Claude Code's entry in the login Keychain | Until signed out |
 | What tasks wrote | The workspace the app named, or the app's own workspace (`… Workspaces/<grant>`) | Until you delete it, or Reset for the app's own workspace |

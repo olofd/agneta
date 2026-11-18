@@ -165,4 +165,6 @@ Everything is in Agneta's Application Support folder, named by its bundle identi
 
 A menu bar app (`LSUIElement`) with no Dock icon. Its own `NSStatusItem` and a borderless glass panel show the accounts, running tasks with Stop, and anything needing attention. Settings has panes for general settings, accounts (with each account's engine and Claude Code or Codex install), apps, activity with task details, privacy and retention, advanced diagnostics, and about. Approval and sign-in open as their own windows. Reduce Motion and Reduce Transparency are respected, and every control is labelled for VoiceOver.
 
-**Not supported yet:** Developer ID signing and notarization (development builds are signed ad hoc), automatic updates, and limits set in Settings (the defaults apply).
+Release builds update themselves with Sparkle, from the latest published GitHub release; development builds never do ([RELEASING.md](RELEASING.md#3-updates-in-the-app-sparkle-2)).
+
+**Not supported yet:** a published release (the pipeline is in [RELEASING.md](RELEASING.md); development builds are signed ad hoc), and limits set in Settings (the defaults apply).

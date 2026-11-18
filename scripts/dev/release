@@ -7,6 +7,8 @@
 # AGNETA_SIGN_IDENTITY: a "Developer ID Application: …" identity. Without it everything is signed ad hoc: fine to
 #   test the steps, refused by Gatekeeper on other Macs. AGNETA_KEYCHAIN names the keychain holding it, if not the
 #   default (CI imports the certificate into a temporary one).
+# AGNETA_SPARKLE_PUBLIC_KEY: Sparkle's EdDSA public key, built into the app with its update feed; a signed release
+#   must have one.
 # Notarization, with an identity: AGNETA_NOTARY_KEY (an App Store Connect API key's .p8 file), AGNETA_NOTARY_KEY_ID
 #   and AGNETA_NOTARY_ISSUER; or AGNETA_NOTARY_PROFILE, a profile stored with `xcrun notarytool store-credentials`.
 set -euo pipefail
@@ -32,6 +34,7 @@ elif [[ -n "${AGNETA_NOTARY_PROFILE:-}" ]]; then
   notary=(--keychain-profile "$AGNETA_NOTARY_PROFILE")
 fi
 [[ -z "$identity" || ${#notary[@]} -gt 0 ]] || { echo "A signed release is notarized: set AGNETA_NOTARY_KEY… or AGNETA_NOTARY_PROFILE" >&2; exit 2; }
+[[ -z "$identity" || -n "${AGNETA_SPARKLE_PUBLIC_KEY:-}" ]] || { echo "A signed release updates itself: set AGNETA_SPARKLE_PUBLIC_KEY" >&2; exit 2; }
 keychain=(); [[ -n "${AGNETA_KEYCHAIN:-}" ]] && keychain=(--keychain "$AGNETA_KEYCHAIN")
 arch=$(uname -m); [[ "$arch" == aarch64 ]] && arch=arm64
 
@@ -67,11 +70,14 @@ if [[ -n "$identity" ]]; then
   # replaced, since they carry entitlements a release mustn't (Node's allows debugging, which notarization refuses).
   # What each program may do beyond the hardened runtime is in scripts/dev/entitlements/<program>.plist.
   while IFS= read -r -d '' file; do
-    [[ "$file" == "$app/Contents/MacOS/Agneta" || "$file" == */AgnetaTestClient.app/* ]] && continue
+    [[ "$file" == "$app/Contents/MacOS/Agneta" || "$file" == */AgnetaTestClient.app/* || "$file" == */Sparkle.framework/* ]] && continue
     file -b "$file" | grep -q Mach-O || continue
     plist="$entitlements/$(basename "$file").plist"
     if [[ -f "$plist" ]]; then sign --entitlements "$plist" "$file"; else sign "$file"; fi
   done < <(find "$app/Contents" -type f -perm +111 -print0)
+  # Sparkle is signed as Sparkle's documentation does it: its installer tool, its progress app, the framework.
+  sparkle="$app/Contents/Frameworks/Sparkle.framework"
+  for item in "$sparkle/Versions/B/Autoupdate" "$sparkle/Versions/B/Updater.app" "$sparkle"; do sign "$item"; done
   # The sandboxed test client keeps its own entitlements (App Sandbox, network client).
   sign --preserve-metadata=entitlements "$app/Contents/Resources/AgnetaTestClient.app"
 fi

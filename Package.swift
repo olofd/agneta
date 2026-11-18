@@ -20,6 +20,8 @@ let package = Package(
     dependencies: [
         // SQLite with migrations. Pinned exactly; updates are deliberate.
         .package(url: "https://github.com/groue/GRDB.swift", exact: "7.9.0"),
+        // Updates for release builds (docs/RELEASING.md, part 3). Pinned exactly, like GRDB.
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1"),
     ],
     targets: [
         .target(name: "AgnetaKit", dependencies: [.product(name: "GRDB", package: "GRDB.swift")]),
@@ -32,7 +34,7 @@ let package = Package(
         .executableTarget(name: "agneta-testclient"),
         .executableTarget(name: "agneta-signin", dependencies: ["AgnetaKit"]),
         // The app: menu bar panel and windows over AgnetaKit (scripts/dev/build-app bundles it).
-        .executableTarget(name: "Agneta", dependencies: ["AgnetaKit"]),
+        .executableTarget(name: "Agneta", dependencies: ["AgnetaKit", .product(name: "Sparkle", package: "Sparkle")]),
         // Reads task traces for people and scripts (docs/DIAGNOSTICS.md); bundled in the app.
         .executableTarget(name: "agneta-diag", dependencies: ["AgnetaKit"]),
         // The fake model and tool server that tests run engines against; agneta-fakes runs them for tests outside

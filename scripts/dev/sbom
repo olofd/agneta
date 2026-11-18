@@ -71,7 +71,7 @@ if every_engine:
                                     [("SHA-512", sri_hex(digest))] if digest.startswith("sha512-") else (), kind="library"))
 resolved = json.loads((repo / "Package.resolved").read_text())
 for pin in resolved["pins"]:
-    components.append(component(pin["identity"], pin["state"]["version"], "MIT" if pin["identity"] == "grdb.swift" else "NOASSERTION",
+    components.append(component(pin["identity"], pin["state"]["version"], {"grdb.swift": "MIT", "sparkle": "MIT"}.get(pin["identity"], "NOASSERTION"),
                                 f"pkg:swift/{pin['location'].removeprefix('https://').removesuffix('.git')}@{pin['state']['version']}",
                                 kind="library", delivery="linked"))
 runtimes = load("runtimes.lock")

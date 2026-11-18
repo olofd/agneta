@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = StatusItemController(model: model)
         Task {
             await model.start()
+            model.updates.start(model)
             if model.accounts.isEmpty { WindowPresenter.shared.showWelcome(model) }
         }
     }

@@ -92,6 +92,9 @@ final class AppModel {
     private let keychain: Keychain
     /// Running under AGNETA_HOME: everything stays inside that folder.
     private let isolated: Bool
+    var isIsolated: Bool { isolated }
+    /// Sparkle, for release builds (Updates.swift).
+    let updates = Updates()
     /// Agneta's own log: events, ids and timing, never content.
     let log: OperationalLog
     /// The runtime: nil while Reset runs, and replaced after it. Whatever waited holds on to the one it began with.
