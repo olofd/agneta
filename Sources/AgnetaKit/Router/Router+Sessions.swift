@@ -381,21 +381,25 @@ extension Router {
 
     /// Opens a task's trace, or continues a resumed one, and follows its engine: what its costs mean, how it names
     /// tools, the plan's usage, its usage ledger, and live delivery when the app asked for it.
+    /// A new task's `meta` is its trace's first record, written before the engine's messages can reach the trace.
     func startTrace(_ traces: Traces, task: String, accountID: String, lease: EngineLease, engineSession: String,
-                            request: JSONValue?, resumed: Bool) -> TraceSession {
+                            request: JSONValue?, resumed: Bool, meta: [String: JSONValue]? = nil) -> TraceSession {
         for server in request?["mcpServers"]?.arrayValue ?? [] {
             for header in server["headers"]?.arrayValue ?? [] { if let value = header["value"]?.stringValue { traces.mask.register(value) } }
         }
-        let trace = traces.open(task: task, lease: lease.key, engineSession: engineSession)
+        var forwarder: TraceForwarder?
         if let live = request?["_meta"]?["agneta/trace@1"], live["live"]?.boolValue == true, let peer = apps[sessions[task]?.app ?? UUID()]?.peer {
             let include = live["include"]?.arrayValue.map { Traces.defaultTypes.union($0.compactMap(\.stringValue)) } ?? Traces.defaultTypes
-            let forwarder = TraceForwarder(include: include, send: { records in
+            forwarder = TraceForwarder(include: include, send: { records in
                 try? await peer.notify("agneta/trace", ["sessionId": .string(task), "records": .array(records)])
             }, overflow: { after in
                 try? await peer.notify("agneta/trace", ["sessionId": .string(task), "records": [], "overflow": ["after": .int(after)]])
             })
             sessions[task]?.forwarder = forwarder
-            trace.writer.observe { forwarder.accept($0) }
+        }
+        let trace = traces.open(task: task, lease: lease.key, engineSession: engineSession) { trace in
+            if let forwarder { trace.writer.observe { forwarder.accept($0) } } // the live app gets `meta` too
+            if let meta { trace.writer.record("meta", meta) }
         }
         trace.set(billing: accounts[accountID]?.billing ?? "unknown")
         trace.identify(with: lease.engine)
@@ -408,10 +412,9 @@ extension Router {
     /// Starts a new task's trace with everything that shapes the run (docs/DIAGNOSTICS.md, `meta`).
     func openTrace(_ traces: Traces, task: String, grant: Grant, accountID: String, lease: EngineLease, engineSession: String,
                            policy: SessionPolicy, request: JSONValue?, result: JSONValue, instructions: String?) {
-        let trace = startTrace(traces, task: task, accountID: accountID, lease: lease, engineSession: engineSession, request: request, resumed: false)
         let account = accounts[accountID]
         func paths(_ urls: [URL]) -> JSONValue { .array(urls.map { .string($0.path(percentEncoded: false)) }) }
-        trace.writer.record("meta", [
+        let meta: [String: JSONValue] = [
             "format": "agneta/trace@1",
             "agneta": ["version": .string(Self.version)],
             "app": ["name": .string(grant.app), "identifier": grant.identifier.map(JSONValue.string) ?? .null, "verified": .bool(grant.verified),
@@ -428,7 +431,9 @@ extension Router {
             "request": request ?? .null,
             "engineResult": result,
             "instructions": instructions.map(JSONValue.string) ?? .null,
-        ])
+        ]
+        let trace = startTrace(traces, task: task, accountID: accountID, lease: lease, engineSession: engineSession, request: request,
+                               resumed: false, meta: meta)
         // Goose reports the model as a config option; other engines as `models`.
         let model = result["models"]?["currentModelId"]
             ?? result["configOptions"]?.arrayValue?.first { $0["id"]?.stringValue == "model" }?["currentValue"]

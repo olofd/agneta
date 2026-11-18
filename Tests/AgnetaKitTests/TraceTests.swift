@@ -228,6 +228,21 @@ import Testing
 
     /// Pages are capped by size as well as count, always hold at least one record, follow on from the previous
     /// page, and are complete only at the trace's end.
+    /// A new task's `meta` is its trace's first record: what `prepare` writes happens before the engine session leads
+    /// to the task, so no engine message can be attributed ahead of it. (CI found `acp` records before `meta` twice
+    /// on 2026-11-18, when meta was written after the trace was registered.)
+    @Test func metaComesBeforeAnythingTheEngineSends() async throws {
+        let traces = Traces(folder: try folder())
+        let session = traces.open(task: "t", lease: "l", engineSession: "e") { trace in
+            #expect(traces.task(lease: "l", engineSession: "e") == nil && traces.session("t") == nil)
+            trace.writer.record("meta", ["format": "agneta/trace@1"])
+        }
+        #expect(traces.task(lease: "l", engineSession: "e") == "t")
+        session.writer.record("acp", ["leg": "engine→agneta"])
+        traces.close(task: "t")
+        #expect(try lines(traces.file(for: "t")).map { $0["type"]?.stringValue } == ["meta", "acp"])
+    }
+
     /// A resumed task goes on from what it had used: the cost its limits count, and its model calls' numbering,
     /// whether it last finished a turn or stopped in the middle of one.
     @Test func aResumedTraceKeepsItsCostAndCallCount() async throws {

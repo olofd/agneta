@@ -28,12 +28,16 @@ public final class Traces: @unchecked Sendable {
 
     public func file(for task: String) -> URL { folder.appending(path: "\(task).jsonl") }
 
-    public func open(task: String, lease: String, engineSession: String) -> TraceSession {
+    /// Opens a task's trace. `prepare` runs before the task can be found by its engine session, so what it records
+    /// (a new task's `meta`) comes first: once registered, the engine's messages are attributed to it from other
+    /// threads at once.
+    public func open(task: String, lease: String, engineSession: String, prepare: (TraceSession) -> Void = { _ in }) -> TraceSession {
         let session = TraceSession(writer: TraceWriter(task: task, file: file(for: task), mask: mask, limits: limits))
         session.writer.onProblem { [weak self] reason in
             guard let handler = self?.lock.withLock({ self?.problemHandler }) else { return }
             handler(task, reason)
         }
+        prepare(session)
         lock.withLock {
             sessions[task] = session
             byEngineSession[lease + "\u{0}" + engineSession] = task
