@@ -26,7 +26,7 @@ Engines are run with their own telemetry, update checks, analytics and feedback 
 | Downloaded components (Claude Code's adapter, OpenCode) | `Runtimes/` in Agneta's data folder | Until Reset; an update keeps them while their pin is unchanged |
 | Update settings, the last check's time, and an update downloaded but not yet installed | Agneta's preferences; `~/Library/Caches/com.objectivecoder.agneta/` | Until the update installs, or Reset |
 | API keys and the diagnostics token | Agneta's Keychain items | Until removed |
-| Plan sign-ins | Codex's `auth.json` in the account's folder; Claude Code's entry in the login Keychain | Until signed out |
+| Plan sign-ins | Codex's and Claude Code's own entries in the login Keychain, one per account | Until signed out (Sign Out and Reset run each one's logout) |
 | What tasks wrote | The workspace the app named, or the app's own workspace (`… Workspaces/<grant>`) | Until you delete it, or Reset for the app's own workspace |
 
 Everything Agneta writes is readable only by your user account (folders `0700`, files `0600`).

@@ -781,6 +781,7 @@ final class AppModel {
         _Concurrency.Task {
             await runtime.remove(account: account.id)
             if account.kind == .claude { await self.signOutOfClaudeCode(homes: [home]) }
+            if account.kind == .chatGPT { await self.signOutOfCodex(homes: [home]) }
             try? FileManager.default.removeItem(at: home)
         }
     }
@@ -902,6 +903,7 @@ final class AppModel {
             try? leftover.close()
         }
         await signOutOfClaudeCode(homes: accountHomes)
+        await signOutOfCodex(homes: accountHomes)
         do {
             try reset.wipe()
         } catch {
@@ -926,6 +928,14 @@ final class AppModel {
         for home in claudeHomes {
             await ClaudeCodeSignIn(cli: cli.path, configDirectory: home.appending(path: "claude", directoryHint: .isDirectory)).signOut()
         }
+    }
+
+    /// Codex keeps each ChatGPT account's sign-in in the login Keychain, keyed by the account's CODEX_HOME. Its own
+    /// logout removes it (and an auth.json from before keyring mode).
+    private func signOutOfCodex(homes: [URL]) async {
+        let codexHomes = homes.map(CodexAdapter.codexHome(account:)).filter { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
+        guard !codexHomes.isEmpty, let cli = chosen("codex", from: codexInstalls) else { return }
+        for home in codexHomes { await CodexSignIn(cli: cli.path, codexHome: home).signOut() }
     }
 
     /// Every account folder on disk (Reset, including one resumed after an interruption).

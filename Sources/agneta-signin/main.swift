@@ -60,7 +60,7 @@ func runSignIn() async throws {
             throw SignInError.provider("No Codex \(CLILocator.codexMinimum) or later is installed")
         }
         let codex = CodexSignIn(cli: cli.path, codexHome: CodexAdapter.codexHome(account: account))
-        if codex.isSignedIn { say("✓ already signed in for Codex"); return }
+        if await codex.isSignedIn() { say("✓ already signed in for Codex"); return }
         try await codex.run(progress: progress)
     default:
         throw SignInError.provider("unknown route \(route)")

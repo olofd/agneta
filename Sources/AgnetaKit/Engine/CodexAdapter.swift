@@ -34,7 +34,9 @@ public struct CodexAdapter: EngineAdapter {
         try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let toml = """
         # Written by Agneta for this account; changes are replaced at the next start.
-        cli_auth_credentials_store = "file"
+        # The sign-in in the login Keychain ("Codex Auth", keyed by this folder), never a file here: everything in this
+        # folder is readable inside the engine's sandbox, where Codex's own tools read files.
+        cli_auth_credentials_store = "keyring"
         check_for_update_on_startup = false
         # Searched on OpenAI's servers without a permission request, so no policy could refuse it.
         web_search = "disabled"
@@ -78,6 +80,7 @@ public struct CodexAdapter: EngineAdapter {
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let codexHome: URL
         var writable: [URL] = []
+        var keychains = false
         var environment: [String: String] = [
             "HOME": home.path(percentEncoded: false), "TMPDIR": temporary.path(percentEncoded: false),
             "PATH": [node.deletingLastPathComponent().path(percentEncoded: false), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].joined(separator: ":"),
@@ -88,7 +91,10 @@ public struct CodexAdapter: EngineAdapter {
         case .chatGPT:
             guard let subscription = context.provider.subscription else { throw RPCError(code: RPCError.internalError, message: "The account has no sign-in") }
             codexHome = Self.codexHome(account: subscription.home)
-            writable.append(codexHome) // Codex refreshes its sign-in and keeps sessions there
+            writable.append(codexHome) // Codex keeps its sessions there
+            // The sign-in is in the login Keychain (keyring mode), reached through $HOME/Library/Keychains, as for Claude Code.
+            try ClaudeCodeSignIn.linkKeychains(into: home)
+            keychains = true
         case .openAI:
             codexHome = home.appending(path: "codex", directoryHint: .isDirectory)
             environment["OPENAI_API_KEY"] = context.provider.apiKey ?? ""
@@ -102,8 +108,9 @@ public struct CodexAdapter: EngineAdapter {
         // does the confining: measured, Codex runs shell commands without asking, and they fail with "sandbox_apply:
         // Operation not permitted" without a tool call; edits ask first and work.
         environment["INITIAL_AGENT_MODE"] = context.session?.policy.tools == .workspace ? "workspace-write" : "read-only"
-        let readable = [node.deletingLastPathComponent().deletingLastPathComponent(), script.deletingLastPathComponent().deletingLastPathComponent(),
+        var readable = [node.deletingLastPathComponent().deletingLastPathComponent(), script.deletingLastPathComponent().deletingLastPathComponent(),
                         cli.path.deletingLastPathComponent().deletingLastPathComponent()]
+        if keychains { readable.append(FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Keychains", directoryHint: .isDirectory)) }
         return EngineLaunch(executable: node, arguments: [script.path(percentEncoded: false)], environment: environment,
                             writable: writable, readable: readable, stateRoot: codexHome)
     }

@@ -4,6 +4,8 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 ## Unreleased
 
+- **ChatGPT plans: sign in again once.** Codex now keeps each account's sign-in in the login Keychain instead of a file in the account's folder, which Codex's own file tools could read inside a task. After updating, the ChatGPT account asks you to sign in again; Sign Out and Reset also remove the Keychain entry.
+
 - **A 19 MB download** (59 MB in 0.2.0). Releases no longer bundle Codex's runtime (Node and codex-acp): it's a download of its own on each release, pinned and checked, fetched the first time a ChatGPT plan or an app set to Codex needs it. Settings shows the progress.
 
 ## 0.2.0 (2026-11-18)

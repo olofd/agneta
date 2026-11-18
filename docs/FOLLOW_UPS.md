@@ -129,7 +129,14 @@ The maintainer brought a second, cold review (2026-11-18) with five findings. Al
   - **Soft limits.** After a 10 s grace, a limit ends the session.
   - **The `Int(1e300)` crash.** Limits outside the range are refused with -32602.
   - **Signalling a reused process group.** The reaper sees the exit with kqueue, ends the group while the zombie leader still holds its number, and only then reaps it; nothing signals the group after that. A first version used `waitid(WNOWAIT)`, which on macOS reports a stopped child over and over (631,242 calls in 3 s); measured and replaced.
-- **Open, next:** a Codex session can read its account's ChatGPT sign-in (`auth.json`) and the account's other Codex sessions, because the whole `CODEX_HOME` is in its sandbox, and Codex reads files with its own tools.
+- **The sign-in: fixed after 0.2.0.** Codex now keeps it in the login Keychain (`cli_auth_credentials_store = "keyring"` in the account's config.toml).
+  - Researched in Codex's source at `rust-v0.167.0`: the Keychain service is "Codex Auth", and the account is a hash of the canonical CODEX_HOME. Saving deletes `auth.json`, refreshes write back to the Keychain, and `codex app-server` (which codex-acp starts) reads the setting.
+  - Checked against the installed Codex 0.167: it accepts the setting and reports "Not logged in" for an empty account. A wrong value is refused, so the setting is really read.
+  - The engine reaches the Keychain like the Claude Code engine, and sign-in is checked with `codex login status`. Sign Out and Reset run `codex logout`, which removes the entry.
+  - There's no migration, so existing ChatGPT accounts sign in again once.
+  - Not yet tried with a real ChatGPT account: a sign-in, a task, and a refresh.
+- **Still open: other tasks' Codex sessions.** Codex always writes them under `CODEX_HOME/sessions/` (only its SQLite state can move), and needs them to resume, so they stay readable to a Codex task on the same account. Options to weigh: a deny rule for other sessions' files (Codex names them only once it writes them), or a CODEX_HOME per task (which would need a sign-in per task, since the Keychain entry is keyed by the folder).
+- **Before this fix:** a Codex session could read its account's ChatGPT sign-in (`auth.json`) and the account's other Codex sessions, because the whole `CODEX_HOME` is in its sandbox, and Codex reads files with its own tools.
   - Codex 0.167 can keep the sign-in in the Keychain (`cli_auth_credentials_store = "keyring"`), as Claude Code already does. That would end the file exposure, but every ChatGPT account would have to sign in again, and it needs testing with a real account.
   - The other sessions need their own design, since Codex must keep them to resume tasks.
 

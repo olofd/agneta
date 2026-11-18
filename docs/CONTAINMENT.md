@@ -64,4 +64,4 @@ None of these is built. The acceptance test is written against behaviour, not ag
 
 - **Engines reach any host on port 443.** Seatbelt filters connections by port, not host name, and engines need HTTPS for their provider. A per-host allowlist needs a network layer Agneta owns (a proxy, or the virtual machine route above).
 - **Claude Code and Codex run their own tools inside the engine's profile,** not the stricter shell profile. Agneta refuses what the policy forbids in their permission requests ([APP_PROTOCOL.md](APP_PROTOCOL.md#permissions)). The acceptance test hasn't yet run with their real programs; it needs signed-in accounts.
-- **On a Claude plan the engine reads `~/Library/Keychains`,** where Claude Code keeps its sign-in.
+- **On a Claude or ChatGPT plan the engine reads `~/Library/Keychains`,** where Claude Code and Codex keep their sign-ins.

@@ -127,7 +127,7 @@ Claude Code and Codex run their own tools. For them Agneta checks every permissi
 | Kind | Where it lives | Who refreshes it |
 | --- | --- | --- |
 | API keys | Agneta's Keychain items (service = the app's bundle identifier) | Nobody; passed to the engine in its environment |
-| ChatGPT plan on Codex | Codex's own `auth.json` in the account's `CODEX_HOME` | Codex |
+| ChatGPT plan on Codex | Codex's own entry in the login Keychain ("Codex Auth", keyed by the account's `CODEX_HOME`) | Codex |
 | Claude plan | Claude Code's own login Keychain entry, keyed by the account's configuration folder | Claude Code |
 | Diagnostics token | Agneta's Keychain items | The user, in Settings |
 
