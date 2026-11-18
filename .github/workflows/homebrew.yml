@@ -46,10 +46,12 @@ jobs:
         run: |
           mkdir -p Casks
           cp "$RUNNER_TEMP/agneta.rb" Casks/agneta.rb
-          git diff --quiet && { echo "The tap has $VERSION already"; exit 0; }
+          # Staged first: the first release's cask is a new file, which a plain diff wouldn't see.
+          git add Casks/agneta.rb
+          git diff --cached --quiet && { echo "The tap has $VERSION already"; exit 0; }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -qam "agneta $VERSION"
+          git commit -qm "agneta $VERSION"
           git push -q
           echo "The tap now has agneta $VERSION"
 
