@@ -235,6 +235,7 @@ Every record has `v`, `seq` (gapless), `t` (UTC with microseconds), `mono` (nano
 | `-32012` | Too many turns waiting; try again shortly |
 | `-32013` | The account is paused in Agneta (`data.agneta.paused`); a turn already running finishes |
 | `-32014` | This session's engine can't do that (`data.agneta.engine`); check `capabilities` first |
+| `-32015` | What the engine needs is still downloading (`data.agneta.engineDownloading`: `engine`, `received`, `total` bytes); try again shortly |
 | `-32601` | Not a method Agneta offers; engines' own methods aren't reachable |
 | `-32602` | Invalid parameters. For a policy, server list or mode, `data.agneta.unenforceable` names the field. "Unknown session" also uses it: another app's session, or an ended one |
 | `-32603` | Agneta couldn't do it: the engine didn't start or stopped, or the app disconnected meanwhile |

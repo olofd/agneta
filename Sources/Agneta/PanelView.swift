@@ -18,6 +18,7 @@ struct PanelView: View {
                 VStack(spacing: 12) {
                     if let problem = model.attentionMessage { attention(problem) }
                     if let update = updateMessage { notice(update) }
+                    ForEach(model.downloads.values.sorted { $0.engine < $1.engine }, id: \.engine) { download in downloadCard(download) }
                     if !model.tasks.isEmpty { tasksCard }
                     accountsCard
                 }
@@ -108,6 +109,33 @@ struct PanelView: View {
         }
         .padding(12)
         .frostedCard(tint: Palette.accent)
+    }
+
+    // MARK: Downloads
+
+    /// What an engine needs, downloading (with its progress) or failed (with Try Again), whatever started it.
+    private func downloadCard(_ download: AppModel.EngineDownload) -> some View {
+        let failed = download.problem != nil
+        return HStack(spacing: 12) {
+            Image(systemName: failed ? "exclamationmark.circle.fill" : "arrow.down.circle.fill").font(.system(size: 20))
+                .foregroundStyle(failed ? Palette.attention : Palette.accent)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(failed ? "\(download.title) couldn't be downloaded" : "Downloading \(download.title)").font(.system(size: 13, weight: .semibold))
+                if failed {
+                    Text("Check your connection, then try again.").font(.system(size: 12)).foregroundStyle(.secondary)
+                } else {
+                    if let fraction = download.fraction { ProgressView(value: fraction).controlSize(.small) } else { ProgressView().progressViewStyle(.linear).controlSize(.small) }
+                    Text(download.amount).font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
+                }
+            }
+            Spacer(minLength: 6)
+            if failed {
+                Button("Try Again") { model.retryDownload(download.engine) }.glassButton(prominent: true).tint(Palette.accent).controlSize(.small)
+            }
+        }
+        .padding(12)
+        .frostedCard(tint: failed ? Palette.attention : Palette.accent)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Tasks

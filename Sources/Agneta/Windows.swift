@@ -495,10 +495,8 @@ struct SettingsView: View {
                         Text(account.label).font(.system(size: 13, weight: .semibold))
                         Text([account.kind.plan, account.email].compactMap { $0 }.joined(separator: " · "))
                             .font(.system(size: 12)).foregroundStyle(.secondary)
-                        if let download = model.engineDownload, download.account == account.id {
-                            HStack(spacing: 6) { ProgressView().controlSize(.mini); Text(download.text) }.font(.system(size: 12)).foregroundStyle(.secondary)
-                        } else if let problem = model.engineDownloadProblem, problem.account == account.id {
-                            Text(problem.text).font(.system(size: 12)).foregroundStyle(Palette.attention).fixedSize(horizontal: false, vertical: true)
+                        if let download = model.downloads.values.first(where: { $0.account == account.id || $0.engine == account.engine }) {
+                            DownloadStatus(download: download) { model.retryDownload(download.engine) }.padding(.top, 3)
                         }
                     }
                     Spacer()
@@ -511,7 +509,8 @@ struct SettingsView: View {
                                 Text(notes.isEmpty ? engine.displayName : "\(engine.displayName) (\(notes.joined(separator: ", ")))").tag(engine.id)
                             }
                         }
-                        .labelsHidden().fixedSize().disabled(model.engineDownload != nil)
+                        .labelsHidden().fixedSize()
+                        .disabled(model.downloads.values.contains { $0.account == account.id && $0.problem == nil })
                         .help("The engine this account's tasks run on")
                     } else {
                         Text(model.engineName(of: account)).font(.system(size: 12)).foregroundStyle(.secondary)

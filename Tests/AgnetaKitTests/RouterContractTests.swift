@@ -362,6 +362,30 @@ actor FakeEngines: EngineSource {
         #expect(await stack.engines.askedEngines.last == .some(nil))
     }
 
+    /// While the engine a session needs is downloading, the app hears that, with the progress, instead of that
+    /// Agneta lacks the engine; once it's done, the session opens.
+    @Test func aSessionWaitingOnADownloadSaysSo() async throws {
+        let stack = try await Stack.start(port: 47648, approve: { _ in
+            Router.PairingAnswer(accounts: ["brokered"], remember: true, engines: ["brokered": "opencode"])
+        })
+        defer { stack.stop() }
+        await stack.router.register(engine: OpenCodeAdapter(executable: URL(filePath: "/usr/bin/false")))
+        await stack.router.setDownloading("opencode", progress: ["received": 10, "total": 40])
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Patient")
+        do {
+            _ = try await stack.session(app, account: "brokered")
+            Issue.record("a session opened while its engine was downloading")
+        } catch let error as RPCError {
+            #expect(error.code == -32015)
+            #expect(error.data?["agneta"]?["engineDownloading"]?["engine"]?.stringValue == "opencode")
+            #expect(error.data?["agneta"]?["engineDownloading"]?["received"]?.intValue == 10)
+        }
+        await stack.router.setDownloading("opencode", progress: Optional<JSONValue>.none)
+        _ = try await stack.session(app, account: "brokered")
+    }
+
     @Test func promptResultsCarryTheTurnsUsage() async throws {
         let stack = try await Stack.start(port: 47442)
         defer { stack.stop() }

@@ -243,11 +243,23 @@ public actor Router {
     ///   - engine: the engine serving the account, so apps can see what its sessions can do.
     ///   - runner: `.native` when the account's provider runs its own tools whatever the engine (a Claude plan runs
     ///     Claude Code); engines that always do (Claude Code, Codex) are native on any account (`runner(account:engine:)`).
+    ///   - engineID: the account's engine by id, also while it isn't here yet (downloading).
     public func add(account id: String, label: String, runner: ToolRunner = .brokered, kind: String? = nil, billing: String = "unknown",
-                    engine: (any EngineAdapter)? = nil) {
+                    engine: (any EngineAdapter)? = nil, engineID: String? = nil) {
         accounts[id] = (label, runner, kind, billing, engine)
+        accountEngines[id] = engineID ?? engine?.id
         if let engine { adapters[engine.id] = engine }
     }
+
+    /// Each account's engine by id, even one that isn't here yet.
+    var accountEngines: [String: String] = [:]
+    /// Engines being downloaded, with their progress: a session that needs one is told to try again shortly, with how
+    /// far along it is, rather than that Agneta lacks the engine.
+    var downloading: [String: JSONValue] = [:]
+    static let engineDownloading: Int64 = -32015
+
+    /// `progress` (`{"received", "total"}`) while the engine downloads; nil once it's done or has failed.
+    public func setDownloading(_ engine: String, progress: JSONValue?) { downloading[engine] = progress }
 
     /// Makes an engine available for apps that are set to it, beyond the accounts' own engines.
     public func register(engine: any EngineAdapter) { adapters[engine.id] = engine }

@@ -69,9 +69,24 @@ final class AppModel {
     private(set) var resetProblem: String?
     /// The database couldn't be opened (for example, written by a newer Agneta).
     private(set) var storeProblem: String?
-    /// An engine being downloaded for an account (OpenCode), and the last such download that failed: Settings shows both.
-    private(set) var engineDownload: (account: String, text: String)?
-    private(set) var engineDownloadProblem: (account: String, text: String)?
+    /// What an engine needs, downloading or failed, by engine: the panel and Settings show it with its progress.
+    struct EngineDownload: Equatable {
+        var engine: String
+        var title: String
+        /// The account that asked for it, whose Settings row shows it too.
+        var account: String?
+        var received: Int64 = 0
+        var total: Int64?
+        var problem: String?
+        var fraction: Double? { total.map { $0 > 0 ? min(Double(received) / Double($0), 1) : 0 } }
+        var amount: String {
+            let done = ByteCountFormatter.string(fromByteCount: received, countStyle: .file)
+            return total.map { "\(done) of \(ByteCountFormatter.string(fromByteCount: $0, countStyle: .file))" } ?? done
+        }
+    }
+    private(set) var downloads: [String: EngineDownload] = [:]
+    /// When the router last heard of each download's progress (twice a second at most).
+    private var progressSent: [String: Date] = [:]
     /// What the last launch cleaned up after a crash, for one quiet line in Activity.
     private(set) var recovered: (engines: Int, tasks: Int) = (0, 0)
     /// The pairing request on screen; edits change its allowed accounts.
@@ -306,14 +321,12 @@ final class AppModel {
     func setEngine(_ account: AccountRecord, _ engine: String) {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }), engines(for: account).contains(where: { $0.id == engine }) else { return }
         if needsDownload(engine) {
-            guard engineDownload == nil else { return }
             downloadEngine(engine, showingUnder: account.id, reason: "chosen") { [weak self] in
                 guard let self, let current = accounts.first(where: { $0.id == account.id }) else { return }
                 setEngine(current, engine)
             }
             return
         }
-        engineDownloadProblem = nil
         accounts[index].engine = engine
         log.log("engine-changed", ["account": .string(account.id), "engine": .string(engine)])
         save(accounts[index])
@@ -605,28 +618,60 @@ final class AppModel {
     /// and supervisor and runs `done`. Downloads asked for meanwhile share this one (RuntimeInstaller). `account`: the
     /// Settings row that shows its progress and any failure.
     private func downloadEngine(_ engine: String, showingUnder account: String?, reason: String, then done: (@MainActor () -> Void)? = nil) {
-        guard let download = download(for: engine), let version = download.asset?.version else { return }
-        if let account {
-            engineDownloadProblem = nil
-            engineDownload = (account, "Downloading \(download.title)…")
+        guard let download = download(for: engine), let asset = download.asset else { return }
+        // A download already going is joined (RuntimeInstaller shares it); one that failed starts again.
+        let joining = downloads[engine].map { $0.problem == nil } ?? false
+        if !joining {
+            downloads[engine] = EngineDownload(engine: engine, title: download.title, account: account, total: asset.size.map(Int64.init))
+            log.log("engine-download", ["engine": .string(engine), "version": .string(asset.version), "reason": .string(reason)])
+            sendProgress(engine, force: true)
+        } else if let account, downloads[engine]?.account == nil {
+            downloads[engine]?.account = account
         }
-        log.log("engine-download", ["engine": .string(engine), "version": .string(version), "reason": .string(reason)])
         let started = Date()
         _Concurrency.Task {
             do {
-                _ = try await download.installer.install(download.name, executable: download.executable)
-                log.log("engine-downloaded", ["engine": .string(engine), "seconds": .int(Int64(Date().timeIntervalSince(started)))])
-                if account != nil, engineDownload?.account == account { engineDownload = nil }
+                _ = try await download.installer.install(download.name, executable: download.executable, received: { received, total in
+                    _Concurrency.Task { @MainActor [weak self] in self?.progressed(engine, received: received, total: total) }
+                })
+                if downloads[engine] != nil {
+                    log.log("engine-downloaded", ["engine": .string(engine), "seconds": .int(Int64(Date().timeIntervalSince(started)))])
+                    downloads[engine] = nil
+                    await runtime?.setDownloading(engine, progress: nil)
+                }
                 for adapter in availableEngines { await runtime?.register(adapter) }
                 done?()
             } catch {
+                guard downloads[engine]?.problem == nil else { return }
                 log.error("engine-download-failed", ["engine": .string(engine), "reason": .string("\(error)")])
-                if let account {
-                    if engineDownload?.account == account { engineDownload = nil }
-                    engineDownloadProblem = (account, "\(download.title) couldn't be downloaded: \(error.localizedDescription)")
-                }
+                downloads[engine]?.problem = "\(download.title) couldn't be downloaded: \(error.localizedDescription)"
+                await runtime?.setDownloading(engine, progress: nil)
             }
         }
+    }
+
+    /// Starts a failed download again (the panel's and Settings' Try Again).
+    func retryDownload(_ engine: String) {
+        downloadEngine(engine, showingUnder: downloads[engine]?.account, reason: "retry")
+    }
+
+    /// Bytes arriving: the panel and Settings follow in steps of half a percent, so drawing keeps up.
+    private func progressed(_ engine: String, received: Int64, total: Int64?) {
+        guard var state = downloads[engine], state.problem == nil else { return }
+        let step = max((total ?? state.total ?? 0) / 200, 256 * 1024)
+        guard received - state.received >= step || received == (total ?? -1) else { return }
+        state.received = received
+        if let total { state.total = total }
+        downloads[engine] = state
+        sendProgress(engine)
+    }
+
+    /// Tells the router how far along a download is, so apps asking meanwhile hear it; twice a second at most.
+    private func sendProgress(_ engine: String, force: Bool = false) {
+        guard let state = downloads[engine], force || Date().timeIntervalSince(progressSent[engine] ?? .distantPast) > 0.5 else { return }
+        progressSent[engine] = Date()
+        let progress: JSONValue = ["received": .int(state.received), "total": state.total.map { .int($0) } ?? .null]
+        _Concurrency.Task { await runtime?.setDownloading(engine, progress: progress) }
     }
 
     func removeAccess(_ grantID: String) {
@@ -1005,6 +1050,9 @@ final class AppModel {
         tasks = [Task(id: "1", app: "Example App", appIdentifier: nil, account: "a", title: "Summarizing meeting notes", started: Date().addingTimeInterval(-840), running: true),
                  Task(id: "2", app: "Example App", appIdentifier: nil, account: "b", title: "Naming a project", started: Date(), running: true)]
         grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"], engines: ["c": "opencode"])]
+        downloads = ["opencode": EngineDownload(engine: "opencode", title: "OpenCode", account: "c", received: 52_400_000, total: 113_407_057),
+                     "codex": EngineDownload(engine: "codex", title: "Codex's runtime", account: "b",
+                                             problem: "Codex's runtime couldn't be downloaded: The Internet connection appears to be offline.")]
         let sample = UUID()
         _ = approvals.add(id: sample, Approval(id: sample, app: "Example App", identifier: "com.example.app", verified: true, code: "123456",
                                                choices: accounts, allowed: ["a", "c"], tools: .workspace,

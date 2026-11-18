@@ -122,6 +122,9 @@ public actor AgnetaRuntime {
         await router.register(engine: engine)
     }
 
+    /// An engine's download progress (`{"received", "total"}`), or nil once it's done or has failed.
+    public func setDownloading(_ engine: String, progress: JSONValue?) async { await router.setDownloading(engine, progress: progress) }
+
     /// Changes the engine an app's tasks on an account run on (nil: the account's own), and saves it.
     public func setEngine(grant: String, account: String, engine: String?) async throws {
         try await router.setEngine(grant: grant, account: account, engine: engine)
@@ -133,7 +136,7 @@ public actor AgnetaRuntime {
     public func serve(account id: String, label: String, setup: AccountSetup, runner: Router.ToolRunner, kind: String?, billing: String, paused: Bool) async {
         await supervisor.add(account: id, setup: setup)
         let engine = await supervisor.engine(for: id)
-        await router.add(account: id, label: label, runner: runner, kind: kind, billing: billing, engine: engine)
+        await router.add(account: id, label: label, runner: runner, kind: kind, billing: billing, engine: engine, engineID: setup.engine)
         await router.setPaused(id, paused)
     }
 

@@ -6,6 +6,7 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 - **ChatGPT plans: sign in again once.** Codex now keeps each account's sign-in in the login Keychain instead of a file in the account's folder, which Codex's own file tools could read inside a task. After updating, the ChatGPT account asks you to sign in again; Sign Out and Reset also remove the Keychain entry.
 
+- **Downloads you can follow.** OpenCode and Codex's runtime show their progress (bytes of total) in the panel and under the account in Settings, whatever started them; a failed download says why, with Try Again. An app whose task needs an engine still downloading is told so (`-32015`, with the progress) instead of that Agneta lacks the engine.
 - **A 19 MB download** (59 MB in 0.2.0). Releases no longer bundle Codex's runtime (Node and codex-acp): it's a download of its own on each release, pinned and checked, fetched the first time a ChatGPT plan or an app set to Codex needs it. Settings shows the progress.
 
 ## 0.2.0 (2026-11-18)

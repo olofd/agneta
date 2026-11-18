@@ -46,11 +46,13 @@ public struct RuntimeInstaller: Sendable {
     /// sees a half-installed or replaced folder.
     /// - Parameter executable: the program in the archive, when it isn't named `name` (the Codex runtime: `node`,
     ///   beside the codex-acp folder). Everything beside it in the archive is installed with it.
-    public func install(_ name: String, executable: String? = nil, progress: SignInProgress? = nil) async throws -> URL {
+    /// - Parameter received: bytes downloaded so far and the total when known, as the download goes.
+    public func install(_ name: String, executable: String? = nil, progress: SignInProgress? = nil,
+                        received: (@Sendable (Int64, Int64?) -> Void)? = nil) async throws -> URL {
         let asset = try asset(name)
         let folder = runtimes.appending(path: "\(name)/\(asset.version)", directoryHint: .isDirectory)
         return try await InstallGate.shared.run(folder.path(percentEncoded: false)) {
-            try await self.installNow(name, executable: executable ?? name, asset: asset, folder: folder, progress: progress)
+            try await self.installNow(name, executable: executable ?? name, asset: asset, folder: folder, progress: progress, received: received)
         }
     }
 
@@ -62,11 +64,12 @@ public struct RuntimeInstaller: Sendable {
         return FileManager.default.isExecutableFile(atPath: program.path(percentEncoded: false)) ? program : nil
     }
 
-    private func installNow(_ name: String, executable program: String, asset: Asset, folder: URL, progress: SignInProgress?) async throws -> URL {
+    private func installNow(_ name: String, executable program: String, asset: Asset, folder: URL, progress: SignInProgress?,
+                            received: (@Sendable (Int64, Int64?) -> Void)?) async throws -> URL {
         let executable = folder.appending(path: program)
         if Self.isInstalled(executable: executable, folder: folder, asset: asset) { return executable }
         progress?(.waiting("Downloading \(name) \(asset.version)…"))
-        let (download, _) = try await URLSession.shared.download(from: asset.url)
+        let (download, _) = try await URLSession.shared.download(from: asset.url, delegate: DownloadProgress(expected: asset.size.map(Int64.init), received))
         defer { try? FileManager.default.removeItem(at: download) }
         let data = try Data(contentsOf: download, options: .mappedIfSafe)
         guard Self.sha256(data) == asset.sha256 else { throw SignInError.provider("\(name) download didn't match its pinned checksum") }
@@ -112,6 +115,21 @@ public struct RuntimeInstaller: Sendable {
     }
 
     static func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+}
+
+/// Reports a download's bytes as they arrive; the total is the server's, else the size the lock records.
+final class DownloadProgress: NSObject, URLSessionDownloadDelegate, Sendable {
+    let expected: Int64?
+    let report: (@Sendable (Int64, Int64?) -> Void)?
+    init(expected: Int64?, _ report: (@Sendable (Int64, Int64?) -> Void)?) {
+        self.expected = expected
+        self.report = report
+    }
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
+                    totalBytesExpectedToWrite: Int64) {
+        report?(totalBytesWritten, totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : expected)
+    }
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
 }
 
 /// Runs one install per key at a time; callers asking meanwhile wait for the same result.

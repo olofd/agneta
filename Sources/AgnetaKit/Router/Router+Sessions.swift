@@ -80,6 +80,10 @@ extension Router {
         }
         if let refusal = Self.refuseServers(servers) { return .failure(refusal) }
         let engine = self.engine(for: account, in: grant)
+        if let wanted = grant.engines[account] ?? accountEngines[account], let progress = downloading[wanted] {
+            return .failure(RPCError(code: Self.engineDownloading, message: "Agneta is still downloading what this engine needs; try again shortly",
+                                     data: ["agneta": ["engineDownloading": progress.setting("engine", to: .string(wanted))]]))
+        }
         if grant.engines[account] != nil, engine == nil {
             return .failure(RPCError(code: RPCError.internalError,
                                      message: "\(grant.app) is set to run on \(grant.engines[account] ?? "an engine") with this account, which this Agneta can't run now; change it in Agneta's Settings → Apps",

@@ -267,3 +267,28 @@ struct SectionTitle: View {
             .accessibilityAddTraits(.isHeader)
     }
 }
+
+/// A download an engine needs: how far along, or why it failed with a way to try again.
+struct DownloadStatus: View {
+    var download: AppModel.EngineDownload
+    var retry: () -> Void
+
+    var body: some View {
+        if let problem = download.problem {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(problem).foregroundStyle(Palette.attention).fixedSize(horizontal: false, vertical: true)
+                Button("Try Again", action: retry).controlSize(.small)
+            }
+            .font(.system(size: 12))
+        } else {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Downloading \(download.title)").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                if let fraction = download.fraction { ProgressView(value: fraction).controlSize(.small) } else { ProgressView().progressViewStyle(.linear).controlSize(.small) }
+                Text(download.amount).font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit().lineLimit(1)
+            }
+            .frame(maxWidth: 240, alignment: .leading)
+            .accessibilityElement(children: .combine)
+        }
+    }
+}
+
