@@ -129,7 +129,7 @@ public final class ToolBroker: @unchecked Sendable {
         let watcher = Thread {
             var byte: UInt8 = 0
             while read(client, &byte, 1) > 0 {}
-            lock.withLock { if !counts.finished { killpg(child.pid, SIGKILL) } }
+            lock.withLock { if !counts.finished { child.signalGroup(SIGKILL) } }
         }
         watcher.start()
         let group = DispatchGroup()
@@ -156,8 +156,8 @@ public final class ToolBroker: @unchecked Sendable {
         Task { box.value = await child.waitForExit(); semaphore.signal() }
         semaphore.wait()
         let raw = box.value
-        // Whatever the command left running in its group (`nohup … &`) ends with it, which also closes the pipes.
-        killpg(child.pid, SIGKILL)
+        // Whatever the command left running in its group (`nohup … &`) ended with it (ChildProcess's reaper), which
+        // also closes the pipes.
         // Output already written is still delivered; a process that left the group can't hold the answer up.
         _ = group.wait(timeout: .now() + 2)
         let status = (raw & 0x7f) == 0 ? (raw >> 8) & 0xff : 128 + (raw & 0x7f)

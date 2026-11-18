@@ -15,6 +15,12 @@ public final class ChildProcess: @unchecked Sendable {
     public let stderr: FileHandle
     private let lock = NSLock()
     private var status: Int32?
+    /// Whether the leader has been reaped, after which its number may be reused: group signals stop then.
+    private final class Group: @unchecked Sendable {
+        let lock = NSLock()
+        var reaped = false
+    }
+    private let group = Group()
     private var waiters: [CheckedContinuation<Int32, Never>] = []
 
     /// - Parameters:
@@ -77,8 +83,16 @@ public final class ChildProcess: @unchecked Sendable {
         stdout = FileHandle(fileDescriptor: outPipe[0], closeOnDealloc: true)
         stderr = FileHandle(fileDescriptor: errPipe[0], closeOnDealloc: true)
 
-        let leader = child
+        let leader = child, group = self.group
         let reaper = Thread { [weak self] in
+            // Seen exited but not yet reaped: the leader is a zombie that still holds its number, so the group can't be
+            // anyone else's. Whatever it left running in its group ends now, and only then is it reaped.
+            var info = siginfo_t()
+            while waitid(P_PID, id_t(leader), &info, WEXITED | WNOWAIT) < 0 && errno == EINTR {}
+            group.lock.withLock {
+                killpg(leader, SIGKILL)
+                group.reaped = true
+            }
             var raw: Int32 = 0
             while waitpid(leader, &raw, 0) < 0 && errno == EINTR {}
             self?.finish(raw)
@@ -115,18 +129,24 @@ public final class ChildProcess: @unchecked Sendable {
         }
     }
 
+    /// Signals the process group, but only while its leader is unreaped: after that the number may belong to
+    /// another program (the reaper has already ended what the group left behind).
+    public func signalGroup(_ signal: Int32) {
+        group.lock.withLock { if !group.reaped { killpg(pid, signal) } }
+    }
+
     /// Signals the whole process group: TERM, then KILL after `grace`. Returns once the leader has exited.
     public func stop(grace: Duration = .seconds(3)) async {
         try? stdin.close()
-        guard !hasExited else { killpg(pid, SIGKILL); return }
-        killpg(pid, SIGTERM)
+        guard !hasExited else { return } // its group was ended when it exited
+        signalGroup(SIGTERM)
         let deadline = ContinuousClock.now + grace
         while !hasExited && ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(20))
         }
-        // Tools the engine started may outlive it; the group signal reaches them too. Right after the leader
-        // is reaped the group number can't have been reused while members remain.
-        killpg(pid, SIGKILL)
+        // Still running after the grace: KILL the group. If the leader exited meanwhile, the reaper has already ended
+        // what it left behind, and the group number is no longer ours to signal.
+        signalGroup(SIGKILL)
         _ = await waitForExit()
     }
 }
