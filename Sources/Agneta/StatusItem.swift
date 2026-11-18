@@ -152,6 +152,13 @@ enum GlassBackground {
             }
             glass.cornerRadius = cornerRadius
             glass.contentView = content
+            // Its layer clipped to the same rounded shape: a borderless window's shadow follows the shape of what it
+            // draws, and the glass view's own layer is a rectangle, which showed as a square dark outline around the
+            // rounded panel (measured: gone with this, the shadow following the corner).
+            glass.wantsLayer = true
+            glass.layer?.cornerRadius = cornerRadius
+            glass.layer?.cornerCurve = .continuous
+            glass.layer?.masksToBounds = true
             return glass
         }
         let effect = NSVisualEffectView()
