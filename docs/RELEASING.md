@@ -20,7 +20,7 @@ It follows what open-source Mac apps that release from CI do (Stats, AltTab, Cod
 
 [RELEASE_SETUP.md](RELEASE_SETUP.md) walks through all of it; `scripts/dev/release-secrets`, run by the maintainer, puts every key in the environment.
 
-Status: the environment, the tag ruleset and the tap exist (2026-11-18). The certificate, the notarization key, Sparkle's key and the tap token wait for the maintainer.
+Status: done (2026-11-18).
 
 ### 1. A correct release build (`scripts/dev/build-app --release`, `scripts/dev/release`)
 
@@ -31,7 +31,7 @@ Status: the environment, the tag ruleset and the tap exist (2026-11-18). The cer
 - **The smoke test runs on what a user gets:** the app is copied out of the mounted DMG and marked as downloaded (quarantined), Gatekeeper must accept it, Agneta must start and serve apps, and every bundled engine must start and answer `initialize` under the hardened runtime.
 - **Files per architecture:** `Agneta-<version>-arm64.dmg` and `-x86_64.dmg` for people, the matching `.zip` for Sparkle, plus one `SHA256SUMS.txt`.
 
-Status: built and run without a Developer ID (2026-11-18): the version, the DMG, the zip, the sums and the smoke test of the DMG all pass with ad hoc signing, and Node and OpenCode run under their entitlements. Developer ID signing and notarization have not run yet: they need step 0.
+Status: built and run without a Developer ID (2026-11-18): the version, the DMG, the zip, the sums and the smoke test of the DMG all pass with ad hoc signing, and Node and OpenCode run under their entitlements. The first dry run on GitHub (0.1.0-rc.1, 2026-11-18) signed both architectures with the Developer ID, Apple notarized the app and the DMG, Gatekeeper accepted the DMG and the downloaded app, and the smoke test passed on both: DMGs of 156 MB (Apple silicon) and 180 MB (Intel).
 
 ### 2. The release workflow (`.github/workflows/release.yml`)
 
@@ -42,7 +42,7 @@ Status: built and run without a Developer ID (2026-11-18): the version, the DMG,
 - On publishing, a second workflow bumps the Homebrew tap and checks that the update feed serves the new version.
 - Every action is pinned by commit, and each job has only the permissions it needs.
 
-Status: in the repository (2026-11-18). The feed script has run with Sparkle's tools on a real build (see [Testing an update](#testing-an-update)); the workflows themselves haven't run yet: they need step 0.
+Status: the build half has run: the dry run of 2026-11-18 built, signed, notarized and smoke-tested both architectures in about 20 minutes. The publish half (attestation, feeds, the draft) runs only on a tag, so the first release runs it; the feed script has run with Sparkle's tools on a real build (see [Testing an update](#testing-an-update)).
 
 ### 3. Updates in the app (Sparkle 2)
 
