@@ -64,6 +64,23 @@ jobs:
       - name: Fetch the pinned engines
         run: scripts/fetch-engines --engine all
 
+      # Measurement (2026-11-18): which clients reach a loopback server from the picked Python on this runner.
+      - name: Loopback clients
+        continue-on-error: true
+        run: |
+          "$AGNETA_TEST_PYTHON" -m http.server 47391 --bind 127.0.0.1 >/dev/null 2>&1 & server=$!
+          sleep 1.5
+          probe() {
+            local label=$1 started=$SECONDS; shift
+            if "$@" >/dev/null 2>&1; then echo "$label: answered in $((SECONDS - started)) s"; else echo "$label: no answer after $((SECONDS - started)) s"; fi
+          }
+          probe curl curl -s -m 8 -o /dev/null http://127.0.0.1:47391/
+          probe "the same Python as client" "$AGNETA_TEST_PYTHON" -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:47391/', timeout=8)"
+          node=$(ls Engines/bin/*/node-runtime/bin/node | head -1)
+          probe "Node (bundled)" "$node" -e "fetch('http://127.0.0.1:47391/', {signal: AbortSignal.timeout(8000)}).then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+          probe "Node under sandbox-exec, loopback allowed" /usr/bin/sandbox-exec -p '(version 1)(allow default)' "$node" -e "fetch('http://127.0.0.1:47391/', {signal: AbortSignal.timeout(8000)}).then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+          kill $server; wait $server 2>/dev/null || true
+
       - name: Build
         run: swift build
 

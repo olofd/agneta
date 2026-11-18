@@ -77,7 +77,8 @@ test('Project Chat pairs, reads a brief, stages a draft, and stops a turn', { ti
   const modelPort = await availablePort();
   const modelURL = `http://127.0.0.1:${modelPort}/v1`;
   const modelLog = join(root, 'model.jsonl');
-  const model = start('python3', ['scripts/dev/fake-model.py', String(modelPort), modelLog]);
+  // AGNETA_TEST_PYTHON: a Python whose loopback server answers (CI picks one, docs/CI.md); else the one on PATH.
+  const model = start(process.env.AGNETA_TEST_PYTHON || 'python3', ['scripts/dev/fake-model.py', String(modelPort), modelLog]);
   children.push(model);
   await waitFor(
     () => fetch(`${modelURL}/models`, { signal: AbortSignal.timeout(1000) }).then((res) => res.ok, () => false),
