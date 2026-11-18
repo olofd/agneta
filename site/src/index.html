@@ -34,7 +34,7 @@
   </section>
 {{demo}}
   <section class="audiences wrap" aria-label="Who it’s for">
-    <div>
+    <div class="card glow">
       <h2>For you, with your own AI plan</h2>
       <p>Use the plan or key you already pay for in the apps you choose, see what each one does with it, and stop it.</p>
       <ul class="points">
@@ -43,7 +43,7 @@
         <li>Every task shows the app it belongs to, the provider it runs on and what it costs.</li>
       </ul>
     </div>
-    <div>
+    <div class="card glow">
       <h2>For app developers</h2>
       <p>Agent features without running an agent loop, building sign-in for every provider, or putting a model bill on your own credit card.</p>
       <ul class="points">
@@ -74,7 +74,7 @@
     </div>
   </section>
 
-  <section class="private band" aria-labelledby="private">
+  <section class="private night" aria-labelledby="private">
     <div class="wrap">
       <h2 id="private">What stays on your Mac</h2>
       <p class="section-lede">Agneta has no servers of its own and sends no telemetry. What leaves your Mac is the task itself: its prompts, and what its tools return, go to your AI provider over HTTPS, because that’s how the model sees it.</p>
@@ -103,6 +103,33 @@
 {{not_list}}
   </section>
 
+  <section class="dev wrap" aria-labelledby="dev">
+    <h2 id="dev">Add it to your app</h2>
+    <p class="section-lede">Your app is an ACP client and Agneta is the ACP agent. Connect to <code>ws://127.0.0.1:47321/acp</code>, pair once, and start sessions with your own tools and a policy. Any WebSocket and JSON-RPC 2.0 code will do.</p>
+    <div class="dev-code">
+      <p class="code-title">Pairing, once</p>
+{{dev_snippet}}
+    </div>
+    <div class="dev-grid">
+      <ul class="link-list">
+        <li><a href="/docs/apps/">Developer guide</a>: the conversation, step by step</li>
+        <li><a href="/docs/app-protocol/">App protocol</a>: every field, limit and error</li>
+        <li><a href="/docs/diagnostics/">Diagnostics</a>: traces, <code>agneta-diag</code> and the diagnostics MCP server</li>
+        <li><a href="https://github.com/olofd/agneta/blob/main/Sources/agneta-testclient/main.swift" rel="noopener">The test client</a>: the whole exchange in about 170 lines of Swift</li>
+      </ul>
+      <figure class="dev-shot">
+        <img src="/images/project-chat.png" width="1960" height="1560" loading="lazy" alt="Project Chat: a conversation with the agent, the project tools it called, and a proposed note with Dismiss and Save note buttons">
+        <figcaption><a href="https://github.com/olofd/agneta/tree/main/examples/project-chat" rel="noopener">Project Chat</a>, the example app: it pairs with Agneta, streams a conversation, and lets the agent propose a note for you to review.</figcaption>
+      </figure>
+    </div>
+  </section>
+  <section class="status wrap" aria-labelledby="status">
+    <h2 id="status" class="visually-hidden">Status</h2>
+    <div class="callout">
+{{status_quote}}
+    </div>
+  </section>
+
   <section class="install band" id="install" aria-labelledby="install-title">
     <div class="wrap">
       <h2 id="install-title">Install</h2>
@@ -128,31 +155,4 @@
     </div>
   </section>
 
-  <section class="status wrap" aria-labelledby="status">
-    <h2 id="status" class="visually-hidden">Status</h2>
-    <div class="callout">
-{{status_quote}}
-    </div>
-  </section>
-
-  <section class="dev wrap" aria-labelledby="dev">
-    <h2 id="dev">Add it to your app</h2>
-    <p class="section-lede">Your app is an ACP client and Agneta is the ACP agent. Connect to <code>ws://127.0.0.1:47321/acp</code>, pair once, and start sessions with your own tools and a policy. Any WebSocket and JSON-RPC 2.0 code will do.</p>
-    <div class="dev-code">
-      <p class="code-title">Pairing, once</p>
-{{dev_snippet}}
-    </div>
-    <div class="dev-grid">
-      <ul class="link-list">
-        <li><a href="/docs/apps/">Developer guide</a>: the conversation, step by step</li>
-        <li><a href="/docs/app-protocol/">App protocol</a>: every field, limit and error</li>
-        <li><a href="/docs/diagnostics/">Diagnostics</a>: traces, <code>agneta-diag</code> and the diagnostics MCP server</li>
-        <li><a href="https://github.com/olofd/agneta/blob/main/Sources/agneta-testclient/main.swift" rel="noopener">The test client</a>: the whole exchange in about 170 lines of Swift</li>
-      </ul>
-      <figure class="dev-shot">
-        <img src="/images/project-chat.png" width="1960" height="1560" loading="lazy" alt="Project Chat: a conversation with the agent, the project tools it called, and a proposed note with Dismiss and Save note buttons">
-        <figcaption><a href="https://github.com/olofd/agneta/tree/main/examples/project-chat" rel="noopener">Project Chat</a>, the example app: it pairs with Agneta, streams a conversation, and lets the agent propose a note for you to review.</figcaption>
-      </figure>
-    </div>
-  </section>
 </main>

@@ -293,8 +293,12 @@ class Markdown:
             # Comments, dimmed: a # at the start of a line, or after whitespace.
             text = re.sub(r"(^|\s)(#[^\n]*)", r'\1<span class="c">\2</span>', text, flags=re.M)
         elif lang == "json":
-            text = re.sub(r"^(\s*)(→|←)", r'\1<span class="c">\2</span>', text, flags=re.M)
-            text = re.sub(r"(&quot;[^&\n]*?&quot;)(\s*:)", r'<span class="k">\1</span>\2', text)
+            # Arrows (who sends it), keys, strings and numbers.
+            text = re.sub(r"^(\s*)(→|←)", r'\1<span class="a">\2</span>', text, flags=re.M)
+            text = re.sub(r"(&quot;(?:(?!&quot;)[^\n])*?&quot;)(\s*:)?|(?<![\w.])(-?\d+(?:\.\d+)?|true|false|null)(?![\w.])",
+                          lambda m: (f'<span class="k">{m.group(1)}</span>{m.group(2)}' if m.group(2) else
+                                     f'<span class="s">{m.group(1)}</span>' if m.group(1) else f'<span class="n">{m.group(3)}</span>'),
+                          text)
         copy = ' data-copy' if lang in ("bash", "sh") else ""
         label = f' data-lang="{esc(lang)}"' if lang and lang != "text" else ""
         return f'<pre{copy}{label}><code>{text}</code></pre>'
@@ -594,8 +598,9 @@ def landing(site):
         a = site.asset(arch)
         url = a["browser_download_url"] if a else f"{REPO}/releases/latest"
         size = f" · {megabytes(a['size'])}" if a else ""
-        downloads.append(f'<a class="download" href="{esc(url)}"><span class="arch">{label}</span>'
-                         f'<span class="detail">{hint}{size}</span></a>')
+        file = f'<span class="file">{esc(a["name"])}</span>' if a else ""
+        downloads.append(f'<a class="download" href="{esc(url)}"><img src="/assets/icon-64.png" width="44" height="44" alt="">'
+                         f'<span class="arch">{label}</span><span class="detail">{hint}{size}</span>{file}</a>')
     if version:
         published = site.release.get("published_at") or ""
         when = f", {long_date(published)}" if published else ""
