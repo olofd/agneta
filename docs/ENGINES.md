@@ -1,6 +1,6 @@
 # Engines
 
-Agneta doesn't run the agent loop itself. An **engine** does: an agent program that speaks ACP over stdio, calls the model, and calls tools. Agneta starts it in a sandbox, configures it for the session, and routes its stream to the app. 
+Agneta doesn't run the agent loop itself. An **engine** does: an agent program that speaks ACP over stdio, calls the model, and calls tools. Agneta starts it in a sandbox, configures it for the session, and routes its stream to the app.
 
 **Providers and engines.** Which engines can serve which kind of provider is one fixed table (`ProviderEngines`):
 
@@ -26,7 +26,7 @@ Everything an engine does its own way lives behind one adapter (`Sources/AgnetaK
 | --- | --- | --- | --- | --- |
 | Version | `goose-acp` 1.59.2 | 2.3.0 | The user's install (2.1.x measured), through `claude-agent-acp` 0.107.2 | The user's install (0.166 or later), through `codex-acp` 2.7.0 on Node 24.19.0 |
 | Shipped | Bundled, pinned (`Engines/goose.lock`) | Downloaded when first picked or asked for, pinned (`Engines/opencode.lock`) | Adapter downloaded on first use, pinned (`Engines/runtimes.lock`); Claude Code is the user's own | Adapter and Node pinned (`Engines/codex.lock`): bundled in development builds, downloaded on first use in releases; Codex is the user's own |
-| Accounts | Claude plan, OpenAI key, Anthropic key | OpenAI key, Anthropic key | Claude plan, Anthropic key | ChatGPT plan, OpenAI key |
+| Providers | Claude plan, OpenAI key, Anthropic key | OpenAI key, Anthropic key | Claude plan, Anthropic key | ChatGPT plan, OpenAI key |
 | Processes | One per session with built-in tools; app-only sessions share one per account | One per session | One per session | One per session |
 | Built-in tools run by | Agneta's tool broker | Agneta's tool broker | The engine (Agneta checks each call) | The engine (Agneta checks each call) |
 | Steering | `_goose/unstable/session/steer` | `_session/steering` | `_session/steering` | `_session/steering` |
@@ -97,7 +97,7 @@ The user's own Claude Code, driven through [`claude-agent-acp`](https://github.c
 The user's own Codex (`codex app-server`), driven through [`codex-acp`](https://github.com/agentclientprotocol/codex-acp) (Apache-2.0), with a pinned Node runtime. Development builds bundle both; a release downloads them together, as Codex's runtime (`Agneta-codex-runtime-<version>-<arch>.zip`, attached to the release and pinned by the app's `codex-runtime.lock`), the first time a Codex account or app needs them.
 
 - **Finding Codex** works as for Claude Code (`~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`), passed as `CODEX_PATH`. Codex 0.166 or later is needed for the app-server schema the adapter uses.
-- **Accounts.** Each account has its own `CODEX_HOME`, with a `config.toml` Agneta rewrites at every start: credentials in the login Keychain (keyring mode: "Codex Auth", keyed by that folder, never a file the engine's own tools could read; separate from the user's own Codex sign-in), update checks, analytics and feedback off, no network for sandboxed commands. Web search is off (it runs on OpenAI's servers without asking), and so are the features that would bring tools beyond the policy: the ChatGPT account's connectors (`apps`), plugins, browser and computer use, image generation, dependency installs, the background daemon and hooks. Checked against Codex 0.167. A ChatGPT plan signs in with `codex login` in that folder, and Codex refreshes its own sign-in. This is separate from Goose's ChatGPT sign-in, so two programs never refresh the same login. An OpenAI key is passed as `OPENAI_API_KEY`.
+- **Accounts.** Each account has its own `CODEX_HOME`, with a `config.toml` Agneta rewrites at every start: credentials in the login Keychain (keyring mode: "Codex Auth", keyed by that folder, never a file the engine's own tools could read; separate from the user's own Codex sign-in), update checks, analytics and feedback off, no network for sandboxed commands. Web search is off (it runs on OpenAI's servers without asking), and so are the features that would bring tools beyond the policy: the ChatGPT account's connectors (`apps`), plugins, browser and computer use, image generation, dependency installs, the background daemon and hooks. Checked against Codex 0.167. A ChatGPT plan signs in with `codex login` in that folder, and Codex refreshes its own sign-in. An OpenAI key is passed as `OPENAI_API_KEY`.
 - **Modes.** Codex starts in `workspace-write` for `workspace` sessions and `read-only` otherwise. Only those two are allowed. `agent` ("Auto review") hands approval questions to Codex's own model reviewer instead of Agneta, and full access stops asking, so both are refused.
 - **Instructions** are appended to Codex's own developer instructions (`systemPrompt` with `mode: "append"`). Replacing them would remove what tells the model how to use Codex's tools.
 - **Tools.** App tools appear as `mcp.<server>.<tool>`. Edits ask permission first and work (`apply_patch`).

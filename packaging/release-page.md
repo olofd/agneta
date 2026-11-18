@@ -26,7 +26,7 @@ Agneta asks before it first checks for updates. After that it checks GitHub abou
 
 ## For app developers
 
-Apps connect at `ws://127.0.0.1:47321/acp` and pair once. Start with the [README's guide](https://github.com/olofd/agneta#for-app-developers), the [Project Chat example](https://github.com/olofd/agneta/tree/v@VERSION@/examples/project-chat) and the [app protocol](https://github.com/olofd/agneta/blob/v@VERSION@/docs/APP_PROTOCOL.md).
+Apps connect at `ws://127.0.0.1:47321/acp` and pair once. Start with the [developer guide](https://agneta.dahlbom.io/docs/apps/), the [Project Chat example](https://github.com/olofd/agneta/tree/v@VERSION@/examples/project-chat) and the [app protocol](https://github.com/olofd/agneta/blob/v@VERSION@/docs/APP_PROTOCOL.md).
 
 ## Check a download
 
@@ -37,4 +37,4 @@ shasum -a 256 -c SHA256SUMS.txt --ignore-missing
 gh attestation verify Agneta-@VERSION@-arm64.dmg --repo olofd/agneta
 ```
 
-The other files are for Agneta itself: the `.zip` files and `appcast-*.xml` for its updater, and `Agneta-codex-runtime-…` (Node and codex-acp), which it downloads the first time a Codex account is used. You don't need them. Problems and questions go to [Issues](https://github.com/olofd/agneta/issues); security reports go privately through the [Security tab](https://github.com/olofd/agneta/security).
+The other files are for Agneta itself: the `.zip` files and `appcast-*.xml` for its updater, and `Agneta-codex-runtime-…` (Node and codex-acp), which it downloads the first time a task runs on Codex. You don't need them. Problems and questions go to [Issues](https://github.com/olofd/agneta/issues); security reports go privately through the [Security tab](https://github.com/olofd/agneta/security).

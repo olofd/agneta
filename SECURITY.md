@@ -27,5 +27,5 @@ What Agneta defends, and against whom, is in the threat model in [docs/PRIVACY.m
 ## Out of scope
 
 - Faults in the engines themselves (Goose, OpenCode, Claude Code, Codex) that Agneta's sandbox contains. Please report those upstream as well.
-- Unsandboxed code already running as the same macOS user. It can read the user's files and drive their apps, so Agneta's approval window slows it down but can't stop it. A sandboxed app, or a program running as another user, is in scope
-- A provider's own terms or account decisions
+- Unsandboxed code already running as the same macOS user. It can read the user's files and drive their apps, so Agneta's approval window slows it down but can't stop it. A sandboxed app, or a program running as another user, is in scope.
+- A provider's own terms or account decisions.

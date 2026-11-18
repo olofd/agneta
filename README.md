@@ -7,11 +7,11 @@
 <p align="center"><strong>Give Mac apps an AI agent you control.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/olofd/agneta/releases/latest"><img src="https://img.shields.io/github/v/release/olofd/agneta?color=1f5a7a" alt="Latest release"></a>
+  <a href="https://github.com/olofd/agneta/releases/latest"><img src="https://img.shields.io/github/v/release/olofd/agneta?color=B0365F" alt="Latest release"></a>
   <a href="https://github.com/olofd/agneta/actions/workflows/ci.yml"><img src="https://github.com/olofd/agneta/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
-  <a href="docs/CONTAINMENT.md#supported-macos-versions"><img src="https://img.shields.io/badge/macOS-14%2B%20%C2%B7%20Apple%20silicon%20and%20Intel-1f5a7a" alt="macOS 14 or later, Apple silicon and Intel"></a>
-  <a href="https://github.com/olofd/homebrew-tap"><img src="https://img.shields.io/badge/Homebrew-olofd%2Ftap%2Fagneta-1f5a7a" alt="Homebrew: olofd/tap/agneta"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/olofd/agneta?color=1f5a7a" alt="Apache License 2.0"></a>
+  <a href="docs/CONTAINMENT.md#supported-macos-versions"><img src="https://img.shields.io/badge/macOS-14%2B%20%C2%B7%20Apple%20silicon%20and%20Intel-B0365F" alt="macOS 14 or later, Apple silicon and Intel"></a>
+  <a href="https://github.com/olofd/homebrew-tap"><img src="https://img.shields.io/badge/Homebrew-olofd%2Ftap%2Fagneta-B0365F" alt="Homebrew: olofd/tap/agneta"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/olofd/agneta?color=B0365F" alt="Apache License 2.0"></a>
 </p>
 
 <p align="center">
@@ -147,7 +147,7 @@ python3 site/build.py && python3 -m http.server 8642 --bind 127.0.0.1 --director
 
 ## For app developers
 
-**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app pairs with Agneta, keeps its access and reconnects by itself, offers to open Agneta when it isn't running, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review.
+**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app pairs with Agneta, keeps its access and reconnects by itself, offers to open Agneta when it isn't running, lets you choose Agneta or Agneta Dev, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review.
 
 Your app is an ACP **client** and Agneta is the ACP **agent**. If your app already speaks ACP, most of what follows is familiar. What Agneta adds is how you reach it, how the user lets your app in, and the rules a task runs under.
 
@@ -205,7 +205,7 @@ The `scope` says what your app will need: the most built-in tools, and the user'
        "agneta/instructions": {"text": "You are Example App's assistant."},
        "agneta/trace": {"live": true}}}}
 ← {"jsonrpc": "2.0", "id": 3, "result": {"sessionId": "s_…", "configOptions": […],
-   "_meta": {"agneta": {"account": "acct-1", "capabilities": {"engine": "goose", "steer": true, "fork": true, …}}}}}
+   "_meta": {"agneta": {"account": "acct-1", "capabilities": {"engine": "claude-code", "steer": true, "fork": false, …}}}}}
 ```
 
 - **Your tools** are an MCP server (Streamable HTTP) that your app runs on loopback, with a fresh bearer per session. Agneta accepts only loopback HTTP servers and masks the bearer in traces. A session with its own engine may reach exactly those ports; app-only sessions on Goose share one engine per account, and OpenCode runs a private server, so those may reach any loopback port. Your tools run in your app, with your app's permissions, not inside Agneta's sandbox.
@@ -251,6 +251,7 @@ The engine's standard ACP `session/update` notifications arrive unchanged, under
 | `agneta/queued {"sessionId", "position"}` | The provider is busy; the turn waits its place and runs later |
 | `agneta/sessionStopped {"stoppedBy": "user"}` | The user pressed Stop in Agneta. Show it as stopped, not as an error |
 | `agneta/sessionStopped {"stoppedBy": "engine"}` | The engine ended on its own; resume the task with `session/load` |
+| `agneta/sessionStopped {"stoppedBy": "limit"}` | A policy limit ended the session; load it again to go on |
 | `agneta/rateLimited {"account", "resetsAt"}` | The provider's limit stopped the turn. Retry after `resetsAt`, or use another provider |
 | Error with `data.agneta.needsSignIn` | The provider must sign in again; ask the user to open Agneta |
 | `-32011` | A turn is already running in this session: steer it, or wait |

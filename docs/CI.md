@@ -1,6 +1,6 @@
 # Continuous integration
 
-`.github/workflows/ci.yml` builds and tests every push to `main` and every pull request, once the repository is on GitHub.
+`.github/workflows/ci.yml` builds and tests every push to `main` and every pull request.
 
 | Job | Runner | Why |
 | --- | --- | --- |

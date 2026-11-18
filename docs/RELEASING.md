@@ -43,7 +43,7 @@ Status: done (2026-11-18).
 ### 1. A correct release build (`scripts/dev/build-app --release`, `scripts/dev/release`)
 
 - **Version from the tag.** `CFBundleShortVersionString` is the tag's version; `CFBundleVersion` is the commit count, so it only rises. Sparkle compares it to decide what's newer.
-- **Each bundled program is signed with what it needs**, from an explicit list, inside out, with the hardened runtime and a secure timestamp. Node compiles JavaScript, so it may make executable memory. OpenCode, a Bun-compiled binary that needs the same ([Bun's guide](https://bun.com/docs/guides/runtime/codesign-macos-executable)), isn't bundled: the app downloads it when an account is set to it, and it runs with its own vendor signature. The build fails if any Mach-O file is left unsigned.
+- **Each bundled program is signed with what it needs**, from an explicit list, inside out, with the hardened runtime and a secure timestamp. Node compiles JavaScript, so it may make executable memory. OpenCode, a Bun-compiled binary that needs the same ([Bun's guide](https://bun.com/docs/guides/runtime/codesign-macos-executable)), isn't bundled: the app downloads it when a provider defaults to it or a task asks for it, and it runs with its own vendor signature. The build fails if any Mach-O file is left unsigned.
 - **Notarization by App Store Connect API key** (`AGNETA_NOTARY_KEY`, `AGNETA_NOTARY_KEY_ID`, `AGNETA_NOTARY_ISSUER`), or a stored `notarytool` profile on a maintainer's Mac. A rejection prints Apple's log.
 - **The DMG**, made with `hdiutil` (no new dependency): the app is signed, notarized and stapled, then put in a DMG with a link to Applications; the DMG is signed, notarized and stapled too, so the first launch works offline.
 - **The smoke test runs on what a user gets:** the app is copied out of the mounted DMG and marked as downloaded (quarantined), Gatekeeper must accept it, Agneta must start and serve apps, and every bundled engine must start and answer `initialize` under the hardened runtime.
@@ -70,7 +70,7 @@ Status: the build half has run: the dry run of 2026-11-18 built, signed, notariz
 - Development builds have no feed and never update themselves. Nor do isolated instances (`AGNETA_HOME`), unless whoever starts one gives it a feed with `AGNETA_UPDATE_FEED`, to test the update path; such an instance installs when it quits and isn't relaunched, since macOS would relaunch it without its environment.
 - [PRIVACY.md](PRIVACY.md) then says exactly what an update check contacts; Sparkle's system profiling stays off.
 
-Status: built (2026-11-18), with Sparkle 2.10.1 in `Contents/Frameworks` (2.3 MB, without the XPC services only sandboxed apps need), signed inside out by `build-app` and `release`. Tested on an Intel Mac with ad hoc signing and a throwaway key: a 0.0.1 build, started isolated against a local feed, found 0.0.2, downloaded it without asking (automatic installs on), checked its EdDSA signature and replaced itself, and the updated copy passed the smoke test. Not tested yet: Install and Relaunch from Sparkle's window, the reminder in the panel, and an update between two Developer ID–signed builds, which the first real releases prove (part 5).
+Status: built (2026-11-18), with Sparkle 2.10.1 in `Contents/Frameworks` (2.3 MB, without the XPC services only sandboxed apps need), signed inside out by `build-app` and `release`. Tested on an Intel Mac with ad hoc signing and a throwaway key: a 0.0.1 build, started isolated against a local feed, found 0.0.2, downloaded it without asking (automatic installs on), checked its EdDSA signature and replaced itself, and the updated copy passed the smoke test. An update between two Developer ID–signed builds is proven by 0.2.0 → 0.3.0. Not tested yet: Install and Relaunch from Sparkle's window, and the reminder in the panel.
 
 ### 4. Homebrew
 
@@ -83,7 +83,7 @@ Status: the tap exists (2026-11-18), and `homebrew.yml` writes the cask from `pa
 
 A dry run, installed on an Intel and an Apple silicon Mac: it opens without a Gatekeeper warning and runs tasks on real accounts. Then `v0.1.0` is tagged, approved, checked and published; `brew install olofd/tap/agneta` is tried on a clean Mac; and `v0.1.1` proves the update from 0.1.0.
 
-Status (2026-11-18): the dry run's Intel DMG, downloaded and opened on an Intel Mac with macOS 26, passed Gatekeeper and started without a prompt; the Apple silicon DMG has passed CI's smoke test, not yet a hand check. `v0.1.0` is tagged, built and drafted.
+Status: done. `v0.1.0` was tagged and published, and every release since, up to `v0.3.1`, came through the same steps. The update path was proven by 0.2.0 → 0.3.0 rather than by a 0.1.1.
 
 ## Building a release by hand
 
@@ -120,7 +120,7 @@ Measured on an Intel Mac with macOS 26.6.2, 2026-11-18, after OpenCode stopped b
 | Zip (the download) | 59 MB | 16 MB |
 | Cold start, launch to listening for apps (median of 5, 2026-11-17) | 271 ms | 271 ms |
 
-Where the size goes: Goose 19 MB, Agneta and its tools 18 MB, Sparkle 2.3 MB. OpenCode (227 MB unpacked, a 108–113 MB download) comes only when an account is set to it, like Claude Code's adapter, and so, in a release, does Codex's runtime: Node (118 MB) and codex-acp (21 MB), packed as `Agneta-codex-runtime-<version>-<arch>.zip` by `scripts/dev/release`, signed, checked to run, attached to the release and pinned by the app's `codex-runtime.lock`. Engines start only when a task needs them, so they don't change the app's start-up. Starting one (launch to its `initialize` answer, median of 5): Goose 17 ms, OpenCode 394 ms.
+Where the size goes: Goose 19 MB, Agneta and its tools 18 MB, Sparkle 2.3 MB. OpenCode (227 MB unpacked, a 108–113 MB download) comes only when a provider defaults to it or a task asks for it, like Claude Code's adapter, and so, in a release, does Codex's runtime: Node (118 MB) and codex-acp (21 MB), packed as `Agneta-codex-runtime-<version>-<arch>.zip` by `scripts/dev/release`, signed, checked to run, attached to the release and pinned by the app's `codex-runtime.lock`. Engines start only when a task needs them, so they don't change the app's start-up. Starting one (launch to its `initialize` answer, median of 5): Goose 17 ms, OpenCode 394 ms.
 
 Since 0.2.1 a release bundles Goose only: a 19 MB DMG (measured on Intel, 2026-11-18, with Sparkle and the icon). Codex's runtime is 43 MB more, fetched the first time a ChatGPT plan (or an app set to Codex) needs it.
 

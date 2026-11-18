@@ -40,7 +40,7 @@ body:
     attributes:
       label: Versions
       description: Agneta (Settings → About), the engine's version (Settings → Engines), and macOS.
-      placeholder: "Agneta 0.3.0, Codex 0.166.0, macOS 26.1 on Apple silicon"
+      placeholder: "Agneta 0.3.1, Codex 0.166.0, macOS 26.1 on Apple silicon"
     validations:
       required: true
   - type: dropdown

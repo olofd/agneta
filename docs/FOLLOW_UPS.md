@@ -9,9 +9,9 @@ Changes the maintainer asked for after 0.1.0, collected as they come in and work
 | 3 | Run a Test Task: the code dialog appears off to the left and shows a spinning cursor | Done; checked in the running app (2026-11-18) |
 | 4 | The app is too big: download OpenCode only when it's chosen | OpenCode done (download 177 → 59 MB); Node and codex-acp next |
 | 5 | Which engine a connection runs on: should the user choose it? | Done: providers → engines only, chosen per task (after 0.2.0) |
-| 6 | No Check for Updates in the app | Done (in the next build) |
-| 7 | Quit Agneta from the menu never quits (development and 0.1.0) | Fixed in code; proven in a standalone reproduction |
-| 8 | No app icon: a frosty, Swedish icon from the two rings, flat and glassy | Done (in the next build) |
+| 6 | No Check for Updates in the app | Done in 0.2.0 |
+| 7 | Quit Agneta from the menu never quits (development and 0.1.0) | Fixed in 0.2.0 |
+| 8 | No app icon: a frosty, Swedish icon from the two rings, flat and glassy | Done in 0.2.0; redesigned (Sunset) after 0.3.1 |
 
 ## 1. The panel is too transparent
 
@@ -104,7 +104,7 @@ Now every quit goes through `applicationShouldTerminate` (`AgnetaApp.swift`). It
 
 > "The development and the production version didn't have an app icon. We have an icon in the menu bar that's two rings interconnected. Use that and create an app icon … We like a Nordic theme, a frosty kind of theme." (2026-11-18)
 
-The icon ([packaging/AppIcon.png](../packaging/AppIcon.png), as macOS 26 renders it), after two rounds with the maintainer ("I want a flatter icon", then "and glassy, modern; Sweden, not Norway"):
+The first icon (0.2.0, replaced by the redesign below), after two rounds with the maintainer ("I want a flatter icon", then "and glassy, modern; Sweden, not Norway"):
 - **Design:** the menu bar mark's two linked rings, in the mark's own geometry, in lake-ice white on the blue of a Swedish winter sea (`#1F4B66`, a deeper shade of Agneta's accent). Two flat colours. In flat colour a crossing only reads with a gap, so both over-and-under crossings are cut as one, and the rings read as chain links.
 - **Glass:** it's a Liquid Glass icon in Icon Composer's format (`packaging/AppIcon.icon`): the blue is the background fill, which macOS turns into a gentle gradient, and the rings are its glass layer, which macOS 26 lights, and darkens or tints with the user's icon style. `build-app` compiles it with Xcode's `actool` into `Assets.car`, plus a rendered `AppIcon.icns` for macOS 14 and 15.
 - **How it's made:** the rings are drawn by `scripts/dev/app-icon.swift`, so proportions stay code. `scripts/dev/app-icon` redraws the ring layer and renders the preview through macOS itself. The background colour and glass settings are in `packaging/AppIcon.icon/icon.json`.
@@ -174,7 +174,7 @@ Fixed: Allow blocked for a provider whose engine isn't installed; a dismissed fa
 Tagged 0.3.0 as it was; the fixes go to 0.3.1. Real and fixed: pairing again left live connections on the old access and let an unverified app inherit another's grant by name; a session opening across an access change was checked only by grant id; Remove Access deleted before revoking; native runners allowed requests with no kind or an unknown one, and "always" passed through where there was no "once"; the limit grace waited on the cancel write; `initialize` had no deadline; history deletion left Claude Code transcripts and Codex rollouts; policy fields of the wrong type fell back to defaults; nothing bounded connections before pairing. By design: 0.2.0's data isn't read (no compatibility before 1.0); the update is now always shown across a minor version.
 
 Left for later:
-- **A wedged shared engine.** A limit ends the session and answers the prompt, but a shared engine (Goose or OpenCode without built-in tools) that ignores the cancel keeps running, for every app on that account. Restarting it would stop the others' sessions; decide whether a limit may.
+- **A wedged shared engine.** A limit ends the session and answers the prompt, but a shared engine (Goose without built-in tools) that ignores the cancel keeps running, for every app on that account. Restarting it would stop the others' sessions; decide whether a limit may.
 - **Shared engines' conversations.** A task on a shared engine is a row in that engine's database, deleted only at sign-out. Deleting it with the task means editing the engine's database under it, or asking the engine (no ACP call for that yet).
-- **From the review's product ideas:** a support matrix (plan × engine × what works), an operator runbook, a contributing guide, more end-to-end tests against the real engines.
+- **From the review's product ideas:** a support matrix (plan × engine × what works), an operator runbook, more end-to-end tests against the real engines.
 

@@ -2,6 +2,21 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
+## Unreleased
+
+A new look, and a website.
+
+**For you**
+
+- **A new icon:** Agneta's linked rings in white, on a Swedish summer evening going coral to rose to violet. Agneta's windows take the same colours, quietly: a deep rose for links, checkboxes and toggles, the rings in the evening's gradient, a faint glow along the top of the panel and dialogs, and the one main button in each window as a subtle coral-to-violet gradient.
+- **Agneta and Agneta Dev side by side:** a development build keeps its own port, data, Keychain items and logs, and now shows a small hammer on its icon and menu bar mark, so the two tell apart.
+- **[agneta.dahlbom.io](https://agneta.dahlbom.io):** Agneta's website, with the documentation, built from this repository's own documents.
+- **Smaller fixes:** a finished task's line in Activity wraps instead of being cut short.
+
+**For apps**
+
+- **Project Chat**, the example app, picks the Agneta it uses (**Use**: Agneta or Agneta Dev), remembers the choice, and names it in what it shows ([examples/project-chat](https://github.com/olofd/agneta/tree/main/examples/project-chat)).
+
 ## 0.3.1 (2026-11-18)
 
 Fixes from an outside review of 0.3.0's access rules: what an app may do now follows your choices at every moment, and less is left behind on disk.

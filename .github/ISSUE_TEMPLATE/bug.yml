@@ -1,5 +1,5 @@
 name: Bug report
-description: Agneta itself misbehaves, its windows, settings, pairing or the app protocol. For a task that fails on one engine or provider, use "Engine or provider problem".
+description: Agneta itself misbehaves: its windows, settings, pairing or the app protocol. For a task that fails on one engine or provider, use "Engine or provider problem".
 labels: [bug]
 body:
   - type: markdown

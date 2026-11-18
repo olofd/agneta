@@ -10,7 +10,7 @@ What leaves your Mac when an app runs a task through Agneta, what stays on it an
 | Tool calls to the app's own tools | The app, on this Mac (loopback) | The app's tools run in the app |
 | A request for the public model catalog, with nothing of yours in it | models.dev, from Goose when it starts | Goose looks up model names and limits there and has no setting to stop it ([ENGINES.md](ENGINES.md#goose)) |
 | Update checks, once you allow them: a request for the update feed, which carries Agneta's version and nothing of yours; and the update itself, when one installs | GitHub (`github.com` and its download host), from release builds only | Agneta asks before its first check and checks about once a day; Settings → General turns checks off. Sparkle's system profile, which would send the Mac's model and macOS version, stays off ([RELEASING.md](RELEASING.md#3-updates-in-the-app-sparkle-2)) |
-| Downloads of components you choose: Claude Code's adapter when you add a Claude plan, OpenCode when you set an account to it, Codex's runtime (Node and codex-acp) when Codex is first used | GitHub (`github.com` and its download host) | Each is a pinned release file, checked against its SHA-256 before use; the request carries nothing of yours |
+| Downloads of components you choose: Claude Code's adapter when you add a Claude plan, OpenCode when it becomes a provider's default or a task asks for it, Codex's runtime (Node and codex-acp) when Codex is first used | GitHub (`github.com` and its download host) | Each is a pinned release file, checked against its SHA-256 before use; the request carries nothing of yours |
 | Nothing else from Agneta | | Agneta has no servers and sends no telemetry |
 
 Engines are run with their own telemetry, update checks, analytics and feedback turned off where they allow it ([ENGINES.md](ENGINES.md)). On Codex, web search (which runs on OpenAI's servers) and the features that bring tools of their own (the ChatGPT account's connectors, plugins, browser and computer use) are off. What your provider keeps, and for how long, is set by your account with them.
@@ -23,7 +23,7 @@ Engines are run with their own telemetry, update checks, analytics and feedback 
 | Each task's trace: prompts, tool calls and results, model calls, decisions, timing | `Traces/`, one owner-only file per task | As long as its history |
 | An engine's own record of the conversation, so the task can resume | The engine's home (`Engines/`), Claude Code's transcripts in the account's folder, Codex's sessions in the account's `CODEX_HOME` | As long as its history: each goes with its task. A task that ran on Goose or OpenCode without built-in tools shares its account's engine: it's a row in that engine's own database, which goes when the account is signed out |
 | Agneta's own log: events, ids, names, counts and timing, never content, tokens or keys | `~/Library/Logs/Agneta/` | 7 days |
-| Downloaded components (Claude Code's adapter, OpenCode) | `Runtimes/` in Agneta's data folder | Until Reset; an update keeps them while their pin is unchanged |
+| Downloaded components (Claude Code's adapter, OpenCode, Codex's runtime) | `Runtimes/` in Agneta's data folder | Until Reset; an update keeps them while their pin is unchanged |
 | Update settings, the last check's time, and an update downloaded but not yet installed | Agneta's preferences; `~/Library/Caches/com.objectivecoder.agneta/` | Until the update installs, or Reset |
 | API keys and the diagnostics token | Agneta's Keychain items | Until removed |
 | Plan sign-ins | Codex's and Claude Code's own entries in the login Keychain, one per account | Until signed out (Sign Out and Reset run each one's logout) |
@@ -39,7 +39,7 @@ Everything Agneta writes is readable only by your user account (folders `0700`, 
 | **Pause** (an account) | Nothing new starts on the account; a running turn finishes. Nothing is removed. |
 | **Remove Access** (an app) | The app's token stops working, its tasks stop and its connections close; the grant is deleted. Its tasks' history and its own workspace stay. |
 | **Sign Out** (an account) | Its key or sign-in is deleted (Claude Code signs out of its own entry), and so are the account's folder and its engines' homes. Its tasks' history and traces stay until they expire. |
-| **Clear History** | Every finished task's history row, trace and engine home is deleted. |
+| **Clear History** | Every finished task's history row, trace and engine home is deleted, and so are Claude Code's transcripts and Codex's session files of those tasks. |
 | **Reset Agneta** | Everything above, and every account, grant, setting, log, cache, the apps' workspaces, Agneta's Keychain items and its login item. |
 
 ## The diagnostics token

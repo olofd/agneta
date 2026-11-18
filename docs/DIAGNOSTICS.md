@@ -47,7 +47,7 @@ Every line has these fields:
 | `permission` | engine call id, tool kind, title, decision (`asked-app`, `allowed-by-policy`, `refused-by-policy`, `cancelled`), answer, ms | Agneta's router |
 | `shell` | command, cwd, exit code or signal, ms, stdout and stderr bytes, the end of stderr, or why it was refused | Agneta's tool broker |
 | `stderr` | One line of the engine's stderr (dedicated engines) | The engine |
-| `lifecycle` | `engine-start` (pid, ms to initialize), `engine-exit` (code or signal), `queued`, `dequeued`, `queue-cancelled`, `queue-paused`, `stop` (by `user`, `app` or `agneta`, with the reason), `steer` (delivery), `limit`, `resumed`, `resume-failed`, `forked`, `dropped`, `trace-truncated`, `engine-db-unavailable` | Agneta |
+| `lifecycle` | `engine-start` (pid, ms to initialize), `engine-exit` (code or signal), `queued`, `dequeued`, `queue-cancelled`, `queue-paused`, `stop` (by `user`, `app` or `engine`, with the reason), `steer` (delivery), `limit`, `limit-enforced`, `resumed`, `resume-failed`, `forked`, `dropped`, `trace-truncated`, `trace-full`, `engine-db-unavailable` | Agneta |
 | `end` | No fields; the outcome is in Agneta's task history | Agneta |
 
 ### Normalized events
@@ -113,7 +113,7 @@ Every token sees every task. Limiting a token to chosen apps isn't supported yet
 A command-line reader bundled in the app at `Contents/MacOS/agneta-diag`:
 
 ```text
-agneta-diag [--home <dir>] tasks
+agneta-diag [--home <dir>] tasks [--limit <n>]
 agneta-diag [--home <dir>] show <task> [--types t1,t2] [--json]
 agneta-diag [--home <dir>] tail [-f] <task> [--json]
 agneta-diag [--home <dir>] summary <task>

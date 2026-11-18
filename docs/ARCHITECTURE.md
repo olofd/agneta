@@ -39,6 +39,7 @@ App (sandboxed or not) ──ACP over a local WebSocket, paired──▶ Agneta 
 | `Sources/agneta-diag/` | Command-line trace reader, shipped in the app |
 | `Sources/agneta-testclient/` | A stand-in client app, built as a sandboxed app with Mac App Store entitlements; the panel's Run a Test Task uses it |
 | `Sources/agnetad`, `agneta-probe`, `agneta-signin` | Development tools: a headless runtime, a direct engine probe, a sign-in driver. Not shipped |
+| `Sources/AgnetaFakes`, `agneta-fakes` | Fake model and tool servers for tests: a library the test process serves, and a program for Project Chat's smoke test. Not shipped |
 | `Engines/*.lock` | Pinned engine and runtime versions with SHA-256 hashes; `scripts/fetch-engines` and `scripts/fetch-codex` fetch them |
 
 The only third-party library linked in is [GRDB.swift](https://github.com/groue/GRDB.swift). Engines are programs Agneta runs, never libraries it links. See [THIRD_PARTY.md](../THIRD_PARTY.md).
@@ -66,6 +67,7 @@ The `EngineSupervisor` starts engines on demand and never replays work.
 - **Shared engines.** App-only sessions on Goose share one engine per account and engine, in the account's home. Concurrent starts of the same engine are merged into one.
 - **The environment is explicit.** Nothing is inherited from Agneta or the user's shell: a private `HOME` and `TMPDIR`, a minimal `PATH`, the provider's settings, and nothing that would load the user's own configuration of that engine.
 - **Every engine runs in its own process group** under `sandbox-exec`, and is stopped by its recorded group, never by name. Its stderr goes to `engine.log` in its home, kept under 1 MB.
+- **A start has a deadline.** An engine that doesn't answer `initialize` within 60 s is stopped, and its task fails instead of waiting.
 - **Crash recovery.** Every engine started is recorded with its pid and process start time. At the next launch, a recorded engine is stopped only if its pid, start time and group leadership all still match, so a reused pid is never touched. Tasks that were running become "Stopped when Agneta quit".
 
 ## Security model
@@ -165,7 +167,7 @@ Everything is in Agneta's Application Support folder, named by its bundle identi
 | `agneta.sqlite` | Accounts, grants (by token hash), task history, turns, recorded engines, settings |
 | `Accounts/<id>/` | Each account's engine home and sign-in |
 | `Engines/<account>-<id>/` | Dedicated engines' homes |
-| `Runtimes/` | Downloaded runtimes (`claude-agent-acp`) |
+| `Runtimes/` | Downloaded runtimes (OpenCode, `claude-agent-acp`, and in releases Codex's runtime) |
 | `Traces/` | Task traces ([DIAGNOSTICS.md](DIAGNOSTICS.md)) |
 
 - **The database** is SQLite through GRDB, with one schema. **Before 1.0 nothing is kept compatible:** no migrations, imports or readers of old shapes in the database, the protocol or files. A schema change edits the schema in place under a new id, and a database made with another id is refused untouched; the user resets. Compatibility starts at 1.0.

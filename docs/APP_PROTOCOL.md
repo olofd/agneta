@@ -55,7 +55,7 @@ What the user allows an app is two lists: the **providers** (each an account: a 
                  "engines": ["claude-code", "goose"], "defaultEngine": "claude-code"}],
   "engines": [{"id": "claude-code", "name": "Claude Code", "state": "ready", "capabilities": {…}},
               {"id": "goose", "name": "Goose", "state": "ready", "capabilities": {…}},
-              {"id": "opencode", "name": "OpenCode", "state": "downloadable", "size": 45000000}],
+              {"id": "opencode", "name": "OpenCode", "state": "downloadable", "size": 113000000}],
   "allowedEngines": "all",
   "scope": {"tools": "workspace", "folders": ["/Users/me/Documents/Example Project"]},
   "workspace": "/Users/me/Library/Application Support/com.objectivecoder.agneta Workspaces/<grant>"
@@ -128,7 +128,7 @@ What the user allows an app is two lists: the **providers** (each an account: a 
 | `limits` | `maxTurns`: model calls within one prompt (default 200). `maxSeconds`: a prompt's wall time (default 4 hours). `maxCostUSD`: the task's known cost so far, across resumes (no default) |
 
 - **Nothing is weakened silently.** A policy Agneta can't enforce is refused with `-32602` and `data.agneta.unenforceable: ["<field>"]`. That covers:
-  - unknown fields, and malformed or non-positive limits;
+  - unknown fields, fields of the wrong type (`"tools": 5`), and malformed or non-positive limits;
   - relative paths, and folders that contain the home folder, other apps' containers, Agneta's own data, `~/Library/LaunchAgents`, `~/Library/Keychains` or `~/.ssh`;
   - a writable folder inside a denied one, or a denied workspace;
   - `maxCostUSD` on an engine that doesn't report cost per call (Claude Code, Codex).
@@ -277,4 +277,4 @@ Every record has `v`, `seq` (gapless), `t` (UTC with microseconds), `mono` (nano
 | `-32015` | What the engine needs is still downloading (`data.agneta.engineDownloading`: `engine`, `received`, `total` bytes); try again shortly |
 | `-32601` | Not a method Agneta offers; engines' own methods aren't reachable |
 | `-32602` | Invalid parameters. For a policy, server list or mode, `data.agneta.unenforceable` names the field. "Unknown session" also uses it: another app's session, or an ended one |
-| `-32603` | Agneta couldn't do it: the engine didn't start or stopped, or the app disconnected meanwhile |
+| `-32603` | Agneta couldn't do it: the engine didn't start (no answer within 60 s) or stopped, or the app disconnected meanwhile |
