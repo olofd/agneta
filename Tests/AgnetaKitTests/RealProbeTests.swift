@@ -18,7 +18,7 @@ import Testing
     let root = FileManager.default.temporaryDirectory.appending(path: "agneta-real-\(UUID().uuidString.prefix(6))", directoryHint: .isDirectory).realFileURL
     try FileManager.default.createDirectory(at: root.appending(path: "work"), withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    let mcp = try ChildProcess(executable: GooseHarness.python!, arguments: [GooseHarness.repo.appending(path: "scripts/dev/fake-mcp.py").path(percentEncoded: false), "47489", "realprobe-bearer-123", root.appending(path: "mcp.log").path(percentEncoded: false)], environment: ["PATH": "/usr/bin:/bin"])
+    let mcp = try GooseHarness.fake("fake-mcp.py", ["47489", "realprobe-bearer-123", root.appending(path: "mcp.log").path(percentEncoded: false)], root: root, name: "mcp")
     defer { killpg(mcp.pid, SIGKILL) }
     // The pinned adapter version, installed (and verified) where the app would keep it.
     let adapterPath = try await RuntimeInstaller(lockFile: GooseHarness.repo.appending(path: "Engines/runtimes.lock"),

@@ -157,7 +157,7 @@ struct RouterIntegrationTests {
         static func start(port: UInt16, modelPort: Int) async throws -> Stack {
             let root = FileManager.default.temporaryDirectory.appending(path: "agneta-router-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            let model = try ChildProcess(executable: GooseHarness.python!, arguments: [GooseHarness.repo.appending(path: "scripts/dev/fake-model.py").path(percentEncoded: false), String(modelPort), root.appending(path: "model.log").path(percentEncoded: false)], environment: ["PATH": "/usr/bin:/bin"])
+            let model = try GooseHarness.fake("fake-model.py", [String(modelPort), root.appending(path: "model.log").path(percentEncoded: false)], root: root, name: "model")
             // Anything failing from here (a port in use) stops the fake model: a leaked one holds its port for later runs.
             do {
                 return try await assemble(root: root, model: model, port: port, modelPort: modelPort)

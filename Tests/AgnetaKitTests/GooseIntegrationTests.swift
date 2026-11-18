@@ -21,6 +21,14 @@ struct GooseHarness {
         .compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0) }
     static var available: Bool { FileManager.default.isExecutableFile(atPath: goose.path(percentEncoded: false)) && python != nil }
 
+    /// Starts one of the fake servers in scripts/dev on Python, everything it prints going to `<root>/<name>.out`, so a
+    /// failing test's folder shows what the server said (a pipe nobody reads would also stall it once full).
+    static func fake(_ script: String, _ arguments: [String], root: URL, name: String) throws -> ChildProcess {
+        let script = repo.appending(path: "scripts/dev/\(script)").path(percentEncoded: false)
+        return try ChildProcess(executable: "/bin/sh", arguments: ["-c", #"exec "$0" -u "$@" >>"$AGNETA_FAKE_OUT" 2>&1"#, python!, script] + arguments,
+                                environment: ["PATH": "/usr/bin:/bin", "AGNETA_FAKE_OUT": root.appending(path: "\(name).out").path(percentEncoded: false)])
+    }
+
     /// Removes a test's folder, unless `AGNETA_KEEP_TEST_FILES` is set: CI keeps them to upload when a run fails.
     static func discard(_ folder: URL) {
         guard ProcessInfo.processInfo.environment["AGNETA_KEEP_TEST_FILES"] == nil else { return }
@@ -50,11 +58,7 @@ struct GooseHarness {
     static func start(port: Int) async throws -> GooseHarness {
         let root = FileManager.default.temporaryDirectory.appending(path: "agneta-goose-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root.appending(path: "work"), withIntermediateDirectories: true)
-        let model = try ChildProcess(
-            executable: python!,
-            arguments: [repo.appending(path: "scripts/dev/fake-model.py").path(percentEncoded: false), String(port), root.appending(path: "model.log").path(percentEncoded: false)],
-            environment: ["PATH": "/usr/bin:/bin"]
-        )
+        let model = try fake("fake-model.py", [String(port), root.appending(path: "model.log").path(percentEncoded: false)], root: root, name: "model")
         try await Task.sleep(for: .milliseconds(400))
         // The fake model stops if the engine can't start: a leaked one holds its port for later runs.
         do {

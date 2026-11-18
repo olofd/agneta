@@ -107,10 +107,8 @@ struct AppScenarioTests {
         let stack = try await RouterIntegrationTests.Stack.start(port: UInt16(47451 + Self.offset(account)), modelPort: 47461 + Self.offset(account))
         let mcpPort = 47471 + Self.offset(account)
         let bearer = "app-mcp-\(UUID().uuidString)"
-        let mcp = try ChildProcess(executable: GooseHarness.python!, arguments: [
-            GooseHarness.repo.appending(path: "scripts/dev/fake-mcp.py").path(percentEncoded: false), String(mcpPort), bearer,
-            stack.root.appending(path: "mcp.log").path(percentEncoded: false),
-        ], environment: ["PATH": "/usr/bin:/bin"])
+        let mcp = try GooseHarness.fake("fake-mcp.py", [String(mcpPort), bearer, stack.root.appending(path: "mcp.log").path(percentEncoded: false)],
+                                        root: stack.root, name: "mcp")
         defer { killpg(mcp.pid, SIGKILL) }
         try await Task.sleep(for: .milliseconds(400))
         do {
