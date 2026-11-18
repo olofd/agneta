@@ -19,6 +19,21 @@ function describeError(error) {
   return error.message;
 }
 
+/** Agneta no longer accepts the token: access was removed, or it ended. Pair again. */
+function needsPairing(error) {
+  return error?.code === -32001;
+}
+
+/** Keeps nothing: the token lasts as long as the app runs. Electron passes a Keychain-backed store (main.mjs). */
+export function memoryTokens() {
+  let token = null;
+  return {
+    load: async () => token,
+    save: async (value) => { token = value; },
+    clear: async () => { token = null; }
+  };
+}
+
 /** Bytes as people read them: "45 MB". */
 function size(bytes) {
   return Number.isFinite(bytes) ? `${Math.round(bytes / 1e6)} MB` : '';
@@ -31,10 +46,17 @@ export class ProjectChat extends EventEmitter {
   #workspace;
   #reply;
   #access;
+  #tokens;
+  /** Connected with a kept token: when the connection drops, a quiet reconnect finds out whether access was removed. */
+  #remembered = false;
 
-  constructor(port) {
+  /**
+   * @param tokens where the token from Always Allow is kept between launches (`load`, `save`, `clear`).
+   */
+  constructor(port, { tokens = memoryTokens() } = {}) {
     super();
     this.port = port;
+    this.#tokens = tokens;
     this.view = {
       project,
       phase: 'disconnected',
@@ -56,7 +78,13 @@ export class ProjectChat extends EventEmitter {
     this.emit('change', this.view);
   }
 
-  async connect() {
+  /**
+   * Connects to Agneta: with the token kept from an earlier Always Allow when there is one, else by pairing, which
+   * opens Agneta's approval window. A token Agneta no longer accepts (access removed there) is forgotten. `quiet` (at
+   * launch, and after the connection drops) never opens the approval window: without a usable token it stops and
+   * says so.
+   */
+  async connect({ quiet = false } = {}) {
     if (this.view.phase !== 'disconnected') return;
     this.#update({
       phase: 'connecting', status: 'Connecting to Agneta…', code: '',
@@ -70,27 +98,47 @@ export class ProjectChat extends EventEmitter {
         if (this.#connection !== connection) return;
         // Let the pending handshake surface its more specific connection error.
         if (this.view.phase === 'connecting' || this.view.phase === 'pairing') return;
+        const remembered = this.#remembered;
         this.disconnect('Connection closed. Connect to start a new chat.');
+        // Agneta closes an app's connections when its access is removed: reconnecting with the token says whether
+        // that's what happened (or Agneta quit).
+        if (remembered) setTimeout(() => this.connect({ quiet: true }), 1000);
       }
     });
     this.#connection = connection;
+    this.#remembered = false;
 
     try {
       await connection.ready;
       if (this.#connection !== connection) return;
-      this.#update({ phase: 'pairing', status: 'Approve Project Chat in Agneta.' });
-      // Ask for the app's own tools and no user folders.
-      const paired = await connection.request('agneta/pair', {
-        name: 'Project Chat', scope: { tools: 'app-only', folders: [] }
-      }, 310_000);
-      if (typeof paired?.token !== 'string') throw new Error('Agneta returned an incomplete pairing response.');
-      // The example uses Allow Once. The token never leaves the main process.
-      const initialized = await connection.request('initialize', {
-        protocolVersion: 1,
-        clientCapabilities: {},
-        clientInfo: { name: 'agneta-project-chat', title: 'Project Chat', version: '0.1.0' },
-        _meta: { agneta: { token: paired.token } }
-      });
+      const kept = await this.#tokens.load();
+      let initialized = kept ? await this.#initialize(connection, kept).catch((error) => {
+        if (needsPairing(error)) return null;
+        throw error;
+      }) : null;
+      if (this.#connection !== connection) return;
+      if (initialized) {
+        this.#remembered = true;
+      } else {
+        if (kept) await this.#tokens.clear();
+        if (quiet) {
+          this.disconnect(kept ? 'Your access was removed in Agneta. Connect to ask again.' : 'Connect to start chatting.');
+          return;
+        }
+        this.#update({ phase: 'pairing', status: 'Approve Project Chat in Agneta.' });
+        // Ask for the app's own tools and no user folders.
+        const paired = await connection.request('agneta/pair', {
+          name: 'Project Chat', scope: { tools: 'app-only', folders: [] }
+        }, 310_000);
+        if (typeof paired?.token !== 'string') throw new Error('Agneta returned an incomplete pairing response.');
+        // Always Allow: kept for the next launch (in the Keychain, through main.mjs). Allow Once ends with this
+        // connection. The token never leaves the main process.
+        if (paired.remembered) {
+          await this.#tokens.save(paired.token);
+          this.#remembered = true;
+        }
+        initialized = await this.#initialize(connection, paired.token);
+      }
       if (this.#connection !== connection) return;
       const access = initialized?._meta?.agneta?.access;
       if (initialized?.protocolVersion !== 1 || typeof access?.workspace !== 'string') {
@@ -103,6 +151,15 @@ export class ProjectChat extends EventEmitter {
     } catch (error) {
       if (this.#connection === connection) this.disconnect(describeError(error));
     }
+  }
+
+  #initialize(connection, token) {
+    return connection.request('initialize', {
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: 'agneta-project-chat', title: 'Project Chat', version: '0.1.0' },
+      _meta: { agneta: { token } }
+    });
   }
 
   /**

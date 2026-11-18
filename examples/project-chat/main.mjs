@@ -1,5 +1,7 @@
-import { app, BrowserWindow, ipcMain, net, protocol } from 'electron';
+import { app, BrowserWindow, ipcMain, net, protocol, safeStorage } from 'electron';
 import { readFileSync } from 'node:fs';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ProjectChat } from './chat.mjs';
 
@@ -39,6 +41,23 @@ app.whenReady().then(() => {
   app.exit(1);
 });
 
+/**
+ * Where the token from Always Allow is kept: encrypted with Electron's safeStorage, whose key is in the login Keychain,
+ * one file per Agneta (port). Nothing is kept where encryption isn't available.
+ */
+const tokens = {
+  file: () => join(app.getPath('userData'), `agneta-token-${port}`),
+  async load() {
+    try { return safeStorage.decryptString(await readFile(tokens.file())); } catch { return null; }
+  },
+  async save(token) {
+    if (!safeStorage.isEncryptionAvailable()) return;
+    await mkdir(dirname(tokens.file()), { recursive: true });
+    await writeFile(tokens.file(), safeStorage.encryptString(token), { mode: 0o600 });
+  },
+  async clear() { await rm(tokens.file(), { force: true }); }
+};
+
 /** The open window, if any: IPC answers only its main frame. */
 let window;
 /** The chat of the open window; a new window starts a new one. */
@@ -77,7 +96,7 @@ function setUp() {
 }
 
 async function openWindow() {
-  const current = new ProjectChat(port);
+  const current = new ProjectChat(port, { tokens });
   const opened = new BrowserWindow({
     title: 'Project Chat',
     width: 980,
@@ -110,4 +129,6 @@ async function openWindow() {
     if (window === opened) window = undefined;
   });
   await opened.loadURL(entry);
+  // With access kept from an earlier Always Allow, it connects by itself; otherwise Connect asks Agneta.
+  current.connect({ quiet: true });
 }

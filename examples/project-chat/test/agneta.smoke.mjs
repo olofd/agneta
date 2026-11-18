@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { ProjectChat } from '../chat.mjs';
+import { ProjectChat, memoryTokens } from '../chat.mjs';
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -88,7 +88,8 @@ test('Project Chat pairs, reads a brief, stages a draft, and stops a turn', { ti
   );
 
   const port = await availablePort();
-  chat = new ProjectChat(port);
+  const tokens = memoryTokens();
+  chat = new ProjectChat(port, { tokens });
   await chat.connect();
   assert.equal(chat.view.phase, 'disconnected');
   assert.match(chat.view.status, /Open Agneta and try again/);
@@ -141,4 +142,19 @@ test('Project Chat pairs, reads a brief, stages a draft, and stops a turn', { ti
   assert.deepEqual(chat.view.notes, [draft]);
   chat.disconnect();
   assert.equal(chat.view.phase, 'disconnected');
+
+  // agnetad answers Always Allow: the token was kept, and the next launch connects without asking.
+  assert.equal(typeof await tokens.load(), 'string');
+  const relaunched = new ProjectChat(port, { tokens });
+  await relaunched.connect({ quiet: true });
+  assert.equal(relaunched.view.phase, 'ready', relaunched.view.status);
+  relaunched.disconnect();
+
+  // A token Agneta no longer accepts (access removed) is forgotten, and a quiet connect says so rather than asking.
+  await tokens.save('a-token-agneta-no-longer-accepts');
+  const removed = new ProjectChat(port, { tokens });
+  await removed.connect({ quiet: true });
+  assert.equal(removed.view.phase, 'disconnected');
+  assert.match(removed.view.status, /access was removed/);
+  assert.equal(await tokens.load(), null);
 });
