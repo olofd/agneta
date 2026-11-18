@@ -185,7 +185,7 @@ import Testing
         // The install runs on the main actor up to its download, so one yield finds it listed; a local file arrives
         // faster than any polling.
         await Task.yield()
-        #expect(library.downloads["opencode"]?.total == 100)
+        #expect(library.downloads["opencode"] != nil) // its total is the pin's, until the server's own arrives
         _ = try await going.value
         #expect(library.downloads.isEmpty && state(library) == "ready")
         _ = try await library.install("opencode")

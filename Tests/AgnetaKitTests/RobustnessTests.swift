@@ -21,7 +21,8 @@ import Testing
         try await Task.sleep(for: .milliseconds(300))
         let start = ContinuousClock.now
         try await Task.sleep(for: .milliseconds(100))
-        #expect(ContinuousClock.now - start < .seconds(2), "the task pool is starved")
+        // A starved pool never wakes the sleep at all; a busy CI runner has stretched it to 2.9 s.
+        #expect(ContinuousClock.now - start < .seconds(10), "the task pool is starved")
         for child in children { kill(child.pid, SIGKILL) }
         for write in writes { await write.value }
         #expect(failures.value == count)

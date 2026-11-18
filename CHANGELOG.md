@@ -2,20 +2,24 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
-## Unreleased
+## 0.4.0 (2026-11-18)
 
 A new look, and a website.
+
+**Updating from 0.3** keeps your providers, apps and history. As a new minor version, the update is shown with these notes rather than installed silently.
 
 **For you**
 
 - **A new icon:** Agneta's linked rings in white, on a Swedish summer evening going coral to rose to violet. Agneta's windows take the same colours, quietly: a deep rose for links, checkboxes and toggles, the rings in the evening's gradient, a faint glow along the top of the panel and dialogs, and the one main button in each window as a subtle coral-to-violet gradient.
+- **Downloads show their progress:** signing in to a Claude plan shows how much of Claude Code's adapter has arrived, and so do the panel and Settings for every engine download. Before, they showed nothing until the download was done.
+- **Nothing left of an unfinished sign-in:** one cancelled, failed or cut short by quitting no longer leaves its folder behind; Agneta removes any at launch.
 - **Agneta and Agneta Dev side by side:** a development build keeps its own port, data, Keychain items and logs, and now shows a small hammer on its icon and menu bar mark, so the two tell apart.
 - **[agneta.dahlbom.io](https://agneta.dahlbom.io):** Agneta's website, with the documentation, built from this repository's own documents.
 - **Smaller fixes:** a finished task's line in Activity wraps instead of being cut short.
 
 **For apps**
 
-- **Project Chat**, the example app, picks the Agneta it uses (**Use**: Agneta or Agneta Dev), remembers the choice, and names it in what it shows ([examples/project-chat](https://github.com/olofd/agneta/tree/main/examples/project-chat)).
+- **Project Chat**, the example app, picks the Agneta it uses (**Use**: Agneta or Agneta Dev), remembers the choice, and names it in what it shows ([examples/project-chat](https://github.com/olofd/agneta/tree/v0.4.0/examples/project-chat)).
 
 ## 0.3.1 (2026-11-18)
 

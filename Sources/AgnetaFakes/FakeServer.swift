@@ -138,6 +138,15 @@ extension FakeServer {
     /// text; "CALL <tool> <json>" calls a tool with exact arguments; "use tool <name>" calls that tool once;
     /// "LONGREPLY <kilobytes>" streams a long reply; "slowly" delays the reply by 5 s and "PAUSE <ms>" by that long;
     /// "RATELIMIT" answers 429 as OpenAI does; anything else gets fixed text. Every request is logged to `log`.
+    /// Files to download, by path: a GET answers with the bytes (and their length), anything else 404. For download
+    /// tests, which need a real HTTP server on loopback and can't use Python's (see the top of this file).
+    public static func files(port: Int, _ files: [String: Data]) async throws -> FakeServer {
+        try await start(port: port) { request in
+            guard request.method == "GET", let data = files[request.path] else { return Response(status: 404, body: Data("not found".utf8)) }
+            return Response(status: 200, headers: ["Content-Type": "application/octet-stream"], body: data)
+        }
+    }
+
     public static func model(port: Int, log: URL) async throws -> FakeServer {
         let lock = NSLock()
         return try await start(port: port) { request in

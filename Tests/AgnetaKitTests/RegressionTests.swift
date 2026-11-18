@@ -1,6 +1,7 @@
 // Regression tests for security and correctness faults found in review, one per fault.
 import Foundation
 import Testing
+import AgnetaFakes
 @testable import AgnetaKit
 
 @Suite struct RegressionTests {
@@ -190,25 +191,13 @@ import Testing
 /// A download reports its bytes as they arrive, up to the whole file (the async `URLSession.download` never did, so the
 /// sign-in window sat at zero), and a server's error status fails it rather than handing back the error page.
 @Test func aDownloadReportsItsProgress() async throws {
-    let root = FileManager.default.temporaryDirectory.appending(path: "agneta-fetch-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: root) }
     let size = 6 << 20
-    try Data((0..<size).map { UInt8(truncatingIfNeeded: $0 &* 31) }).write(to: root.appending(path: "payload.zip"))
+    let payload = Data((0..<size).map { UInt8(truncatingIfNeeded: $0 &* 31) })
     let port = 47693
-    let server = Process()
-    server.executableURL = URL(filePath: "/usr/bin/python3")
-    server.arguments = ["-m", "http.server", String(port), "--bind", "127.0.0.1", "--directory", root.path(percentEncoded: false)]
-    server.standardOutput = FileHandle.nullDevice
-    server.standardError = FileHandle.nullDevice
-    try server.run()
-    defer { server.terminate(); server.waitUntilExit() }
+    let server = try await FakeServer.files(port: port, ["/payload.zip": payload])
+    defer { server.stop() }
     let seen = Seen()
-    var file: URL?
-    for _ in 0..<50 where file == nil {
-        file = try? await Download.fetch(URL(string: "http://127.0.0.1:\(port)/payload.zip")!) { received, total in seen.add(received, total) }
-        if file == nil { try await Task.sleep(for: .milliseconds(100)) } // the server still starting
-    }
+    let file: URL? = try await Download.fetch(URL(string: "http://127.0.0.1:\(port)/payload.zip")!) { received, total in seen.add(received, total) }
     let downloaded = try #require(file)
     defer { try? FileManager.default.removeItem(at: downloaded) }
     #expect((try? Data(contentsOf: downloaded).count) == size)
