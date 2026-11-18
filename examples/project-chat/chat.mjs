@@ -102,11 +102,14 @@ export class ProjectChat extends EventEmitter {
   /**
    * @param tokens where the token from Always Allow is kept between launches (`load`, `save`, `clear`).
    * @param openAgneta when Agneta isn't running: asks the user whether to open it and, if they say yes, opens it;
-   *   resolves to whether it did (main.mjs: a dialog, then `agneta-dev://open`). Without it, the app only says so.
+   *   resolves to whether it did (main.mjs: a dialog, then `agneta://open` or `agneta-dev://open`). Without it, the
+   *   app only says so.
+   * @param name what the app calls this Agneta in what it shows: "Agneta" for a release, "Agneta Dev" for a development build.
    */
-  constructor(port, { tokens = memoryTokens(), openAgneta = null } = {}) {
+  constructor(port, { tokens = memoryTokens(), openAgneta = null, name = 'Agneta' } = {}) {
     super();
     this.port = port;
+    this.name = name;
     this.#tokens = tokens;
     this.#openAgneta = openAgneta;
     this.view = {
@@ -144,7 +147,7 @@ export class ProjectChat extends EventEmitter {
   async connect({ quiet = false } = {}) {
     if (this.view.phase !== 'disconnected') return;
     this.#update({
-      phase: 'connecting', status: 'Connecting to Agneta…', code: '',
+      phase: 'connecting', status: `Connecting to ${this.name}…`, code: '',
       messages: [], draft: null, usage: null
     });
     const connection = new AcpConnection(this.port, {
@@ -179,10 +182,10 @@ export class ProjectChat extends EventEmitter {
       } else {
         if (kept) await this.#tokens.clear();
         if (quiet) {
-          this.disconnect(kept ? 'Your access was removed in Agneta. Connect to ask again.' : 'Connect to start chatting.');
+          this.disconnect(kept ? `Your access was removed in ${this.name}. Connect to ask again.` : 'Connect to start chatting.');
           return;
         }
-        this.#update({ phase: 'pairing', status: 'Approve Project Chat in Agneta.' });
+        this.#update({ phase: 'pairing', status: `Approve Project Chat in ${this.name}.` });
         // Ask for the app's own tools and no user folders.
         const paired = await connection.request('agneta/pair', {
           name: 'Project Chat', scope: { tools: 'app-only', folders: [] }
@@ -203,12 +206,12 @@ export class ProjectChat extends EventEmitter {
       }
       this.#workspace = access.workspace;
       this.#setAccess(access);
-      if (!this.view.account) throw new Error('No active provider was granted. Connect one in Agneta and pair again.');
+      if (!this.view.account) throw new Error(`No active provider was granted. Connect one in ${this.name} and pair again.`);
       this.#update({ phase: 'ready', status: 'Ready', code: '' });
       this.#prepare();
     } catch (error) {
       if (this.#connection !== connection) return;
-      this.disconnect(describeError(error));
+      this.disconnect(error.notRunning ? `${this.name} isn't running. Open it, then connect.` : describeError(error));
       // Agneta isn't running: offer to open it (at launch only to someone who has used it, a token kept), then connect.
       if (error.notRunning && this.#openAgneta && (!quiet || await this.#tokens.load())) await this.#offerToOpen(quiet);
     }
@@ -216,9 +219,9 @@ export class ProjectChat extends EventEmitter {
 
   async #offerToOpen(quiet) {
     if (!await this.#openAgneta()) return;
-    this.#update({ status: 'Opening Agneta…' });
+    this.#update({ status: `Opening ${this.name}…` });
     if (!await listening(this.port, 20)) {
-      this.#update({ status: 'Agneta didn\'t start. Open it, then connect.' });
+      this.#update({ status: `${this.name} didn't start. Open it, then connect.` });
       return;
     }
     await this.connect({ quiet });
@@ -339,7 +342,7 @@ export class ProjectChat extends EventEmitter {
         if (error.code !== -32015 || Date.now() - started > 600_000 || this.#connection !== connection) throw error;
         const name = this.view.providers.flatMap((entry) => entry.engines).find((entry) => entry.id === downloading?.engine)?.name ?? 'the engine';
         const progress = downloading?.total ? ` · ${size(downloading.received)} of ${size(downloading.total)}` : '';
-        this.#update({ status: `Agneta is downloading ${name}${progress}…` });
+        this.#update({ status: `${this.name} is downloading ${name}${progress}…` });
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     }
@@ -463,7 +466,7 @@ export class ProjectChat extends EventEmitter {
     if (method === 'agneta/accessChanged' && params?.access) this.#setAccess(params.access);
     if (!this.#session || params?.sessionId !== this.#session) return;
     if (method === 'agneta/sessionStopped') {
-      const status = params.stoppedBy === 'user' ? 'Stopped in Agneta.' : 'The engine stopped.';
+      const status = params.stoppedBy === 'user' ? `Stopped in ${this.name}.` : 'The engine stopped.';
       this.#dropSession();
       // A close in progress still owns the reset.
       if (this.view.phase === 'resetting') return;

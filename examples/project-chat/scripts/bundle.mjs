@@ -1,7 +1,8 @@
 // Makes build/Project Chat.app: a copy of Electron with Project Chat inside, which Finder and the Dock open as
 // Project Chat. `npm start` runs the shared Electron.app from node_modules with this folder as its app, so a Dock
 // click after quitting starts bare Electron; this bundle carries the app itself (Electron loads
-// Contents/Resources/app when it's there). macOS only. It connects to AGNETA_PORT as given now, else 47331.
+// Contents/Resources/app when it's there). macOS only. With AGNETA_PORT set now, the bundle keeps that port; without it,
+// the app offers the release and the development build, as `npm start` does.
 import { execFileSync } from 'node:child_process';
 import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';

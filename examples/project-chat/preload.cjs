@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('projectChat', {
   state: () => ipcRenderer.invoke('chat:state'),
+  agnetas: () => ipcRenderer.invoke('chat:agnetas'),
+  use: (id) => ipcRenderer.invoke('chat:use', id),
   connect: () => ipcRenderer.invoke('chat:connect'),
   send: (text) => ipcRenderer.invoke('chat:send', text),
   stop: () => ipcRenderer.invoke('chat:stop'),

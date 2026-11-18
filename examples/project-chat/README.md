@@ -18,9 +18,9 @@ To open it from Finder or the Dock like any app, run `npm run bundle` once and o
 
 Project Chat opens its session as soon as it's connected, so the **Model** and **Effort** pickers show the engine's own choices before the first message (found by their ACP categories, `model` and `thought_level`; each shown only where there's a choice). Changing either applies between turns and carries over to the next chat.
 
-When Agneta isn't running, Project Chat asks whether to open it (**Open Agneta Dev**), opens it through `agneta-dev://open` (`agneta://open` for a release), waits for it, and connects. It never opens Agneta without asking.
+When Agneta isn't running, Project Chat asks whether to open it (**Open Agneta** or **Open Agneta Dev**), opens it through `agneta://open` (`agneta-dev://open` for a development build), waits for it, and connects. It never opens Agneta without asking.
 
-Project Chat connects to dev builds on port `47331`. For a release build, use `AGNETA_PORT=47321 npm start` (or `AGNETA_PORT=47321 npm run bundle`, which the bundle keeps). For an [isolated dev instance](../../README.md#build-and-run), use the port you gave Agneta, for example `AGNETA_PORT=47341 npm start`.
+**Which Agneta.** While disconnected, the **Use** menu beside Connect picks the release (**Agneta**, port `47321`) or a development build (**Agneta Dev**, port `47331`). The choice is remembered; on the first launch Project Chat uses the one that's running, the release when both or neither are. Each keeps its own access: the token from Always Allow is stored per port. For an [isolated dev instance](../../README.md#build-and-run), give its port instead, for example `AGNETA_PORT=47341 npm start` (or `AGNETA_PORT=47341 npm run bundle`, which the bundle keeps); the menu is then hidden.
 
 ### Try the workflow
 

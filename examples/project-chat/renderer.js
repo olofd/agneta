@@ -7,6 +7,8 @@ const prompt = element('prompt');
 const status = element('status');
 let phase = 'disconnected';
 let briefLoaded = false;
+/** Which Agneta the app uses (the release or a development build), and the ones it can pick from. */
+let agnetas = { use: '', choices: [] };
 
 function render(state) {
   if (!briefLoaded) {
@@ -37,7 +39,11 @@ function render(state) {
   if (status.textContent !== state.status) status.textContent = state.status;
   element('pairing').hidden = !state.code;
   element('pairing-code').textContent = state.code;
-  connectionButton.textContent = phase === 'disconnected' ? 'Connect to Agneta'
+  // Which Agneta to connect to: picked while disconnected, so a chat never changes Agneta under it.
+  const using = agnetas.choices.find((entry) => entry.id === agnetas.use);
+  fill(element('agneta'), agnetas.choices.map((entry) => [entry.id, entry.name]), agnetas.use);
+  element('agneta-picker').hidden = phase !== 'disconnected' || agnetas.choices.length < 2;
+  connectionButton.textContent = phase === 'disconnected' ? `Connect to ${using?.name ?? 'Agneta'}`
     : connected ? 'Disconnect' : 'Cancel connection';
   connectionButton.classList.toggle('quiet', phase !== 'disconnected');
   element('new-chat').hidden = !connected;
@@ -98,6 +104,7 @@ function run(action) {
 
 connectionButton.addEventListener('click', () => run(phase === 'disconnected' ? chat.connect() : chat.disconnect()));
 element('new-chat').addEventListener('click', () => run(chat.newChat()));
+element('agneta').addEventListener('change', (event) => run(chat.use(event.target.value).then(loadAgnetas)));
 element('provider').addEventListener('change', (event) => run(chat.choose({ account: event.target.value })));
 element('engine').addEventListener('change', (event) => run(chat.choose({ account: element('provider').value, engine: event.target.value })));
 element('model').addEventListener('change', (event) => run(chat.configure({ model: event.target.value })));
@@ -118,5 +125,10 @@ element('form').addEventListener('submit', (event) => {
   prompt.value = '';
   run(chat.send(text));
 });
+async function loadAgnetas() {
+  agnetas = await chat.agnetas();
+  render(await chat.state());
+}
+
 chat.onChange(render);
-run(chat.state().then(render));
+run(loadAgnetas());

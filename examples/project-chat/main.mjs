@@ -1,18 +1,30 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
 import { readFileSync } from 'node:fs';
+import { createConnection } from 'node:net';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ProjectChat } from './chat.mjs';
 
-// AGNETA_PORT, else the port a bundle was made for (scripts/bundle.mjs), else a development Agneta's.
+// Which Agneta to use: the release (port 47321, opened by agneta://) or a development build (47331, agneta-dev://),
+// as the user picks next to Connect, remembered. AGNETA_PORT, or the port a bundle was made for (scripts/bundle.mjs),
+// fixes it instead: an isolated instance on another port has no URL to open it by.
 // Read synchronously: the scheme below must be registered before Electron is ready.
+const agnetas = [
+  { id: 'release', name: 'Agneta', port: 47321, url: 'agneta://open' },
+  { id: 'dev', name: 'Agneta Dev', port: 47331, url: 'agneta-dev://open' }
+];
 let bundled = null;
 try { bundled = readFileSync(new URL('./port', import.meta.url), 'utf8'); } catch {}
-const port = Number(process.env.AGNETA_PORT ?? bundled?.trim() ?? 47331);
-if (!Number.isInteger(port) || port < 1 || port > 65535) {
-  throw new Error('AGNETA_PORT must be a valid TCP port.');
+const fixed = process.env.AGNETA_PORT ?? bundled?.trim();
+if (fixed !== undefined) {
+  const port = Number(fixed);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('AGNETA_PORT must be a valid TCP port.');
+  const known = agnetas.find((choice) => choice.port === port);
+  agnetas.splice(0, agnetas.length, known ?? { id: 'fixed', name: `Agneta on port ${port}`, port, url: null });
 }
+/** The Agneta in use now. */
+let agneta = agnetas[0];
 
 const scheme = 'project-chat';
 const entry = `${scheme}://app/`;
@@ -43,28 +55,50 @@ app.whenReady().then(() => {
 
 /**
  * Where the token from Always Allow is kept: encrypted with Electron's safeStorage, whose key is in the login Keychain,
- * one file per Agneta (port). Nothing is kept where encryption isn't available.
+ * one file per Agneta (port), so each keeps its own access. Nothing is kept where encryption isn't available.
  */
-const tokens = {
-  file: () => join(app.getPath('userData'), `agneta-token-${port}`),
-  async load() {
-    try { return safeStorage.decryptString(await readFile(tokens.file())); } catch { return null; }
-  },
-  async save(token) {
-    if (!safeStorage.isEncryptionAvailable()) return;
-    await mkdir(dirname(tokens.file()), { recursive: true });
-    await writeFile(tokens.file(), safeStorage.encryptString(token), { mode: 0o600 });
-  },
-  async clear() { await rm(tokens.file(), { force: true }); }
-};
+function tokensFor(port) {
+  const file = () => join(app.getPath('userData'), `agneta-token-${port}`);
+  return {
+    async load() {
+      try { return safeStorage.decryptString(await readFile(file())); } catch { return null; }
+    },
+    async save(token) {
+      if (!safeStorage.isEncryptionAvailable()) return;
+      await mkdir(dirname(file()), { recursive: true });
+      await writeFile(file(), safeStorage.encryptString(token), { mode: 0o600 });
+    },
+    async clear() { await rm(file(), { force: true }); }
+  };
+}
 
-/** The Agneta on this port, to open when it isn't running: a release on 47321, a development build on 47331. An
- * isolated instance (any other port) has no URL to open it by. */
-const agneta = port === 47321 ? { name: 'Agneta', url: 'agneta://open' } : port === 47331 ? { name: 'Agneta Dev', url: 'agneta-dev://open' } : null;
+/** The user's pick, kept between launches. */
+const choiceFile = () => join(app.getPath('userData'), 'agneta.json');
+
+/** Whether something answers on the port now. */
+function answers(port) {
+  return new Promise((resolve) => {
+    const probe = createConnection({ host: '127.0.0.1', port }, () => { probe.destroy(); resolve(true); });
+    probe.on('error', () => resolve(false));
+    probe.setTimeout(500, () => { probe.destroy(); resolve(false); });
+  });
+}
+
+/** The Agneta to start with: the one picked last, else the one running (the release when both or neither are). */
+async function initialAgneta() {
+  if (agnetas.length === 1) return agnetas[0];
+  try {
+    const { use } = JSON.parse(await readFile(choiceFile(), 'utf8'));
+    const picked = agnetas.find((choice) => choice.id === use);
+    if (picked) return picked;
+  } catch {}
+  const [release, dev] = await Promise.all(agnetas.map((choice) => answers(choice.port)));
+  return dev && !release ? agnetas[1] : agnetas[0];
+}
 
 /** Asks whether to open Agneta, and opens it when the user says so (docs/APP_PROTOCOL.md, Connecting). */
 async function openAgneta() {
-  if (!agneta) return false;
+  if (!agneta.url) return false;
   const { response } = await dialog.showMessageBox(window, {
     type: 'info',
     message: `${agneta.name} isn't running`,
@@ -100,6 +134,8 @@ function setUp() {
   // MCP credentials stay in the main process.
   const actions = {
     state: () => chat.view,
+    agnetas: () => ({ use: agneta.id, choices: agnetas.map(({ id, name }) => ({ id, name })) }),
+    use: (id) => useAgneta(id),
     connect: () => chat.connect(),
     send: (text) => chat.send(text),
     stop: () => chat.stop(),
@@ -121,8 +157,31 @@ function setUp() {
   }
 }
 
+/** A chat with the Agneta in use, showing in `opened`. */
+function startChat(opened) {
+  const current = new ProjectChat(agneta.port, { tokens: tokensFor(agneta.port), openAgneta, name: agneta.name });
+  current.on('change', (state) => {
+    if (!opened.isDestroyed()) opened.webContents.send('chat:state-changed', state);
+  });
+  chat = current;
+  return current;
+}
+
+/** Switches to another Agneta: the chat with the current one ends, and one with the new one connects as at launch. */
+async function useAgneta(id) {
+  const next = agnetas.find((choice) => choice.id === id);
+  if (!next || next === agneta || !window) return;
+  agneta = next;
+  await writeFile(choiceFile(), JSON.stringify({ use: id })).catch(() => {});
+  chat.removeAllListeners('change');
+  chat.disconnect();
+  const current = startChat(window);
+  window.webContents.send('chat:state-changed', current.view);
+  current.connect({ quiet: true });
+}
+
 async function openWindow() {
-  const current = new ProjectChat(port, { tokens, openAgneta });
+  agneta = await initialAgneta();
   const opened = new BrowserWindow({
     title: 'Project Chat',
     width: 980,
@@ -138,23 +197,20 @@ async function openWindow() {
     }
   });
   window = opened;
-  chat = current;
+  startChat(opened);
 
   opened.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   opened.webContents.on('will-navigate', (event) => event.preventDefault());
   opened.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  current.on('change', (state) => {
-    if (!opened.isDestroyed()) opened.webContents.send('chat:state-changed', state);
-  });
   // Closing the window ends its chat (and an Allow Once grant with it).
   opened.once('close', () => {
-    current.removeAllListeners('change');
-    current.disconnect();
+    chat.removeAllListeners('change');
+    chat.disconnect();
   });
   opened.once('closed', () => {
     if (window === opened) window = undefined;
   });
   await opened.loadURL(entry);
   // With access kept from an earlier Always Allow, it connects by itself; otherwise Connect asks Agneta.
-  current.connect({ quiet: true });
+  chat.connect({ quiet: true });
 }
