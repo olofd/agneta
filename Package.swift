@@ -42,5 +42,7 @@ let package = Package(
         .target(name: "AgnetaFakes"),
         .executableTarget(name: "agneta-fakes", dependencies: ["AgnetaFakes"]),
         .testTarget(name: "AgnetaKitTests", dependencies: ["AgnetaKit", "AgnetaFakes"]),
+        // The app's own logic (approvals, sign-in, the engine library), without its windows.
+        .testTarget(name: "AgnetaTests", dependencies: ["Agneta"]),
     ]
 )
