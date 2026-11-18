@@ -1,5 +1,5 @@
-// Agneta's visual language (design/proposal): Nordic restraint on native
-// materials. Fjord-blue accent, pine for running, amber for attention, quiet
+// Agneta's visual language (design/proposal): Swedish restraint on native
+// materials. Winter-sea blue accent, pine for running, amber for attention, quiet
 // provider monograms, the connected-rings mark.
 import AgnetaKit
 import AppKit

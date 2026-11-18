@@ -1,8 +1,10 @@
-// Draws Agneta's app icon: the menu bar's two linked rings, flat ice-white on flat fjord blue. Nordic and quiet: two
-// colours, no gradients, no texture, the over-and-under crossings drawn as clean gaps. Written as code so the design
-// can be tuned and every size redrawn from one place.
-//   swift scripts/dev/app-icon.swift <out.png> [size]      one PNG (default 1024)
-//   scripts/dev/app-icon <out.icns>                        every size, packed with iconutil
+// Draws Agneta's app icon: the menu bar's two linked rings, ice white on the blue of a Swedish winter sea. Flat and
+// quiet: two colours, the over-and-under crossings drawn as clean gaps. On macOS 26 the rings are the glass layer of a
+// Liquid Glass icon (packaging/AppIcon.icon), which the system lights and tints; older macOS gets these drawings.
+// Written as code so the design can be tuned and every size redrawn from one place.
+//   swift scripts/dev/app-icon.swift <out.png> [size]       the whole icon, flat (default 1024)
+//   swift scripts/dev/app-icon.swift <out.png> 1024 rings   only the rings, full-bleed, for the Liquid Glass layer
+//   scripts/dev/app-icon                                     everything, see there
 import AppKit
 import CoreGraphics
 
@@ -11,9 +13,11 @@ let out = URL(filePath: args.count > 1 ? args[1] : "AppIcon.png")
 let size = CGFloat(args.count > 2 ? Double(args[2]) ?? 1024 : 1024)
 /// Optical sizing, as Apple's own icons do: at 32 pixels and below, bolder rings.
 let small = size <= 32
+/// Only the rings, on a transparent canvas where the whole canvas is the icon's body (Icon Composer's layout).
+let ringsOnly = args.count > 3 && args[3] == "rings"
 
-/// The two colours: fjord blue (a deeper shade of Agneta's accent) and ice white.
-let fjord: UInt32 = 0x1f4b66, ice: UInt32 = 0xeef6fa
+/// The two colours: winter-sea blue (the Baltic in winter, a deeper shade of Agneta's accent) and lake-ice white.
+let sea: UInt32 = 0x1f4b66, ice: UInt32 = 0xeef6fa
 
 func color(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
     CGColor(srgbRed: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255, blue: CGFloat(hex & 0xff) / 255, alpha: alpha)
@@ -33,12 +37,20 @@ let body = CGRect(x: 100, y: 100, width: 824, height: 824)
 let shape = squircle(body)
 
 // The icon's own shadow, as the grid expects (macOS draws it under every icon of this shape), then the flat body.
-ctx.saveGState()
-ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 28, color: color(0x0b2233, 0.3))
-ctx.addPath(shape)
-ctx.setFillColor(color(fjord))
-ctx.fillPath()
-ctx.restoreGState()
+if !ringsOnly {
+    ctx.saveGState()
+    ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 28, color: color(0x0b2233, 0.3))
+    ctx.addPath(shape)
+    ctx.setFillColor(color(sea))
+    ctx.fillPath()
+    ctx.restoreGState()
+}
+// The rings layer fills Icon Composer's whole canvas, which is the body, so it's drawn larger by the body's ratio.
+if ringsOnly {
+    ctx.translateBy(x: 512, y: 512)
+    ctx.scaleBy(x: 1024 / 824, y: 1024 / 824)
+    ctx.translateBy(x: -512, y: -512)
+}
 
 // The rings: the menu bar mark's geometry (24-point grid: radius 5.6, centres 6.8 apart, line 1.9), scaled up.
 let unit: CGFloat = 30

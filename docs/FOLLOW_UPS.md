@@ -11,7 +11,7 @@ Changes the maintainer asked for after 0.1.0, collected as they come in and work
 | 5 | Which engine a connection runs on: should the user choose it? | Proposed, the maintainer's call |
 | 6 | No Check for Updates in the app | Done (in the next build) |
 | 7 | Quit Agneta from the menu never quits (development and 0.1.0) | Fixed in code; proven in a standalone reproduction |
-| 8 | No app icon: a frosty, Nordic icon from the two rings | Done (in the next build); the design is open to taste |
+| 8 | No app icon: a frosty, Swedish icon from the two rings, flat and glassy | Done (in the next build) |
 
 ## 1. The panel is too transparent
 
@@ -88,13 +88,10 @@ Now every quit goes through `applicationShouldTerminate` (`AgnetaApp.swift`). It
 
 > "The development and the production version didn't have an app icon. We have an icon in the menu bar that's two rings interconnected. Use that and create an app icon … We like a Nordic theme, a frosty kind of theme." (2026-11-18)
 
-The icon ([packaging/AppIcon.png](../packaging/AppIcon.png)) is flat, as the maintainer asked after a first, shaded version:
-- **Rings:** the menu bar mark's two linked rings, in the mark's own geometry, in ice white (`#EEF6FA`).
-- **Background:** fjord blue (`#1F4B66`), a deeper shade of Agneta's accent. Two colours, no gradients or texture.
-- **Crossings:** in flat colour a crossing only reads with a gap, so each over-and-under crossing is cut as one (the left ring passes over at the top, the right one at the bottom), and the rings read as chain links.
-- **Shape:** macOS's grid, an 824-point body with continuous corners and the standard soft shadow. Finder shows it as designed.
-- **Small sizes:** at 32 pixels and below the rings are bolder.
-- **How it's made:** drawn by `scripts/dev/app-icon.swift`, so the colours and proportions are code to tune. `scripts/dev/app-icon` redraws every size into `packaging/AppIcon.icns`, which `build-app` bundles.
-- **Set aside:** a frosted-ice version with an aurora sky, and a pale one (blue rings on frosted ice). Both are in the history of `scripts/dev/app-icon.swift`.
-- **Later:** a Liquid Glass version for macOS 26 (Icon Composer, layered, so the system can light and tint it).
+The icon ([packaging/AppIcon.png](../packaging/AppIcon.png), as macOS 26 renders it), after two rounds with the maintainer ("I want a flatter icon", then "and glassy, modern; Sweden, not Norway"):
+- **Design:** the menu bar mark's two linked rings, in the mark's own geometry, in lake-ice white on the blue of a Swedish winter sea (`#1F4B66`, a deeper shade of Agneta's accent). Two flat colours. In flat colour a crossing only reads with a gap, so both over-and-under crossings are cut as one, and the rings read as chain links.
+- **Glass:** it's a Liquid Glass icon in Icon Composer's format (`packaging/AppIcon.icon`): the blue is the background fill, which macOS turns into a gentle gradient, and the rings are its glass layer, which macOS 26 lights, and darkens or tints with the user's icon style. `build-app` compiles it with Xcode's `actool` into `Assets.car`, plus a rendered `AppIcon.icns` for macOS 14 and 15.
+- **How it's made:** the rings are drawn by `scripts/dev/app-icon.swift`, so proportions stay code. `scripts/dev/app-icon` redraws the ring layer and renders the preview through macOS itself. The background colour and glass settings are in `packaging/AppIcon.icon/icon.json`.
+- **Checked:** Finder shows the rebuilt Agneta Dev with it.
+- **Set aside:** a shaded frosted-ice version with an aurora sky, a pale one, and a flat one without glass. All are in the history of `scripts/dev/app-icon.swift`.
 
