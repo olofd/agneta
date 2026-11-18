@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<meta name="description" content="{{description}}">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#151516" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="{{canonical}}">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/assets/icon-64.png" type="image/png">
+<link rel="stylesheet" href="/style.css">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Agneta">
+<meta property="og:title" content="{{og_title}}">
+<meta property="og:description" content="{{description}}">
+<meta property="og:url" content="{{canonical}}">
+<meta property="og:image" content="https://agneta.dahlbom.io/images/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="Agneta, a macOS menu bar app: its panel and its approval window">
+<meta name="twitter:card" content="summary_large_image">
+{{head_extra}}
+<script src="/site.js" defer></script>
+</head>
+<body class="{{page_class}}">
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar">
+  <div class="bar-inner">
+    <a class="brand" href="/"><img src="/assets/icon-64.png" width="28" height="28" alt="">Agneta</a>
+    <nav aria-label="Site">
+      <a href="/docs/"{{nav_docs}}>Docs</a>
+      <a href="/changelog/"{{nav_changelog}}>Changelog</a>
+      <a href="https://github.com/olofd/agneta" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+{{body}}
+<footer class="foot">
+  <div class="wrap">
+    <nav aria-label="Project">
+      <a href="/#install">Download</a>
+      <a href="/docs/">Documentation</a>
+      <a href="/changelog/">Changelog</a>
+      <a href="https://github.com/olofd/agneta" rel="noopener">Source</a>
+      <a href="https://github.com/olofd/agneta/releases" rel="noopener">Releases</a>
+      <a href="https://github.com/olofd/agneta/issues" rel="noopener">Issues</a>
+      <a href="https://github.com/olofd/agneta/security" rel="noopener">Report a vulnerability</a>
+    </nav>
+    <p>Agneta is free software under the <a href="https://github.com/olofd/agneta/blob/main/LICENSE" rel="noopener">Apache License 2.0</a>. It’s an independent project, not affiliated with or endorsed by OpenAI, Anthropic, the Agent Client Protocol maintainers, or the Goose or OpenCode projects. Product names belong to their owners.</p>
+    <p>This site is built from the repository’s own documents, at <a href="{{commit_url}}" rel="noopener">{{commit}}</a>.</p>
+  </div>
+</footer>
+</body>
+</html>
