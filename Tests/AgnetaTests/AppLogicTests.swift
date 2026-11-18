@@ -23,8 +23,11 @@ import Testing
     @Test func answersInOrderOneAtATime() async throws {
         let window = Window(), approvals = desk(window)
         let first = Router.PairingRequest(app: "First"), second = Router.PairingRequest(app: "Second")
-        async let firstAnswer = approvals.ask(first, allowed: ["a"], engines: ["goose", "opencode"])
-        async let secondAnswer = approvals.ask(second, allowed: ["a"], engines: ["goose", "opencode"])
+        // One after the other: requests made together reach the queue in either order (on a slow runner the second
+        // came first, and the answered request was the wrong one).
+        let firstAnswer = Task { await approvals.ask(first, allowed: ["a"], engines: ["goose", "opencode"]) }
+        for _ in 0..<100 where approvals.current == nil { try await Task.sleep(for: .milliseconds(10)) }
+        let secondAnswer = Task { await approvals.ask(second, allowed: ["a"], engines: ["goose", "opencode"]) }
         try await Task.sleep(for: .milliseconds(50))
         #expect(window.shown == [first.id] && approvals.current?.app == "First")
 
@@ -32,13 +35,13 @@ import Testing
         approvals.current?.allowed = ["c", "a"]
         approvals.current?.engines = ["goose"]
         approvals.answer(remember: true)
-        let answered = await firstAnswer
+        let answered = await firstAnswer.value
         #expect(answered == Router.PairingAnswer(accounts: ["a", "c"], engines: .only(["goose"]), remember: true))
         try await Task.sleep(for: .milliseconds(50))
         #expect(window.closed == 1 && window.shown == [first.id, second.id] && approvals.current?.app == "Second")
 
         approvals.answer(remember: nil) // Don't Allow
-        let refused = await secondAnswer
+        let refused = await secondAnswer.value
         #expect(refused == nil)
         #expect(approvals.current == nil)
     }
