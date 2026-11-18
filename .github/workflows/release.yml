@@ -92,8 +92,8 @@ jobs:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
           set -euo pipefail
-          : "${DEVELOPER_ID_P12:?Set the release environment's DEVELOPER_ID_P12}"
-          : "${ASC_KEY_P8:?Set the release environment's ASC_KEY_P8}"
+          : "${DEVELOPER_ID_P12:?Set DEVELOPER_ID_P12 in the release environment}"
+          : "${ASC_KEY_P8:?Set ASC_KEY_P8 in the release environment}"
           umask 077
           keys="$RUNNER_TEMP/agneta-keys"; mkdir -p "$keys"
           keychain="$keys/signing.keychain-db"; password=$(uuidgen)
@@ -116,7 +116,7 @@ jobs:
           AGNETA_NOTARY_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           AGNETA_NOTARY_ISSUER: ${{ secrets.ASC_ISSUER_ID }}
         run: |
-          : "${AGNETA_SIGN_IDENTITY:?Set the release environment's variable AGNETA_SIGN_IDENTITY}"
+          : "${AGNETA_SIGN_IDENTITY:?Set the variable AGNETA_SIGN_IDENTITY in the release environment}"
           scripts/dev/release
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
