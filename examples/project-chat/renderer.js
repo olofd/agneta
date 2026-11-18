@@ -30,8 +30,9 @@ function render(state) {
   // The engine's own models and reasoning efforts, once the chat's session is open; changeable between turns.
   fill(element('model'), state.models.map((entry) => [entry.value, entry.name]), state.model);
   fill(element('effort'), state.efforts.map((entry) => [entry.value, entry.name]), state.effort);
-  element('model-picker').hidden = !connected || state.models.length === 0;
-  element('effort-picker').hidden = !connected || state.efforts.length === 0;
+  // Only where there's a choice: Goose on a Claude plan offers one model, Claude Code's own ("current").
+  element('model-picker').hidden = !connected || state.models.length < 2;
+  element('effort-picker').hidden = !connected || state.efforts.length < 2;
   element('model').disabled = element('effort').disabled = !canSend;
   if (status.textContent !== state.status) status.textContent = state.status;
   element('pairing').hidden = !state.code;

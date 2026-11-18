@@ -169,8 +169,8 @@ A session's settings are the engine's own ACP config options, in `session/new`'s
 
 | Category | What | Seen |
 | --- | --- | --- |
-| `model` | The model (on Goose and OpenCode also the id `model`) | Codex, Goose, OpenCode |
-| `thought_level` | Reasoning effort | Codex; Goose and OpenCode for models that have it |
+| `model` | The model (every engine also uses the id `model`) | Codex, Claude Code, Goose, OpenCode. Goose on a Claude plan offers one: Claude Code's own, `current` |
+| `thought_level` | Reasoning effort (ids differ: `reasoning_effort` on Codex, `effort` on Claude Code, `thinking_effort` on Goose) | Codex, Claude Code, Goose on a Claude plan; Goose and OpenCode with an API key for models that have it |
 
 - Change one with `session/set_config_option {"sessionId", "configId", "value"}`, before the first prompt or between turns. The answer is the options as they are now: another model may offer other efforts, or none.
 - To let people choose before they type, open the session first (it starts the engine but calls no model). Choices may come in groups; a current value may be missing from the choices (Goose reports its configured model without always listing it).
