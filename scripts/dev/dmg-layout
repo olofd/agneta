@@ -1,0 +1,69 @@
+#!/bin/bash
+# Redraws the DMG window after a design change: packaging/dmg/background.tiff (scripts/dev/dmg-background.swift, at 1x
+# and 2x) and packaging/dmg/DS_Store, the window's layout as Finder records it (icon view, no toolbar, 660 × 400, icons
+# at 128 points over the arrow, the background). Made here, once, through Finder, and committed: the release script
+# only copies the two files into the DMG, since scripting Finder on CI runners is unreliable. Finder may ask to be
+# automated the first time.
+#   scripts/dev/dmg-layout
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+# Where Finder is told to put the two icons, from the window's top; with 128-point icons and their names this puts
+# their centres on the arrow (y 185 in scripts/dev/dmg-background.swift).
+icon_y=${DMG_ICON_Y:-140}
+work=$(mktemp -d "${TMPDIR:-/tmp}/agneta-dmg-layout-XXXX")
+mount=""
+cleanup() { [[ -n "$mount" ]] && hdiutil detach -quiet -force "$mount" 2>/dev/null; rm -rf "$work"; }
+trap cleanup EXIT
+mkdir -p packaging/dmg
+swift scripts/dev/dmg-background.swift "$work/background.png" 1 >/dev/null
+swift scripts/dev/dmg-background.swift "$work/background@2x.png" 2 >/dev/null
+tiffutil -cathidpicheck "$work/background.png" "$work/background@2x.png" -out packaging/dmg/background.tiff 2>/dev/null
+
+# A stand-in for the DMG's contents: the names are what the layout keys on.
+staging=$work/staging
+mkdir -p "$staging/Agneta.app" "$staging/.background"
+touch "$staging/.VolumeIcon.icns"
+ln -s /Applications "$staging/Applications"
+cp packaging/dmg/background.tiff "$staging/.background/background.tiff"
+hdiutil create -quiet -volname Agneta -srcfolder "$staging" -fs HFS+ -format UDRW -size 20m -ov "$work/layout.dmg"
+mount=$(hdiutil attach -readwrite -noverify -noautoopen "$work/layout.dmg" | awk -F'\t' '/\/Volumes\//{print $NF}' | tail -1)
+[[ -d "$mount" ]] || { echo "dmg-layout: couldn't mount the layout image" >&2; exit 1; }
+
+osascript <<SCRIPT
+tell application "Finder"
+  set theFolder to folder (POSIX file "$mount" as alias)
+  open theFolder
+  set theWindow to container window of theFolder
+  set current view of theWindow to icon view
+  set toolbar visible of theWindow to false
+  set statusbar visible of theWindow to false
+  -- 660 × 400 of content under the title bar.
+  set bounds of theWindow to {200, 120, 860, 548}
+  set theOptions to icon view options of theWindow
+  set arrangement of theOptions to not arranged
+  set icon size of theOptions to 128
+  set text size of theOptions to 13
+  set background picture of theOptions to file "background.tiff" of folder ".background" of theFolder
+  -- Finder places an icon by the point it's given lower than its centre: these put the icons over the arrow.
+  set position of item "Agneta.app" of theFolder to {165, $icon_y}
+  set position of item "Applications" of theFolder to {495, $icon_y}
+  -- Hidden items, for anyone whose Finder shows them: outside the window.
+  set position of item ".background" of theFolder to {900, 100}
+  set position of item ".VolumeIcon.icns" of theFolder to {900, 260}
+  update theFolder without registering applications
+  delay 1
+  close theWindow
+  -- Opened and closed once more, so Finder records the window as set.
+  open theFolder
+  set bounds of container window of theFolder to {200, 120, 860, 548}
+  delay 1
+  close container window of theFolder
+end tell
+SCRIPT
+sync
+# Finder finishes writing .DS_Store when the disk goes: detach, then read it back read-only.
+hdiutil detach -quiet "$mount"
+mount=$(hdiutil attach -readonly -nobrowse -noverify -noautoopen "$work/layout.dmg" | awk -F'\t' '/\/Volumes\//{print $NF}' | tail -1)
+[[ -f "$mount/.DS_Store" ]] || { echo "dmg-layout: Finder wrote no .DS_Store" >&2; exit 1; }
+cp "$mount/.DS_Store" packaging/dmg/DS_Store
+echo "packaging/dmg/background.tiff, packaging/dmg/DS_Store"

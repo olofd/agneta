@@ -151,7 +151,21 @@ staging=$(mktemp -d "${TMPDIR:-/tmp}/agneta-dmg-XXXX")
 trap 'rm -rf "$staging"' EXIT
 /usr/bin/ditto "$app" "$staging/Agneta.app"
 ln -s /Applications "$staging/Applications"
-hdiutil create -quiet -volname Agneta -srcfolder "$staging" -fs HFS+ -format ULFO -ov "$out/$name.dmg"
+# The disk shows Agneta's icon when it's open (Finder's sidebar and window, the desktop), not the plain disk: the
+# volume icon is the app's .icns, flagged as the volume's custom icon, which takes a writable image, converted after.
+cp "$app/Contents/Resources/AppIcon.icns" "$staging/.VolumeIcon.icns"
+# The window: a dusk background with an arrow to Applications, icons placed over it (scripts/dev/dmg-layout).
+mkdir "$staging/.background"
+cp packaging/dmg/background.tiff "$staging/.background/background.tiff"
+cp packaging/dmg/DS_Store "$staging/.DS_Store"
+writable=$(mktemp -u "${TMPDIR:-/tmp}/agneta-dmg-rw-XXXX").dmg
+mount=$(mktemp -d "${TMPDIR:-/tmp}/agneta-dmg-mount-XXXX")
+hdiutil create -quiet -volname Agneta -srcfolder "$staging" -fs HFS+ -format UDRW -ov "$writable"
+hdiutil attach -quiet -nobrowse -noautoopen -mountpoint "$mount" "$writable"
+xcrun SetFile -a C "$mount"
+hdiutil detach -quiet "$mount"
+hdiutil convert -quiet "$writable" -format ULFO -ov -o "$out/$name.dmg"
+rm -f "$writable"; rmdir "$mount" 2>/dev/null || true
 if [[ -n "$identity" ]]; then
   codesign --force --timestamp --sign "$identity" ${keychain[@]+"${keychain[@]}"} "$out/$name.dmg"
   notarize "$out/$name.dmg"
