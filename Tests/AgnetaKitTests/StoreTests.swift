@@ -82,6 +82,19 @@ private func temporaryFolder() throws -> URL {
         #expect(try database.history().isEmpty)
     }
 
+    /// A grant saved under a new token (the app paired again) replaces its row: one grant, the new token's.
+    @Test func aRenewedGrantReplacesItsRow() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let database = try AgnetaDatabase(file: folder.appending(path: "agneta.sqlite"))
+        var grant = Router.Grant(app: "Again", accounts: ["a1"])
+        try database.save(grant, tokenHash: "old")
+        grant.accounts = ["a1", "a2"]
+        try database.save(grant, tokenHash: "new")
+        #expect(try database.grants().keys.sorted() == ["new"])
+        #expect(try database.grants()["new"]?.accounts == ["a1", "a2"])
+    }
+
     /// Before 1.0 there are no migrations: a database made with another schema (an earlier build's, a later one's) is
     /// refused and left exactly as it was, so the user resets.
     @Test func refusesADatabaseFromAnotherSchema() throws {

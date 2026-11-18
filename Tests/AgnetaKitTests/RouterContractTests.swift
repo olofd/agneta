@@ -417,6 +417,45 @@ actor FakeEngines: EngineSource {
         #expect(await !stack.router.hasGrant(grant.id))
     }
 
+    /// An app that pairs again with Always Allow gets its earlier access back, renewed: the same grant (its workspace and
+    /// tasks), what was just allowed, and a new token; the old token stops working. Allow Once leaves it alone, and the
+    /// app learns from pairing whether to keep its token.
+    @Test func pairingAgainReplacesAnAppsAccess() async throws {
+        let saved = SavedGrants()
+        let answers = Answers([Router.PairingAnswer(accounts: ["brokered"], remember: true),
+                               Router.PairingAnswer(accounts: ["brokered", "native"], remember: true),
+                               Router.PairingAnswer(accounts: ["native"], remember: false)])
+        let stack = try await Stack.start(port: 47655, commit: { hash, grant in await saved.commit(hash, grant) }) { _ in await answers.next() }
+        defer { stack.stop() }
+        func pair() async throws -> (token: String, result: JSONValue) {
+            let app = AppClient(port: stack.port)
+            defer { app.close() }
+            let result = try await app.request("agneta/pair", ["name": "Again"])
+            return (try #require(result["token"]?.stringValue), result)
+        }
+        let first = try await pair()
+        let grant = try #require(await saved.last)
+        #expect(first.result["remembered"]?.boolValue == true)
+
+        let second = try await pair()
+        let renewed = try #require(await saved.last)
+        #expect(renewed.id == grant.id && renewed.accounts == ["brokered", "native"])
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        do {
+            _ = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(first.token)]]])
+            Issue.record("the replaced token still works")
+        } catch let error as RPCError {
+            #expect(error.code == -32001)
+        }
+        _ = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(second.token)]]])
+
+        // Allow Once is a grant of its own, for that connection, and says so.
+        let once = try await pair()
+        #expect(once.result["remembered"]?.boolValue == false)
+        #expect(await saved.last?.id == grant.id) // the remembered one wasn't touched
+    }
+
     /// While the engine a session needs is downloading, the app hears that, with the progress, instead of that
     /// Agneta lacks the engine; one that downloads but hasn't started is asked for (`engineWanted`); once it's ready,
     /// the session opens. A new catalog that changes what the app may do reaches it as `agneta/accessChanged`.
@@ -1144,4 +1183,11 @@ actor SavedGrants {
 actor Wanted {
     private(set) var engines: [String] = []
     func add(_ engine: String) { engines.append(engine) }
+}
+
+/// Pairing answers given in turn.
+actor Answers {
+    private var answers: [Router.PairingAnswer]
+    init(_ answers: [Router.PairingAnswer]) { self.answers = answers }
+    func next() -> Router.PairingAnswer? { answers.isEmpty ? nil : answers.removeFirst() }
 }

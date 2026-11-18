@@ -262,6 +262,13 @@ public actor Router {
         if changed { accessChanged() }
     }
 
+    /// Whether a grant is for this app: the same verified signing identity (identifier and team), or, for an app Agneta
+    /// can't verify, the same name. Pairing again replaces such an app's access instead of adding to it.
+    public static func sameApp(_ grant: Grant, app: String, identifier: String?, team: String?, verified: Bool) -> Bool {
+        guard grant.verified == verified else { return false }
+        return verified ? grant.identifier == identifier && grant.team == team : grant.app == app
+    }
+
     /// Whether any connection still holds this grant.
     public func hasGrant(_ id: String) -> Bool { tokens.values.contains { $0.id == id } }
 

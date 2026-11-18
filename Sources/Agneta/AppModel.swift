@@ -286,8 +286,12 @@ final class AppModel {
         case .paired(let hash, let grant):
             log.log("paired", ["grant": .string(grant.id), "app": .string(grant.app), "verified": .bool(grant.verified), "accounts": .int(Int64(grant.accounts.count)),
                                "tools": .string(grant.tools.rawValue), "folders": .int(Int64(grant.folders.count)), "remembered": .bool(grant.remembered)])
-            // Saved by the router before the token went out; an "Allow Once" grant is never saved or listed.
-            if grant.remembered { grants[hash] = grant }
+            // Saved by the router before the token went out; an "Allow Once" grant is never saved or listed. Pairing again
+            // replaced the app's earlier token, if it had one.
+            if grant.remembered {
+                grants = grants.filter { $0.value.id != grant.id }
+                grants[hash] = grant
+            }
         case .grantChanged(let hash, let grant):
             log.log("app-access-changed", ["grant": .string(grant.id), "accounts": .int(Int64(grant.accounts.count)),
                                            "engines": { if case .only(let some) = grant.engines { .int(Int64(some.count)) } else { "all" } }()])
@@ -341,7 +345,12 @@ final class AppModel {
 
     /// One provider ticked to start with (the user adds more deliberately), and every engine: the app picks per task.
     private func askForApproval(_ pairing: Router.PairingRequest) async -> Router.PairingAnswer? {
-        await approvals.ask(pairing, allowed: Set(accounts.first { !$0.paused }.map { [$0.id] } ?? []), engines: Set(library.catalog.entries.keys))
+        let verified = pairing.code == nil
+        let replaces = grants.values.contains {
+            Router.sameApp($0, app: pairing.app, identifier: verified ? pairing.peer?.identifier : nil, team: verified ? pairing.peer?.team : nil, verified: verified)
+        }
+        return await approvals.ask(pairing, allowed: Set(accounts.first { !$0.paused }.map { [$0.id] } ?? []), engines: Set(library.catalog.entries.keys),
+                                   replaces: replaces)
     }
 
     /// Changes which providers and engines an app may use (Settings → Apps). Its sessions that no longer fit stop.

@@ -21,6 +21,8 @@ final class Approvals {
         /// What the app asks to do: the most built-in tools, and folders of the user's beyond its own workspace.
         var tools: SessionPolicy.Tools = .appOnly
         var folders: [URL] = []
+        /// The app has remembered access already, which Always Allow replaces (Router.sameApp).
+        var replaces = false
     }
 
     /// A request nobody answers is refused after this long: a window nobody saw shouldn't keep its app waiting.
@@ -42,10 +44,11 @@ final class Approvals {
     var allowance: @MainActor (Set<String>) -> EngineAllowance = { _ in .all }
 
     /// Asks the user, and waits for the answer: nil for Don't Allow.
-    func ask(_ pairing: Router.PairingRequest, allowed: Set<String>, engines: Set<String>) async -> Router.PairingAnswer? {
+    func ask(_ pairing: Router.PairingRequest, allowed: Set<String>, engines: Set<String>, replaces: Bool = false) async -> Router.PairingAnswer? {
         await withCheckedContinuation { continuation in
             let request = Request(id: pairing.id, app: pairing.app, identifier: pairing.peer?.identifier, verified: pairing.code == nil,
-                                  code: pairing.code ?? "", allowed: allowed, engines: engines, tools: pairing.tools, folders: pairing.folders)
+                                  code: pairing.code ?? "", allowed: allowed, engines: engines, tools: pairing.tools, folders: pairing.folders,
+                                  replaces: replaces)
             if queue.add(id: pairing.id, request, answer: { continuation.resume(returning: $0) }) { present(pairing.id) }
             _Concurrency.Task { [weak self] in
                 try? await _Concurrency.Task.sleep(for: Self.timeout)

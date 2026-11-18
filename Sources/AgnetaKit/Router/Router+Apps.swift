@@ -104,7 +104,12 @@ extension Router {
             // The app may have gone while the user decided (or Agneta reset): no grant nobody received.
             guard !shutDown, apps[appID] != nil else { return .failure(RPCError(code: RPCError.internalError, message: "The app disconnected")) }
             let token = Self.newToken(), hash = Self.hash(token)
-            var grant = Grant(app: name, identifier: verified ? peer?.identifier : nil, team: verified ? peer?.team : nil, verified: verified,
+            let identifier = verified ? peer?.identifier : nil, team = verified ? peer?.team : nil
+            // "Always Allow" for an app that has it already replaces its access rather than adding to it: the same grant
+            // (its workspace, and its tasks to resume) with what was just allowed and a new token; the old token stops
+            // working. "Allow Once" leaves remembered access alone.
+            let earlier = answer.remember ? tokens.values.first { $0.remembered && Self.sameApp($0, app: name, identifier: identifier, team: team, verified: verified) } : nil
+            var grant = Grant(id: earlier?.id ?? UUID().uuidString, app: name, identifier: identifier, team: team, verified: verified,
                               accounts: answer.accounts, engines: answer.engines, tools: scope.tools,
                               folders: scope.folders.map { $0.path(percentEncoded: false) }, remembered: answer.remember)
             // The app's own workspace, inside its grant whatever else it asked for.
@@ -123,11 +128,15 @@ extension Router {
                 }
                 guard !shutDown, apps[appID] != nil else { return .failure(RPCError(code: RPCError.internalError, message: "The app disconnected")) }
             }
+            // The grant's earlier tokens stop working (its row was replaced when it was saved, its id being unique).
+            if let earlier { tokens = tokens.filter { $0.value.id != earlier.id } }
             tokens[hash] = grant
             if !answer.remember { onceTokens[appID] = hash }
             onEvent(.paired(tokenHash: hash, grant: grant))
             apps[appID]?.grant = grant // the live entry, not a copy from before the approval
-            return .success(["token": .string(token), "access": access(grant)])
+            // `remembered`: keep the token (in the Keychain) to connect with next time; an Allow Once token ends with this
+            // connection.
+            return .success(["token": .string(token), "remembered": .bool(answer.remember), "access": access(grant)])
         }
         if method == "initialize" {
             guard let token = params?["_meta"]?["agneta"]?["token"]?.stringValue, let grant = tokens[Self.hash(token)] else {

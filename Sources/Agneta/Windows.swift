@@ -400,6 +400,11 @@ struct ApprovalView: View {
 
                     ApprovalScope(app: approval.app, tools: approval.tools, folders: approval.folders)
                         .padding(.horizontal, 32)
+                    if approval.replaces {
+                        Label("Always Allow replaces the access \(approval.app) was given before", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 11.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 32)
+                    }
 
                     if approval.verified, let identifier = approval.identifier {
                         Label("Verified app · \(identifier)", systemImage: "checkmark.seal.fill").foregroundStyle(Palette.running)
