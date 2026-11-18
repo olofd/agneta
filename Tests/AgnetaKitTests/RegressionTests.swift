@@ -186,3 +186,39 @@ import Testing
     #expect(found("goose", "s1", claude).isEmpty && found("claude-code", "../s1", claude).isEmpty)
     #expect(found("claude-code", "s1", URL(filePath: "/tmp")).isEmpty && found("claude-code", "s1", root).isEmpty)
 }
+
+/// A download reports its bytes as they arrive, up to the whole file (the async `URLSession.download` never did, so the
+/// sign-in window sat at zero), and a server's error status fails it rather than handing back the error page.
+@Test func aDownloadReportsItsProgress() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: "agneta-fetch-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let size = 6 << 20
+    try Data((0..<size).map { UInt8(truncatingIfNeeded: $0 &* 31) }).write(to: root.appending(path: "payload.zip"))
+    let port = 47693
+    let server = Process()
+    server.executableURL = URL(filePath: "/usr/bin/python3")
+    server.arguments = ["-m", "http.server", String(port), "--bind", "127.0.0.1", "--directory", root.path(percentEncoded: false)]
+    server.standardOutput = FileHandle.nullDevice
+    server.standardError = FileHandle.nullDevice
+    try server.run()
+    defer { server.terminate(); server.waitUntilExit() }
+    let seen = Seen()
+    var file: URL?
+    for _ in 0..<50 where file == nil {
+        file = try? await Download.fetch(URL(string: "http://127.0.0.1:\(port)/payload.zip")!) { received, total in seen.add(received, total) }
+        if file == nil { try await Task.sleep(for: .milliseconds(100)) } // the server still starting
+    }
+    let downloaded = try #require(file)
+    defer { try? FileManager.default.removeItem(at: downloaded) }
+    #expect((try? Data(contentsOf: downloaded).count) == size)
+    #expect(seen.last == Int64(size) && seen.total == Int64(size) && seen.count > 1)
+    await #expect(throws: (any Error).self) { _ = try await Download.fetch(URL(string: "http://127.0.0.1:\(port)/missing.zip")!) }
+}
+
+/// What a download reported.
+final class Seen: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var last: Int64 = 0, total: Int64?, count = 0
+    func add(_ received: Int64, _ total: Int64?) { lock.withLock { last = received; self.total = total; count += 1 } }
+}

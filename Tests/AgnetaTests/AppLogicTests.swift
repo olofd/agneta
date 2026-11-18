@@ -161,7 +161,9 @@ import Testing
         let (library, root) = try library()
         defer { try? FileManager.default.removeItem(at: root) }
         let going = Task { try await library.install("opencode") }
-        try await waitUntil { library.downloads["opencode"] != nil }
+        // The install runs on the main actor up to its download, so one yield finds it listed; a local file arrives
+        // faster than any polling.
+        await Task.yield()
         #expect(library.downloads["opencode"]?.total == 100)
         _ = try await going.value
         #expect(library.downloads.isEmpty && state(library) == "ready")

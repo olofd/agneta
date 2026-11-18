@@ -78,7 +78,7 @@ public struct RuntimeInstaller: Sendable {
         let executable = folder.appending(path: program)
         if Self.isInstalled(executable: executable, folder: folder, asset: asset) { return executable }
         progress?(.waiting("Downloading \(name) \(asset.version)…"))
-        let (download, _) = try await URLSession.shared.download(from: asset.url, delegate: DownloadProgress(expected: asset.size.map(Int64.init), received))
+        let download = try await Download.fetch(asset.url, expected: asset.size.map(Int64.init), received: received)
         defer { try? FileManager.default.removeItem(at: download) }
         let data = try Data(contentsOf: download, options: .mappedIfSafe)
         guard Self.sha256(data) == asset.sha256 else { throw SignInError.provider("\(name) download didn't match its pinned checksum") }
@@ -155,19 +155,63 @@ public struct RuntimeInstaller: Sendable {
     static func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 }
 
-/// Reports a download's bytes as they arrive; the total is the server's, else the size the lock records.
-final class DownloadProgress: NSObject, URLSessionDownloadDelegate, Sendable {
-    let expected: Int64?
-    let report: (@Sendable (Int64, Int64?) -> Void)?
-    init(expected: Int64?, _ report: (@Sendable (Int64, Int64?) -> Void)?) {
+/// A download that reports its bytes as they arrive. The async `URLSession.download(from:delegate:)` never calls a
+/// download delegate's `didWriteData`, so a download through it showed no progress at all (the sign-in window sat at
+/// "Zero KB" while bytes arrived); a session of its own, with the delegate as the session's, does. The total is the
+/// server's, else the size the lock records. Cancelling the calling task cancels the download.
+final class Download: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let expected: Int64?
+    private let report: (@Sendable (Int64, Int64?) -> Void)?
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<URL, Error>?
+    private var file: URL?
+
+    private init(expected: Int64?, report: (@Sendable (Int64, Int64?) -> Void)?) {
         self.expected = expected
         self.report = report
     }
+
+    /// Downloads `url` to a temporary file the caller owns (and removes).
+    static func fetch(_ url: URL, expected: Int64? = nil, received: (@Sendable (Int64, Int64?) -> Void)? = nil) async throws -> URL {
+        let download = Download(expected: expected, report: received)
+        let session = URLSession(configuration: .ephemeral, delegate: download, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                download.lock.withLock { download.continuation = continuation }
+                session.downloadTask(with: url).resume()
+            }
+        } onCancel: {
+            session.invalidateAndCancel()
+        }
+    }
+
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
                     totalBytesExpectedToWrite: Int64) {
         report?(totalBytesWritten, totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : expected)
     }
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
+
+    /// The system removes `location` when this returns, so it's moved somewhere of ours first.
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        if let status = (downloadTask.response as? HTTPURLResponse)?.statusCode, !(200..<300).contains(status) { return }
+        let kept = FileManager.default.temporaryDirectory.appending(path: "agneta-download-\(UUID().uuidString)")
+        if (try? FileManager.default.moveItem(at: location, to: kept)) != nil { lock.withLock { file = kept } }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        let (continuation, file) = lock.withLock { () -> (CheckedContinuation<URL, Error>?, URL?) in
+            defer { self.continuation = nil }
+            return (self.continuation, self.file)
+        }
+        if let error {
+            continuation?.resume(throwing: error)
+        } else if let file {
+            continuation?.resume(returning: file)
+        } else {
+            let status = (task.response as? HTTPURLResponse)?.statusCode ?? 0
+            continuation?.resume(throwing: SignInError.provider("the download failed (HTTP \(status))"))
+        }
+    }
 }
 
 /// Runs one install per key at a time; callers asking meanwhile wait for the same result.
