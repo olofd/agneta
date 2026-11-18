@@ -11,6 +11,7 @@ A new look, and a website.
 **For you**
 
 - **A new icon:** Agneta's linked rings in white, on a Swedish summer evening going coral to rose to violet. Agneta's windows take the same colours, quietly: a deep rose for links, checkboxes and toggles, the rings in the evening's gradient, a faint glow along the top of the panel and dialogs, and the one main button in each window as a subtle coral-to-violet gradient.
+- **A proper installer:** the DMG opens on a dusk background with an arrow from Agneta to Applications and what to do next, and the disk carries Agneta's icon.
 - **Downloads show their progress:** signing in to a Claude plan shows how much of Claude Code's adapter has arrived, and so do the panel and Settings for every engine download. Before, they showed nothing until the download was done.
 - **Nothing left of an unfinished sign-in:** one cancelled, failed or cut short by quitting no longer leaves its folder behind; Agneta removes any at launch.
 - **Agneta and Agneta Dev side by side:** a development build keeps its own port, data, Keychain items and logs, and now shows a small hammer on its icon and menu bar mark, so the two tell apart.
