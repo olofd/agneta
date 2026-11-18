@@ -4,6 +4,7 @@
 // Written as code so the design can be tuned and every size redrawn from one place.
 //   swift scripts/dev/app-icon.swift <out.png> [size]       the whole icon, flat (default 1024)
 //   swift scripts/dev/app-icon.swift <out.png> 1024 rings   only the rings, full-bleed, for the Liquid Glass layer
+//   swift scripts/dev/app-icon.swift <out.png> 1024 hammer  only the development build's hammer, for its own layer
 //   scripts/dev/app-icon                                     everything, see there
 import AppKit
 import CoreGraphics
@@ -15,6 +16,8 @@ let size = CGFloat(args.count > 2 ? Double(args[2]) ?? 1024 : 1024)
 let small = size <= 32
 /// Only the rings, on a transparent canvas where the whole canvas is the icon's body (Icon Composer's layout).
 let ringsOnly = args.count > 3 && args[3] == "rings"
+/// Only the hammer that marks a development build (Agneta Dev), on the same canvas: low on the right, clear of the rings.
+let hammerOnly = args.count > 3 && args[3] == "hammer"
 
 /// The two colours: winter-sea blue (the Baltic in winter, a deeper shade of Agneta's accent) and lake-ice white.
 let sea: UInt32 = 0x1f4b66, ice: UInt32 = 0xeef6fa
@@ -37,6 +40,11 @@ let body = CGRect(x: 100, y: 100, width: 824, height: 824)
 let shape = squircle(body)
 
 // The icon's own shadow, as the grid expects (macOS draws it under every icon of this shape), then the flat body.
+if hammerOnly {
+    drawHammer()
+    write()
+    exit(0)
+}
 if !ringsOnly {
     ctx.saveGState()
     ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 28, color: color(0x0b2233, 0.3))
@@ -97,7 +105,37 @@ cross(over: right, from: 198, to: 268)
 ctx.endTransparencyLayer()
 ctx.restoreGState()
 
-let image = ctx.makeImage()!
-let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])!
-try png.write(to: out)
-print(out.path(percentEncoded: false))
+write()
+
+/// The development build's mark: a small claw hammer in warm amber, tilted as if mid-swing, in the lower right corner
+/// where the rings leave room. Amber against the winter-sea blue reads at a glance, even at Dock size.
+func drawHammer() {
+    let amber: UInt32 = 0xf4a93c
+    ctx.saveGState()
+    ctx.translateBy(x: 806, y: 132)
+    ctx.scaleBy(x: 0.66, y: 0.66)
+    ctx.rotate(by: -0.4)
+    ctx.setFillColor(color(amber))
+    // The handle, then the head across its top: a square face on the left, a short claw on the right.
+    ctx.addPath(CGPath(roundedRect: CGRect(x: -34, y: -190, width: 68, height: 270), cornerWidth: 30, cornerHeight: 30, transform: nil))
+    ctx.fillPath()
+    ctx.addPath(CGPath(roundedRect: CGRect(x: -150, y: 54, width: 96, height: 124), cornerWidth: 18, cornerHeight: 18, transform: nil))
+    ctx.fillPath()
+    let head = CGMutablePath()
+    head.move(to: CGPoint(x: -64, y: 74))
+    head.addLine(to: CGPoint(x: 70, y: 74))
+    head.addQuadCurve(to: CGPoint(x: 150, y: 48), control: CGPoint(x: 118, y: 72))
+    head.addQuadCurve(to: CGPoint(x: 70, y: 158), control: CGPoint(x: 150, y: 140))
+    head.addLine(to: CGPoint(x: -64, y: 158))
+    head.closeSubpath()
+    ctx.addPath(head)
+    ctx.fillPath()
+    ctx.restoreGState()
+}
+
+func write() {
+    let image = ctx.makeImage()!
+    let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])!
+    try! png.write(to: out)
+    print(out.path(percentEncoded: false))
+}

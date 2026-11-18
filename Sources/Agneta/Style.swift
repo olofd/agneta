@@ -31,8 +31,10 @@ enum Palette {
 
 /// The two connected rings, drawn as a template image so the menu bar tints it.
 enum Mark {
-    /// Two linked rings: each passes over the other once, like links in a chain seen flat.
-    static func image(size: CGFloat = 18, badge: Bool = false) -> NSImage {
+    /// Two linked rings: each passes over the other once, like links in a chain seen flat. `badge` adds the dot that
+    /// says something needs the user; `hammer` the small hammer in the lower right corner that marks a development build
+    /// (Agneta Dev), as its app icon has, so the two running side by side tell apart in the menu bar.
+    static func image(size: CGFloat = 18, badge: Bool = false, hammer: Bool = false) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             let s = rect.width / 24
             let radius = 5.6 * s, line = 1.9 * s
@@ -53,10 +55,43 @@ enum Mark {
                 NSColor.black.setFill()
                 NSBezierPath(ovalIn: NSRect(x: 18.5 * s, y: 17.5 * s, width: 5.5 * s, height: 5.5 * s)).fill()
             }
+            if hammer { Self.hammer(scale: s) }
             return true
         }
         image.isTemplate = true
         return image
+    }
+
+    /// The hammer, tilted, with a clear margin cut around it so it reads apart from the ring it overlaps.
+    private static func hammer(scale s: CGFloat) {
+        var transform = AffineTransform(translationByX: 20.2 * s, byY: 3.7 * s)
+        transform.rotate(byRadians: -0.6)
+        let handle = NSBezierPath(roundedRect: NSRect(x: -0.75 * s, y: -3.6 * s, width: 1.5 * s, height: 5.2 * s), xRadius: 0.75 * s, yRadius: 0.75 * s)
+        // The head: a square face on the left, a claw tapering to a point on the right.
+        let head = NSBezierPath()
+        head.move(to: NSPoint(x: -3.4 * s, y: 0.9 * s))
+        head.line(to: NSPoint(x: -1.1 * s, y: 0.9 * s))
+        head.line(to: NSPoint(x: -1.1 * s, y: 1.6 * s))
+        head.line(to: NSPoint(x: 3.2 * s, y: 1.1 * s))
+        head.line(to: NSPoint(x: 1.2 * s, y: 3.2 * s))
+        head.line(to: NSPoint(x: -1.1 * s, y: 3.2 * s))
+        head.line(to: NSPoint(x: -1.1 * s, y: 3.9 * s))
+        head.line(to: NSPoint(x: -3.4 * s, y: 3.9 * s))
+        head.close()
+        let shape = NSBezierPath()
+        shape.append(handle)
+        shape.append(head)
+        shape.transform(using: transform)
+        guard let context = NSGraphicsContext.current else { return }
+        context.saveGraphicsState()
+        context.compositingOperation = .destinationOut
+        shape.lineWidth = 2.4 * s
+        shape.lineJoinStyle = .round
+        NSColor.black.setStroke()
+        shape.stroke()
+        context.restoreGraphicsState()
+        NSColor.black.setFill()
+        shape.fill()
     }
 }
 

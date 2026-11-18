@@ -17,8 +17,8 @@ final class StatusItemController: NSObject {
     init(model: AppModel) {
         self.model = model
         super.init()
-        item.button?.image = Mark.image(size: 18)
-        item.button?.setAccessibilityLabel("Agneta")
+        item.button?.image = Mark.image(size: 18, hammer: model.isDevelopment)
+        item.button?.setAccessibilityLabel(model.isDevelopment ? "Agneta Dev" : "Agneta")
         item.button?.target = self
         item.button?.action = #selector(toggle)
         observeAttention()
@@ -30,7 +30,7 @@ final class StatusItemController: NSObject {
     private func observeAttention() {
         withObservationTracking { [weak self] in
             guard let self else { return }
-            item.button?.image = Mark.image(size: 18, badge: model.needsAttention)
+            item.button?.image = Mark.image(size: 18, badge: model.needsAttention, hammer: model.isDevelopment)
             let title = model.attentionMessage?.title
             if let title, title != announced {
                 NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,

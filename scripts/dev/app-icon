@@ -1,38 +1,23 @@
 #!/bin/bash
-# Redraws Agneta's app icon after a design change (scripts/dev/app-icon.swift):
+# Redraws Agneta's app icons after a design change (scripts/dev/app-icon.swift): the release's, and the development
+# build's, which is the same icon with a small amber hammer, so Agneta and Agneta Dev side by side tell apart.
 # - packaging/AppIcon.icon/Assets/rings.png, the glass layer of the Liquid Glass icon (packaging/AppIcon.icon, Icon
-#   Composer's format; its icon.json holds the background colour and the glass settings).
-# - packaging/AppIcon/Assets.car (macOS 26) and AppIcon.icns (older macOS), compiled from it with actool and committed,
-#   which build-app copies into the bundle. Compiled here, not in every build: actool crashes under Xcode 26 on some
-#   macOS 15 Macs (seen on GitHub's macos-15 Apple silicon runner).
-# - packaging/AppIcon.png, a preview of the icon as macOS renders it, for docs and review.
+#   Composer's format; its icon.json holds the background colour and the glass settings), and
+#   packaging/AppIconDev.icon, the same with the hammer's layer added (Assets/hammer.png).
+# - packaging/AppIcon/ and packaging/AppIconDev/: Assets.car (macOS 26) and the .icns (older macOS), compiled from them
+#   with actool and committed, which build-app copies into the bundle. Compiled here, not in every build: actool
+#   crashes under Xcode 26 on some macOS 15 Macs (seen on GitHub's macos-15 Apple silicon runner).
+# - packaging/AppIcon.png and AppIconDev.png, previews of the icons as macOS renders them, for docs and review.
 #   scripts/dev/app-icon
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 work=$(mktemp -d "${TMPDIR:-/tmp}/agneta-icon-XXXX")
 trap 'rm -rf "$work"' EXIT
 swift scripts/dev/app-icon.swift packaging/AppIcon.icon/Assets/rings.png 1024 rings >/dev/null
-# The preview: compile as build-app does, put it in a bare bundle, and ask macOS for that bundle's icon.
-mkdir -p packaging/AppIcon
-xcrun actool packaging/AppIcon.icon --compile packaging/AppIcon --platform macosx --minimum-deployment-target 14.0 \
-  --app-icon AppIcon --output-partial-info-plist "$work/partial.plist" --target-device mac >/dev/null
-app=$work/Preview.app
-mkdir -p "$app/Contents/Resources" "$app/Contents/MacOS"
-# A bundle without a program gets macOS's "can't open" badge on its icon.
-printf '#!/bin/sh\n' > "$app/Contents/MacOS/Preview"
-chmod +x "$app/Contents/MacOS/Preview"
-cp packaging/AppIcon/Assets.car packaging/AppIcon/AppIcon.icns "$app/Contents/Resources/"
-cat > "$app/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>CFBundleIdentifier</key><string>com.objectivecoder.agneta.iconpreview</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleExecutable</key><string>Preview</string>
-  <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>CFBundleIconName</key><string>AppIcon</string>
-</dict></plist>
-PLIST
+mkdir -p packaging/AppIconDev.icon/Assets
+cp packaging/AppIcon.icon/Assets/rings.png packaging/AppIconDev.icon/Assets/rings.png
+swift scripts/dev/app-icon.swift packaging/AppIconDev.icon/Assets/hammer.png 1024 hammer >/dev/null
+
 cat > "$work/preview.swift" <<'SWIFT'
 import AppKit
 let icon = NSWorkspace.shared.icon(forFile: CommandLine.arguments[1])
@@ -44,5 +29,32 @@ icon.draw(in: NSRect(x: 0, y: 0, width: 1024, height: 1024))
 NSGraphicsContext.restoreGraphicsState()
 try! rep.representation(using: .png, properties: [:])!.write(to: URL(filePath: CommandLine.arguments[2]))
 SWIFT
-swift "$work/preview.swift" "$app" packaging/AppIcon.png
-echo "packaging/AppIcon.icon/Assets/rings.png, packaging/AppIcon/, packaging/AppIcon.png"
+
+# Compiles packaging/<name>.icon into packaging/<name>/ as build-app uses it, then previews it: in a bare bundle,
+# macOS draws the bundle's icon.
+icon() {
+  local name=$1 app=$work/$1.app
+  mkdir -p "packaging/$name"
+  xcrun actool "packaging/$name.icon" --compile "packaging/$name" --platform macosx --minimum-deployment-target 14.0 \
+    --app-icon "$name" --output-partial-info-plist "$work/$name.plist" --target-device mac >/dev/null
+  mkdir -p "$app/Contents/Resources" "$app/Contents/MacOS"
+  # A bundle without a program gets macOS's "can't open" badge on its icon.
+  printf '#!/bin/sh\n' > "$app/Contents/MacOS/Preview"
+  chmod +x "$app/Contents/MacOS/Preview"
+  cp "packaging/$name/Assets.car" "packaging/$name/$name.icns" "$app/Contents/Resources/"
+  cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>com.objectivecoder.agneta.iconpreview.$name</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleExecutable</key><string>Preview</string>
+  <key>CFBundleIconFile</key><string>$name</string>
+  <key>CFBundleIconName</key><string>$name</string>
+</dict></plist>
+PLIST
+  swift "$work/preview.swift" "$app" "packaging/$name.png"
+}
+icon AppIcon
+icon AppIconDev
+echo "packaging/AppIcon.icon, AppIconDev.icon, AppIcon/, AppIconDev/, AppIcon.png, AppIconDev.png"

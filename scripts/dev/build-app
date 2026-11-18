@@ -52,9 +52,11 @@ if [[ "$engines" == all ]]; then
 fi
 cp Engines/runtimes.lock "$app/Contents/Resources/runtimes.lock"
 cp Engines/opencode.lock "$app/Contents/Resources/opencode.lock"
-# The app icon: Liquid Glass on macOS 26 (Assets.car), a rendered AppIcon.icns before. Compiled from
-# packaging/AppIcon.icon by scripts/dev/app-icon and committed: actool crashes under Xcode 26 on some macOS 15 Macs.
-cp packaging/AppIcon/Assets.car packaging/AppIcon/AppIcon.icns "$app/Contents/Resources/"
+# The app icon: Liquid Glass on macOS 26 (Assets.car), a rendered .icns before. Compiled from packaging/AppIcon.icon
+# (AppIconDev.icon for development builds: the same with a small hammer, so Agneta and Agneta Dev running side by side
+# tell apart) by scripts/dev/app-icon and committed: actool crashes under Xcode 26 on some macOS 15 Macs.
+if $release; then icon=AppIcon; else icon=AppIconDev; fi
+cp "packaging/$icon/Assets.car" "packaging/$icon/$icon.icns" "$app/Contents/Resources/"
 cp Engines/goose.lock "$app/Contents/Resources/goose.lock"
 cp -R .build/AgnetaTestClient.app "$app/Contents/Resources/AgnetaTestClient.app"
 # The version is AGNETA_VERSION, or the v* tag on this commit, or 0.0.0 for an untagged build. The build number is
@@ -78,8 +80,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>Agneta</string>
   <key>CFBundleDisplayName</key><string>$name</string>
   <key>CFBundleExecutable</key><string>Agneta</string>
-  <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>CFBundleIconName</key><string>AppIcon</string>
+  <key>CFBundleIconFile</key><string>$icon</string>
+  <key>CFBundleIconName</key><string>$icon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$build</string>

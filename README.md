@@ -101,7 +101,7 @@ open "build/Agneta Dev.app"
 
 - The connected-rings symbol appears in the menu bar. Connect a provider from its panel.
 - To see the app side, choose **Run a Test Task** from the panel's ⋯ menu. A small sandboxed test app asks for access; once you allow it, it runs one short task and shows the reply.
-- Development builds listen on `ws://127.0.0.1:47331/acp` and keep their data in `~/Library/Application Support/com.objectivecoder.agneta.dev/`. The bundle identifiers (`com.objectivecoder.agneta`, and `.dev` for development builds) use the author's developer name. They also name Agneta's data folder, Keychain items and logs, so they stay the same from release to release.
+- Development builds listen on `ws://127.0.0.1:47331/acp` and keep their data in `~/Library/Application Support/com.objectivecoder.agneta.dev/`. They run side by side with a release: their own port, data, Keychain items, logs and `agneta-dev://` URL, and a small hammer on the app icon and the menu bar mark tells them apart. The bundle identifiers (`com.objectivecoder.agneta`, and `.dev` for development builds) use the author's developer name. They also name Agneta's data folder, Keychain items and logs, so they stay the same from release to release.
 - For a throwaway instance, `AGNETA_HOME=<folder> AGNETA_PORT=<port> "build/Agneta Dev.app/Contents/MacOS/Agneta"` keeps its data, Keychain items and Reset inside that folder. Give each instance its own port (diagnostics listen two above it); one without `AGNETA_PORT`, or on your own Agneta's ports, doesn't listen and says why.
 
 Tests:
