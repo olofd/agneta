@@ -50,12 +50,9 @@ if [[ "$engines" == all ]]; then
 fi
 cp Engines/runtimes.lock "$app/Contents/Resources/runtimes.lock"
 cp Engines/opencode.lock "$app/Contents/Resources/opencode.lock"
-# The app icon: Liquid Glass on macOS 26 (Assets.car), a rendered AppIcon.icns before (packaging/AppIcon.icon,
-# drawn by scripts/dev/app-icon).
-actool=$(mktemp -d "${TMPDIR:-/tmp}/agneta-actool-XXXX")
-xcrun actool packaging/AppIcon.icon --compile "$app/Contents/Resources" --platform macosx --minimum-deployment-target 14.0 \
-  --app-icon AppIcon --output-partial-info-plist "$actool/partial.plist" --target-device mac >/dev/null
-rm -rf "$actool"
+# The app icon: Liquid Glass on macOS 26 (Assets.car), a rendered AppIcon.icns before. Compiled from
+# packaging/AppIcon.icon by scripts/dev/app-icon and committed: actool crashes under Xcode 26 on some macOS 15 Macs.
+cp packaging/AppIcon/Assets.car packaging/AppIcon/AppIcon.icns "$app/Contents/Resources/"
 cp Engines/goose.lock "$app/Contents/Resources/goose.lock"
 cp -R .build/AgnetaTestClient.app "$app/Contents/Resources/AgnetaTestClient.app"
 # The version is AGNETA_VERSION, or the v* tag on this commit, or 0.0.0 for an untagged build. The build number is
