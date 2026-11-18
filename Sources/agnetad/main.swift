@@ -1,11 +1,11 @@
 // Headless development host: Agneta's runtime and WebSocket server without the
 // app UI, keeping its records in --home like the app does. Pairing requests are
 // approved for every account and logged (the app asks the user instead). Not shipped.
-// Usage: agnetad --goose <path> --home <dir> [--port 47331] [--env KEY=VALUE]...
+// Usage: agnetad --goose <path> --home <dir> [--opencode <path>] [--port 47331] [--env KEY=VALUE]...
 import AgnetaKit
 import Foundation
 
-var goose = "", home = "", port: UInt16 = 47331
+var goose = "", opencode = "", home = "", port: UInt16 = 47331
 var env: [String: String] = [:]
 var args = Array(CommandLine.arguments.dropFirst())
 while !args.isEmpty {
@@ -13,6 +13,7 @@ while !args.isEmpty {
     let value = args.isEmpty ? "" : args.removeFirst()
     switch flag {
     case "--goose": goose = value
+    case "--opencode": opencode = value
     case "--home": home = value
     case "--port": port = UInt16(value) ?? port
     case "--env":
@@ -42,8 +43,9 @@ let runtime = try await AgnetaRuntime(.init(store: AgnetaStore(root: root), shel
     log("pairing request from \(request.app) [\(who)]\(request.code.map { ", code \($0)" } ?? ""): approved for dev")
     return Router.PairingAnswer(accounts: ["dev"], remember: true)
 }
-// Goose only: the development host has no other engines.
-await runtime.setCatalog(EngineCatalog(ready: [GooseAdapter(executable: URL(filePath: goose))]))
+// Goose, and OpenCode when given: the development host has no others.
+await runtime.setCatalog(EngineCatalog(ready: [GooseAdapter(executable: URL(filePath: goose))]
+                                       + (opencode.isEmpty ? [] : [OpenCodeAdapter(executable: URL(filePath: opencode))])))
 await runtime.serve(account: "dev", label: "Development account", provider: provider, runner: .brokered,
                     kind: anthropic ? .anthropicKey : .openAIKey, billing: "api-key", paused: false)
 await runtime.observe { event in
