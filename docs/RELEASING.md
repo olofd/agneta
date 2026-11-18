@@ -14,7 +14,7 @@ It follows what open-source Mac apps that release from CI do (Stats, AltTab, Cod
 
 - A Developer ID Application certificate for Agneta alone, so revoking it never affects another app. Exported as a `.p12` with macOS-compatible encryption (`openssl pkcs12 -export -legacy`, or Keychain Access): newer OpenSSL defaults don't import into a macOS keychain.
 - An App Store Connect API key for notarization, Agneta's own.
-- A GitHub environment `release`, usable only from `v*` tags and waiting for the maintainer's approval, holding the secrets `DEVELOPER_ID_P12`, `DEVELOPER_ID_P12_PASSWORD`, `ASC_KEY_P8`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `SPARKLE_ED_PRIVATE_KEY` and `HOMEBREW_TAP_TOKEN` (a fine-grained token that may write only to the tap), and the variable `AGNETA_SIGN_IDENTITY`. A ruleset lets only the maintainer create `v*` tags. Pull requests never see these secrets.
+- A GitHub environment `release`, usable only from `v*` tags and waiting for the maintainer's approval, holding the secrets `DEVELOPER_ID_P12`, `DEVELOPER_ID_P12_PASSWORD`, `ASC_KEY_P8`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `SPARKLE_ED_PRIVATE_KEY` and `HOMEBREW_TAP_TOKEN` (a fine-grained token that may write only to the tap), and the variables `AGNETA_SIGN_IDENTITY` and `AGNETA_SPARKLE_PUBLIC_KEY` (Sparkle's public key, built into the app). A ruleset lets only the maintainer create `v*` tags. Pull requests never see these secrets.
 - Sparkle's EdDSA key, made once with Sparkle's `generate_keys`. The private key is kept offline as well as in the secret: without it, installed copies can't be updated again.
 - The repository `olofd/homebrew-tap`.
 

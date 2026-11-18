@@ -1,0 +1,71 @@
+# When the maintainer publishes a release, puts it in the Homebrew tap (olofd/homebrew-tap) and checks that the
+# update feeds now offer it (docs/RELEASING.md). Prereleases are skipped: they are neither in the tap nor offered.
+name: Homebrew and update feeds
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release to put in the tap (e.g. v0.1.0)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  tap:
+    name: Bump the tap
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    environment: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fill in the cask
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          version=${TAG#v}
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt --dir "$RUNNER_TEMP"
+          sum() { awk -v file="Agneta-$version-$1.dmg" '$2 == file { print $1 }' "$RUNNER_TEMP/SHA256SUMS.txt"; }
+          arm=$(sum arm64) intel=$(sum x86_64)
+          [[ ${#arm} == 64 && ${#intel} == 64 ]] || { echo "::error::SHA256SUMS.txt lacks a DMG"; exit 1; }
+          sed -e "s/@VERSION@/$version/" -e "s/@SHA256_ARM64@/$arm/" -e "s/@SHA256_X86_64@/$intel/" \
+            packaging/homebrew/agneta.rb > "$RUNNER_TEMP/agneta.rb"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: olofd/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Push the cask
+        working-directory: tap
+        run: |
+          mkdir -p Casks
+          cp "$RUNNER_TEMP/agneta.rb" Casks/agneta.rb
+          git diff --quiet && { echo "The tap has $VERSION already"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qam "agneta $VERSION"
+          git push -q
+          echo "The tap now has agneta $VERSION"
+
+  feeds:
+    name: Check the update feeds
+    if: github.event_name == 'release' && !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    steps:
+      - name: Each architecture's feed offers the release
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version=${TAG#v}
+          for arch in arm64 x86_64; do
+            feed=$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast-$arch.xml")
+            grep -q "<sparkle:shortVersionString>$version</sparkle:shortVersionString>" <<<"$feed" || { echo "::error::appcast-$arch.xml doesn't offer $version"; exit 1; }
+            echo "appcast-$arch.xml offers $version"
+          done

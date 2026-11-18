@@ -1,0 +1,45 @@
+#!/bin/bash
+# Writes each architecture's Sparkle update feed for a release (docs/RELEASING.md): appcast-arm64.xml and
+# appcast-x86_64.xml in <folder>, next to the release's zips, each offering that architecture's zip, signed with the
+# EdDSA key, its notes taken from CHANGELOG.md. The feeds are published as release assets, so
+# releases/latest/download/appcast-<arch>.xml is always the newest published release's.
+#   SPARKLE_ED_PRIVATE_KEY=… scripts/dev/appcast <version> <folder>
+# Sparkle's tools come from SPARKLE_BIN, or are downloaded once (pinned, checked) into ~/Library/Caches.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+version=${1:?usage: appcast <version> <folder>} folder=${2:?usage: appcast <version> <folder>}
+: "${SPARKLE_ED_PRIVATE_KEY:?set it to the EdDSA private key, as generate_keys -x writes it}"
+repository=https://github.com/olofd/agneta
+sparkle_version=2.10.1
+sparkle_sha256=1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27
+
+if [[ -z "${SPARKLE_BIN:-}" ]]; then
+  tools="$HOME/Library/Caches/agneta-build/sparkle-$sparkle_version"
+  if [[ ! -x "$tools/bin/generate_appcast" ]]; then
+    download=$(mktemp -d "${TMPDIR:-/tmp}/agneta-sparkle-XXXX")
+    curl -fsSL -o "$download/sparkle.tar.xz" "https://github.com/sparkle-project/Sparkle/releases/download/$sparkle_version/Sparkle-$sparkle_version.tar.xz"
+    echo "$sparkle_sha256  $download/sparkle.tar.xz" | shasum -a 256 -c - >/dev/null || { echo "Sparkle's download doesn't match its checksum" >&2; exit 1; }
+    mkdir -p "$tools"
+    tar -xJf "$download/sparkle.tar.xz" -C "$tools"
+    rm -rf "$download"
+  fi
+  SPARKLE_BIN="$tools/bin"
+fi
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/agneta-appcast-XXXX")
+trap 'rm -rf "$work"' EXIT
+notes=$(scripts/dev/release-notes "$version" | python3 scripts/dev/notes-html "$repository/blob/v$version/")
+for arch in arm64 x86_64; do
+  zip="$folder/Agneta-$version-$arch.zip"
+  [[ -f "$zip" ]] || { echo "no $zip" >&2; exit 1; }
+  mkdir -p "$work/$arch"
+  cp "$zip" "$work/$arch/"
+  # generate_appcast embeds the notes it finds beside an archive, under the archive's name.
+  printf '%s\n' "$notes" > "$work/$arch/Agneta-$version-$arch.html"
+  printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | "$SPARKLE_BIN/generate_appcast" --ed-key-file - \
+    --download-url-prefix "$repository/releases/download/v$version/" \
+    --full-release-notes-url "$repository/releases/tag/v$version" --link "$repository" \
+    --embed-release-notes -o "$folder/appcast-$arch.xml" "$work/$arch"
+  grep -q 'sparkle:edSignature=' "$folder/appcast-$arch.xml" || { echo "appcast-$arch.xml has no EdDSA signature" >&2; exit 1; }
+  echo "wrote appcast-$arch.xml"
+done

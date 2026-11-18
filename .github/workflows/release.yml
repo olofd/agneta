@@ -1,0 +1,184 @@
+# Builds, signs, notarizes and drafts a release (docs/RELEASING.md). A v* tag makes a draft release for the
+# maintainer to check and publish; a run by hand is a dry run that keeps the files as a workflow artifact only.
+# The signing secrets live in the `release` environment, which waits for the maintainer's approval.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version for the dry run (e.g. 0.1.0-rc.1); nothing is published
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Check the commit can be released
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then version=${GITHUB_REF_NAME#v} publish=true; else version=$INPUT_VERSION publish=false; fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::$version isn't major.minor.patch[-pre]"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Releasing $version (publish: $publish) from $(git rev-parse --short HEAD)"
+      - name: The changelog has the version's notes
+        if: steps.version.outputs.publish == 'true'
+        run: scripts/dev/release-notes "${{ steps.version.outputs.version }}" > /dev/null
+      - name: The commit is on main
+        run: |
+          git fetch --quiet origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_SHA isn't on main"; exit 1; }
+      - name: CI passed on the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" --jq .total_count)
+          [[ "$passed" -gt 0 ]] || { echo "::error::CI hasn't passed on $GITHUB_SHA"; exit 1; }
+
+  build:
+    name: Build, sign and notarize (${{ matrix.arch }})
+    needs: verify
+    environment: release
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-26
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the build number is the commit count
+          persist-credentials: false
+
+      - name: Use Xcode 26
+        run: |
+          xcode=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          [ -n "$xcode" ] || { echo "No Xcode 26 on this runner" >&2; exit 1; }
+          sudo xcode-select -s "$xcode"
+
+      # The certificate goes into a keychain of its own, made for this job and deleted at its end.
+      - name: Prepare the signing keys
+        env:
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          : "${DEVELOPER_ID_P12:?Set the release environment's DEVELOPER_ID_P12}"
+          : "${ASC_KEY_P8:?Set the release environment's ASC_KEY_P8}"
+          umask 077
+          keys="$RUNNER_TEMP/agneta-keys"; mkdir -p "$keys"
+          keychain="$keys/signing.keychain-db"; password=$(uuidgen)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$DEVELOPER_ID_P12" | base64 --decode > "$keys/developer-id.p12"
+          security import "$keys/developer-id.p12" -k "$keychain" -P "$DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
+          rm "$keys/developer-id.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          printf '%s\n' "$ASC_KEY_P8" > "$keys/AuthKey.p8"
+          { echo "AGNETA_KEYCHAIN=$keychain"; echo "AGNETA_NOTARY_KEY=$keys/AuthKey.p8"; } >> "$GITHUB_ENV"
+
+      - name: Build the release
+        env:
+          AGNETA_VERSION: ${{ needs.verify.outputs.version }}
+          AGNETA_SIGN_IDENTITY: ${{ vars.AGNETA_SIGN_IDENTITY }}
+          AGNETA_SPARKLE_PUBLIC_KEY: ${{ vars.AGNETA_SPARKLE_PUBLIC_KEY }}
+          AGNETA_NOTARY_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          AGNETA_NOTARY_ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          : "${AGNETA_SIGN_IDENTITY:?Set the release environment's variable AGNETA_SIGN_IDENTITY}"
+          scripts/dev/release
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.arch }}
+          path: build/release/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Remove the signing keys
+        if: always()
+        run: |
+          [ -n "${AGNETA_KEYCHAIN:-}" ] && security delete-keychain "$AGNETA_KEYCHAIN" || true
+          rm -rf "$RUNNER_TEMP/agneta-keys"
+
+  publish:
+    name: Draft the release
+    needs: [verify, build]
+    if: needs.verify.outputs.publish == 'true'
+    environment: release
+    runs-on: macos-15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: build/release
+          merge-multiple: true
+      - name: Checksums
+        working-directory: build/release
+        run: |
+          cat SHA256SUMS-*.txt | sort -k2 > SHA256SUMS.txt
+          rm SHA256SUMS-*.txt
+          shasum -a 256 -c SHA256SUMS.txt
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            build/release/*.dmg
+            build/release/*.zip
+      - name: Update feeds
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: scripts/dev/appcast "$VERSION" build/release
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/dev/release-notes "$VERSION" > "$RUNNER_TEMP/notes.md"
+          prerelease=(); [[ "$VERSION" == *-* ]] && prerelease=(--prerelease)
+          cd build/release
+          gh release create "v$VERSION" --draft --verify-tag ${prerelease[@]+"${prerelease[@]}"} \
+            --title "Agneta $VERSION" --notes-file "$RUNNER_TEMP/notes.md" \
+            Agneta-*.dmg Agneta-*.zip appcast-*.xml
+          # The checksums go last: their presence says every file before them arrived whole.
+          gh release upload "v$VERSION" SHA256SUMS.txt
+          echo "Drafted v$VERSION: check it, then publish it on GitHub."
