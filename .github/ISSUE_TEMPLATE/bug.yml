@@ -18,7 +18,7 @@ body:
     attributes:
       label: Agneta version
       description: In Settings → About (it names the build and commit too), or the commit you built.
-      placeholder: "0.3.0"
+      placeholder: "0.3.1"
     validations:
       required: true
   - type: input

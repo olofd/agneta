@@ -20,7 +20,7 @@ Agneta never signs in as another program, and never holds a plan's tokens: each 
 ## What Agneta ships and downloads
 
 - Agneta's own code is Apache-2.0 ([../LICENSE](../LICENSE)).
-- Goose, OpenCode, `codex-acp` and Node are open source and bundled, each under its own licence ([../THIRD_PARTY.md](../THIRD_PARTY.md)).
+- Goose, OpenCode, `codex-acp` and Node are open source, each under its own licence ([../THIRD_PARTY.md](../THIRD_PARTY.md)). Goose is bundled. OpenCode, and in releases Node and `codex-acp`, are downloaded when first needed and checked against their pins.
 - `claude-agent-acp`'s released binary embeds Anthropic's proprietary Agent SDK, so Agneta doesn't redistribute it: it's downloaded from its own release on first use and checked against a pinned hash.
 - Claude Code and Codex are never bundled or modified. Agneta uses the copies you installed.
 

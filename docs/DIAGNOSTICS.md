@@ -134,6 +134,6 @@ Settings → Activity shows each task's summary and timeline, and exports the sa
 ## Retention
 
 - Traces follow task history: 30 days by default, or a week, 90 days or none, set in Settings → Privacy. History is pruned at launch and daily.
-- Clear History and Reset delete traces, along with the engine homes that held those tasks' conversations.
+- Clear History and Reset delete traces, along with the engine homes that held those tasks' conversations, and Claude Code's transcripts and Codex's session files of those tasks.
 - A dedicated engine's stderr goes to `engine.log` in its engine home, kept under 1 MB.
 - A total cap across all traces isn't supported yet: each task's trace is capped at 1 GB, and history retention bounds how many are kept.

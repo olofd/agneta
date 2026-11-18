@@ -7,7 +7,7 @@ Changes the maintainer asked for after 0.1.0, collected as they come in and work
 | 1 | The menu bar panel is too transparent | Done; checked in the running app (2026-11-18) |
 | 2 | Settings: scrolled content runs into the window title | Done; checked in the running app (2026-11-18) |
 | 3 | Run a Test Task: the code dialog appears off to the left and shows a spinning cursor | Done; checked in the running app (2026-11-18) |
-| 4 | The app is too big: download OpenCode only when it's chosen | OpenCode done (download 177 → 59 MB); Node and codex-acp next |
+| 4 | The app is too big: download OpenCode only when it's chosen | Done: OpenCode in 0.2.0 (download 177 → 59 MB), Codex's runtime in 0.3.0 (19 MB) |
 | 5 | Which engine a connection runs on: should the user choose it? | Done: providers → engines only, chosen per task (after 0.2.0) |
 | 6 | No Check for Updates in the app | Done in 0.2.0 |
 | 7 | Quit Agneta from the menu never quits (development and 0.1.0) | Fixed in 0.2.0 |
@@ -55,7 +55,7 @@ Claude Code's adapter already works this way: pinned in `Engines/runtimes.lock` 
 - An ad hoc release build: 180 MB unpacked instead of 404, a 59 MB zip instead of 177. The smoke test passes, and the SBOM lists OpenCode as downloaded on first use.
 - Not yet tried: a real download in the app (113 MB from GitHub) followed by a task on OpenCode. The installer and the engine-lock format are covered by `RuntimeInstallerTests`.
 
-**Node and codex-acp, next.** codex-acp is an npm package with 22 dependencies, so it isn't one release file like OpenCode. The likely way is to build one archive per architecture, Node plus the installed codex-acp, and attach it to each Agneta release, pinned by the app. That needs a decision on hosting, and on how development builds get it.
+**Node and codex-acp, done in 0.3.0** as Codex's runtime, a download of its own. The plan was: codex-acp is an npm package with 22 dependencies, so it isn't one release file like OpenCode. The likely way is to build one archive per architecture, Node plus the installed codex-acp, and attach it to each Agneta release, pinned by the app. That needs a decision on hosting, and on how development builds get it.
 
 ## 5. Choosing the engine
 

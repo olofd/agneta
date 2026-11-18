@@ -124,8 +124,7 @@ scripts/dev/build-app              # fetches the pinned engines, builds and sign
 open "build/Agneta Dev.app"
 ```
 
-- The connected-rings symbol appears in the menu bar. Connect a provider from its panel.
-- To see the app side, choose **Run a Test Task** from the panel's ⋯ menu. A small sandboxed test app asks for access; once you allow it, it runs one short task and shows the reply.
+- As with a release, the connected-rings symbol appears in the menu bar, and **Run a Test Task** in the panel's ⋯ menu shows the app side.
 - Development builds listen on `ws://127.0.0.1:47331/acp` and keep their data in `~/Library/Application Support/com.objectivecoder.agneta.dev/`. They run side by side with a release: their own port, data, Keychain items, logs and `agneta-dev://` URL, and a small hammer on the app icon and the menu bar mark tells them apart. The bundle identifiers (`com.objectivecoder.agneta`, and `.dev` for development builds) use the author's developer name. They also name Agneta's data folder, Keychain items and logs, so they stay the same from release to release.
 - For a throwaway instance, `AGNETA_HOME=<folder> AGNETA_PORT=<port> "build/Agneta Dev.app/Contents/MacOS/Agneta"` keeps its data, Keychain items and Reset inside that folder. Give each instance its own port (diagnostics listen two above it); one without `AGNETA_PORT`, or on your own Agneta's ports, doesn't listen and says why.
 
@@ -159,7 +158,7 @@ Your app is an ACP **client** and Agneta is the ACP **agent**. If your app alrea
 | What the agent may touch | Whatever the agent process can reach | A policy you send with each session (tools, folders, network, approval, limits), enforced by sandboxes, or refused |
 | Afterwards | Nothing standard | Usage in every prompt result, and the task's full trace, live or later |
 
-No SDK is needed. Any WebSocket and JSON-RPC 2.0 code will do, including in a sandboxed Mac App Store app. That needs `com.apple.security.network.client` to connect, plus `com.apple.security.network.server` if the app serves its own MCP tools; its folders come from the user (an open panel or a security-scoped bookmark), since Agneta keeps app containers out of reach ([details](docs/APP_PROTOCOL.md#connecting)). To see the whole exchange in Swift, read [`Sources/agneta-testclient/main.swift`](Sources/agneta-testclient/main.swift), the maintainers' test client: it pairs, opens a session with a policy and an MCP server, prompts and prints the stream in about 170 lines. It's a demonstration, not a client library: a real app keeps its token in the Keychain and reconnects with it, as Project Chat does.
+No SDK is needed. Any WebSocket and JSON-RPC 2.0 code will do, including in a sandboxed Mac App Store app. That needs `com.apple.security.network.client` to connect, plus `com.apple.security.network.server` if the app serves its own MCP tools; its folders come from the user (an open panel or a security-scoped bookmark), since Agneta keeps app containers out of reach ([details](docs/APP_PROTOCOL.md#connecting)). To see the whole exchange in Swift, read [`Sources/agneta-testclient/main.swift`](Sources/agneta-testclient/main.swift), the maintainers' test client: it pairs, opens a session with a policy and an MCP server, prompts and prints the stream in about 220 lines. It's a demonstration, not a client library: a real app keeps its token in the Keychain and reconnects with it, as Project Chat does.
 
 ### The conversation, step by step
 
@@ -257,8 +256,8 @@ The engine's standard ACP `session/update` notifications arrive unchanged, under
 | `-32011` | A turn is already running in this session: steer it, or wait |
 | `-32012` | Too many turns are waiting; try again shortly |
 | `-32013` | The user paused this provider |
-| `-32015` | The engine is still downloading (`data.agneta.engineDownloading`, with progress); try again shortly |
 | `-32014` | This engine can't do that; check `capabilities` |
+| `-32015` | The engine is still downloading (`data.agneta.engineDownloading`, with progress); try again shortly |
 
 The full reference, with every field, limit and error, is **[docs/APP_PROTOCOL.md](docs/APP_PROTOCOL.md)**. Every step there is exercised by `Tests/AgnetaKitTests/AppScenarioTests.swift` against a real engine.
 
