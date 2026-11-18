@@ -20,8 +20,9 @@ import Testing
 
     /// A long line arriving in small chunks is scanned once: each push looks only at the bytes it brought.
     /// (Rescanning the whole buffer per 64 KB chunk took 32 MB to ~9 s, quadratic in the line's length.) Judged by
-    /// growth, not a wall clock, so a slow machine can't fail it: four times the line may take about four times
-    /// as long, while a rescan would take sixteen.
+    /// growth, not a wall clock, so a slow machine can't fail it: eight times the line takes about eight times as
+    /// long, while a rescan would take sixty-four. The best of three runs each, and a limit far from both, so a busy
+    /// runner's noise can't decide it (one CI run measured 10.5x at four times the line, against a limit of 8).
     @Test func aLongLineIsFramedInLinearTime() throws {
         let chunk = Data(repeating: UInt8(ascii: "x"), count: 64 << 10)
         func frame(chunks: Int) throws -> Duration {
@@ -32,8 +33,9 @@ import Testing
             #expect(lines.map(\.count) == [chunks * (64 << 10) + 1, 1] && lines.first?.last == UInt8(ascii: "y"))
             return ContinuousClock.now - started
         }
-        let small = try frame(chunks: 128), large = try frame(chunks: 512)
-        #expect(large < small * 8, "framing 32 MB took \(large), 8 MB \(small): more than linear growth")
+        func best(chunks: Int) throws -> Duration { try (0..<3).map { _ in try frame(chunks: chunks) }.min()! }
+        let small = try best(chunks: 64), large = try best(chunks: 512)
+        #expect(large < small * 24, "framing 32 MB took \(large), 4 MB \(small): more than linear growth")
         #expect(large < .seconds(20))
     }
 
