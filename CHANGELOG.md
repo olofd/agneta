@@ -2,20 +2,31 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
-## Unreleased
+## 0.3.0 (2026-11-18)
 
-- **Start fresh.** This version reads none of 0.2.0's data: after updating, Agneta asks you to reset, then to connect your providers and allow your apps again. Until 1.0, versions don't carry data or protocol details over.
-- **Apps choose the engine; you choose what they may use.** The approval window asks only which providers (your plans and API keys) an app may use. Every engine is allowed unless you narrow them under Advanced, and Settings → Apps changes both later. The app picks a provider and an engine for each task among those; without one it gets the provider's default, set in Settings → Engines (renamed from Accounts' engine menu, with each engine's source, version, install and download). Settings → Accounts is now Providers.
-- **App protocol** ([APP_PROTOCOL.md](docs/APP_PROTOCOL.md)): `agneta/access` returns the providers and engines an app may use (each engine's state on this Mac: ready, downloading, downloadable, failed or unavailable, and why), the same object `initialize` (`_meta.agneta.access`) and pairing return, and `agneta/accessChanged` says when it changes. `session/new` takes `_meta.agneta.engine`; a refusal carries the current access. Extension names lose their `@1` (`agneta/policy`, `agneta/task`, `agneta/usage`, …). `_meta.agneta.accounts`, `scope` and `workspace` in `initialize` moved into `access`; `engineUnavailable` and `engineChanged` are gone (a saved task whose engine stores sessions differently now reports `stateChanged`). A resumed task keeps the engine that saved it.
+You choose which of your plans and API keys an app may use; the app picks the engine. A 19 MB download, downloads you can follow, and calmer windows.
 
-- **ChatGPT sign-ins stay in the Keychain.** Codex now keeps each ChatGPT plan's sign-in in the login Keychain instead of a file in the account's folder, which Codex's own file tools could read inside a task. Sign Out and Reset remove the Keychain entry.
-- **An app paired again keeps one grant.** Always Allow for an app that has access already renews it (its workspace and tasks stay) instead of listing it twice; the approval window says so. Pairing's result says whether access is `remembered`, so an app keeps its token and reconnects without asking ([APP_PROTOCOL.md](docs/APP_PROTOCOL.md)).
-- **No provider yet?** An app that asks before any provider is connected gets a window to connect one there, and the provider connected is ticked. A provider whose engine isn't installed yet can still be allowed; its row says what it needs.
-- **Steadier engines.** A default engine whose download failed no longer keeps tasks waiting while another engine can run; a failed download you put away stays away until something needs it. Downloads are checked against their pins at launch, whole (not only their program), and off the main thread.
-- **Tidier windows.** Dialogs keep their close button and buttons clear of their rounded corners; the menu bar panel no longer shows an outline of its old size after it grows or shrinks; Agneta says provider, not account, for what it connects.
+**Updating from 0.2.0:** this version reads none of 0.2.0's data. After the update Agneta asks you to reset; then connect your plans and keys again, and apps ask for access again. Until 1.0, versions don't carry data or protocol details over.
 
-- **Downloads you can follow.** OpenCode, Claude Code's adapter and Codex's runtime show their progress (bytes of total) in the panel and in Settings, whatever started them; a failed download says why, with Try Again, and can be put away. An app whose task needs an engine that isn't here starts its download and is told so (`-32015`, with the progress) until it's ready. A downloaded engine is checked against its pin at each launch, and Codex's runtime is named by its contents, so a release that changes it is downloaded again.
-- **A 19 MB download** (59 MB in 0.2.0). Releases no longer bundle Codex's runtime (Node and codex-acp): it's a download of its own on each release, pinned and checked, fetched the first time a ChatGPT plan or an app set to Codex needs it. Settings shows the progress.
+**For you**
+
+- **Apps choose the engine; you choose what they may use.** The approval window asks only which providers (your plans and API keys) an app may use. Every engine is allowed unless you narrow them under Advanced, and Settings → Apps changes both later. Settings → Engines sets each provider's default engine, used when an app doesn't pick, and shows each engine's source, version, install and download. Settings → Accounts is now Providers.
+- **No provider yet?** An app that asks before any is connected gets a window to connect one there, and it's ticked. A provider whose engine isn't installed yet can still be allowed; its row says what it needs.
+- **One grant per app.** Always Allow for an app that has access already renews it, keeping its workspace and tasks, instead of listing it twice; the window says so.
+- **Downloads you can follow.** OpenCode, Claude Code's adapter and Codex's runtime show their progress in the panel and in Settings; a failed download says why, with Try Again, and can be put away. Downloads are checked against their pins at every launch, whole, off the main thread.
+- **A 19 MB download** (59 MB in 0.2.0). Codex's runtime (Node and codex-acp) is a download of its own, fetched the first time a ChatGPT plan or an app needs Codex.
+- **Steadier engines.** A default engine whose download failed no longer keeps tasks waiting while another engine can run.
+- **ChatGPT sign-ins stay in the Keychain,** not in a file Codex's own tools could read during a task. Sign Out and Reset remove them.
+- **Calmer windows.** Dialogs keep their close button and buttons clear of their rounded corners, and filled buttons are easier to read in dark mode; the menu bar panel no longer shows a square outline; Agneta says provider, not account, for what it connects.
+
+**For apps** ([APP_PROTOCOL.md](https://github.com/olofd/agneta/blob/v0.3.0/docs/APP_PROTOCOL.md))
+
+- `agneta/access` returns the providers and engines an app may use, each engine's state on this Mac (ready, downloading, downloadable, failed or unavailable, and why); `initialize` (`_meta.agneta.access`) and pairing return the same, and `agneta/accessChanged` says when it changes. `session/new` takes `_meta.agneta.engine`; a refusal carries the current access. An engine that isn't here starts downloading when asked for (`-32015`, with the progress).
+- Pairing's result says whether access is `remembered`: keep that token and reconnect with it; `-32001` means the user removed access.
+- Model and reasoning effort: each engine's own settings, found by their ACP categories (`model`, `thought_level`), set with `session/set_config_option`. Tried on Codex, Claude Code, Goose and OpenCode.
+- When Agneta isn't running, ask the user and open `agneta://open` (`agneta-dev://open` for a development build).
+- Breaking: extension names lose their `@1` (`agneta/policy`, `agneta/task`, `agneta/usage`, …); `_meta.agneta.accounts`, `scope` and `workspace` in `initialize` moved into `access`; `engineUnavailable` and `engineChanged` are gone (a saved task whose engine stores sessions differently reports `stateChanged`).
+- The Project Chat example shows all of it: it keeps its access, offers to open Agneta, and has provider, engine, model and effort pickers.
 
 ## 0.2.0 (2026-11-18)
 
