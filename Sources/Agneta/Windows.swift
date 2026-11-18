@@ -337,7 +337,7 @@ struct ApprovalView: View {
                                     ProviderIcon(kind: account.kind, size: 28)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(account.label).font(.system(size: 13, weight: .semibold))
-                                        Text(account.kind.plan).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                        Text("\(account.kind.plan) · \(model.engineName(of: account))").font(.system(size: 11.5)).foregroundStyle(.secondary)
                                     }
                                     Spacer()
                                     Image(systemName: on ? "checkmark.circle.fill" : "circle").font(.system(size: 18))
@@ -419,6 +419,7 @@ struct SettingsView: View {
     var model: AppModel
     @State var section: Pane
     @State private var keyKind: AccountKind = .anthropicKey
+    @State private var keyEngine = "goose"
     @State private var key = ""
     @State private var keyError: String?
     @State private var openAtLogin = SMAppService.mainApp.status == .enabled
@@ -482,7 +483,7 @@ struct SettingsView: View {
                     ProviderIcon(kind: account.kind, size: 32)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(account.label).font(.system(size: 13, weight: .semibold))
-                        Text(([account.kind.plan, account.email].compactMap { $0 } + (account.engine == "goose" ? [] : ["runs on \(model.engines(for: account).first { $0.id == account.engine }?.displayName ?? account.engine)"])).joined(separator: " · "))
+                        Text([account.kind.plan, account.email].compactMap { $0 }.joined(separator: " · "))
                             .font(.system(size: 12)).foregroundStyle(.secondary)
                         if let download = model.engineDownload, download.account == account.id {
                             HStack(spacing: 6) { ProgressView().controlSize(.mini); Text(download.text) }.font(.system(size: 12)).foregroundStyle(.secondary)
@@ -492,18 +493,22 @@ struct SettingsView: View {
                     }
                     Spacer()
                     if account.paused { StatusPill(text: "Paused", color: .secondary) }
+                    // The engine, in plain sight: a picker when the account has a choice, else just its name.
+                    if model.engines(for: account).count > 1 {
+                        Picker("Engine", selection: Binding(get: { account.engine }, set: { model.setEngine(account, $0) })) {
+                            ForEach(model.engines(for: account), id: \.id) { engine in
+                                Text(model.downloadNote(for: engine.id).map { "\(engine.displayName) (\($0))" } ?? engine.displayName).tag(engine.id)
+                            }
+                        }
+                        .labelsHidden().fixedSize().disabled(model.engineDownload != nil)
+                        .help("The engine this account's tasks run on")
+                    } else {
+                        Text(model.engineName(of: account)).font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
                     Menu {
                         Button("Rename…") { askRename(account) }
                         Button(account.paused ? "Resume" : "Pause") { model.setPaused(account, !account.paused) }
                         Button("Default Model…") { askDefaultModel(account) }
-                        if model.engines(for: account).count > 1 {
-                            Picker("Engine", selection: Binding(get: { account.engine }, set: { model.setEngine(account, $0) })) {
-                                ForEach(model.engines(for: account), id: \.id) { engine in
-                                    Text(model.downloadNote(for: engine.id).map { "\(engine.displayName) (\($0))" } ?? engine.displayName).tag(engine.id)
-                                }
-                            }
-                            .disabled(model.engineDownload != nil)
-                        }
                         Divider()
                         Button("Sign Out…", role: .destructive) { confirmSignOut(account) }
                     } label: {
@@ -530,12 +535,20 @@ struct SettingsView: View {
                 Text("Anthropic (Claude)").tag(AccountKind.anthropicKey)
                 Text("OpenAI").tag(AccountKind.openAIKey)
             }
+            .onChange(of: keyKind) { _, kind in
+                if !model.engines(for: kind).contains(where: { $0.id == keyEngine }) { keyEngine = "goose" }
+            }
+            Picker("Engine", selection: $keyEngine) {
+                ForEach(model.engines(for: keyKind), id: \.id) { engine in
+                    Text((engine.id == "goose" ? "Goose (recommended)" : engine.displayName) + (model.downloadNote(for: engine.id).map { " (\($0))" } ?? "")).tag(engine.id)
+                }
+            }
             HStack {
                 SecureField("API key", text: $key)
                 Button("Add") {
-                    let kind = keyKind, value = key
+                    let kind = keyKind, value = key, engine = keyEngine
                     key = ""
-                    Task { do { try await model.addAPIKey(kind, key: value); keyError = nil } catch { keyError = "Couldn't store the key in the Keychain." } }
+                    Task { do { try await model.addAPIKey(kind, key: value, engine: engine); keyError = nil } catch { keyError = "Couldn't store the key in the Keychain." } }
                 }
                 .disabled(key.count < 20)
             }
@@ -543,7 +556,7 @@ struct SettingsView: View {
         } header: {
             Text("API key")
         } footer: {
-            Text("Pay as you go on your provider account. Keys stay in your Keychain and reach Agneta's engine only while a task runs.")
+            Text("Pay as you go on your provider account. Keys stay in your Keychain and reach Agneta's engine only while a task runs. Goose is built in; OpenCode downloads when you choose it; Codex and Claude Code run your own installs. You can change an account's engine at any time.")
         }
     }
 

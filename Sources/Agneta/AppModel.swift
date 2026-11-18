@@ -220,15 +220,24 @@ final class AppModel {
 
     /// Engines an account can be set to: API keys run on any engine; plans on the engine their sign-in belongs to.
     /// OpenCode is among them before it's downloaded.
-    func engines(for account: AccountRecord) -> [any EngineAdapter] {
+    func engines(for account: AccountRecord) -> [any EngineAdapter] { engines(for: account.kind) }
+
+    func engines(for kind: AccountKind) -> [any EngineAdapter] {
         let all = engines(downloadable: true)
-        return switch account.kind {
+        return switch kind {
         case .openAIKey: all.filter { $0.id != "claude-code" }
         case .anthropicKey: all.filter { $0.id != "codex" }
         case .chatGPT: all.filter { $0.id == "codex" }
         case .claude: all.filter { ["goose", "claude-code"].contains($0.id) }
         }
     }
+
+    /// The engine an account runs on, by name ("Codex"), as the panel, the approval window and Settings show it.
+    func engineName(of account: AccountRecord) -> String {
+        engines(for: account).first { $0.id == account.engine }?.displayName ?? Self.engineNames[account.engine] ?? account.engine
+    }
+    /// Names for engines that aren't available right now (Claude Code or Codex not installed).
+    static let engineNames = ["goose": "Goose", "opencode": "OpenCode", "claude-code": "Claude Code", "codex": "Codex"]
 
     /// What choosing this engine would download first, e.g. "downloads 108 MB"; nil when it's here already.
     func downloadNote(for engine: String) -> String? {
@@ -659,12 +668,15 @@ final class AppModel {
         signIn = nil
     }
 
-    func addAPIKey(_ kind: AccountKind, key: String) async throws {
+    /// Adds an API-key account on the engine the user picked (Goose unless they chose another). An engine that isn't
+    /// here yet (OpenCode) downloads first, and the account switches to it once it's installed.
+    func addAPIKey(_ kind: AccountKind, key: String, engine: String = "goose") async throws {
         let record = AccountRecord(kind: kind, label: kind == .anthropicKey ? "Claude API" : "OpenAI API")
         try keychain.set(key, for: record.id)
         accounts.append(record)
         try database?.save(record)
         await configure(record)
+        if engine != record.engine { setEngine(record, engine) }
     }
 
     func signOut(_ account: AccountRecord) {
@@ -884,8 +896,9 @@ final class AppModel {
 
     /// Sample data for design snapshots (AGNETA_SHOWCASE).
     func loadSample() {
-        accounts = [AccountRecord(id: "a", kind: .claude, label: "Claude", email: "work@example.com"),
-                    AccountRecord(id: "b", kind: .chatGPT, label: "ChatGPT", email: "me@example.com"),
+        // Each on the engine it would really run on: a ChatGPT plan always runs on Codex.
+        accounts = [AccountRecord(id: "a", kind: .claude, label: "Claude", email: "work@example.com", engine: "claude-code"),
+                    AccountRecord(id: "b", kind: .chatGPT, label: "ChatGPT", email: "me@example.com", engine: "codex"),
                     AccountRecord(id: "c", kind: .openAIKey, label: "OpenAI API")]
         tasks = [Task(id: "1", app: "Example App", appIdentifier: nil, account: "a", title: "Summarizing meeting notes", started: Date().addingTimeInterval(-840), running: true),
                  Task(id: "2", app: "Example App", appIdentifier: nil, account: "b", title: "Naming a project", started: Date(), running: true)]

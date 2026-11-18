@@ -150,8 +150,8 @@ struct PanelView: View {
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
             ForEach(model.accounts) { account in
-                AccountRow(account: account, needsSignIn: model.needsSignIn.contains(account.id), limitedUntil: model.limited[account.id],
-                           planUsage: model.planUsage[account.id]) {
+                AccountRow(account: account, engine: model.engineName(of: account), needsSignIn: model.needsSignIn.contains(account.id),
+                           limitedUntil: model.limited[account.id], planUsage: model.planUsage[account.id]) {
                     open { WindowPresenter.shared.showSettings(model, section: .accounts) }
                 }
             }
@@ -214,6 +214,8 @@ struct TaskRow: View {
 
 struct AccountRow: View {
     var account: AccountRecord
+    /// The engine it runs on, by name.
+    var engine: String
     var needsSignIn: Bool
     /// Set when a provider limit stopped a task: the reset time, or nil inside when unknown.
     var limitedUntil: Date?? = nil
@@ -227,7 +229,7 @@ struct AccountRow: View {
                 ProviderIcon(kind: account.kind, size: 32)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(account.label).font(.system(size: 13, weight: .semibold))
-                    Text(planUsage ?? account.email.map { "\(account.kind.plan) · \($0)" } ?? account.kind.plan)
+                    Text("\(planUsage ?? account.kind.plan) · \(engine)")
                         .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
@@ -243,6 +245,6 @@ struct AccountRow: View {
             .padding(.vertical, 7).padding(.horizontal, 8)
         }
         .buttonStyle(RowButtonStyle())
-        .accessibilityLabel("\(account.label), \(account.kind.plan)\(needsSignIn ? ", needs sign-in" : "")")
+        .accessibilityLabel("\(account.label), \(account.kind.plan), runs on \(engine)\(needsSignIn ? ", needs sign-in" : "")")
     }
 }

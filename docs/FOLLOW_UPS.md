@@ -8,7 +8,7 @@ Changes the maintainer asked for after 0.1.0, collected as they come in and work
 | 2 | Settings: scrolled content runs into the window title | Done; checked in the running app (2026-11-18) |
 | 3 | Run a Test Task: the code dialog appears off to the left and shows a spinning cursor | Done; checked in the running app (2026-11-18) |
 | 4 | The app is too big: download OpenCode only when it's chosen | OpenCode done (download 177 → 59 MB); Node and codex-acp next |
-| 5 | Which engine a connection runs on: should the user choose it? | Proposed, the maintainer's call |
+| 5 | Which engine a connection runs on: should the user choose it? | Done (in the next build) |
 | 6 | No Check for Updates in the app | Done (in the next build) |
 | 7 | Quit Agneta from the menu never quits (development and 0.1.0) | Fixed in code; proven in a standalone reproduction |
 | 8 | No app icon: a frosty, Swedish icon from the two rings, flat and glassy | Done (in the next build) |
@@ -69,6 +69,12 @@ Proposal: keep the choice per account, since that's where sign-in and credential
 - Adding an account asks which engine when there's more than one, with the recommended one preselected and a line on how they differ.
 - An account's Settings row gets a plain Engine picker, not one buried in the ⋯ menu.
 - Not now: a different engine per app for the same account. It can be added later as a per-grant setting if a real need appears. Apps already see each engine's abilities in `initialize`.
+
+**Built (2026-11-18), as proposed and agreed:**
+- **Where the engine shows:** in the panel's account rows ("ChatGPT plan · Codex") and in the approval window's account choices. `AppModel.engineName(of:)` names it, even for an engine that isn't installed right now.
+- **Settings → Accounts:** each account row shows its engine in plain sight: a picker when the account has a choice (with OpenCode's download size), otherwise just the name. The picker is no longer in the ⋯ menu.
+- **Adding an API key:** you choose its engine, with Goose preselected as recommended. Choosing OpenCode downloads it, then switches the new account. A line under the form says how the engines differ.
+- **Checked** in rendered snapshots of the panel, the approval window and Settings. The design-review sample accounts now sit on the engines they would really use (a ChatGPT plan on Codex, a Claude plan on Claude Code).
 
 ## 6. Check for Updates is missing
 
