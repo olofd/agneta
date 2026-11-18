@@ -1,20 +1,77 @@
 # Releasing
 
-How a release of Agneta is built, signed, checked and published, what it weighs, and what isn't done yet.
+How a release of Agneta is built, signed, published and updated, what it weighs, and which parts are built yet. The pipeline below is the plan agreed on 2026-11-18; each step's status says what exists today.
 
-## Steps
+## How a release works
 
-1. CI passes on the commit ([CI.md](CI.md)), and `CHANGELOG.md` has the release's section.
-2. On each architecture (a release is per architecture: build on an Apple silicon Mac and on an Intel Mac):
+The maintainer pushes a tag such as `v0.1.0`. GitHub Actions builds Agneta on GitHub's own Macs, once for Apple silicon and once for Intel, signs it with Agneta's Developer ID, notarizes it, tests what a user downloads, and attaches it to a **draft** release. The maintainer checks the draft and publishes it. Publishing is the one switch: the DMGs appear on the release page, Agneta's update feed points at the new version, and the Homebrew tap is bumped.
 
-   ```bash
-   AGNETA_SIGN_IDENTITY="Developer ID Application: …" AGNETA_NOTARY_PROFILE=agneta scripts/dev/release --previous <last release's zip>
-   ```
+It follows what open-source Mac apps that release from CI do (Stats, AltTab, CodeEdit, Ollama, UTM): a Developer ID certificate in a temporary keychain on the runner, `notarytool`, and `gh release create`. Ollama, which also ships helper programs inside its app, is the closest model: every bundled program is signed before the app, and both the app and the DMG are notarized and stapled.
 
-   `scripts/dev/release` builds `build/Agneta.app` with the release identity (`com.objectivecoder.agneta`, port 47321), signs everything inside it with the identity (secure timestamp, hardened runtime; Node may make executable memory, since it compiles JavaScript), zips it, notarizes and staples it, writes the zip's SHA-256, and runs the smoke test. It refuses an uncommitted checkout.
-3. Publish both zips and their `.sha256` files with the release notes from `CHANGELOG.md`.
+## The parts
 
-`AGNETA_NOTARY_PROFILE` is a profile stored once with `xcrun notarytool store-credentials`. Without `AGNETA_SIGN_IDENTITY` the build is signed ad hoc: fine for testing, but Gatekeeper refuses it on other Macs.
+### 0. Accounts and secrets (once, by the maintainer)
+
+- A Developer ID Application certificate for Agneta alone, so revoking it never affects another app. Exported as a `.p12` with macOS-compatible encryption (`openssl pkcs12 -export -legacy`, or Keychain Access): newer OpenSSL defaults don't import into a macOS keychain.
+- An App Store Connect API key for notarization, Agneta's own.
+- A GitHub environment `release`, usable only from `v*` tags and waiting for the maintainer's approval, holding the secrets `DEVELOPER_ID_P12`, `DEVELOPER_ID_P12_PASSWORD`, `ASC_KEY_P8`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `SPARKLE_ED_PRIVATE_KEY` and `HOMEBREW_TAP_TOKEN` (a fine-grained token that may write only to the tap), and the variable `AGNETA_SIGN_IDENTITY`. A ruleset lets only the maintainer create `v*` tags. Pull requests never see these secrets.
+- Sparkle's EdDSA key, made once with Sparkle's `generate_keys`. The private key is kept offline as well as in the secret: without it, installed copies can't be updated again.
+- The repository `olofd/homebrew-tap`.
+
+Status: not done.
+
+### 1. A correct release build (`scripts/dev/build-app --release`, `scripts/dev/release`)
+
+- **Version from the tag.** `CFBundleShortVersionString` is the tag's version; `CFBundleVersion` is the commit count, so it only rises. Sparkle compares it to decide what's newer.
+- **Each bundled program is signed with what it needs**, from an explicit list, inside out, with the hardened runtime and a secure timestamp. OpenCode is a Bun-compiled binary and Node compiles JavaScript, so both may make executable memory ([Bun's guide](https://bun.com/docs/guides/runtime/codesign-macos-executable)). The build fails if any Mach-O file is left unsigned.
+- **Notarization by App Store Connect API key** (`AGNETA_NOTARY_KEY`, `AGNETA_NOTARY_KEY_ID`, `AGNETA_NOTARY_ISSUER`), or a stored `notarytool` profile on a maintainer's Mac. A rejection prints Apple's log.
+- **The DMG**, made with `hdiutil` (no new dependency): the app is signed, notarized and stapled, then put in a DMG with a link to Applications; the DMG is signed, notarized and stapled too, so the first launch works offline.
+- **The smoke test runs on what a user gets:** the app is copied out of the mounted DMG and marked as downloaded (quarantined), Gatekeeper must accept it, Agneta must start and serve apps, and every bundled engine must start and answer `initialize` under the hardened runtime.
+- **Files per architecture:** `Agneta-<version>-arm64.dmg` and `-x86_64.dmg` for people, the matching `.zip` for Sparkle, plus one `SHA256SUMS.txt`.
+
+Status: signing (without per-program entitlements) and notarizing a zip are scripted; the rest is not done.
+
+### 2. The release workflow (`.github/workflows/release.yml`)
+
+- Starts on a `v*` tag, or by hand as a dry run that builds and signs but only keeps the files as a workflow artifact.
+- `verify`, without secrets: the tag has a section in `CHANGELOG.md`, the commit is on `main`, and CI passed on it.
+- `build`, one job per architecture (Apple silicon and Intel runners), in the `release` environment: imports the certificate into a temporary keychain, runs `scripts/dev/release`, and deletes the keychain and keys whatever happens.
+- `publish`: writes `SHA256SUMS.txt`, records GitHub's build provenance attestation (`gh attestation verify` checks a download against it), writes each architecture's Sparkle feed with `generate_appcast`, takes the notes from `CHANGELOG.md`, and creates the draft with `gh release create --draft --verify-tag`, uploading the checksums last.
+- On publishing, a second workflow bumps the Homebrew tap and checks that the update feed serves the new version.
+- Every action is pinned by commit, and each job has only the permissions it needs.
+
+Status: not done.
+
+### 3. Updates in the app (Sparkle 2)
+
+- Sparkle, pinned to an exact version, with a "Check for Updates…" item in the panel's ⋯ menu and, in Settings, "Check for updates automatically" and "Download and install automatically". Sparkle asks before its first check; automatic installation is off until the user turns it on. Reminders are the gentle kind meant for menu bar apps.
+- An update installs only when no task is running, or when Agneta quits. Apps reconnect and resume their tasks with `session/load`.
+- Each architecture has its own feed, `https://github.com/olofd/agneta/releases/latest/download/appcast-<arch>.xml`. `latest` never points at a draft, so publishing is what offers an update. Updates are verified with the EdDSA key built into the app, as well as by their Developer ID signature.
+- Development builds and isolated instances (`AGNETA_HOME`) have no feed and never update themselves.
+- [PRIVACY.md](PRIVACY.md) then says exactly what an update check contacts; Sparkle's system profiling stays off.
+
+Status: not done. Today there are no automatic updates: a new release replaces the app, and data and sign-ins carry over.
+
+### 4. Homebrew
+
+- A cask in `olofd/homebrew-tap` (`brew install olofd/tap/agneta`), one per architecture through `arch arm: "arm64", intel: "x86_64"`, marked `auto_updates true` so `brew` leaves updating to Sparkle. The publish workflow bumps its version and checksums; the tap's CI runs `brew audit --cask --strict` and installs it.
+- Homebrew's own cask repository needs public interest first (for a project submitted by its author: 225 stars, 90 forks or 90 watchers; [policy](https://docs.brew.sh/Package-Acceptance-Policy)). Once it's there, Homebrew's bots keep it current.
+
+Status: not done.
+
+### 5. The first release
+
+A dry run, installed on an Intel and an Apple silicon Mac: it opens without a Gatekeeper warning and runs tasks on real accounts. Then `v0.1.0` is tagged, approved, checked and published; `brew install olofd/tap/agneta` is tried on a clean Mac; and `v0.1.1` proves the update from 0.1.0.
+
+## Building a release by hand
+
+Until the workflow exists, on each architecture:
+
+```bash
+AGNETA_SIGN_IDENTITY="Developer ID Application: …" AGNETA_NOTARY_PROFILE=agneta scripts/dev/release --previous <last release's zip>
+```
+
+It builds `build/Agneta.app` with the release identity (`com.objectivecoder.agneta`, port 47321), signs it, zips it, notarizes and staples it, writes the zip's SHA-256 and runs the smoke test. It refuses an uncommitted checkout. `AGNETA_NOTARY_PROFILE` is a profile stored once with `xcrun notarytool store-credentials`. Without `AGNETA_SIGN_IDENTITY` the build is signed ad hoc: fine for testing, refused by Gatekeeper on other Macs.
 
 ## The smoke test
 
@@ -32,19 +89,12 @@ Measured on an Intel Mac with macOS 26.6.2, 2026-11-17:
 
 Where the size goes, with every engine: OpenCode 227 MB, Node (for Codex's adapter) 118 MB, codex-acp 21 MB, Goose 19 MB, Agneta and its tools 18 MB. Engines start only when a task needs them, so they don't change the app's start-up. Starting one (launch to its `initialize` answer, median of 5): Goose 17 ms, OpenCode 394 ms.
 
-Goose only covers OpenAI and Anthropic API keys and Claude plans (Claude Code's adapter downloads on first use, as it does today). A ChatGPT plan needs Codex's adapter and Node, and OpenCode is only another engine for API keys. Shipping Goose alone and downloading the others when an account needs them, as the Claude adapter is, would cut the download tenfold. Which accounts the first release supports is still a product decision; the build supports both.
+Releases ship every engine: a ChatGPT plan needs Codex's adapter and Node. Shipping Goose alone and downloading the others when an account needs them, as Claude Code's adapter is, would cut the download tenfold; that is a later step.
 
 ## Support
 
 | | |
 | --- | --- |
 | macOS | 14 and later. Tested on 26 ([CONTAINMENT.md](CONTAINMENT.md#supported-macos-versions) lists each version's status) |
-| Architectures | Apple silicon and Intel, one build each |
+| Architectures | Apple silicon and Intel, one build each: a universal app would carry both architectures' engines and double the download |
 | Building | Xcode 26 or later |
-| Updates | None automatic yet: a new release is downloaded and replaces the app; data and sign-ins carry over |
-
-## Not done yet
-
-- **A Developer ID.** Signing and notarization are scripted, but no release has been signed: that needs the maintainer's Apple Developer Program membership.
-- **Automatic updates.**
-- **A universal build.** Releases are per architecture.
