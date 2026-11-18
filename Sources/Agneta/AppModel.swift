@@ -271,23 +271,10 @@ final class AppModel {
     func setEngine(_ account: AccountRecord, _ engine: String) {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }), engines(for: account).contains(where: { $0.id == engine }) else { return }
         if engine == "opencode", !openCodeInstalled {
-            guard engineDownload == nil, let installer = openCodeInstaller, let version = openCodeAsset?.version else { return }
-            engineDownloadProblem = nil
-            engineDownload = (account.id, "Downloading OpenCode \(version)…")
-            log.log("engine-download", ["engine": .string(engine), "version": .string(version)])
-            let started = Date()
-            _Concurrency.Task {
-                do {
-                    _ = try await installer.install("opencode")
-                    log.log("engine-downloaded", ["engine": .string(engine), "seconds": .int(Int64(Date().timeIntervalSince(started)))])
-                    engineDownload = nil
-                    for adapter in availableEngines { await runtime?.register(adapter) }
-                    if let current = accounts.first(where: { $0.id == account.id }) { setEngine(current, engine) }
-                } catch {
-                    log.error("engine-download-failed", ["engine": .string(engine), "reason": .string("\(error)")])
-                    engineDownload = nil
-                    engineDownloadProblem = (account.id, "OpenCode couldn't be downloaded: \(error.localizedDescription)")
-                }
+            guard engineDownload == nil else { return }
+            downloadOpenCode(showingUnder: account.id, reason: "chosen") { [weak self] in
+                guard let self, let current = accounts.first(where: { $0.id == account.id }) else { return }
+                setEngine(current, engine)
             }
             return
         }
@@ -337,6 +324,8 @@ final class AppModel {
         await runtime.observe { [weak self] event in _Concurrency.Task { @MainActor in self?.handle(event) } }
         reloadHistory()
         for account in accounts { await configure(account) }
+        // Apps set to an engine that isn't here (a new pin, a download that failed) get it again, in the background.
+        for engine in Set(grants.values.flatMap { $0.engines.values }) { ensureEngine(engine) }
 
         if let portProblem {
             serverProblem = portProblem
@@ -440,17 +429,9 @@ final class AppModel {
         case .openAIKey:
             provider = ProviderSetup(kind: .openAI, model: account.model, apiKey: keychain.get(account.id))
         }
-        // An account set to OpenCode before it was here (an account from an older build, a reset data folder) gets it now.
-        if account.engine == "opencode", !openCodeInstalled, let installer = openCodeInstaller {
-            do {
-                _ = try await installer.install("opencode")
-                guard current() else { return }
-                for engine in availableEngines { await runtime.register(engine) }
-            } catch {
-                log.error("engine-download-failed", ["engine": .string("opencode"), "reason": .string("\(error)")])
-                engineDownloadProblem = (account.id, "OpenCode couldn't be downloaded: \(error.localizedDescription)")
-            }
-        }
+        // An account set to OpenCode before it was here (0.1.0 bundled it; a new pin; a reset data folder) gets it in
+        // the background: Agneta starts listening for apps meanwhile, and Settings shows the download.
+        if account.engine == "opencode", !openCodeInstalled { downloadOpenCode(showingUnder: account.id, reason: "account") }
         guard current() else { return }
         for secret in provider.secrets { runtime.traces.mask.register(secret) }
         // Claude Code and Codex run their own tools whatever the account; the router decides per session, since an app
@@ -581,15 +562,34 @@ final class AppModel {
     /// Makes sure an engine an app was set to is here: OpenCode downloads the first time. A failure is logged, and the
     /// app's tasks are refused with a reason until it's fixed.
     func ensureEngine(_ engine: String) {
-        guard engine == "opencode", !openCodeInstalled, let installer = openCodeInstaller else { return }
-        log.log("engine-download", ["engine": .string(engine), "reason": .string("app")])
+        guard engine == "opencode", !openCodeInstalled else { return }
+        downloadOpenCode(showingUnder: nil, reason: "app")
+    }
+
+    /// Downloads, checks and installs OpenCode in the background, then makes it available to the router and supervisor
+    /// and runs `done`. Downloads asked for meanwhile share this one (RuntimeInstaller). `account`: the Settings row
+    /// that shows its progress and any failure.
+    private func downloadOpenCode(showingUnder account: String?, reason: String, then done: (@MainActor () -> Void)? = nil) {
+        guard let installer = openCodeInstaller, let version = openCodeAsset?.version else { return }
+        if let account {
+            engineDownloadProblem = nil
+            engineDownload = (account, "Downloading OpenCode \(version)…")
+        }
+        log.log("engine-download", ["engine": "opencode", "version": .string(version), "reason": .string(reason)])
+        let started = Date()
         _Concurrency.Task {
             do {
                 _ = try await installer.install("opencode")
+                log.log("engine-downloaded", ["engine": "opencode", "seconds": .int(Int64(Date().timeIntervalSince(started)))])
+                if account != nil, engineDownload?.account == account { engineDownload = nil }
                 for adapter in availableEngines { await runtime?.register(adapter) }
-                log.log("engine-downloaded", ["engine": .string(engine)])
+                done?()
             } catch {
-                log.error("engine-download-failed", ["engine": .string(engine), "reason": .string("\(error)")])
+                log.error("engine-download-failed", ["engine": "opencode", "reason": .string("\(error)")])
+                if let account {
+                    if engineDownload?.account == account { engineDownload = nil }
+                    engineDownloadProblem = (account, "OpenCode couldn't be downloaded: \(error.localizedDescription)")
+                }
             }
         }
     }
