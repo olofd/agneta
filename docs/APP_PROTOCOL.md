@@ -16,9 +16,9 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
 
 ## Pairing, once per app
 
-1. Send `agneta/pair {"name": "Example App", "scope": {"tools": "workspace", "folders": ["/Users/me/Documents/Example Project"]}}`. Agneta opens its approval window, which shows what the scope asks for; the user picks which accounts the app may use (one is chosen to start with), then **Allow Once** or **Always Allow**.
-   - **`scope`** is what the app will need: `tools`, the most built-in tools its sessions will use (`app-only`, `read` or `workspace`, as in the [policy](#agnetapolicy1)), and `folders`, the user's folders its sessions will work in (absolute paths, under the policy's folder rules). Without a scope the app gets app-only tools and no folders of the user's. Either way it also gets a workspace of its own, made by Agneta. Ask for what the app's features need, and no more: the user sees it all before deciding.
-   - Allowed: `{"token": "…", "accounts": ["<account id>", …], "workspace": "<the app's own workspace>"}`. Keep the token in the app's Keychain. Agneta stores only its hash.
+1. Send `agneta/pair {"name": "Example App", "scope": {"tools": "workspace", "folders": ["/Users/me/Documents/Example Project"]}}`. Agneta opens its approval window, which shows what the scope asks for; the user ticks the providers the app may use (one is ticked to start with), then **Allow Once** or **Always Allow**. Every engine is allowed too, unless the user narrows them under **Advanced**: your app picks the provider and engine of each task, among what it may use ([Access](#access)).
+   - **`scope`** is what the app will need: `tools`, the most built-in tools its sessions will use (`app-only`, `read` or `workspace`, as in the [policy](#agnetapolicy)), and `folders`, the user's folders its sessions will work in (absolute paths, under the policy's folder rules). Without a scope the app gets app-only tools and no folders of the user's. Either way it also gets a workspace of its own, made by Agneta. Ask for what the app's features need, and no more: the user sees it all before deciding.
+   - Allowed: `{"token": "…", "access": {…}}` ([Access](#access)). Keep the token in the app's Keychain. Agneta stores only its hash.
    - **Allow Once** grants this connection only: the token stops working when it closes, and Agneta keeps nothing. Pair again next time.
    - A scope Agneta can't accept (a folder it protects, an unknown field) is refused with `-32602` before the user is asked.
    - Don't Allow: error `-32002`. Closing the approval window, or leaving it unanswered for 5 minutes, is the same.
@@ -37,24 +37,45 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
 
 - **Result:** standard `agentCapabilities` (`loadSession: true`, images in prompts, HTTP MCP servers, `session/close`), plus:
   - `_meta.agneta.extensions`: the extensions below;
-  - `_meta.agneta.accounts`: `[{"id", "label", "paused", "capabilities", "engines"}]`, the accounts this app may use. A paused account starts nothing new (**Pause**, under [Turns](#turns)).
-    - `capabilities` describes the engine a session on the account runs on by default: its provider's selected engine (see [the session result](#the-result)).
-    - `engines` lists `[{"id", "name", "capabilities"}]`, every engine a session on the account may ask for (the engines its provider supports that are on this Mac), the default first.
-  - `_meta.agneta.scope` (`{"tools", "folders"}`, what the user allowed) and `_meta.agneta.workspace` (the app's own workspace).
+  - `_meta.agneta.access`: what the app may use ([Access](#access)).
 - **Error `-32001`** with `data.agneta.needsPairing: true` means the token is unknown, access was removed, an Allow Once grant has ended, or (for a verified app) the connecting program isn't the one that paired. Pair again.
+
+### Access
+
+What the user allows an app is two lists: the **providers** (each an account: a ChatGPT or Claude plan, an API key) and the **engines** (Goose, OpenCode, Claude Code, Codex; all of them unless the user narrowed them). Each task runs on one provider and one engine, which your app picks; the pair must be one the provider supports ([ENGINES.md](ENGINES.md)) and this Mac can run. `agneta/access {}` returns, at any time, what that means now, the same object `initialize` and pairing return:
+
+```json
+{
+  "providers": [{"id": "a1b2c3d4", "label": "Claude", "kind": "claude", "paused": false, "needsSignIn": false,
+                 "engines": ["claude-code", "goose"], "defaultEngine": "claude-code"}],
+  "engines": [{"id": "claude-code", "name": "Claude Code", "state": "ready", "capabilities": {…}},
+              {"id": "goose", "name": "Goose", "state": "ready", "capabilities": {…}},
+              {"id": "opencode", "name": "OpenCode", "state": "downloadable", "size": 45000000}],
+  "allowedEngines": "all",
+  "scope": {"tools": "workspace", "folders": ["/Users/me/Documents/Example Project"]},
+  "workspace": "/Users/me/Library/Application Support/com.objectivecoder.agneta Workspaces/<grant>"
+}
+```
+
+- **`providers`:** each provider the app may use. `engines` are those its tasks there may run on now or after a download, the default first (`defaultEngine`: the provider's default in Agneta's settings when allowed, else the first allowed). A paused provider starts nothing new (**Pause**, under [Turns](#turns)); one that `needsSignIn` waits for the user in Agneta.
+- **`engines`:** each engine the app may use, with its `state` on this Mac: `ready` (with its `capabilities`, as in [the session result](#the-result)), `downloading` (`received`, `total`), `downloadable` (`size`: it downloads when first needed), `failed` (`reason`; asking for it tries again) or `unavailable` (`reason`, such as "Install Codex 0.166 or later").
+- **`allowedEngines`:** `"all"` (including engines Agneta adds later) or the engine ids the user ticked.
+- **`scope`** and **`workspace`:** what the user allowed, and the app's own workspace within it.
+- **`agneta/accessChanged {"access"}`** arrives when any of it changes: the user changes the app's providers or engines in Agneta's settings (sessions that no longer fit stop, with `agneta/sessionStopped`), a provider is paused, resumed, signed out or needs signing in, or an engine arrives, starts downloading or goes away. Download progress doesn't send it: `agneta/access` and `-32015` carry it.
 
 | Extension | What it adds |
 | --- | --- |
-| `agneta/policy@1` | The session policy: tools, folders, network, approval, limits |
-| `agneta/task@1` | A title and a stop warning shown in Agneta's menu |
-| `agneta/instructions`, `agneta/instructions@1` | Instructions at start, and `agneta/instructions/set` between turns |
-| `agneta/steer@1` | `agneta/steer` during a turn |
-| `agneta/usage@1` | Each prompt result's usage: model calls, tokens, cost, and what the numbers mean |
-| `agneta/limit@1` | Which policy limit stopped a turn |
-| `agneta/queue@1` | `agneta/queued` when a turn waits for room |
-| `agneta/fork@1` | `agneta/fork`: a new task that starts with a copy of an earlier one's conversation |
-| `agneta/rateLimited@1` | `agneta/rateLimited` and structured error data when a provider's limit stops a turn |
-| `agneta/trace@1` | The task's full trace, live and afterwards ([DIAGNOSTICS.md](DIAGNOSTICS.md)) |
+| `agneta/policy` | The session policy: tools, folders, network, approval, limits |
+| `agneta/access` | `agneta/access` and `agneta/accessChanged`: the providers and engines the app may use ([Access](#access)) |
+| `agneta/task` | A title and a stop warning shown in Agneta's menu |
+| `agneta/instructions` | Instructions at start, and `agneta/instructions/set` between turns |
+| `agneta/steer` | `agneta/steer` during a turn |
+| `agneta/usage` | Each prompt result's usage: model calls, tokens, cost, and what the numbers mean |
+| `agneta/limit` | Which policy limit stopped a turn |
+| `agneta/queue` | `agneta/queued` when a turn waits for room |
+| `agneta/fork` | `agneta/fork`: a new task that starts with a copy of an earlier one's conversation |
+| `agneta/rateLimited` | `agneta/rateLimited` and structured error data when a provider's limit stops a turn |
+| `agneta/trace` | The task's full trace, live and afterwards ([DIAGNOSTICS.md](DIAGNOSTICS.md)) |
 
 ## A session
 
@@ -67,21 +88,21 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
                   "headers": [{"name": "Authorization", "value": "Bearer <per-session token>"}]}],
   "_meta": {
     "agneta": {"account": "<account id>"},
-    "agneta/policy@1": {"tools": "workspace", "network": "none", "approval": "never-ask",
+    "agneta/policy": {"tools": "workspace", "network": "none", "approval": "never-ask",
                         "readable": [], "writable": [], "readOnly": [], "denied": [],
                         "limits": {"maxTurns": 200, "maxSeconds": 1800}},
-    "agneta/task@1": {"title": "Tidying the project notes", "stopWarning": "Example App keeps the work so far"},
+    "agneta/task": {"title": "Tidying the project notes", "stopWarning": "Example App keeps the work so far"},
     "agneta/instructions": {"text": "You are Example App's assistant…"},
-    "agneta/trace@1": {"live": true}
+    "agneta/trace": {"live": true}
   }
 }
 ```
 
 **`cwd`** is the workspace: the folder the agent works in. It must be an absolute path, and the same rules as the policy's folders apply to it.
 
-**`_meta.agneta.account`** chooses the account, one the app's grant allows. If it's omitted, the first allowed account is used.
+**`_meta.agneta.account`** chooses the provider, one of `access.providers`. If it's omitted, the first one is used.
 
-**`_meta.agneta.engine`** (optional) chooses the engine, one of that account's `engines` from `initialize`. Without it the session runs on the account's provider's selected engine. An engine the provider doesn't support, or that isn't on this Mac, is refused with `-32602` and `data.agneta.engines` listing what the account can run on. A loaded or forked session always runs on the engine that saved it.
+**`_meta.agneta.engine`** (optional) chooses the engine, one of that provider's `engines`; without it the session runs on its `defaultEngine`. An engine the provider doesn't support, the app may not use, or this Mac can't run is refused with `-32602` and the current access in `data.agneta.access`. One that downloads first starts downloading, and the session is refused with `-32015` and `data.agneta.engineDownloading {"engine", "received", "total"}` until it's done: show the progress and try again shortly. A loaded or forked session always runs on the engine that saved it.
 
 **`mcpServers`** are the app's own tools: Streamable HTTP on loopback, with a bearer token.
 - Only `type: "http"` with a `127.0.0.1`, `localhost` or `::1` URL is accepted. Anything else is refused with `-32602` and `data.agneta.unenforceable: ["mcpServers"]`: a stdio server would be a command run inside the engine's sandbox, and a remote one a host the policy didn't allow.
@@ -90,7 +111,7 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
 - Header values are masked in traces.
 - In tool events, the server's `name` comes back as the tool's `extension`, and the tool's own name as `tool`.
 
-### `agneta/policy@1`
+### `agneta/policy`
 
 | Field | Values |
 | --- | --- |
@@ -159,19 +180,19 @@ The result:
 
 ```json
 {"stopReason": "end_turn", "usage": {"inputTokens": 42, "outputTokens": 7, "totalTokens": 49},
- "_meta": {"agneta/usage@1": {"modelCalls": 2, "models": ["gpt-x"], "inputTokens": 84, "outputTokens": 14,
+ "_meta": {"agneta/usage": {"modelCalls": 2, "models": ["gpt-x"], "inputTokens": 84, "outputTokens": 14,
                               "cacheReadTokens": 0, "cacheWriteTokens": 0, "cost": null, "costKind": "estimated",
                               "taskCost": null, "billing": "api-key", "account": "…", "ms": 196.4, "msToFirstToken": 147.1,
                               "basis": "engine-ledger"},
-           "agneta/limit@1": {"limit": "maxSeconds", "value": 1800}}}
+           "agneta/limit": {"limit": "maxSeconds", "value": 1800}}}
 ```
 
-- **`agneta/usage@1`** comes from the engine's own records, one entry per model call, summed over the turn. Nothing is counted from stream items.
+- **`agneta/usage`** comes from the engine's own records, one entry per model call, summed over the turn. Nothing is counted from stream items.
   - `basis` says where the numbers come from: `engine-ledger` (the per-call records) or `engine-turn-totals` (the engine's own totals for the turn, which Claude Code needs; see [ENGINES.md](ENGINES.md#claude-code)).
   - `costKind` is `estimated` for API keys, and `plan-equivalent` for subscriptions, where the plan pays and nothing is charged per call.
   - Unknown values are `null`, never guessed.
   - `usage` is the engine's own figure for the turn, passed through.
-- **`agneta/limit@1`** appears only when a policy limit stopped the turn. `maxTurns` ends with ACP's `max_turn_requests`; time and cost end as `cancelled`, with this field saying why. Limits are checked twice a second. A limit is a hard limit: if the engine hasn't stopped the turn 10 s after Agneta cancels it (stuck in a tool, or ignoring the cancel), Agneta ends the session (which stops its engine), sends `agneta/sessionStopped` with `stoppedBy: "limit"`, and answers the prompt the same way with `"sessionEnded": true` in this field. Load the session again to go on.
+- **`agneta/limit`** appears only when a policy limit stopped the turn. `maxTurns` ends with ACP's `max_turn_requests`; time and cost end as `cancelled`, with this field saying why. Limits are checked twice a second. A limit is a hard limit: if the engine hasn't stopped the turn 10 s after Agneta cancels it (stuck in a tool, or ignoring the cancel), Agneta ends the session (which stops its engine), sends `agneta/sessionStopped` with `stoppedBy: "limit"`, and answers the prompt the same way with `"sessionEnded": true` in this field. Load the session again to go on.
 - **One turn at a time per session.** A prompt while one runs is refused with `-32011`. To add to a running turn, steer it.
 
 | Method | Effect |
@@ -187,9 +208,9 @@ The result:
 - Pass the tool servers again, since their bearers are per session. The policy and instructions default to the original ones; `_meta` may set new ones, and ask for live trace delivery.
 - The engine returns to the same engine home and replays the conversation as `session/update`s before the result. The next turn sees the whole history, and the trace continues with the next sequence numbers.
 - The result's `_meta.agneta.resumed` is true.
-- It passes the same checks as `session/new`: the account (granted, not paused), the policy against the grant, the tool servers and the cost limit.
+- It passes the same checks as `session/new`: the provider (granted, not paused), the engine (still allowed), the policy against the grant, the tool servers and the cost limit.
 - Loading a session that's already open, or another app's, fails with `-32602`. A task that ran without built-in tools must be resumed without them.
-- A task resumes only on the engine that saved it. If the account has moved to another engine since, or the engine stores sessions differently now, loading fails with `-32602` and `data.agneta.engineChanged {"saved", "current"}`; start a new task instead.
+- A task resumes only on the engine that saved it, whatever the provider's default is now. If the app may no longer use that engine, or it isn't on this Mac any more, loading fails with `-32602` and the current access in `data.agneta.access`; if it stores sessions differently now, with `data.agneta.stateChanged {"engine", "saved", "current"}`. Start a new task instead.
 - Its cost goes on from where it was, so `maxCostUSD` counts the whole task, and so do the trace's turn and model-call numbers.
 - Instructions appended with `agneta/instructions/set` aren't restored. Set them again after loading.
 
@@ -197,7 +218,7 @@ The result:
 - The new task has its own id, engine and trace. Its result's `_meta.agneta.forkOf` names the source. Prompts to it never touch the original.
 - Its policy is `_meta`'s if given; otherwise it's the original's with `tools: "read"`.
 - It keeps the original's instructions unless `_meta["agneta/instructions"]` sets new ones.
-- It passes the same checks as `session/new`, and like a load it needs the engine that saved the original (`data.agneta.engineChanged` otherwise). Its cost starts from zero: it's a task of its own.
+- It passes the same checks as `session/new`, and like a load it needs the engine that saved the original. Its cost starts from zero: it's a task of its own.
 
 **Pause.** The user can pause an account in Agneta's menu. Then nothing new starts on it: `session/new`, `session/load`, `agneta/fork` and `session/prompt` fail with `-32013` and `data.agneta.paused`, and so does a prompt that was waiting in the queue. A turn already running finishes. Open sessions stay open and take turns again once the user resumes the account.
 
@@ -220,9 +241,9 @@ Every decision is in the trace's `permission` records: who decided (`asked-app`,
 
 ## The trace
 
-Agneta writes a full trace of every task ([DIAGNOSTICS.md](DIAGNOSTICS.md), format `agneta/trace@1`). An app can read its own tasks, and only those.
+Agneta writes a full trace of every task ([DIAGNOSTICS.md](DIAGNOSTICS.md), format `agneta/trace`). An app can read its own tasks, and only those.
 
-- **Live:** with `"agneta/trace@1": {"live": true}` on `session/new` (or `session/load`), records arrive as `agneta/trace {"sessionId", "records": [...]}` notifications. They come in sequence order, batched every 100 ms in groups of up to 64, from `meta` to `end`. An app that reads too slowly to keep up (10,000 records waiting) gets one last `agneta/trace {"sessionId", "records": [], "overflow": {"after": <seq>}}`, and live delivery for that task stops; read on from `after` with `agneta/trace/read`. `"include": ["acp"]` adds the raw JSON-RPC frames of both connections.
+- **Live:** with `"agneta/trace": {"live": true}` on `session/new` (or `session/load`), records arrive as `agneta/trace {"sessionId", "records": [...]}` notifications. They come in sequence order, batched every 100 ms in groups of up to 64, from `meta` to `end`. An app that reads too slowly to keep up (10,000 records waiting) gets one last `agneta/trace {"sessionId", "records": [], "overflow": {"after": <seq>}}`, and live delivery for that task stops; read on from `after` with `agneta/trace/read`. `"include": ["acp"]` adds the raw JSON-RPC frames of both connections.
 - **Afterwards, or after a reconnect:** `agneta/trace/read {"sessionId", "after": <last seq>, "types"?: [...], "limit"?: 500}` returns `{"records", "next", "complete"}`. Page until `complete`. It works for running and finished tasks within the history retention, up to 5,000 records or about 8 MB a page (always at least one record).
 
 Every record has `v`, `seq` (gapless), `t` (UTC with microseconds), `mono` (nanoseconds since the trace was opened or resumed), `task`, `turn` and `type`. Secrets are masked. The record types are listed in [DIAGNOSTICS.md](DIAGNOSTICS.md#record-types).

@@ -1,19 +1,20 @@
 // Agneta's records in one SQLite file: accounts, app grants, task
-// history, the engines it started, and settings. GRDB with a single writer;
-// migrations run in transactions after a file backup, and a database written
-// by a newer Agneta is refused rather than touched. Secrets never land here:
-// API keys are in the Keychain, subscription tokens in each account's folder,
-// app tokens only as SHA-256 hashes.
+// history, the engines it started, and settings. GRDB with a single writer.
+// Before 1.0 there are no migrations: the schema below is the only one, changed
+// in place under a new id, and a database made with another id is left
+// untouched and refused, so the user resets (docs/ARCHITECTURE.md). Secrets
+// never land here: API keys are in the Keychain, subscription tokens in each
+// account's folder, app tokens only as SHA-256 hashes.
 import Foundation
 import GRDB
 
 public enum StoreError: Error, Equatable, CustomStringConvertible {
-    /// The file was written by a newer Agneta; nothing was changed.
-    case newerVersion(file: String)
+    /// The file was made by a build of Agneta with another schema; nothing was changed.
+    case otherSchema(file: String)
 
     public var description: String {
         switch self {
-        case .newerVersion: "Agneta's data was saved by a newer version of Agneta."
+        case .otherSchema: "Agneta's data was saved by another build of Agneta, which this one can't read."
         }
     }
 }
@@ -70,35 +71,31 @@ public final class AgnetaDatabase: Sendable {
     public let file: URL
     private let queue: DatabaseQueue
 
-    /// Opens (creating if needed) and migrates the database.
-    /// - Parameter legacy: an `agneta.json` from builds before SQLite; imported once, then renamed.
-    public init(file: URL, importing legacy: URL? = nil) throws {
+    /// Opens the database, creating it if needed. One made with another schema is refused, untouched.
+    public init(file: URL) throws {
         self.file = file
         let folder = file.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let existed = FileManager.default.fileExists(atPath: file.path(percentEncoded: false))
         var configuration = Configuration()
         configuration.foreignKeysEnabled = true
         configuration.label = "agneta"
         queue = try DatabaseQueue(path: file.path(percentEncoded: false), configuration: configuration)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path(percentEncoded: false))
-
         let migrator = Self.migrator
         try queue.read { db in
-            if try migrator.hasBeenSuperseded(db) { throw StoreError.newerVersion(file: file.lastPathComponent) }
-        }
-        if existed, try queue.read({ try !migrator.hasCompletedMigrations($0) }) {
-            try backup(suffix: try queue.read { try migrator.appliedIdentifiers($0).sorted().last } ?? "empty")
+            if try migrator.hasBeenSuperseded(db) { throw StoreError.otherSchema(file: file.lastPathComponent) }
         }
         try migrator.migrate(queue)
-        if let legacy { try importLegacy(legacy) }
     }
 
     // MARK: Schema
 
+    /// The schema's id: a new one whenever the schema changes, until 1.0.
+    static let schema = "2026-11-18"
+
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
-        migrator.registerMigration("v1") { db in
+        migrator.registerMigration(schema) { db in
             try db.create(table: "accounts") { t in
                 t.primaryKey("id", .text)
                 t.column("kind", .text).notNull()
@@ -113,9 +110,14 @@ public final class AgnetaDatabase: Sendable {
                 t.column("id", .text).notNull().unique()
                 t.column("app", .text).notNull()
                 t.column("identifier", .text)
+                t.column("team", .text)
                 t.column("verified", .boolean).notNull()
+                // The providers (account ids) and engines ("all", or engine ids) the app may use (Access).
                 t.column("accounts", .jsonText).notNull()
+                t.column("engines", .jsonText).notNull()
                 t.column("created", .datetime).notNull()
+                t.column("tools", .text).notNull()
+                t.column("folders", .jsonText).notNull()
             }
             try db.create(table: "sessions") { t in
                 t.primaryKey("id", .text)
@@ -149,64 +151,7 @@ public final class AgnetaDatabase: Sendable {
                 t.column("value", .text).notNull()
             }
         }
-        migrator.registerMigration("v2") { db in
-            // Engine choice per account.
-            try db.alter(table: "accounts") { t in t.add(column: "engine", .text).notNull().defaults(to: "goose") }
-        }
-        migrator.registerMigration("v3") { db in
-            // What each app was allowed: the most built-in tools and its folders (GrantScope), and its signing team.
-            // Grants from before read as app-only with no folders of the user's; the app pairs again to ask for more.
-            try db.alter(table: "grants") { t in
-                t.add(column: "team", .text)
-                t.add(column: "tools", .text).notNull().defaults(to: "app-only")
-                t.add(column: "folders", .jsonText).notNull().defaults(to: "[]")
-            }
-        }
-        migrator.registerMigration("v4") { db in
-            // The engine an app's tasks run on, per account, where the user chose one for the app (Router.Grant.engines).
-            try db.alter(table: "grants") { t in t.add(column: "engines", .jsonText).notNull().defaults(to: "{}") }
-        }
-        migrator.registerMigration("v5") { db in
-            // Engines belong to providers only (ProviderEngines): neither accounts nor apps name one. Each kind of
-            // provider keeps the engine its accounts used (the most common one, where they differed); the per-account
-            // and per-app columns go.
-            let rows = try Row.fetchAll(db, sql: "SELECT kind, engine, COUNT(*) AS n FROM accounts GROUP BY kind, engine ORDER BY kind, n DESC, engine")
-            var kept = Set<String>()
-            for row in rows {
-                let kind: String = row["kind"], engine: String = row["engine"]
-                guard let parsed = AccountKind(rawValue: kind), !kept.contains(kind), ProviderEngines.supported(by: parsed).contains(engine) else { continue }
-                kept.insert(kind)
-                try db.execute(sql: "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", arguments: [ProviderEngines.settingKey(parsed), engine])
-            }
-            try db.alter(table: "accounts") { t in t.drop(column: "engine") }
-            try db.alter(table: "grants") { t in t.drop(column: "engines") }
-        }
         return migrator
-    }
-
-    /// A copy of the file before a migration, beside it: `agneta.sqlite.before-<last applied>`.
-    private func backup(suffix: String) throws {
-        let copy = file.deletingLastPathComponent().appending(path: "\(file.lastPathComponent).before-\(suffix)")
-        try? FileManager.default.removeItem(at: copy)
-        try queue.backup(to: DatabaseQueue(path: copy.path(percentEncoded: false)))
-    }
-
-    private func importLegacy(_ legacy: URL) throws {
-        guard let data = try? Data(contentsOf: legacy) else { return }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let state = try? decoder.decode(LegacyState.self, from: data) else { return }
-        try queue.write { db in
-            guard try Row.fetchOne(db, sql: "SELECT 1 FROM accounts LIMIT 1") == nil else { return }
-            for account in state.accounts { try Self.insert(account, db) }
-            for (hash, grant) in state.grants { try Self.insert(grant, hash: hash, db) }
-        }
-        try FileManager.default.moveItem(at: legacy, to: legacy.deletingLastPathComponent().appending(path: "\(legacy.lastPathComponent).imported"))
-    }
-
-    private struct LegacyState: Decodable {
-        var accounts: [AccountRecord] = []
-        var grants: [String: Router.Grant] = [:]
     }
 
     // MARK: Accounts
@@ -246,8 +191,9 @@ public final class AgnetaDatabase: Sendable {
             for row in try Row.fetchAll(db, sql: "SELECT * FROM grants") {
                 let accounts = (try? JSONDecoder().decode([String].self, from: Data((row["accounts"] as String).utf8))) ?? []
                 let folders = (try? JSONDecoder().decode([String].self, from: Data((row["folders"] as String).utf8))) ?? []
+                let engines = EngineAllowance(json: try? JSONCoding.decode(Data((row["engines"] as String).utf8)))
                 grants[row["tokenHash"]] = Router.Grant(id: row["id"], app: row["app"], identifier: row["identifier"], team: row["team"],
-                                                        verified: row["verified"], accounts: accounts, created: row["created"],
+                                                        verified: row["verified"], accounts: accounts, engines: engines, created: row["created"],
                                                         tools: SessionPolicy.Tools(rawValue: row["tools"]) ?? .appOnly, folders: folders)
             }
             return grants
@@ -261,11 +207,12 @@ public final class AgnetaDatabase: Sendable {
     private static func insert(_ grant: Router.Grant, hash: String, _ db: GRDB.Database) throws {
         let accounts = String(decoding: try JSONEncoder().encode(grant.accounts), as: UTF8.self)
         let folders = String(decoding: try JSONEncoder().encode(grant.folders), as: UTF8.self)
+        let engines = String(decoding: try JSONCoding.encode(grant.engines.json), as: UTF8.self)
         try db.execute(sql: """
-            INSERT OR REPLACE INTO grants (tokenHash, id, app, identifier, team, verified, accounts, created, tools, folders)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO grants (tokenHash, id, app, identifier, team, verified, accounts, created, tools, folders, engines)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, arguments: [hash, grant.id, grant.app, grant.identifier, grant.team, grant.verified, accounts, grant.created,
-                             grant.tools.rawValue, folders])
+                             grant.tools.rawValue, folders, engines])
     }
 
     public func deleteGrant(id: String) throws {

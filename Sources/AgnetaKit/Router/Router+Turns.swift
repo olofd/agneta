@@ -114,7 +114,7 @@ extension Router {
         }
     }
 
-    /// The turn's usage for the app (`agneta/usage@1`): from the engine's per-call ledger, with
+    /// The turn's usage for the app (`agneta/usage`): from the engine's per-call ledger, with
     /// what the numbers mean. Unknown values stay null.
     func usage(_ turn: [String: JSONValue], account: String) -> JSONValue {
         let ledger = turn["ledger"]

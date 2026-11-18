@@ -4,13 +4,14 @@
 // sandboxed app bundle with Mac App Store entitlements (scripts/dev/testclient-app).
 // It shows the protocol end to end and is not a client library: a real app keeps
 // its token in the Keychain and handles reconnects (docs/APP_PROTOCOL.md).
-// Usage: agneta-testclient [--port 47331] [--cwd <dir>] [--mcp <url> --mcp-token <t>] [--tools app-only|read|workspace] --prompt <text>...
+// Usage: agneta-testclient [--port 47331] [--cwd <dir>] [--mcp <url> --mcp-token <t>] [--tools app-only|read|workspace]
+//                          [--account <id>] [--engine <id>] --prompt <text>...
 // To reuse an earlier pairing, set AGNETA_TOKEN in the environment. It's never an argument: any local
 // process can read another's arguments.
 import AppKit
 import Foundation
 
-var port = 47331, cwd = "", mcp: String?, mcpToken: String?, tools = "app-only", prompts: [String] = [], token: String?, account: String?
+var port = 47331, cwd = "", mcp: String?, mcpToken: String?, tools = "app-only", prompts: [String] = [], token: String?, account: String?, engine: String?
 var args = Array(CommandLine.arguments.dropFirst())
 while !args.isEmpty {
     let flag = args.removeFirst()
@@ -23,6 +24,7 @@ while !args.isEmpty {
     case "--tools": tools = value
     case "--prompt": prompts.append(value)
     case "--account": account = value
+    case "--engine": engine = value
     default: break // Xcode/LaunchServices may add arguments to app launches.
     }
 }
@@ -170,13 +172,20 @@ do {
         let paired: [String: Any]
         do { paired = try await client.request("agneta/pair", ["name": "Agneta Test Client", "scope": scope]); hideCode() } catch { hideCode(); throw error }
         token = paired["token"] as? String ?? ""
-        say("paired; accounts \(paired["accounts"] ?? [])")
+        say("paired")
     }
     let initialized = try await client.request("initialize", ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": token ?? ""]]])
     say("initialized: \((initialized["agentInfo"] as? [String: Any])?["title"] ?? "?")")
+    // What this app may use: its providers, each with the engines its tasks there may run on (the default first).
+    let access = try await client.request("agneta/access", [:])
+    let providers = access["providers"] as? [[String: Any]] ?? []
+    for provider in providers {
+        say("provider \(provider["id"] ?? "?") (\(provider["label"] ?? "?")): engines \((provider["engines"] as? [String] ?? []).joined(separator: ", "))")
+    }
+    if account == nil { account = providers.first { $0["paused"] as? Bool != true }?["id"] as? String }
     if cwd.isEmpty {
         // Without a folder of its own choosing, the app works in the workspace Agneta gave it.
-        cwd = ((initialized["_meta"] as? [String: Any])?["agneta"] as? [String: Any])?["workspace"] as? String ?? ""
+        cwd = access["workspace"] as? String ?? ""
     }
     var servers: [[String: Any]] = []
     if let mcp {
@@ -184,8 +193,8 @@ do {
     }
     let session = try await client.request("session/new", [
         "cwd": cwd, "mcpServers": servers,
-        "_meta": ["agneta/policy@1": ["tools": tools, "network": "none", "approval": "ask-app"], "agneta/task@1": ["title": "Test task"],
-                  "agneta/instructions": ["text": "You are a test assistant."], "agneta": ["account": account ?? ""]],
+        "_meta": ["agneta/policy": ["tools": tools, "network": "none", "approval": "ask-app"], "agneta/task": ["title": "Test task"],
+                  "agneta/instructions": ["text": "You are a test assistant."], "agneta": ["account": account ?? ""].merging(engine.map { ["engine": $0] } ?? [:]) { _, new in new }],
     ])
     let sessionID = session["sessionId"] as? String ?? ""
     say("session \(sessionID)")

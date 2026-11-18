@@ -64,6 +64,15 @@ public struct RuntimeInstaller: Sendable {
         return FileManager.default.isExecutableFile(atPath: program.path(percentEncoded: false)) ? program : nil
     }
 
+    /// The installed program, only while it's still what its pin says (the archive's hash, and the program's own
+    /// content as installed): for checking an install found on disk before running it.
+    public func verified(_ name: String, executable: String? = nil) -> URL? {
+        guard let asset = try? asset(name) else { return nil }
+        let folder = runtimes.appending(path: "\(name)/\(asset.version)", directoryHint: .isDirectory)
+        let program = folder.appending(path: executable ?? name)
+        return Self.isInstalled(executable: program, folder: folder, asset: asset) ? program : nil
+    }
+
     private func installNow(_ name: String, executable program: String, asset: Asset, folder: URL, progress: SignInProgress?,
                             received: (@Sendable (Int64, Int64?) -> Void)?) async throws -> URL {
         let executable = folder.appending(path: program)

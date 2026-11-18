@@ -235,7 +235,7 @@ import Testing
         let traces = Traces(folder: try folder())
         let session = traces.open(task: "t", lease: "l", engineSession: "e") { trace in
             #expect(traces.task(lease: "l", engineSession: "e") == nil && traces.session("t") == nil)
-            trace.writer.record("meta", ["format": "agneta/trace@1"])
+            trace.writer.record("meta", ["format": "agneta/trace"])
         }
         #expect(traces.task(lease: "l", engineSession: "e") == "t")
         session.writer.record("acp", ["leg": "engine→agneta"])

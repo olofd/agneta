@@ -64,16 +64,6 @@ public struct ProviderSetup: Sendable {
     public var secrets: [String] { [apiKey].compactMap { $0 } }
 }
 
-/// One account as engines serve it: which engine, and which provider.
-public struct AccountSetup: Sendable {
-    public var engine: String
-    public var provider: ProviderSetup
-    public init(engine: String, provider: ProviderSetup) {
-        self.engine = engine
-        self.provider = provider
-    }
-}
-
 /// What a session brings when its engine is configured at launch (process-per-session engines).
 public struct EngineSessionSpec: Sendable {
     public var policy: SessionPolicy

@@ -1,4 +1,4 @@
-// Appends one task's trace (docs/DIAGNOSTICS.md, `agneta/trace@1`). Records
+// Appends one task's trace (docs/DIAGNOSTICS.md, `agneta/trace`). Records
 // get their sequence number when they're recorded, so the file order is the
 // order things happened; writing happens on a serial queue so a turn never
 // waits on the disk. Under pressure or past the size cap, raw frames and text

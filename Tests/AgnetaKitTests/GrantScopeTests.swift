@@ -59,7 +59,7 @@ extension RouterContractTests {
         defer { app.close() }
         try await app.pairAndInitialize("Plain", scope: .null)
         let initialized = try await app.request("initialize", ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": .string(try #require(app.token))]]])
-        let workspace = try #require(initialized["_meta"]?["agneta"]?["workspace"]?.stringValue)
+        let workspace = try #require(initialized["_meta"]?["agneta"]?["access"]?["workspace"]?.stringValue)
         #expect(FileManager.default.fileExists(atPath: workspace))
         func newSession(_ cwd: String, tools: String?) async throws -> JSONValue {
             var meta: [String: JSONValue] = ["agneta": ["account": "brokered"]]

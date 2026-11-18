@@ -6,7 +6,7 @@ So Agneta writes **one trace per task** and lets three kinds of reader at it:
 
 | Reader | How | Sees |
 | --- | --- | --- |
-| The app that ran the task | The ACP extension `agneta/trace@1`, live and afterwards ([APP_PROTOCOL.md](APP_PROTOCOL.md#the-trace)) | Its own tasks only |
+| The app that ran the task | The ACP extension `agneta/trace`, live and afterwards ([APP_PROTOCOL.md](APP_PROTOCOL.md#the-trace)) | Its own tasks only |
 | Agents and tools (a coding agent debugging a run, a developer) | The diagnostics MCP server, with a token the user creates | Every task |
 | People and scripts | The files, through `agneta-diag` | Every task |
 
@@ -16,7 +16,7 @@ Two kinds of record stay apart:
 - **Task traces** hold content (prompts, tool input and output), because that's their purpose. They're local, owner-only (mode 0600), kept as long as task history, and deleted by Clear History and Reset.
 - **Agneta's operational log** holds event names, ids, counts and timing, never content. Its job is to debug Agneta itself.
 
-## The task trace, `agneta/trace@1`
+## The task trace, `agneta/trace`
 
 One JSON Lines file per task: `Traces/<task id>.jsonl` in Agneta's Application Support folder.
 

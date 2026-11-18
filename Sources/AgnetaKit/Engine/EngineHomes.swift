@@ -10,10 +10,9 @@ public enum EngineKeys {
     /// The shared engine of an account for one engine: one process per account and engine, never two on one state.
     public static func shared(account: String, engine: String) -> String { "\(account)/shared-\(engine)" }
 
-    /// Whether a key names a shared engine, including `<account>/shared` from before keys named the engine.
+    /// Whether a key names a shared engine.
     public static func isShared(_ key: String) -> Bool {
-        guard let last = key.split(separator: "/").last else { return false }
-        return last == "shared" || last.hasPrefix("shared-")
+        key.split(separator: "/").last?.hasPrefix("shared-") == true
     }
 }
 

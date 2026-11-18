@@ -175,14 +175,14 @@ struct RouterIntegrationTests {
             let fake = ProviderSetup(kind: .openAI, model: "gpt-4o", apiKey: "fake", baseURL: "http://127.0.0.1:\(modelPort)/v1")
             // The whole runtime, as the app runs it: records, grants and cleanup included.
             let runtime = try await AgnetaRuntime(.init(store: AgnetaStore(root: root.appending(path: "agneta", directoryHint: .isDirectory)),
-                                                        engines: [goose, opencode], shellTool: BuiltTools.shell, engineLoopbackPorts: [modelPort])) { _ in
+                                                        shellTool: BuiltTools.shell, engineLoopbackPorts: [modelPort])) { _ in
                 Router.PairingAnswer(accounts: ["dev", "oc"], remember: true)
             }
-            // "dev" runs on Goose, "oc" on OpenCode, both against the same fake model.
-            await runtime.serve(account: "dev", label: "Dev", setup: AccountSetup(engine: "goose", provider: fake), runner: .brokered,
-                                kind: "openai-key", billing: "api-key", paused: false)
-            await runtime.serve(account: "oc", label: "Dev on OpenCode", setup: AccountSetup(engine: "opencode", provider: fake), runner: .brokered,
-                                kind: "openai-key", billing: "api-key", paused: false)
+            // "dev" runs on Goose, "oc" on OpenCode, both against the same fake OpenAI model: "oc" is filed as an Anthropic
+            // key only so its kind's default can be OpenCode while "dev"'s stays Goose.
+            await runtime.setCatalog(EngineCatalog(ready: [goose, opencode], defaults: ProviderEngines(selected: [.anthropicKey: "opencode"])))
+            await runtime.serve(account: "dev", label: "Dev", provider: fake, runner: .brokered, kind: .openAIKey, billing: "api-key", paused: false)
+            await runtime.serve(account: "oc", label: "Dev on OpenCode", provider: fake, runner: .brokered, kind: .anthropicKey, billing: "api-key", paused: false)
             let server = try WebSocketServer(port: port)
             try await server.start()
             let router = runtime.router

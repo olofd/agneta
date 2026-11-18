@@ -194,7 +194,7 @@ extension RouterIntegrationTests {
             try await app.pairAndInitialize("Counted")
             let session = try await app.newSession(cwd: try stack.workspace("Counted"), tools: "app-only", account: "oc")
             let result = try await app.prompt(session, "PAUSE 2500 hello") // longer than one 2 s read
-            let usage = result["_meta"]?["agneta/usage@1"]
+            let usage = result["_meta"]?["agneta/usage"]
             // The fake model reports 42 tokens in and 7 out for each call.
             #expect(usage?["modelCalls"]?.intValue == 1, "\(usage ?? .null)")
             #expect(usage?["inputTokens"]?.intValue == 42 && usage?["outputTokens"]?.intValue == 7, "\(usage ?? .null)")
@@ -223,17 +223,17 @@ extension ContainmentTests {
         printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\\n' "$id"
         while true; do sleep 0.05; done
         """)
-        let supervisor = EngineSupervisor(.init(engines: [probe], shellTool: BuiltTools.shell, root: root.appending(path: "agneta")),
-                                          accounts: ["a": AccountSetup(engine: "probe", provider: ProviderSetup(kind: .openAI, apiKey: "k"))])
+        let supervisor = EngineSupervisor(.init(shellTool: BuiltTools.shell, root: root.appending(path: "agneta")),
+                                          accounts: ["a": ProviderSetup(kind: .openAI, apiKey: "k")])
         let context = PolicyContext(userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [root.appending(path: "agneta")])
         let editing = try SessionPolicy.parse(["tools": "workspace"], cwd: workspace.path(percentEncoded: false), context: context)
         let reading = try SessionPolicy.parse(["tools": "read"], cwd: workspace.path(percentEncoded: false), context: context)
         func spec(_ policy: SessionPolicy) -> EngineSessionSpec { EngineSessionSpec(policy: policy, servers: [], instructions: nil) }
 
-        let first = try await supervisor.open(account: "a", policy: editing, mcpPorts: [], key: nil, session: spec(editing))
+        let first = try await supervisor.open(account: "a", engine: probe, policy: editing, mcpPorts: [], key: nil, session: spec(editing))
         let closing = Task { await supervisor.release(first) }
         try await Task.sleep(for: .milliseconds(50))
-        let loaded = try await supervisor.open(account: "a", policy: editing, mcpPorts: [], key: first.key, session: spec(editing))
+        let loaded = try await supervisor.open(account: "a", engine: probe, policy: editing, mcpPorts: [], key: first.key, session: spec(editing))
         #expect(kill(first.pid, 0) != 0, "a second engine started while the first was still on its home")
         #expect(loaded.pid != first.pid)
         await closing.value
@@ -243,7 +243,7 @@ extension ContainmentTests {
             try? await Task.sleep(for: .milliseconds(200))
             await supervisor.release(loaded)
         }
-        let again = try await supervisor.open(account: "a", policy: reading, mcpPorts: [], key: loaded.key, session: spec(reading))
+        let again = try await supervisor.open(account: "a", engine: probe, policy: reading, mcpPorts: [], key: loaded.key, session: spec(reading))
         #expect(again.pid != loaded.pid && kill(loaded.pid, 0) != 0)
         await helperDone.value
         await supervisor.stopAll()
@@ -273,8 +273,7 @@ extension RouterContractTests {
         let stack = try await Stack.start(port: 47635)
         defer { stack.stop() }
         let opencode = OpenCodeAdapter(executable: URL(filePath: "/usr/bin/false"))
-        await stack.engines.use(opencode, for: "brokered")
-        await stack.router.add(account: "brokered", label: "API", kind: "openai-key", billing: "api-key", engine: opencode)
+        await stack.router.setCatalog(EngineCatalog(ready: [opencode]))
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Modes")

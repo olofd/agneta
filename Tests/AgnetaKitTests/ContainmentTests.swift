@@ -96,11 +96,11 @@ final class Listener {
         exec cat > /dev/null
         """
         let probe = ProbeAdapter(script: script)
-        let supervisor = EngineSupervisor(.init(engines: [probe], shellTool: BuiltTools.shell, root: root.appending(path: "agneta")),
-                                          accounts: ["a": AccountSetup(engine: "probe", provider: ProviderSetup(kind: .openAI, apiKey: "k"))])
+        let supervisor = EngineSupervisor(.init(shellTool: BuiltTools.shell, root: root.appending(path: "agneta")),
+                                          accounts: ["a": ProviderSetup(kind: .openAI, apiKey: "k")])
         let context = PolicyContext(userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [root.appending(path: "agneta")])
         let policy = try SessionPolicy.parse(["tools": "workspace", "readable": [.string(path(readable))]], cwd: path(workspace), context: context)
-        let lease = try await supervisor.open(account: "a", policy: policy, mcpPorts: [mcp.port], key: nil,
+        let lease = try await supervisor.open(account: "a", engine: probe, policy: policy, mcpPorts: [mcp.port], key: nil,
                                               session: EngineSessionSpec(policy: policy, servers: [], instructions: nil))
         let results = try String(contentsOf: EngineHomes.home(root: root.appending(path: "agneta"), key: lease.key).appending(path: "results.txt"), encoding: .utf8)
         await supervisor.stopAll()

@@ -34,6 +34,8 @@ final class AppModel {
         var code: String
         var choices: [AccountRecord]
         var allowed: Set<String>
+        /// The engines the app may use (Advanced): every one to start with.
+        var engines: Set<String>
         /// What the app asks to do: the most built-in tools, and folders of the user's beyond its own workspace.
         var tools: SessionPolicy.Tools = .appOnly
         var folders: [URL] = []
@@ -65,7 +67,7 @@ final class AppModel {
     /// Set while Reset Agneta runs, and the failed step if it stopped.
     private(set) var resetting = false
     private(set) var resetProblem: String?
-    /// The database couldn't be opened (for example, written by a newer Agneta).
+    /// The database couldn't be opened (for example, made by another build of Agneta).
     private(set) var storeProblem: String?
     /// What an engine needs, downloading or failed, by engine: the panel and Settings show it with its progress.
     struct EngineDownload: Equatable {
@@ -165,15 +167,14 @@ final class AppModel {
     private var bundleFolder: URL { Bundle.main.bundleURL.appending(path: "Contents/MacOS", directoryHint: .isDirectory) }
     var gooseURL: URL { bundleFolder.appending(path: "goose-acp") }
     /// What an engine downloads before it can run, pinned by a lock the app carries, installed under Runtimes/:
-    /// - OpenCode (`opencode.lock`), most people never use and is over half Agneta's size;
+    /// - OpenCode (`opencode.lock`), which most people never use and is over half Agneta's size;
+    /// - Claude Code's adapter, claude-agent-acp (`runtimes.lock`);
     /// - Codex's runtime (`codex-runtime.lock`, written by a release build): Node and codex-acp, which only Codex needs.
     ///   A development build bundles them instead.
     struct Download {
         let installer: RuntimeInstaller
         let name: String, executable: String, title: String
         var asset: RuntimeInstaller.Asset? { try? installer.asset(name) }
-        /// Where the program is once installed.
-        func program(in runtimes: URL) -> URL? { asset.map { runtimes.appending(path: "\(name)/\($0.version)/\(executable)") } }
     }
 
     func download(for engine: String) -> Download? {
@@ -182,6 +183,8 @@ final class AppModel {
             return Bundle.main.url(forResource: "opencode", withExtension: "lock").map {
                 Download(installer: RuntimeInstaller(lockFile: $0, runtimes: store.runtimesFolder), name: "opencode", executable: "opencode", title: "OpenCode")
             }
+        case "claude-code":
+            return Download(installer: installer(), name: "claude-agent-acp", executable: "claude-agent-acp", title: "Claude Code's adapter")
         case "codex":
             guard !codexBundled else { return nil }
             return Bundle.main.url(forResource: "codex-runtime", withExtension: "lock").map {
@@ -191,28 +194,25 @@ final class AppModel {
         }
     }
 
-    /// Whether an engine must be downloaded before it can run.
-    func needsDownload(_ engine: String) -> Bool {
-        guard let download = download(for: engine), let program = download.program(in: store.runtimesFolder) else { return false }
-        return !FileManager.default.isExecutableFile(atPath: program.path(percentEncoded: false))
+    /// A downloaded engine's program, once it's installed and still what its pin says: checked once per launch and
+    /// after each download (RuntimeInstaller.verified), never trusted from the file being there.
+    private func verifiedProgram(_ engine: String) -> URL? {
+        if let known = verified[engine] { return known }
+        let program = download(for: engine).flatMap { $0.installer.verified($0.name, executable: $0.executable) }
+        verified[engine] = .some(program)
+        return program
     }
+    private var verified: [String: URL?] = [:]
 
-    var openCodeURL: URL? { download(for: "opencode")?.program(in: store.runtimesFolder) }
-
-    /// Node and codex-acp inside the bundle (a development build), else where Codex's runtime is downloaded to.
+    /// Node and codex-acp inside the bundle (a development build).
     private var codexBundled: Bool { FileManager.default.isExecutableFile(atPath: bundleFolder.appending(path: "node").path(percentEncoded: false)) }
+    /// Node and codex-acp: bundled, or downloaded and checked.
     private var codexRuntime: (node: URL, script: URL)? {
         if codexBundled {
             return (bundleFolder.appending(path: "node"), Bundle.main.bundleURL.appending(path: "Contents/Resources/codex-acp/dist/index.js"))
         }
-        guard let node = download(for: "codex")?.program(in: store.runtimesFolder) else { return nil }
+        guard let node = verifiedProgram("codex") else { return nil }
         return (node, node.deletingLastPathComponent().appending(path: "codex-acp/dist/index.js"))
-    }
-    /// The installed claude-agent-acp (downloaded on first use, version from the bundled runtimes.lock).
-    var claudeAdapterURL: URL? {
-        guard let data = try? Data(contentsOf: runtimeLock), let version = (try? JSONCoding.decode(data))?["claude-agent-acp"]?["version"]?.stringValue else { return nil }
-        let url = store.runtimesFolder.appending(path: "claude-agent-acp/\(version)/claude-agent-acp")
-        return FileManager.default.isExecutableFile(atPath: url.path(percentEncoded: false)) ? url : nil
     }
 
     /// The user's Claude Code and Codex installs, newest first. Looked up at launch and when Settings opens
@@ -225,7 +225,7 @@ final class AppModel {
             let found = await Self.lookUpInstalls()
             guard found.0 != claudeCodeInstalls || found.1 != codexInstalls else { return }
             (claudeCodeInstalls, codexInstalls) = found
-            for engine in availableEngines { await runtime?.register(engine) }
+            refreshCatalog()
         }
     }
 
@@ -248,78 +248,125 @@ final class AppModel {
         chosenCLI[name] = install.id
         try? database?.set(install.id, for: "cli.\(name)")
         log.log("cli-chosen", ["cli": .string(name), "version": install.version.map(JSONValue.string) ?? .null, "source": .string(install.source)])
-        _Concurrency.Task { for engine in availableEngines { await runtime?.register(engine) } }
+        refreshCatalog()
     }
 
-    /// The engines this Agneta can run now: its own, plus OpenCode once downloaded and Claude Code when the user has it.
-    var availableEngines: [any EngineAdapter] { engines(downloadable: false) }
+    // MARK: Engines
 
-    /// With `downloadable`, also the engines an account can be set to and that download then (OpenCode).
-    private func engines(downloadable: Bool) -> [any EngineAdapter] {
-        var engines: [any EngineAdapter] = [GooseAdapter(executable: gooseURL)]
-        if let openCodeURL, downloadable || !needsDownload("opencode") { engines.append(OpenCodeAdapter(executable: openCodeURL)) }
-        if let adapter = claudeAdapterURL, let cli = chosen("claude", from: claudeCodeInstalls) { engines.append(ClaudeCodeAdapter(executable: adapter, cli: cli)) }
-        if let (node, script) = codexRuntime, downloadable || FileManager.default.fileExists(atPath: script.path(percentEncoded: false)),
-           let cli = chosen("codex", from: codexInstalls) {
-            engines.append(CodexAdapter(node: node, script: script, cli: cli))
+    /// The engines this Agneta has and each provider's default: one snapshot, which the router, the supervisor and
+    /// every window read (EngineCatalog). Rebuilt by `refreshCatalog` whenever any of it changes.
+    private(set) var catalog = EngineCatalog()
+    /// The default engine the user chose per kind of provider (Settings → Engines).
+    private var defaults = ProviderEngines()
+    /// Catalogs on their way to the runtime, newest kept, delivered in order.
+    private var catalogSink: AsyncStream<EngineCatalog>.Continuation?
+
+    /// Builds the catalog from what's here and hands it to the runtime. A provider in use whose default engine isn't
+    /// here yet starts downloading it (not after a failed download: Try Again does that).
+    func refreshCatalog() {
+        catalog = makeCatalog()
+        catalogSink?.yield(catalog)
+        for kind in Set(accounts.map(\.kind)) {
+            if let engine = catalog.defaultEngine(for: kind), case .downloadable? = catalog.entries[engine]?.state {
+                downloadEngine(engine, reason: "default")
+            }
         }
-        return engines
     }
 
-    /// The one link between providers and engines: which engine each kind of provider runs on (ProviderEngines).
-    /// Accounts and apps name no engine; an account runs on its provider's.
-    private(set) var providerEngines = ProviderEngines()
-
-    /// Engines that can run now or download when needed: what a provider's selection is checked against.
-    private var availableEngineIDs: Set<String> { Set(engines(downloadable: true).map(\.id)) }
-
-    /// The engines that can serve a kind of provider here, most preferred first.
-    func engines(for kind: AccountKind) -> [any EngineAdapter] {
-        let all = engines(downloadable: true)
-        return ProviderEngines.supported(by: kind).compactMap { id in all.first { $0.id == id } }
+    private func makeCatalog() -> EngineCatalog {
+        if let sampleEngines { return EngineCatalog(ready: sampleEngines, defaults: defaults) }
+        var entries = [EngineCatalog.Entry(ready: GooseAdapter(executable: gooseURL))]
+        if let program = verifiedProgram("opencode") {
+            entries.append(.init(ready: OpenCodeAdapter(executable: program)))
+        } else if let state = downloadState("opencode") {
+            entries.append(.init(id: "opencode", name: "OpenCode", state: state))
+        }
+        // Claude Code and Codex are the user's own installs, each reached through an adapter Agneta brings.
+        if let cli = chosen("claude", from: claudeCodeInstalls) {
+            if let adapter = claudeAdapterURL {
+                entries.append(.init(ready: ClaudeCodeAdapter(executable: adapter, cli: cli)))
+            } else {
+                entries.append(.init(id: "claude-code", name: "Claude Code", state: downloadState("claude-code") ?? .unavailable("Its adapter isn't pinned in this build")))
+            }
+        } else {
+            entries.append(.init(id: "claude-code", name: "Claude Code", state: .unavailable("Install the Claude app or Claude Code")))
+        }
+        if let cli = chosen("codex", from: codexInstalls) {
+            if let (node, script) = codexRuntime {
+                entries.append(.init(ready: CodexAdapter(node: node, script: script, cli: cli)))
+            } else {
+                entries.append(.init(id: "codex", name: "Codex", state: downloadState("codex") ?? .unavailable("Its runtime isn't pinned in this build")))
+            }
+        } else {
+            entries.append(.init(id: "codex", name: "Codex", state: .unavailable("Install Codex \(CLILocator.codexMinimum) or later")))
+        }
+        return EngineCatalog(entries, defaults: defaults)
     }
 
-    /// The engine a kind of provider runs on: its selection, else its most preferred available one; nil when none can
-    /// (a ChatGPT plan without Codex installed).
-    func engine(for kind: AccountKind) -> String? { providerEngines.engine(for: kind, available: availableEngineIDs) }
+    /// A downloaded engine that isn't here: downloading, failed, or waiting until it's needed.
+    private func downloadState(_ engine: String) -> EngineCatalog.State? {
+        if let download = downloads[engine] {
+            if let problem = download.problem { return .failed(problem) }
+            return .downloading(received: download.received, total: download.total)
+        }
+        return download(for: engine)?.asset.map { .downloadable(size: $0.size.map(Int64.init)) }
+    }
 
-    /// The engine an account runs on: its provider's.
-    func engine(of account: AccountRecord) -> String? { engine(for: account.kind) }
+    /// Every engine, in Agneta's order (Goose first).
+    var allEngines: [EngineCatalog.Entry] {
+        Self.engineOrder.compactMap { catalog.entries[$0] } + catalog.entries.values.filter { !Self.engineOrder.contains($0.id) }.sorted { $0.id < $1.id }
+    }
+    static let engineOrder = ["goose", "opencode", "claude-code", "codex"]
 
-    /// An engine's name ("Codex"), also for one that isn't installed now.
+    /// The engines a kind of provider can run on here (now or after a download), most preferred first.
+    func engines(for kind: AccountKind) -> [EngineCatalog.Entry] {
+        ProviderEngines.supported(by: kind).compactMap { id in catalog.usable(id) ? catalog.entries[id] : nil }
+    }
+
+    /// A kind of provider's default engine; nil when none can run here (a ChatGPT plan without Codex).
+    func engine(for kind: AccountKind) -> String? { catalog.defaultEngine(for: kind) }
+
+    /// An engine's name ("Codex").
     func engineName(_ engine: String?) -> String {
         guard let engine else { return "no engine" }
-        return engines(downloadable: true).first { $0.id == engine }?.displayName ?? Self.engineNames[engine] ?? engine
+        return catalog.entries[engine]?.name ?? Self.engineNames[engine] ?? engine
     }
-    func engineName(of account: AccountRecord) -> String { engineName(engine(of: account)) }
     static let engineNames = ["goose": "Goose", "opencode": "OpenCode", "claude-code": "Claude Code", "codex": "Codex"]
 
-    /// An engine's label in a provider's picker: its name, marked when it's the one recommended for that provider, and
-    /// with what it downloads first.
-    func engineChoice(_ engine: any EngineAdapter, for kind: AccountKind) -> String {
+    /// An engine's label in a provider's default picker: its name, marked when it's the one recommended for that
+    /// provider, and with what it downloads first.
+    func engineChoice(_ engine: EngineCatalog.Entry, for kind: AccountKind) -> String {
         let notes = [ProviderEngines.supported(by: kind).first == engine.id ? "recommended" : nil, downloadNote(for: engine.id)].compactMap { $0 }
-        return notes.isEmpty ? engine.displayName : "\(engine.displayName) (\(notes.joined(separator: ", ")))"
+        return notes.isEmpty ? engine.name : "\(engine.name) (\(notes.joined(separator: ", ")))"
     }
 
-    /// What selecting this engine would download first, e.g. "downloads 108 MB"; nil when it's here already.
+    /// What using this engine would download first, e.g. "downloads 108 MB"; nil when it's here already.
     func downloadNote(for engine: String) -> String? {
-        guard needsDownload(engine), let asset = download(for: engine)?.asset else { return nil }
-        return asset.size.map { "downloads \(ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file))" } ?? "downloads first"
+        guard case .downloadable(let size)? = catalog.entries[engine]?.state else { return nil }
+        return size.map { "downloads \(ByteCountFormatter.string(fromByteCount: $0, countStyle: .file))" } ?? "downloads first"
     }
 
-    /// Selects the engine a kind of provider runs on. New tasks on its accounts run on it; running ones keep theirs.
-    /// One that isn't here yet downloads first, and the selection takes effect once it's installed.
-    func select(_ engine: String, for kind: AccountKind) {
-        guard ProviderEngines.supported(by: kind).contains(engine), availableEngineIDs.contains(engine) else { return }
-        if needsDownload(engine) {
-            downloadEngine(engine, reason: "selected") { [weak self] in self?.select(engine, for: kind) }
-            return
+    /// Whether an engine must be downloaded (or downloaded again) before it can run.
+    func needsDownload(_ engine: String) -> Bool {
+        switch catalog.entries[engine]?.state {
+        case .downloadable?, .failed?: true
+        default: false
         }
-        providerEngines.selected[kind] = engine
+    }
+
+    /// Sets a kind of provider's default engine. New tasks that don't ask for an engine run on it; running ones keep
+    /// theirs. One that isn't here yet starts downloading, and tasks hear it's downloading until it's done.
+    func select(_ engine: String, for kind: AccountKind) {
+        guard ProviderEngines.supported(by: kind).contains(engine), catalog.usable(engine) else { return }
+        defaults.selected[kind] = engine
         try? database?.set(engine, for: ProviderEngines.settingKey(kind))
         log.log("engine-selected", ["provider": .string(kind.rawValue), "engine": .string(engine)])
-        for account in accounts where account.kind == kind { _Concurrency.Task { await configure(account) } }
+        if case .failed? = catalog.entries[engine]?.state { downloadEngine(engine, reason: "selected") }
+        refreshCatalog()
     }
+
+    /// The installed claude-agent-acp, the version runtimes.lock pins.
+    var claudeAdapterURL: URL? { installer().installed("claude-agent-acp") }
 
     var shellToolURL: URL { bundleFolder.appending(path: "agneta-shell") }
     var runtimeLock: URL { Bundle.main.url(forResource: "runtimes", withExtension: "lock") ?? bundleFolder.appending(path: "runtimes.lock") }
@@ -336,10 +383,9 @@ final class AppModel {
         }
         log.log("start", ["version": .string(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"),
                           "development": .bool(isDevelopment), "isolated": .bool(isolated), "port": .int(Int64(port))])
-        // The engines are registered again once the user's chosen Claude Code and Codex are known.
         let runtime: AgnetaRuntime
         do {
-            runtime = try await AgnetaRuntime(.init(store: store, engines: availableEngines, shellTool: shellToolURL, appWorkspaces: appWorkspaces),
+            runtime = try await AgnetaRuntime(.init(store: store, shellTool: shellToolURL, appWorkspaces: appWorkspaces),
                                               log: log) { [weak self] request in await self?.askForApproval(request) }
         } catch let error as StoreError {
             storeProblem = error.description
@@ -358,10 +404,15 @@ final class AppModel {
         historyDays = await runtime.historyDays
         for name in ["claude", "codex"] { if let path = try? database.setting("cli.\(name)") { chosenCLI[name] = path } }
         for kind in AccountKind.allCases {
-            if let engine = try? database.setting(ProviderEngines.settingKey(kind)) { providerEngines.selected[kind] = engine }
+            if let engine = try? database.setting(ProviderEngines.settingKey(kind)) { defaults.selected[kind] = engine }
         }
         (claudeCodeInstalls, codexInstalls) = await Self.lookUpInstalls()
-        for engine in availableEngines { await runtime.register(engine) }
+        // Every catalog reaches this runtime in order, the newest kept.
+        let (catalogs, sink) = AsyncStream<EngineCatalog>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        catalogSink?.finish()
+        catalogSink = sink
+        _Concurrency.Task { for await catalog in catalogs { await runtime.setCatalog(catalog) } }
+        refreshCatalog()
         await runtime.observe { [weak self] event in _Concurrency.Task { @MainActor in self?.handle(event) } }
         reloadHistory()
         for account in accounts { await configure(account) }
@@ -451,7 +502,8 @@ final class AppModel {
         case .claude:
             let adapter = try? await installer().install("claude-agent-acp")
             guard current() else { return }
-            for engine in availableEngines { await runtime.register(engine) }
+            verified["claude-code"] = nil
+            refreshCatalog()
             provider = ProviderSetup(kind: .claudeCode, model: account.model,
                                      subscription: SubscriptionAccount(route: .claudeCode, home: home, adapter: adapter,
                                                                        claudeCode: chosen("claude", from: claudeCodeInstalls)?.path))
@@ -462,16 +514,14 @@ final class AppModel {
         case .openAIKey:
             provider = ProviderSetup(kind: .openAI, model: account.model, apiKey: keychain.get(account.id))
         }
-        // The provider's engine (ProviderEngines). One that isn't here yet (0.1.0 bundled OpenCode; a new pin; a reset data
-        // folder) downloads in the background: Agneta listens for apps meanwhile, and the panel shows the download.
-        let engine = engine(of: account) ?? ProviderEngines.supported(by: account.kind)[0]
-        if needsDownload(engine) { downloadEngine(engine, reason: "account") }
         guard current() else { return }
         for secret in provider.secrets { runtime.traces.mask.register(secret) }
-        // Claude Code and Codex run their own tools whatever the account; the router decides per session, since a task
-        // may ask for another engine its provider supports (Router.runner(account:engine:)).
-        await runtime.serve(account: account.id, label: account.label, setup: AccountSetup(engine: engine, provider: provider),
-                            runner: runner, kind: account.kind.rawValue, billing: billing, paused: account.paused)
+        // Claude Code and Codex run their own tools whatever the account; the router decides per session, since each
+        // task picks its engine (Router.runner(account:engine:)).
+        await runtime.serve(account: account.id, label: account.label, provider: provider, runner: runner, kind: account.kind,
+                            billing: billing, paused: account.paused)
+        // Its default engine downloads now if it isn't here.
+        refreshCatalog()
     }
 
     // MARK: Events from the router
@@ -522,6 +572,9 @@ final class AppModel {
             log.log("rate-limited", ["account": .string(account), "resetsAt": resetsAt.map { .string(TraceWriter.timestamp($0)) } ?? .null])
         case .usage(let id, _, let cost):
             if let index = tasks.firstIndex(where: { $0.id == id }), let cost { tasks[index].cost = cost }
+        case .engineWanted(let engine):
+            // A task asked for an engine that downloads first: it's told to try again shortly while this runs.
+            downloadEngine(engine, reason: "task")
         }
     }
 
@@ -541,10 +594,10 @@ final class AppModel {
 
     private func askForApproval(_ pairing: Router.PairingRequest) async -> Router.PairingAnswer? {
         await withCheckedContinuation { continuation in
-            // One account to start with: the user adds more deliberately.
+            // One provider to start with (the user adds more deliberately), and every engine: the app picks per task.
             let request = Approval(id: pairing.id, app: pairing.app, identifier: pairing.peer?.identifier, verified: pairing.code == nil,
                                    code: pairing.code ?? "", choices: accounts, allowed: Set(accounts.first { !$0.paused }.map { [$0.id] } ?? []),
-                                   tools: pairing.tools, folders: pairing.folders)
+                                   engines: Set(catalog.entries.keys), tools: pairing.tools, folders: pairing.folders)
             if approvals.add(id: pairing.id, request, answer: { continuation.resume(returning: $0) }) {
                 WindowPresenter.shared.showApproval(self, request: pairing.id)
             }
@@ -560,8 +613,18 @@ final class AppModel {
         guard let pending = approvals.current else { return }
         // In account order, so "the first allowed account" (the default for new sessions) is stable.
         let allowed = accounts.map(\.id).filter { pending.allowed.contains($0) }
-        let answer = remember.map { Router.PairingAnswer(accounts: allowed, remember: $0) }
+        let answer = remember.map { Router.PairingAnswer(accounts: allowed, engines: allowance(pending.engines), remember: $0) }
         settleApproval(pending.id, with: answer)
+    }
+
+    /// Every engine ticked is "all", which includes engines Agneta adds later; otherwise only those ticked.
+    func allowance(_ engines: Set<String>) -> EngineAllowance {
+        engines.isSuperset(of: catalog.entries.keys) ? .all : .only(engines)
+    }
+
+    /// The providers of `allowed` that can't run on any of these engines here, for the approval window and Apps to warn of.
+    func stranded(_ allowed: Set<String>, engines: Set<String>) -> [AccountRecord] {
+        accounts.filter { allowed.contains($0.id) && Access.engines(for: $0.kind, allowed: allowance(engines), catalog: catalog).isEmpty }
     }
 
     /// Answers a pairing request, shown or waiting; nil is Don't Allow. Answering one already answered does nothing.
@@ -573,36 +636,29 @@ final class AppModel {
         }
     }
 
-    /// Downloads, checks and installs what an engine needs in the background, then makes it available to the router
-    /// and supervisor and runs `done`. Downloads asked for meanwhile share this one (RuntimeInstaller).
-    private func downloadEngine(_ engine: String, reason: String, then done: (@MainActor () -> Void)? = nil) {
+    /// Downloads, checks and installs what an engine needs in the background; the catalog follows each step, so apps
+    /// and windows see it downloading, then ready (or failed). Downloads asked for meanwhile share this one.
+    private func downloadEngine(_ engine: String, reason: String) {
         guard let download = download(for: engine), let asset = download.asset else { return }
         // A download already going is joined (RuntimeInstaller shares it); one that failed starts again.
-        let joining = downloads[engine].map { $0.problem == nil } ?? false
-        if !joining {
-            downloads[engine] = EngineDownload(engine: engine, title: download.title, total: asset.size.map(Int64.init))
-            log.log("engine-download", ["engine": .string(engine), "version": .string(asset.version), "reason": .string(reason)])
-            sendProgress(engine, force: true)
-        }
+        guard downloads[engine].map({ $0.problem != nil }) ?? true else { return }
+        downloads[engine] = EngineDownload(engine: engine, title: download.title, total: asset.size.map(Int64.init))
+        log.log("engine-download", ["engine": .string(engine), "version": .string(asset.version), "reason": .string(reason)])
+        refreshCatalog()
         let started = Date()
         _Concurrency.Task {
             do {
                 _ = try await download.installer.install(download.name, executable: download.executable, received: { received, total in
                     _Concurrency.Task { @MainActor [weak self] in self?.progressed(engine, received: received, total: total) }
                 })
-                if downloads[engine] != nil {
-                    log.log("engine-downloaded", ["engine": .string(engine), "seconds": .int(Int64(Date().timeIntervalSince(started)))])
-                    downloads[engine] = nil
-                    await runtime?.setDownloading(engine, progress: nil)
-                }
-                for adapter in availableEngines { await runtime?.register(adapter) }
-                done?()
+                log.log("engine-downloaded", ["engine": .string(engine), "seconds": .int(Int64(Date().timeIntervalSince(started)))])
+                downloads[engine] = nil
+                verified[engine] = nil
             } catch {
-                guard downloads[engine]?.problem == nil else { return }
                 log.error("engine-download-failed", ["engine": .string(engine), "reason": .string("\(error)")])
                 downloads[engine]?.problem = "\(download.title) couldn't be downloaded: \(error.localizedDescription)"
-                await runtime?.setDownloading(engine, progress: nil)
             }
+            refreshCatalog()
         }
     }
 
@@ -611,7 +667,15 @@ final class AppModel {
         downloadEngine(engine, reason: "retry")
     }
 
-    /// Bytes arriving: the panel and Settings follow in steps of half a percent, so drawing keeps up.
+    /// Puts a failed download away (its card's close button); the engine downloads again when it's next needed.
+    func dismissDownload(_ engine: String) {
+        guard downloads[engine]?.problem != nil else { return }
+        downloads[engine] = nil
+        refreshCatalog()
+    }
+
+    /// Bytes arriving: the panel and Settings follow in steps of half a percent, apps (through the catalog) twice a
+    /// second at most.
     private func progressed(_ engine: String, received: Int64, total: Int64?) {
         guard var state = downloads[engine], state.problem == nil else { return }
         let step = max((total ?? state.total ?? 0) / 200, 256 * 1024)
@@ -619,15 +683,23 @@ final class AppModel {
         state.received = received
         if let total { state.total = total }
         downloads[engine] = state
-        sendProgress(engine)
+        guard Date().timeIntervalSince(progressSent[engine] ?? .distantPast) > 0.5 else { return }
+        progressSent[engine] = Date()
+        refreshCatalog()
     }
 
-    /// Tells the router how far along a download is, so apps asking meanwhile hear it; twice a second at most.
-    private func sendProgress(_ engine: String, force: Bool = false) {
-        guard let state = downloads[engine], force || Date().timeIntervalSince(progressSent[engine] ?? .distantPast) > 0.5 else { return }
-        progressSent[engine] = Date()
-        let progress: JSONValue = ["received": .int(state.received), "total": state.total.map { .int($0) } ?? .null]
-        _Concurrency.Task { await runtime?.setDownloading(engine, progress: progress) }
+    /// Changes which providers and engines an app may use (Settings → Apps). Its sessions that no longer fit stop.
+    func setAccess(_ grant: Router.Grant, accounts allowed: Set<String>, engines: Set<String>) {
+        guard let runtime, !allowed.isEmpty else { return }
+        let accountIDs = accounts.map(\.id).filter(allowed.contains), allowance = allowance(engines)
+        log.log("app-access", ["grant": .string(grant.id), "accounts": .int(Int64(accountIDs.count)),
+                               "engines": allowance == .all ? "all" : .int(Int64(engines.count))])
+        let log = log
+        _Concurrency.Task {
+            do { try await runtime.setAccess(grant: grant.id, accounts: accountIDs, engines: allowance) } catch {
+                log.error("app-access-not-saved", ["grant": .string(grant.id), "reason": .string("\(error)")])
+            }
+        }
     }
 
     func removeAccess(_ grantID: String) {
@@ -878,7 +950,7 @@ final class AppModel {
         server = nil
         await runtime?.shutdown()
         runtime = nil
-        accounts = []; grants = [:]; tasks = []; history = []; needsSignIn = []
+        accounts = []; grants = [:]; tasks = []; history = []; needsSignIn = []; downloads = [:]; verified = [:]
         approvals.refuseAll()
         WindowPresenter.shared.closeApproval()
         abandonSignIn()
@@ -928,16 +1000,37 @@ final class AppModel {
     }
 
     /// Codex keeps each ChatGPT account's sign-in in the login Keychain, keyed by the account's CODEX_HOME. Its own
-    /// logout removes it (and an auth.json from before keyring mode).
+    /// logout removes it.
     private func signOutOfCodex(homes: [URL]) async {
         let codexHomes = homes.map(CodexAdapter.codexHome(account:)).filter { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
-        guard !codexHomes.isEmpty, let cli = chosen("codex", from: codexInstalls) else { return }
+        guard !codexHomes.isEmpty else { return }
+        // Codex's own logout removes its Keychain entry; without a Codex install it can't run, and the entry stays.
+        guard let cli = chosen("codex", from: codexInstalls) else {
+            log.error("codex-sign-out-skipped", ["accounts": .int(Int64(codexHomes.count)), "reason": "no supported Codex install"])
+            return
+        }
         for home in codexHomes { await CodexSignIn(cli: cli.path, codexHome: home).signOut() }
     }
 
     /// Every account folder on disk (Reset, including one resumed after an interruption).
     private var accountHomes: [URL] {
         ((try? FileManager.default.contentsOfDirectory(at: store.accountsFolder, includingPropertiesForKeys: nil)) ?? []).filter(\.hasDirectoryPath)
+    }
+
+    /// Asks before Reset Agneta: Cancel is the default, resetting takes a deliberate click.
+    func confirmReset() {
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "Reset Agneta?"
+        alert.informativeText = """
+            Running tasks stop. Agneta deletes, on this Mac: your providers' sign-ins and API keys, every app's access, task history, logs, downloaded components and preferences.
+
+            It doesn't cancel subscriptions or delete anything your AI providers keep. Apps will ask to connect again.
+            """
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Reset Agneta")
+        alert.buttons.last?.hasDestructiveAction = true
+        if alert.runModal() == .alertSecondButtonReturn { _Concurrency.Task { await resetAgneta() } }
     }
 
     func retryReset() {
@@ -949,7 +1042,7 @@ final class AppModel {
     var status: String {
         if resetting { return "Resetting…" }
         if resetProblem != nil { return "Reset didn't finish" }
-        if storeProblem != nil { return "Agneta needs an update" }
+        if storeProblem != nil { return "Agneta needs a reset" }
         if let problem = serverProblem { return problem.isEmpty ? "Something needs you" : "Apps can't connect" }
         if let first = accounts.first(where: { needsSignIn.contains($0.id) }) { return "\(first.label) needs you" }
         let running = tasks.filter(\.running).count
@@ -972,8 +1065,9 @@ final class AppModel {
             return ("Reset didn't finish", problem, "Try Again", { self.retryReset() })
         }
         if let problem = storeProblem {
-            return ("Agneta needs an update", "\(problem) Install the latest Agneta; your data is kept as it is.", "Show Data",
-                    { NSWorkspace.shared.activateFileViewerSelecting([self.store.databaseFile]) })
+            // Before 1.0 no build reads another's data: Reset starts fresh.
+            return ("Agneta needs a reset", "\(problem) Reset Agneta to start fresh; you'll connect your providers and allow your apps again.", "Reset…",
+                    { self.confirmReset() })
         }
         if let problem = serverProblem {
             return ("Apps can't connect", problem, "Settings", { WindowPresenter.shared.showSettings(self, section: .general) })
@@ -994,7 +1088,15 @@ final class AppModel {
     // MARK: Developer
 
     /// Sample data for design snapshots (AGNETA_SHOWCASE).
+    /// The showcase's engines: every one, as if installed, so the engine pickers can be reviewed. Nil in use.
+    private var sampleEngines: [any EngineAdapter]?
+
     func loadSample() {
+        let none = URL(filePath: "/usr/bin/false")
+        sampleEngines = [GooseAdapter(executable: none), OpenCodeAdapter(executable: none),
+                         ClaudeCodeAdapter(executable: none, cli: InstalledCLI(path: none, version: "2.1.0", source: "path")),
+                         CodexAdapter(node: none, script: none, cli: InstalledCLI(path: none, version: "0.166.0", source: "path"))]
+        catalog = makeCatalog()
         accounts = [AccountRecord(id: "a", kind: .claude, label: "Claude", email: "work@example.com"),
                     AccountRecord(id: "b", kind: .chatGPT, label: "ChatGPT", email: "me@example.com"),
                     AccountRecord(id: "c", kind: .openAIKey, label: "OpenAI API")]
@@ -1006,7 +1108,7 @@ final class AppModel {
                                              problem: "Codex's runtime couldn't be downloaded: The Internet connection appears to be offline.")]
         let sample = UUID()
         _ = approvals.add(id: sample, Approval(id: sample, app: "Example App", identifier: "com.example.app", verified: true, code: "123456",
-                                               choices: accounts, allowed: ["a", "c"], tools: .workspace,
+                                               choices: accounts, allowed: ["a", "c"], engines: Set(catalog.entries.keys), tools: .workspace,
                                                folders: [FileManager.default.homeDirectoryForCurrentUser.appending(path: "Documents/Example Project")]),
                           answer: { _ in })
         signIn = SignIn(kind: .claude, text: "When Claude shows you a code, paste it here.", page: URL(string: "https://claude.com"), needsCode: true)

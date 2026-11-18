@@ -73,7 +73,7 @@ final class WindowPresenter {
         windows["approval"]?.level = .floating
     }
     func closeApproval() { close("approval") }
-    func showSettings(_ model: AppModel, section: SettingsView.Pane = .accounts) {
+    func showSettings(_ model: AppModel, section: SettingsView.Pane = .providers) {
         model.refreshInstalls()
         close("settings")
         show("settings", title: "Agneta Settings", size: NSSize(width: 780, height: 540), glass: false, resizable: true) { SettingsView(model: model, section: section) }
@@ -315,6 +315,7 @@ struct ApprovalScope: View {
 
 struct ApprovalView: View {
     @Bindable var model: AppModel
+    @State private var showsAdvanced = false
 
     var body: some View {
         if let approval = model.approval {
@@ -337,7 +338,7 @@ struct ApprovalView: View {
                                     ProviderIcon(kind: account.kind, size: 28)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(account.label).font(.system(size: 13, weight: .semibold))
-                                        Text("\(account.kind.plan) · \(model.engineName(of: account))").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                        Text(account.kind.plan).font(.system(size: 11.5)).foregroundStyle(.secondary)
                                     }
                                     Spacer()
                                     Image(systemName: on ? "checkmark.circle.fill" : "circle").font(.system(size: 18))
@@ -353,6 +354,24 @@ struct ApprovalView: View {
                     .padding(5)
                     .frostedCard(cornerRadius: 18)
                     .padding(.horizontal, 28)
+
+                    // Which engines the app may pick from: all of them, unless someone who knows wants otherwise. A
+                    // popover, so the dialog keeps its size.
+                    HStack(spacing: 6) {
+                        Button("Advanced…") { showsAdvanced = true }
+                            .buttonStyle(.link)
+                            .popover(isPresented: $showsAdvanced, arrowEdge: .bottom) {
+                                EngineAccessList(model: model, allowed: approval.allowed,
+                                                 engines: Binding(get: { model.approval?.engines ?? [] }, set: { model.approval?.engines = $0 }))
+                                    .padding(16).frame(width: 320)
+                            }
+                        if model.allowance(approval.engines) != .all {
+                            Text(approval.engines.count == 1 ? "1 engine" : "\(approval.engines.count) engines").foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 32)
 
                     ApprovalScope(app: approval.app, tools: approval.tools, folders: approval.folders)
                         .padding(.horizontal, 32)
@@ -377,16 +396,96 @@ struct ApprovalView: View {
                     Button { model.answerApproval(remember: nil) } label: { Text("Don't Allow").frame(maxWidth: .infinity) }
                         .glassButton().keyboardShortcut(.cancelAction)
                     // Once: for this connection only, nothing kept. Return chooses it, and only for a verified app.
+                    // Nothing to allow while no ticked provider can run on a ticked engine.
+                    let nothing = approval.allowed.isEmpty || model.stranded(approval.allowed, engines: approval.engines).count == approval.allowed.count
                     Button { model.answerApproval(remember: false) } label: { Text("Allow Once").frame(maxWidth: .infinity) }
                         .glassButton()
                         .defaultAction(when: approval.verified)
-                        .disabled(approval.allowed.isEmpty)
+                        .disabled(nothing)
                     Button { model.answerApproval(remember: true) } label: { Text("Always Allow").frame(maxWidth: .infinity) }
                         .glassButton(prominent: true).tint(Palette.accent)
-                        .disabled(approval.allowed.isEmpty)
+                        .disabled(nothing)
                 }
                 .controlSize(.large)
             }
+        }
+    }
+}
+
+/// The engines an app may use, ticked (Advanced, in the approval window and Settings → Apps). The app picks one per
+/// task among these and what its provider supports; a provider left with none is pointed out.
+struct EngineAccessList: View {
+    var model: AppModel
+    /// The providers the app may use, for the warning.
+    var allowed: Set<String>
+    @Binding var engines: Set<String>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("The app chooses an engine for each task from the ones ticked here.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+            ForEach(model.allEngines, id: \.id) { engine in
+                Toggle(isOn: Binding(get: { engines.contains(engine.id) }, set: { on in
+                    if on { engines.insert(engine.id) } else { engines.remove(engine.id) }
+                })) {
+                    HStack(spacing: 6) {
+                        Text(engine.name).font(.system(size: 12.5))
+                        if let note = Self.note(engine, model) { Text(note).font(.system(size: 11)).foregroundStyle(.tertiary) }
+                    }
+                }
+                .toggleStyle(.checkbox)
+            }
+            ForEach(model.stranded(allowed, engines: engines)) { account in
+                Label("\(account.label) can't run on any engine ticked here", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11.5)).foregroundStyle(Palette.attention)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    static func note(_ engine: EngineCatalog.Entry, _ model: AppModel) -> String? {
+        switch engine.state {
+        case .ready: nil
+        case .downloading: "downloading"
+        case .downloadable: model.downloadNote(for: engine.id)
+        case .failed: "download failed"
+        case .unavailable(let reason): reason
+        }
+    }
+}
+
+/// What one app may use, changed in place (Settings → Apps): its providers, and its engines under Advanced.
+struct AppAccess: View {
+    var model: AppModel
+    var grant: Router.Grant
+
+    private var accounts: Set<String> { Set(grant.accounts) }
+    private var engines: Set<String> {
+        switch grant.engines {
+        case .all: Set(model.catalog.entries.keys)
+        case .only(let some): some
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(model.accounts) { account in
+                Toggle(isOn: Binding(get: { accounts.contains(account.id) }, set: { on in
+                    var changed = accounts
+                    if on { changed.insert(account.id) } else { changed.remove(account.id) }
+                    model.setAccess(grant, accounts: changed, engines: engines)
+                })) {
+                    Text(account.label).font(.system(size: 12.5))
+                }
+                .toggleStyle(.checkbox)
+                // An app keeps at least one provider: Remove Access takes them all.
+                .disabled(accounts == [account.id])
+            }
+            DisclosureGroup("Advanced") {
+                EngineAccessList(model: model, allowed: accounts,
+                                 engines: Binding(get: { engines }, set: { model.setAccess(grant, accounts: accounts, engines: $0) }))
+                    .padding(.top, 4)
+            }
+            .font(.system(size: 12))
         }
     }
 }
@@ -401,12 +500,12 @@ struct SettingsView: View {
     ]
 
     enum Pane: String, CaseIterable, Identifiable {
-        case general = "General", accounts = "Accounts", engines = "Engines", apps = "Apps", activity = "Activity", privacy = "Privacy", advanced = "Advanced", about = "About"
+        case general = "General", providers = "Providers", engines = "Engines", apps = "Apps", activity = "Activity", privacy = "Privacy", advanced = "Advanced", about = "About"
         var id: String { rawValue }
         var symbol: String {
             switch self {
             case .general: "gearshape"
-            case .accounts: "person.crop.circle"
+            case .providers: "person.crop.circle"
             case .engines: "cpu"
             case .apps: "square.grid.2x2"
             case .activity: "clock"
@@ -434,7 +533,7 @@ struct SettingsView: View {
             Form {
                 switch section {
                 case .general: general
-                case .accounts: accountsPane
+                case .providers: providersPane
                 case .engines: enginesPane
                 case .apps: appsPane
                 case .activity: activityPane
@@ -477,7 +576,8 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder private var accountsPane: some View {
+    /// The user's providers: each plan they signed in to and each API key, one account each.
+    @ViewBuilder private var providersPane: some View {
         Section {
             ForEach(model.accounts) { account in
                 HStack(spacing: 12) {
@@ -486,15 +586,16 @@ struct SettingsView: View {
                         Text(account.label).font(.system(size: 13, weight: .semibold))
                         Text([account.kind.plan, account.email].compactMap { $0 }.joined(separator: " · "))
                             .font(.system(size: 12)).foregroundStyle(.secondary)
-                        if let engine = model.engine(of: account), let download = model.downloads[engine] {
+                        if let engine = model.engine(for: account.kind), let download = model.downloads[engine] {
                             DownloadStatus(download: download) { model.retryDownload(download.engine) }.padding(.top, 3)
                         }
                     }
                     Spacer()
                     if account.paused { StatusPill(text: "Paused", color: .secondary) }
-                    // Its provider's engine (Settings → Engines), for reference.
-                    Text(model.engineName(of: account)).font(.system(size: 12)).foregroundStyle(.secondary)
-                        .help("Tasks on \(account.kind.plan.lowercased())s run on \(model.engineName(of: account)) unless they ask for another; change it in Engines")
+                    // Its provider's default engine (Settings → Engines), for reference.
+                    let engine = model.engineName(model.engine(for: account.kind))
+                    Text(engine).font(.system(size: 12)).foregroundStyle(.secondary)
+                        .help("Tasks run on \(engine) unless the app picks another; the default is set in Engines")
                     Menu {
                         Button("Rename…") { askRename(account) }
                         Button(account.paused ? "Resume" : "Pause") { model.setPaused(account, !account.paused) }
@@ -509,11 +610,13 @@ struct SettingsView: View {
                 }
                 .padding(.vertical, 3)
             }
-            if model.accounts.isEmpty { Text("No accounts yet.").foregroundStyle(.secondary) }
+            if model.accounts.isEmpty { Text("No providers yet.").foregroundStyle(.secondary) }
+        } header: {
+            Text("Connected")
         } footer: {
             HStack {
                 Spacer()
-                Menu("Add Account") {
+                Menu("Add Provider") {
                     Button("ChatGPT…") { model.startSignIn(.chatGPT) }
                     Button("Claude…") { model.startSignIn(.claude) }
                 }
@@ -537,7 +640,7 @@ struct SettingsView: View {
             }
             if let keyError { Text(keyError).foregroundStyle(Palette.attention) }
         } header: {
-            Text("API key")
+            Text("Add an API key")
         } footer: {
             Text("Pay as you go on your provider account. Keys stay in your Keychain and reach Agneta's engine only while a task runs.")
         }
@@ -581,8 +684,8 @@ struct SettingsView: View {
         if alert.runModal() == .alertSecondButtonReturn { model.signOut(account) }
     }
 
-    /// Engines and providers, the one link between them (ProviderEngines): which engine each kind of provider runs on,
-    /// and what each engine is, where it comes from and whom it serves.
+    /// Engines: each kind of provider's default (tasks that don't pick an engine run on it), and what each engine is,
+    /// where it comes from and which providers it can serve (ProviderEngines).
     @ViewBuilder private var enginesPane: some View {
         Section {
             ForEach(AccountKind.allCases, id: \.self) { kind in
@@ -591,7 +694,6 @@ struct SettingsView: View {
                     Picker(Self.providerName(kind), selection: Binding(get: { model.engine(for: kind) ?? "" }, set: { model.select($0, for: kind) })) {
                         ForEach(options, id: \.id) { engine in Text(model.engineChoice(engine, for: kind)).tag(engine.id) }
                     }
-                    .disabled(downloading(any: options.map(\.id)))
                 } else {
                     LabeledContent(Self.providerName(kind)) {
                         Text(model.engine(for: kind).map { model.engineName($0) } ?? (kind == .chatGPT ? "Needs Codex" : "Needs Claude Code")).foregroundStyle(.secondary)
@@ -599,9 +701,9 @@ struct SettingsView: View {
                 }
             }
         } header: {
-            Text("Which engine each provider uses")
+            Text("Default engine for each provider")
         } footer: {
-            Text("A task runs on its provider's engine here, unless the app asks for another that provider supports. A ChatGPT plan works only with Codex; a Claude plan with Claude Code, or Goose running that Claude Code.")
+            Text("Apps choose the engine for each task; these are used when they don't. A ChatGPT plan works only with Codex; a Claude plan with Claude Code, or Goose running that Claude Code.")
         }
         Section {
             engineRow("goose", detail: "Built in · \(lockedVersion("goose"))")
@@ -619,11 +721,6 @@ struct SettingsView: View {
         }
     }
 
-    /// Whether one of these engines is downloading: a provider's picker waits for it.
-    private func downloading(any engines: [String]) -> Bool {
-        model.downloads.values.contains { download in download.problem == nil && engines.contains(download.engine) }
-    }
-
     /// One engine: its name, where it comes from, which providers it serves, its download if one is going, and any
     /// extra controls (the install it uses).
     @ViewBuilder private func engineRow(_ id: String, detail: String, @ViewBuilder extra: () -> some View = { EmptyView() }) -> some View {
@@ -634,6 +731,8 @@ struct SettingsView: View {
                 .font(.system(size: 11)).foregroundStyle(.tertiary)
             if let download = model.downloads[id] {
                 DownloadStatus(download: download) { model.retryDownload(id) }.padding(.top, 3)
+            } else if case .unavailable(let reason)? = model.catalog.entries[id]?.state {
+                Text(reason).font(.system(size: 11.5)).foregroundStyle(Palette.attention)
             }
         }
         .padding(.vertical, 2)
@@ -666,9 +765,12 @@ struct SettingsView: View {
                     Button("Remove Access") { model.removeAccess(grant.id) }
                 }
                 .padding(.vertical, 3)
+                AppAccess(model: model, grant: grant).padding(.leading, 44)
             }
         } header: {
             Text("Apps that can use Agneta")
+        } footer: {
+            Text("An app may use the providers ticked for it, and chooses an engine for each task from those under Advanced.")
         }
     }
 
@@ -824,21 +926,7 @@ struct SettingsView: View {
         if alert.runModal() == .alertSecondButtonReturn { model.clearHistory() }
     }
 
-    private func confirmReset() {
-        let alert = NSAlert()
-        alert.alertStyle = .critical
-        alert.messageText = "Reset Agneta?"
-        alert.informativeText = """
-            Running tasks stop. Agneta deletes, on this Mac: your account sign-ins and API keys, every app's access, task history, logs, downloaded components and preferences.
-
-            It doesn't cancel subscriptions or delete anything your AI providers keep. Apps will ask to connect again.
-            """
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Reset Agneta")
-        alert.buttons.last?.hasDestructiveAction = true
-        // Cancel is the default (Return); resetting takes a deliberate click.
-        if alert.runModal() == .alertSecondButtonReturn { Task { await model.resetAgneta() } }
-    }
+    private func confirmReset() { model.confirmReset() }
 
     /// A version from a bundled lock file (`goose.lock`: top-level `version`; `runtimes.lock`: per runtime).
     private func lockedVersion(_ file: String, runtime: String? = nil) -> String {

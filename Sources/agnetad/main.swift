@@ -33,17 +33,19 @@ let workspaces = root.deletingLastPathComponent().appending(path: root.lastPathC
 let shellTool = URL(filePath: CommandLine.arguments[0]).deletingLastPathComponent().appending(path: "agneta-shell")
 let modelPorts = env["OPENAI_BASE_URL"].flatMap { URL(string: $0)?.port }.map { [$0] } ?? []
 // --env GOOSE_PROVIDER=openai|anthropic, GOOSE_MODEL, OPENAI_API_KEY / ANTHROPIC_API_KEY, OPENAI_BASE_URL.
-let provider = ProviderSetup(kind: env["GOOSE_PROVIDER"] == "anthropic" ? .anthropic : .openAI, model: env["GOOSE_MODEL"],
+let anthropic = env["GOOSE_PROVIDER"] == "anthropic"
+let provider = ProviderSetup(kind: anthropic ? .anthropic : .openAI, model: env["GOOSE_MODEL"],
                              apiKey: env["OPENAI_API_KEY"] ?? env["ANTHROPIC_API_KEY"], baseURL: env["OPENAI_BASE_URL"])
-let engine = GooseAdapter(executable: URL(filePath: goose))
-let runtime = try await AgnetaRuntime(.init(store: AgnetaStore(root: root), engines: [engine], shellTool: shellTool,
+let runtime = try await AgnetaRuntime(.init(store: AgnetaStore(root: root), shellTool: shellTool,
                                            appWorkspaces: workspaces, engineLoopbackPorts: modelPorts)) { request in
     let who = request.peer.map { "\($0.identifier ?? "unsigned") team \($0.team ?? "none") valid \($0.valid) pid \($0.pid)" } ?? "unidentified"
     log("pairing request from \(request.app) [\(who)]\(request.code.map { ", code \($0)" } ?? ""): approved for dev")
     return Router.PairingAnswer(accounts: ["dev"], remember: true)
 }
-await runtime.serve(account: "dev", label: "Development account", setup: AccountSetup(engine: "goose", provider: provider), runner: .brokered,
-                    kind: nil, billing: "unknown", paused: false)
+// Goose only: the development host has no other engines.
+await runtime.setCatalog(EngineCatalog(ready: [GooseAdapter(executable: URL(filePath: goose))]))
+await runtime.serve(account: "dev", label: "Development account", provider: provider, runner: .brokered,
+                    kind: anthropic ? .anthropicKey : .openAIKey, billing: "api-key", paused: false)
 await runtime.observe { event in
     if case .router(.sessionEnded(let id, let ending)) = event { log("task \(id) ended: \(ending.rawValue)") }
 }

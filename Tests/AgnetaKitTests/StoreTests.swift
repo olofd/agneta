@@ -22,7 +22,8 @@ private func temporaryFolder() throws -> URL {
         account.paused = true
         try database.save(account)
         let grant = Router.Grant(app: "Example App", identifier: "com.example.app", team: "TEAM1", verified: true, accounts: ["a1"],
-                                 tools: .read, folders: ["/tmp/project"])
+                                 engines: .only(["goose", "codex"]), tools: .read, folders: ["/tmp/project"])
+        try database.save(Router.Grant(app: "Another App", accounts: ["a1"]), tokenHash: "hash2")
         try database.save(grant, tokenHash: "hash1")
 
         let reopened = try AgnetaDatabase(file: database.file)
@@ -30,7 +31,10 @@ private func temporaryFolder() throws -> URL {
         #expect(try reopened.accounts().first?.paused == true)
         let read = try #require(try reopened.grants()["hash1"])
         #expect(read.accounts == ["a1"] && read.team == "TEAM1" && read.tools == .read && read.folders == ["/tmp/project"] && read.remembered)
+        #expect(read.engines == .only(["goose", "codex"]))
+        #expect(try reopened.grants()["hash2"]?.engines == .all)
         try reopened.deleteGrant(id: grant.id)
+        try reopened.deleteGrant(id: try #require(try reopened.grants()["hash2"]).id)
         try reopened.deleteAccount("a1")
         #expect(try reopened.grants().isEmpty)
         #expect(try reopened.accounts().isEmpty)
@@ -78,48 +82,20 @@ private func temporaryFolder() throws -> URL {
         #expect(try database.history().isEmpty)
     }
 
-    @Test func importsTheJSONStoreOnce() throws {
-        let folder = try temporaryFolder()
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let legacy = folder.appending(path: "agneta.json")
-        try Data("""
-            {"accounts":[{"id":"chatgpt","kind":"chatgpt","label":"ChatGPT","created":"2026-11-17T10:00:00Z"}],
-             "grants":{"h1":{"id":"g1","app":"Example App","verified":false,"accounts":["chatgpt"],"created":"2026-11-17T10:01:00Z"}}}
-            """.utf8).write(to: legacy)
-        let database = try AgnetaDatabase(file: folder.appending(path: "agneta.sqlite"), importing: legacy)
-        #expect(try database.accounts().map(\.id) == ["chatgpt"])
-        #expect(try database.grants()["h1"]?.id == "g1")
-        #expect(!FileManager.default.fileExists(atPath: legacy.path(percentEncoded: false)))
-        #expect(FileManager.default.fileExists(atPath: folder.appending(path: "agneta.json.imported").path(percentEncoded: false)))
-    }
-
-    @Test func refusesADatabaseFromANewerAgneta() throws {
+    /// Before 1.0 there are no migrations: a database made with another schema (an earlier build's, a later one's) is
+    /// refused and left exactly as it was, so the user resets.
+    @Test func refusesADatabaseFromAnotherSchema() throws {
         let folder = try temporaryFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
         let file = folder.appending(path: "agneta.sqlite")
         try AgnetaDatabase(file: file).close()
         let queue = try DatabaseQueue(path: file.path(percentEncoded: false))
-        try queue.write { try $0.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES ('v99')") }
+        try queue.write { try $0.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES ('v5')") }
         try queue.close()
 
-        #expect(throws: StoreError.newerVersion(file: "agneta.sqlite")) { try AgnetaDatabase(file: file) }
-        // Untouched: the newer migration is still recorded.
+        #expect(throws: StoreError.otherSchema(file: "agneta.sqlite")) { try AgnetaDatabase(file: file) }
         let check = try DatabaseQueue(path: file.path(percentEncoded: false))
-        #expect(try check.read { try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations") }.contains("v99"))
-    }
-
-    @Test func backsUpBeforeMigrating() throws {
-        let folder = try temporaryFolder()
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let file = folder.appending(path: "agneta.sqlite")
-        // An empty database from before any migration: opening it migrates, so a backup comes first.
-        try DatabaseQueue(path: file.path(percentEncoded: false)).close()
-        _ = try AgnetaDatabase(file: file)
-        #expect(FileManager.default.fileExists(atPath: folder.appending(path: "agneta.sqlite.before-empty").path(percentEncoded: false)))
-        // Already current: no new backup.
-        try FileManager.default.removeItem(at: folder.appending(path: "agneta.sqlite.before-empty"))
-        _ = try AgnetaDatabase(file: file)
-        #expect(!FileManager.default.fileExists(atPath: folder.appending(path: "agneta.sqlite.before-empty").path(percentEncoded: false)))
+        #expect(try check.read { try String.fetchAll($0, sql: "SELECT identifier FROM grdb_migrations") }.contains("v5"))
     }
 }
 

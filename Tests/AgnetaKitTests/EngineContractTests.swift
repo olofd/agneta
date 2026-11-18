@@ -126,8 +126,8 @@ extension RouterContractTests {
         func answer(_ label: String) async -> String? { await stack.engines.permissionAnswers[label]?["outcome"]?["optionId"]?.stringValue }
 
         let codex = CodexAdapter(node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: EngineContractTests.cli)
-        await stack.engines.use(codex, for: "native")
-        await stack.router.add(account: "native", label: "ChatGPT", runner: .native, kind: "chatgpt", billing: "subscription", engine: codex)
+        await stack.router.add(account: "native", label: "ChatGPT", runner: .native, kind: .chatGPT, billing: "subscription")
+        await stack.router.setCatalog(EngineCatalog(ready: [codex]))
         let onCodex = try await session()
         _ = try await app.prompt(onCodex, #"ask codex-app {"toolCall": {"toolCallId": "elicitation:1", "kind": "execute", "title": "MCP tool call approval", "input": {"serverName": "app"}}, "_meta": {"is_mcp_tool_approval": true}}"#)
         _ = try await app.prompt(onCodex, #"ask codex-correlated {"announce": {"sessionUpdate": "tool_call", "toolCallId": "call-9", "title": "mcp.app.echo", "kind": "execute", "status": "pending"}, "toolCall": {"toolCallId": "call-9", "kind": "execute"}, "_meta": {"is_mcp_tool_approval": true}}"#)
@@ -139,8 +139,8 @@ extension RouterContractTests {
         #expect(await answer("codex-other") == "reject")
 
         let claude = ClaudeCodeAdapter(executable: URL(filePath: "/usr/bin/false"), cli: EngineContractTests.cli)
-        await stack.engines.use(claude, for: "native")
-        await stack.router.add(account: "native", label: "Claude", runner: .native, kind: "claude", billing: "subscription", engine: claude)
+        await stack.router.add(account: "native", label: "Claude", runner: .native, kind: .claude, billing: "subscription")
+        await stack.router.setCatalog(EngineCatalog(ready: [claude]))
         let onClaude = try await session()
         _ = try await app.prompt(onClaude, #"ask claude-app {"toolCall": {"toolCallId": "t1", "kind": "execute", "_meta": {"claudeCode": {"toolName": "mcp__app__echo"}}}}"#)
         _ = try await app.prompt(onClaude, #"ask claude-internal {"toolCall": {"toolCallId": "t2", "kind": "execute", "_meta": {"claudeCode": {"toolName": "mcp__workspace__bash"}}}}"#)

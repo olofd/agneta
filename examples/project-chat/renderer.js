@@ -20,7 +20,13 @@ function render(state) {
   phase = state.phase;
   const connected = !['disconnected', 'connecting', 'pairing'].includes(phase);
   const canSend = phase === 'ready';
-  element('account').textContent = state.account;
+  // The provider and engine of the next chat: only pairs Agneta says this app may use.
+  const provider = state.providers.find((entry) => entry.id === state.account);
+  fill(element('provider'), state.providers.map((entry) => [entry.id, entry.paused ? `${entry.label} (paused)` : entry.label]), state.account);
+  fill(element('engine'), (provider?.engines ?? []).map((entry) => [entry.id, entry.name]), state.engine);
+  element('provider-picker').hidden = !connected || state.providers.length === 0;
+  element('engine-picker').hidden = !connected || !provider;
+  element('provider').disabled = element('engine').disabled = !canSend;
   if (status.textContent !== state.status) status.textContent = state.status;
   element('pairing').hidden = !state.code;
   element('pairing-code').textContent = state.code;
@@ -69,12 +75,24 @@ function render(state) {
   ].filter(Boolean).join(' · ');
 }
 
+/** Sets a select's options ([value, label] pairs) and choice, touching the DOM only when they changed. */
+function fill(select, options, value) {
+  const key = JSON.stringify(options);
+  if (select.dataset.options !== key) {
+    select.replaceChildren(...options.map(([id, label]) => new Option(label, id)));
+    select.dataset.options = key;
+  }
+  if (select.value !== value) select.value = value;
+}
+
 function run(action) {
   action.catch(() => { status.textContent = 'The app could not complete this action.'; });
 }
 
 connectionButton.addEventListener('click', () => run(phase === 'disconnected' ? chat.connect() : chat.disconnect()));
 element('new-chat').addEventListener('click', () => run(chat.newChat()));
+element('provider').addEventListener('change', (event) => run(chat.choose({ account: event.target.value })));
+element('engine').addEventListener('change', (event) => run(chat.choose({ account: element('provider').value, engine: event.target.value })));
 element('stop').addEventListener('click', () => run(chat.stop()));
 element('save').addEventListener('click', () => run(chat.save()));
 element('dismiss').addEventListener('click', () => run(chat.dismiss()));

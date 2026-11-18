@@ -1,6 +1,6 @@
-// The one link between providers and engines: each kind of provider (an account's kind) is served by a list of
-// engines, and one of them is selected, by the user in Settings → Engines or else by preference. Nothing else names
-// an engine: an account runs on its provider's selected engine, and an app on whichever account a task uses.
+// Which engines can serve which kind of provider (an account's kind), a fixed table, and the default the user chose
+// for each kind in Settings → Engines. Accounts name no engine; an app picks one per task among what its grant
+// allows (Access), and a task that names none runs on its provider's default.
 import Foundation
 
 public struct ProviderEngines: Sendable, Equatable {

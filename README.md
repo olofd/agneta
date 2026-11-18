@@ -21,7 +21,7 @@ For app developers, this means agent features without running an agent loop, bui
 
 - **A local agent runtime that apps share.** An app sends a task: a workspace folder, its own tools (an MCP server), instructions and limits. Agneta runs an agent engine on it and streams back ACP updates, usage and a full trace.
 - **An account manager.** It handles sign-in for ChatGPT and Claude plans through your own Codex's and Claude Code's logins, so Agneta never holds a plan's tokens. API keys stay in your Keychain. One account can serve several apps, and every task shows which app it belongs to, which account it runs on and what it costs.
-- **A consent layer.** An app has to pair before it can do anything. You approve it in a window that shows whether its code signature checks out and what it will be able to do (its tools and folders), and you choose which accounts it may use, once or always. You can see and stop every task, and remove an app's access at any time.
+- **A consent layer.** An app has to pair before it can do anything. You approve it in a window that shows whether its code signature checks out and what it will be able to do (its tools and folders), and you choose which of your providers (plans and API keys) it may use, once or always. Engines are all allowed unless you narrow them under Advanced; the app picks the engine for each task. You can see and stop every task, and remove an app's access at any time.
 - **A sandbox.** Every engine runs under a macOS sandbox profile. It can read the task's workspace, the folders the policy names and what the engine itself needs, and nothing else in your home folder. The engine itself can reach any HTTPS host, which is how it reaches its provider. Shell commands run under an even stricter profile, confined to the workspace with no network (engines that run their own shells aren't allowed to run commands while a task has no network). [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#sandbox-profiles) lists exactly what each part can reach.
 - **A flight recorder.** Every task leaves a structured trace: prompts, tool calls, model calls, permission decisions and timing. You read it with the `agneta-diag` command-line tool or an optional local MCP server. Apps can read their own tasks' traces live.
 
@@ -49,12 +49,12 @@ For app developers, this means agent features without running an agent loop, bui
                        accounts · consent · policy · limits · traces
 ```
 
-1. **Pair once.** The app connects and calls `agneta/pair` with the scope it needs (tools and folders). Agneta identifies the process by its code signature; the user sees the scope, picks accounts, and allows it once or always. The app keeps a token in its Keychain.
-2. **Start a session.** It calls `session/new` with a workspace, the app's MCP server and a policy, for example `{"tools": "workspace", "network": "none", "limits": {"maxTurns": 200}}`. Agneta refuses any policy it can't enforce rather than quietly weakening it.
+1. **Pair once.** The app connects and calls `agneta/pair` with the scope it needs (tools and folders). Agneta identifies the process by its code signature; the user sees the scope, ticks the providers it may use, and allows it once or always. The app keeps a token in its Keychain, and `agneta/access` tells it which providers and engines it may use.
+2. **Start a session.** It calls `session/new` with a provider and, if it wants, an engine, a workspace, the app's MCP server and a policy, for example `{"tools": "workspace", "network": "none", "limits": {"maxTurns": 200}}`. Agneta refuses any policy it can't enforce rather than quietly weakening it.
 3. **Prompt.** Agneta queues the turn within the account's limits and starts or reuses an engine under the right sandbox profile. It streams the engine's ACP updates back, answers permission requests from the policy (or asks the app), and returns usage with the result.
 4. **Watch and stop.** The task appears in the menu bar panel, its trace is written as it runs, and the user can stop it at any time.
 
-Plain ACP works unchanged. Agneta's own extensions (`agneta/policy@1`, `agneta/usage@1`, `agneta/steer@1`, `agneta/fork@1`, `agneta/trace@1` and others) are listed in `initialize`, and an app that ignores them still works.
+Plain ACP works unchanged. Agneta's own extensions (`agneta/policy`, `agneta/usage`, `agneta/steer`, `agneta/fork`, `agneta/trace` and others) are listed in `initialize`, and an app that ignores them still works.
 
 ### Accounts and engines
 
@@ -67,7 +67,7 @@ Plain ACP works unchanged. Agneta's own extensions (`agneta/policy@1`, `agneta/u
 
 **Without Claude Code or Codex,** Agneta still works with an OpenAI or Anthropic API key, on Goose (bundled) or OpenCode (downloaded when you choose it). A Claude plan needs Claude Code (the Claude desktop app includes it), and a ChatGPT plan needs Codex 0.166 or later.
 
-Goose comes bundled; OpenCode, which would be over half of Agneta's size, is downloaded the first time you set an account to it. Both are pinned by version and SHA-256. Claude Code and Codex are your own installs: Agneta finds them, including the copy inside the Claude desktop app, and never redistributes them. Engines differ in what they can do (steering, forking, cost reporting), and Agneta exposes each one's extras instead of hiding them behind a common subset. See [docs/ENGINES.md](docs/ENGINES.md).
+Goose comes bundled; OpenCode, which would be over half of Agneta's size, is downloaded the first time it's needed. Both are pinned by version and SHA-256. Claude Code and Codex are your own installs: Agneta finds them, including the copy inside the Claude desktop app, and never redistributes them. Engines differ in what they can do (steering, forking, cost reporting), and Agneta exposes each one's extras instead of hiding them behind a common subset. See [docs/ENGINES.md](docs/ENGINES.md).
 
 ## Install
 
@@ -144,7 +144,7 @@ The `scope` says what your app will need: the most built-in tools, and the user'
 → {"jsonrpc": "2.0", "id": 2, "method": "initialize",
    "params": {"protocolVersion": 1, "clientCapabilities": {}, "_meta": {"agneta": {"token": "…"}}}}
 ← {"jsonrpc": "2.0", "id": 2, "result": {"protocolVersion": 1, "agentCapabilities": {…},
-   "_meta": {"agneta": {"extensions": ["agneta/policy@1", "agneta/usage@1", …],
+   "_meta": {"agneta": {"extensions": ["agneta/policy", "agneta/usage", …],
                         "accounts": [{"id": "acct-1", "label": "Claude", "paused": false, "capabilities": {…}}]}}}}
 ```
 
@@ -159,11 +159,11 @@ Error `-32001` with `needsPairing` means the user removed your app, or the token
                      "headers": [{"name": "Authorization", "value": "Bearer <per-session secret>"}]}],
      "_meta": {
        "agneta": {"account": "acct-1"},
-       "agneta/policy@1": {"tools": "workspace", "network": "none", "approval": "never-ask",
+       "agneta/policy": {"tools": "workspace", "network": "none", "approval": "never-ask",
                            "limits": {"maxTurns": 100, "maxSeconds": 900}},
-       "agneta/task@1": {"title": "Tidying the project notes"},
+       "agneta/task": {"title": "Tidying the project notes"},
        "agneta/instructions": {"text": "You are Example App's assistant."},
-       "agneta/trace@1": {"live": true}}}}
+       "agneta/trace": {"live": true}}}}
 ← {"jsonrpc": "2.0", "id": 3, "result": {"sessionId": "s_…", "configOptions": […],
    "_meta": {"agneta": {"account": "acct-1", "capabilities": {"engine": "goose", "steer": true, "fork": true, …}}}}}
 ```
@@ -182,7 +182,7 @@ Error `-32001` with `needsPairing` means the user removed your app, or the token
 ← {"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "s_…", "update": {"sessionUpdate": "tool_call", …}}}
    …
 ← {"jsonrpc": "2.0", "id": 4, "result": {"stopReason": "end_turn",
-   "_meta": {"agneta/usage@1": {"modelCalls": 3, "inputTokens": 5120, "outputTokens": 410, "cost": null,
+   "_meta": {"agneta/usage": {"modelCalls": 3, "inputTokens": 5120, "outputTokens": 410, "cost": null,
                                 "costKind": "plan-equivalent", "billing": "subscription", "ms": 8210.4}}}}
 ```
 
@@ -223,7 +223,7 @@ An app that hands its agent work to Agneta should see at least as much as it wou
 
 | Reader | How | Sees |
 | --- | --- | --- |
-| The app that ran the task | `agneta/trace@1` over its ACP connection: live notifications, or `agneta/trace/read` pages afterwards | Its own tasks only |
+| The app that ran the task | `agneta/trace` over its ACP connection: live notifications, or `agneta/trace/read` pages afterwards | Its own tasks only |
 | An agent or a developer debugging a run | The diagnostics MCP server, once the user turns it on | Every task |
 | People and scripts | `agneta-diag` on the command line, or the JSON Lines files | Every task |
 

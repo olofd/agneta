@@ -123,9 +123,9 @@ struct AppScenarioTests {
                 "_meta": [
                     SessionPolicy.key: ["tools": "workspace", "network": "none", "approval": "never-ask"],
                     "agneta": ["account": .string(account)],
-                    "agneta/task@1": ["title": "Summarizing meeting notes", "stopWarning": "The app keeps the work so far"],
+                    "agneta/task": ["title": "Summarizing meeting notes", "stopWarning": "The app keeps the work so far"],
                     "agneta/instructions": ["text": "You are the app's agent. Use the app's tools."],
-                    "agneta/trace@1": ["live": true],
+                    "agneta/trace": ["live": true],
                 ],
             ])
             let session = try #require(created["sessionId"]?.stringValue)
@@ -145,7 +145,7 @@ struct AppScenarioTests {
             #expect(swatch["stopReason"]?.stringValue == "end_turn")
 
             // 4. Every turn reports its usage and what the cost means.
-            let usage = try #require(echo["_meta"]?["agneta/usage@1"])
+            let usage = try #require(echo["_meta"]?["agneta/usage"])
             #expect(usage["modelCalls"]?.intValue == 2 && usage["inputTokens"]?.intValue == 84)
             #expect(usage["billing"]?.stringValue == "api-key" && usage["costKind"]?.stringValue == "estimated")
 

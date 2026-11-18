@@ -22,7 +22,7 @@ enum Snapshots {
         presenter.showWelcome(model) // after sign-in, which closes the welcome window
         // AGNETA_SHOWCASE_PANE picks the Settings pane, e.g. Activity or Privacy.
         let paneName = ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_PANE"]
-        let pane = paneName.flatMap { SettingsView.Pane(rawValue: $0) } ?? .accounts
+        let pane = paneName.flatMap { SettingsView.Pane(rawValue: $0) } ?? .providers
         presenter.showSettings(model, section: pane)
         // "Details" shows a task's details window from a sample trace, only in an isolated home.
         if paneName == "Details", ProcessInfo.processInfo.environment["AGNETA_HOME"] != nil {

@@ -56,6 +56,7 @@ async function openWindow() {
     send: (text) => chat.send(text),
     stop: () => chat.stop(),
     newChat: () => chat.newChat(),
+    choose: (value) => chat.choose(value),
     disconnect: () => chat.disconnect(),
     save: () => chat.review(true),
     dismiss: () => chat.review(false)

@@ -25,27 +25,14 @@ public protocol EngineSource: Sendable {
     /// - Parameters:
     ///   - key: an earlier lease's key, to resume in the same engine home (its sessions live there).
     ///   - session: the session, for engines configured per process.
-    ///   - engine: the engine the task runs on, when it isn't the account's provider's selected one (ProviderEngines).
-    func open(account: String, engine: String?, policy: SessionPolicy, mcpPorts: [Int], key: String?, session: EngineSessionSpec?) async throws -> EngineLease
+    ///   - engine: the engine the task runs on (Router.taskEngine), with the account's provider.
+    func open(account: String, engine: any EngineAdapter, policy: SessionPolicy, mcpPorts: [Int], key: String?, session: EngineSessionSpec?) async throws -> EngineLease
     /// Called when a session ends; a dedicated engine stops, a shared one stays.
     func release(_ lease: EngineLease) async
 }
 
-extension EngineSource {
-    public func open(account: String, policy: SessionPolicy, mcpPorts: [Int], key: String? = nil) async throws -> EngineLease {
-        try await open(account: account, engine: nil, policy: policy, mcpPorts: mcpPorts, key: key, session: nil)
-    }
-
-    /// On the account's provider's selected engine.
-    public func open(account: String, policy: SessionPolicy, mcpPorts: [Int], key: String?, session: EngineSessionSpec?) async throws -> EngineLease {
-        try await open(account: account, engine: nil, policy: policy, mcpPorts: mcpPorts, key: key, session: session)
-    }
-}
-
 public actor EngineSupervisor: EngineSource {
     public struct Configuration: Sendable {
-        /// The engines Agneta can run, by id ("goose", "opencode").
-        public var engines: [String: any EngineAdapter]
         public var shellTool: URL
         /// Agneta's data root: account homes and per-session scratch live under it.
         public var root: URL
@@ -57,9 +44,8 @@ public actor EngineSupervisor: EngineSource {
         /// Task traces: shell commands, engine stderr and exits are reported here.
         public var traces: Traces?
 
-        public init(engines: [any EngineAdapter], shellTool: URL, root: URL, engineLoopbackPorts: [Int] = [], confine: Bool = true,
+        public init(shellTool: URL, root: URL, engineLoopbackPorts: [Int] = [], confine: Bool = true,
                     ledger: (any EngineLedger)? = nil, traces: Traces? = nil) {
-            self.engines = Dictionary(engines.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             self.shellTool = shellTool
             self.root = root
             self.engineLoopbackPorts = engineLoopbackPorts
@@ -81,31 +67,22 @@ public actor EngineSupervisor: EngineSource {
     }
 
     private let configuration: Configuration
-    private var engines: [String: any EngineAdapter]
-    private var accounts: [String: AccountSetup] = [:]
+    /// Each account's provider: how its engines sign in and which model they use.
+    private var accounts: [String: ProviderSetup] = [:]
     private var running: [String: Running] = [:]
     private var starting: [String: Task<EngineLease, Error>] = [:]
     private var holders: [String: Int] = [:]
     private var broker: ToolBroker?
     private let grants = GrantTable()
 
-    public init(_ configuration: Configuration, accounts: [String: AccountSetup] = [:]) {
+    public init(_ configuration: Configuration, accounts: [String: ProviderSetup] = [:]) {
         self.configuration = configuration
-        self.engines = configuration.engines
         self.accounts = accounts
     }
 
-    /// Adds or replaces an engine while running (e.g. Claude Code once its adapter is installed).
-    public func register(_ engine: any EngineAdapter) { engines[engine.id] = engine }
-
-    /// Serves `account` with this engine and provider. Engines already running keep their setup.
-    public func add(account: String, setup: AccountSetup) {
-        accounts[account] = setup
-    }
-
-    /// The engine an account uses, for what its sessions can do.
-    public func engine(for account: String) -> (any EngineAdapter)? {
-        accounts[account].flatMap { engines[$0.engine] }
+    /// Serves `account` with this provider. Engines already running keep their setup.
+    public func add(account: String, provider: ProviderSetup) {
+        accounts[account] = provider
     }
 
     /// Stops every engine serving `account` and forgets it.
@@ -137,22 +114,17 @@ public actor EngineSupervisor: EngineSource {
         return service
     }
 
-    public func open(account: String, engine chosen: String?, policy: SessionPolicy, mcpPorts: [Int], key resume: String?, session: EngineSessionSpec?) async throws -> EngineLease {
-        guard var setup = accounts[account] else { throw RPCError(code: RPCError.invalidParams, message: "Unknown account \(account)") }
-        // The task's engine, with the account's provider (the router checked the provider supports it).
-        if let chosen { setup.engine = chosen }
-        guard let adapter = engines[setup.engine] else {
-            throw RPCError(code: RPCError.internalError, message: "This Agneta doesn't include the \(setup.engine) engine")
-        }
+    public func open(account: String, engine adapter: any EngineAdapter, policy: SessionPolicy, mcpPorts: [Int], key resume: String?,
+                     session: EngineSessionSpec?) async throws -> EngineLease {
+        guard let provider = accounts[account] else { throw RPCError(code: RPCError.invalidParams, message: "Unknown account \(account)") }
         // A session gets its own engine when the engine is configured per process, when it may use built-in
         // tools (the sandbox profile is per process), and on the Claude Code route (it reads its working folder).
         // A resumed session returns to its earlier engine home, where the engine keeps its sessions.
         let resumable = resume.flatMap { $0.hasPrefix(account + "/") && !$0.contains("..") ? $0 : nil }
         let dedicated = resumable.map { !EngineKeys.isShared($0) }
-            ?? (adapter.capabilities.processPerSession || policy.tools != .appOnly || setup.provider.kind == .claudeCode)
-        // A shared engine's key names its engine: when the provider's engine changes, the new one never joins a process
-        // of the old one on the same account home. A task from a shared engine (any key shape) resumes on today's.
-        let key = dedicated ? (resumable ?? "\(account)/\(UUID().uuidString.lowercased())") : EngineKeys.shared(account: account, engine: setup.engine)
+            ?? (adapter.capabilities.processPerSession || policy.tools != .appOnly || provider.kind == .claudeCode)
+        // A shared engine's key names its engine: two engines on one account never share a process.
+        let key = dedicated ? (resumable ?? "\(account)/\(UUID().uuidString.lowercased())") : EngineKeys.shared(account: account, engine: adapter.id)
         if dedicated, resumable != nil {
             // A task's own engine is never shared. A load (or a fork copying a closed task) waits until no other process
             // is on that engine home, whether still stopping or held by another lease (a fork's helper), so one home
@@ -177,7 +149,7 @@ public actor EngineSupervisor: EngineSource {
             holders[key, default: 0] += 1
             return lease
         }
-        let start = Task { try await self.spawn(key: key, account: account, adapter: adapter, setup: setup, dedicated: dedicated,
+        let start = Task { try await self.spawn(key: key, account: account, adapter: adapter, provider: provider, dedicated: dedicated,
                                                 policy: policy, mcpPorts: mcpPorts, session: session) }
         starting[key] = start
         defer { starting[key] = nil }
@@ -186,7 +158,7 @@ public actor EngineSupervisor: EngineSource {
         return lease
     }
 
-    private func spawn(key: String, account: String, adapter: any EngineAdapter, setup: AccountSetup, dedicated: Bool,
+    private func spawn(key: String, account: String, adapter: any EngineAdapter, provider: ProviderSetup, dedicated: Bool,
                        policy: SessionPolicy, mcpPorts: [Int], session: EngineSessionSpec?) async throws -> EngineLease {
         let accountHome = configuration.root.appending(path: "Accounts/\(account)", directoryHint: .isDirectory)
         // Each engine process gets its own state so concurrent processes don't share a session database.
@@ -209,7 +181,7 @@ public actor EngineSupervisor: EngineSource {
         }
 
         let ports = configuration.engineLoopbackPorts + mcpPorts
-        var launch = try adapter.launch(EngineLaunchContext(home: engineHome, provider: setup.provider, shell: dedicated ? configuration.shellTool : nil,
+        var launch = try adapter.launch(EngineLaunchContext(home: engineHome, provider: provider, shell: dedicated ? configuration.shellTool : nil,
                                                             session: session, loopbackPorts: ports))
         launch.environment.merge(brokerEnvironment) { _, broker in broker }
         var wrapper: [String] = []

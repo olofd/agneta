@@ -1,4 +1,4 @@
-// agneta/policy@1: the rules an app sends with session/new. Agneta enforces
+// agneta/policy: the rules an app sends with session/new. Agneta enforces
 // every field or refuses the session; it never runs with weaker rules.
 import Foundation
 
@@ -60,7 +60,7 @@ public struct SessionPolicy: Sendable, Equatable {
     /// sandbox profiles write these without resolving them again. Empty for a policy built in code.
     public var checkedPaths: Set<String> = []
 
-    public static let key = "agneta/policy@1"
+    public static let key = "agneta/policy"
 
     /// An app that sends no policy gets workspace tools in its cwd, approval through the app.
     public static func fallback(workspace: URL) -> SessionPolicy {

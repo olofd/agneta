@@ -19,13 +19,18 @@ function describeError(error) {
   return error.message;
 }
 
+/** Bytes as people read them: "45 MB". */
+function size(bytes) {
+  return Number.isFinite(bytes) ? `${Math.round(bytes / 1e6)} MB` : '';
+}
+
 export class ProjectChat extends EventEmitter {
   #connection;
   #session;
   #tools;
-  #account;
   #workspace;
   #reply;
+  #access;
 
   constructor(port) {
     super();
@@ -35,7 +40,10 @@ export class ProjectChat extends EventEmitter {
       phase: 'disconnected',
       status: 'Connect to start chatting.',
       code: '',
+      // What Agneta lets this app use (agneta/access), and the provider and engine the next chat runs on.
+      providers: [],
       account: '',
+      engine: '',
       messages: [],
       draft: null,
       notes: [],
@@ -84,18 +92,47 @@ export class ProjectChat extends EventEmitter {
         _meta: { agneta: { token: paired.token } }
       });
       if (this.#connection !== connection) return;
-      const agneta = initialized?._meta?.agneta;
-      if (initialized?.protocolVersion !== 1 || typeof agneta?.workspace !== 'string') {
-        throw new Error('Use an Agneta build that provides a workspace when pairing.');
+      const access = initialized?._meta?.agneta?.access;
+      if (initialized?.protocolVersion !== 1 || typeof access?.workspace !== 'string') {
+        throw new Error('Use an Agneta build that tells apps what they may use.');
       }
-      const account = agneta.accounts?.find((entry) => entry.paused === false);
-      if (!account) throw new Error('No active account was granted. Connect an account in Agneta and pair again.');
-      this.#account = account.id;
-      this.#workspace = agneta.workspace;
-      this.#update({ phase: 'ready', account: account.label, status: 'Ready', code: '' });
+      this.#workspace = access.workspace;
+      this.#setAccess(access);
+      if (!this.view.account) throw new Error('No active provider was granted. Connect one in Agneta and pair again.');
+      this.#update({ phase: 'ready', status: 'Ready', code: '' });
     } catch (error) {
       if (this.#connection === connection) this.disconnect(describeError(error));
     }
+  }
+
+  /**
+   * What this app may use: each provider with the engines its tasks may run on there (the default first). The
+   * current choice stays while it's still allowed; otherwise the first active provider and its default engine.
+   */
+  #setAccess(access) {
+    this.#access = access;
+    const names = Object.fromEntries((access.engines ?? []).map((engine) => [engine.id, engine.name]));
+    const providers = (access.providers ?? []).map((provider) => ({
+      id: provider.id,
+      label: provider.label,
+      paused: provider.paused,
+      engines: (provider.engines ?? []).map((id) => ({ id, name: names[id] ?? id }))
+    }));
+    let provider = providers.find((entry) => entry.id === this.view.account && !entry.paused)
+      ?? providers.find((entry) => !entry.paused && entry.engines.length > 0);
+    const engine = provider?.engines.some((entry) => entry.id === this.view.engine) ? this.view.engine : provider?.engines[0]?.id;
+    this.#update({ providers, account: provider?.id ?? '', engine: engine ?? '' });
+  }
+
+  /** Picks the provider and engine for the next chat; the open one, on the old pair, closes. */
+  async choose({ account, engine } = {}) {
+    if (this.view.phase !== 'ready') return;
+    const provider = this.view.providers.find((entry) => entry.id === account);
+    if (!provider) return;
+    const chosen = provider.engines.some((entry) => entry.id === engine) ? engine : provider.engines[0]?.id ?? '';
+    if (provider.id === this.view.account && chosen === this.view.engine) return;
+    if (this.#session) await this.newChat();
+    this.#update({ account: provider.id, engine: chosen });
   }
 
   async #openSession(connection) {
@@ -114,16 +151,31 @@ export class ProjectChat extends EventEmitter {
       return;
     }
     this.#tools = tools;
-    const opened = await connection.request('session/new', {
+    const request = {
       cwd: this.#workspace,
       mcpServers: [tools.registration],
       _meta: {
-        agneta: { account: this.#account },
-        'agneta/policy@1': { tools: 'app-only', network: 'none', approval: 'never-ask', limits },
+        agneta: { account: this.view.account, engine: this.view.engine || undefined },
+        'agneta/policy': { tools: 'app-only', network: 'none', approval: 'never-ask', limits },
         'agneta/instructions': { text: instructions },
-        'agneta/task@1': { title: `${project.name} · Project Chat` }
+        'agneta/task': { title: `${project.name} · Project Chat` }
       }
-    }, 30_000);
+    };
+    let opened;
+    // An engine Agneta is still downloading answers -32015 with its progress: wait, showing it, then try again.
+    for (const started = Date.now(); ; ) {
+      try {
+        opened = await connection.request('session/new', request, 30_000);
+        break;
+      } catch (error) {
+        const downloading = error.data?.agneta?.engineDownloading;
+        if (error.code !== -32015 || Date.now() - started > 600_000 || this.#connection !== connection) throw error;
+        const name = this.view.providers.flatMap((entry) => entry.engines).find((entry) => entry.id === downloading?.engine)?.name ?? 'the engine';
+        const progress = downloading?.total ? ` · ${size(downloading.received)} of ${size(downloading.total)}` : '';
+        this.#update({ status: `Agneta is downloading ${name}${progress}…` });
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
     if (this.#connection !== connection) return;
     if (typeof opened?.sessionId !== 'string') throw new Error('Agneta returned no session ID.');
     this.#session = opened.sessionId;
@@ -148,12 +200,12 @@ export class ProjectChat extends EventEmitter {
         sessionId: session, prompt: [{ type: 'text', text }]
       }, 120_000);
       if (this.#connection !== connection || this.#session !== session) return;
-      const limit = result?._meta?.['agneta/limit@1']?.limit;
+      const limit = result?._meta?.['agneta/limit']?.limit;
       const status = limit ? `Stopped at the ${limit} limit.`
         : result?.stopReason === 'cancelled' ? 'Turn stopped.'
         : !result?.stopReason || result.stopReason === 'end_turn' ? 'Ready'
         : `Turn ended (${result.stopReason}).`;
-      this.#update({ phase: 'ready', status, usage: result?._meta?.['agneta/usage@1'] ?? null });
+      this.#update({ phase: 'ready', status, usage: result?._meta?.['agneta/usage'] ?? null });
     } catch (error) {
       if (this.#connection !== connection || (session && this.#session !== session)) return;
       if (!this.#session) this.#dropSession();
@@ -194,7 +246,7 @@ export class ProjectChat extends EventEmitter {
     this.#connection = undefined;
     this.#dropSession();
     connection?.close();
-    this.#update({ phase: 'disconnected', status, code: '', account: '' });
+    this.#update({ phase: 'disconnected', status, code: '', providers: [], account: '', engine: '' });
   }
 
   #dropSession() {
@@ -222,6 +274,8 @@ export class ProjectChat extends EventEmitter {
     if (method === 'agneta/pairingCode' && this.view.phase === 'pairing') {
       this.#update({ code: params?.code ?? '' });
     }
+    // The user changed what this app may use, or an engine arrived or went away.
+    if (method === 'agneta/accessChanged' && params?.access) this.#setAccess(params.access);
     if (!this.#session || params?.sessionId !== this.#session) return;
     if (method === 'agneta/sessionStopped') {
       const status = params.stoppedBy === 'user' ? 'Stopped in Agneta.' : 'The engine stopped.';

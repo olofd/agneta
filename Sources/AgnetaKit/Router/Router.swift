@@ -9,9 +9,9 @@ import CryptoKit
 import Foundation
 
 public actor Router {
-    /// What the user allowed an app (GrantScope): accounts, the most built-in tools, and the folders its sessions
-    /// may name.
-    public struct Grant: Sendable, Equatable, Codable {
+    /// What the user allowed an app (GrantScope): the providers (accounts) and the engines it may use, as two lists
+    /// (Access), the most built-in tools, and the folders its sessions may name.
+    public struct Grant: Sendable, Equatable {
         public var id: String
         public var app: String
         /// The verified signing identifier when pairing could read it.
@@ -27,9 +27,12 @@ public actor Router {
         public var folders: [String]
         /// Kept across launches ("Always Allow"), or only for the connection that paired ("Allow Once").
         public var remembered: Bool
+        /// The engines the app's tasks may run on, on any of its providers that supports them.
+        public var engines: EngineAllowance
 
         public init(id: String = UUID().uuidString, app: String, identifier: String? = nil, team: String? = nil, verified: Bool = false,
-                    accounts: [String], created: Date = Date(), tools: SessionPolicy.Tools = .appOnly, folders: [String] = [], remembered: Bool = true) {
+                    accounts: [String], engines: EngineAllowance = .all, created: Date = Date(), tools: SessionPolicy.Tools = .appOnly,
+                    folders: [String] = [], remembered: Bool = true) {
             self.id = id
             self.app = app
             self.identifier = identifier
@@ -40,16 +43,7 @@ public actor Router {
             self.tools = tools
             self.folders = folders
             self.remembered = remembered
-        }
-
-        /// Grants saved before scopes existed read as app-only with no folders: the app pairs again to ask for more.
-        public init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            self.init(id: try c.decode(String.self, forKey: .id), app: try c.decode(String.self, forKey: .app),
-                      identifier: try c.decodeIfPresent(String.self, forKey: .identifier), team: try c.decodeIfPresent(String.self, forKey: .team),
-                      verified: try c.decode(Bool.self, forKey: .verified), accounts: try c.decode([String].self, forKey: .accounts),
-                      created: try c.decode(Date.self, forKey: .created), tools: try c.decodeIfPresent(SessionPolicy.Tools.self, forKey: .tools) ?? .appOnly,
-                      folders: try c.decodeIfPresent([String].self, forKey: .folders) ?? [], remembered: try c.decodeIfPresent(Bool.self, forKey: .remembered) ?? true)
+            self.engines = engines
         }
     }
 
@@ -93,6 +87,8 @@ public actor Router {
         case planUsage(account: String, limits: JSONValue)
         /// The app behind a pairing request still waiting for the user went away: stop asking.
         case pairingWithdrawn(UUID)
+        /// A task asked for an engine that isn't here yet but can be downloaded (or failed to): the host downloads it.
+        case engineWanted(String)
     }
 
     /// How an account's engine runs tools. Goose's own tools go through Agneta's broker;
@@ -117,11 +113,15 @@ public actor Router {
 
     /// The user's yes to a pairing request.
     public struct PairingAnswer: Sendable, Equatable {
+        /// The providers the app may use.
         public var accounts: [String]
+        /// The engines it may use on them.
+        public var engines: EngineAllowance
         /// "Always Allow": kept across launches. Otherwise only this connection may use it.
         public var remember: Bool
-        public init(accounts: [String], remember: Bool) {
+        public init(accounts: [String], engines: EngineAllowance = .all, remember: Bool) {
             self.accounts = accounts
+            self.engines = engines
             self.remember = remember
         }
     }
@@ -162,7 +162,11 @@ public actor Router {
         let generation = UUID()
     }
 
-    var accounts: [String: (label: String, runner: ToolRunner, kind: String?, billing: String, engine: (any EngineAdapter)?)] = [:]
+    var accounts: [String: (label: String, runner: ToolRunner, kind: AccountKind, billing: String)] = [:]
+    /// Accounts whose engine said they need signing in again, until they're served again.
+    var needsSignIn: Set<String> = []
+    /// The engines this Agneta has and each provider's default (the host's snapshot).
+    var catalog = EngineCatalog()
     /// Paused accounts start nothing new (see `setPaused`).
     var paused: Set<String> = []
     var apps: [UUID: App] = [:]
@@ -228,70 +232,131 @@ public actor Router {
         self.approve = approve
     }
 
+    /// Serves an account (again, after signing in or a change). Its tasks run on engines its kind supports.
     /// - Parameters:
-    ///   - kind: the account kind for traces, e.g. `chatgpt`.
     ///   - billing: `subscription` or `api-key`, so traces can say what a cost means.
-    ///   - engine: the engine serving the account, so apps can see what its sessions can do.
     ///   - runner: `.native` when the account's provider runs its own tools whatever the engine (a Claude plan runs
     ///     Claude Code); engines that always do (Claude Code, Codex) are native on any account (`runner(account:engine:)`).
-    ///   - engineID: the account's engine by id (its provider's, ProviderEngines), also while it isn't here yet.
-    public func add(account id: String, label: String, runner: ToolRunner = .brokered, kind: String? = nil, billing: String = "unknown",
-                    engine: (any EngineAdapter)? = nil, engineID: String? = nil) {
-        accounts[id] = (label, runner, kind, billing, engine)
-        accountEngines[id] = engineID ?? engine?.id
-        if let engine { adapters[engine.id] = engine }
+    public func add(account id: String, label: String, runner: ToolRunner = .brokered, kind: AccountKind, billing: String = "unknown") {
+        accounts[id] = (label, runner, kind, billing)
+        needsSignIn.remove(id)
+        accessChanged()
     }
 
-    /// Every engine Agneta can run, by id: a task may ask for any its account's provider supports.
-    var adapters: [String: any EngineAdapter] = [:]
-    public func register(engine: any EngineAdapter) { adapters[engine.id] = engine }
-
-    /// The engines an account's tasks may run on: those its provider supports (ProviderEngines) that are here, the
-    /// provider's selected one first.
-    func engines(for account: String) -> [any EngineAdapter] {
-        let selected = accounts[account]?.engine
-        guard let kind = accounts[account]?.kind.flatMap(AccountKind.init(rawValue:)) else { return selected.map { [$0] } ?? [] }
-        let others = ProviderEngines.supported(by: kind).filter { $0 != selected?.id }.compactMap { adapters[$0] }
-        return (selected.map { [$0] } ?? []) + others
+    /// The host's new snapshot of its engines and defaults. Apps hear `agneta/accessChanged` when what they may run
+    /// changed (not for download progress, which `-32015` and `agneta/access` carry).
+    public func setCatalog(_ catalog: EngineCatalog) {
+        let changed = catalog.shape != self.catalog.shape
+        self.catalog = catalog
+        if changed { accessChanged() }
     }
 
-    /// The engine a task runs on: the one it asks for, which its account's provider must support and Agneta must have
-    /// (or be downloading), else the provider's selected one. A task resuming (`session/load`, `agneta/fork`) asks for
-    /// the engine that saved it, which only has to be here: it was its provider's when the task began.
-    func taskEngine(account: String, requested: String?, resuming: Bool = false) -> Result<String?, RPCError> {
-        guard let requested, requested != accountEngines[account] else { return .success(accountEngines[account]) }
+    /// Whether any connection still holds this grant.
+    public func hasGrant(_ id: String) -> Bool { tokens.values.contains { $0.id == id } }
+
+    /// Changes which providers and engines an app may use, for every connection holding the grant, and saves it.
+    /// Sessions that no longer fit (on a provider or engine taken away) stop; the app hears `agneta/accessChanged`.
+    public func setAccess(grant id: String, accounts allowed: [String], engines: EngineAllowance) async throws {
+        for (hash, grant) in tokens where grant.id == id {
+            var changed = grant
+            changed.accounts = allowed
+            changed.engines = engines
+            if changed.remembered, let commit { try await commit(hash, changed) }
+            // Access removed while the change was saved stays removed (AgnetaRuntime.setAccess deletes the saved row again).
+            guard tokens[hash]?.id == id else { continue }
+            tokens[hash] = changed
+            for (appID, app) in apps where app.grant?.id == id { apps[appID]?.grant = changed }
+            onEvent(.paired(tokenHash: hash, grant: changed))
+        }
+        for (session, entry) in sessions where apps[entry.app]?.grant?.id == id
+            && (!allowed.contains(entry.account) || !engines.allows(entry.lease.engine.id)) {
+            await stop(session)
+        }
+        accessChanged(grant: id)
+    }
+
+    /// What an app may use, as it sees it (`agneta/access`, and `initialize`'s `_meta.agneta.access`).
+    /// - `providers`: each provider (account) it may use, with the engines its tasks there may run on (default first).
+    /// - `engines`: each engine it may use, with its state on this Mac and, once it's here, its capabilities.
+    func access(_ grant: Grant) -> JSONValue {
+        let providers: [JSONValue] = grant.accounts.compactMap { id in
+            guard let account = accounts[id] else { return nil }
+            let engines = Access.engines(for: account.kind, allowed: grant.engines, catalog: catalog)
+            return ["id": .string(id), "label": .string(account.label), "kind": .string(account.kind.rawValue),
+                    "paused": .bool(paused.contains(id)), "needsSignIn": .bool(needsSignIn.contains(id)),
+                    "engines": .array(engines.map(JSONValue.string)), "defaultEngine": engines.first.map(JSONValue.string) ?? .null]
+        }
+        let engines = catalog.entries.keys.filter(grant.engines.allows).sorted().map(catalog.json)
+        return ["providers": .array(providers), "engines": .array(engines), "allowedEngines": grant.engines.json,
+                "scope": ["tools": .string(grant.tools.rawValue), "folders": .array(grant.folders.map(JSONValue.string))],
+                "workspace": Self.workspace(of: grant, in: context).map { .string($0.path(percentEncoded: false)) } ?? .null]
+    }
+
+    /// Tells connected apps (those holding `grant`, or every one) that what they may use changed, with what it is now.
+    func accessChanged(grant only: String? = nil) {
+        for app in apps.values {
+            guard let grant = app.grant, only == nil || grant.id == only else { continue }
+            let peer = app.peer, access = access(grant)
+            Task { try? await peer.notify("agneta/accessChanged", ["access": access]) }
+        }
+    }
+
+    /// The engine a task runs on, or why it can't: a new task's is the one it asks for or its provider's default, among
+    /// what the grant allows (Access); a resumed or forked task's is the engine that saved it, which the grant must
+    /// still allow. The engine must be ready: one still downloading is answered with how far along it is (`-32015`),
+    /// and one that isn't here but can download starts downloading (`engineWanted`) and is answered the same way.
+    func taskEngine(account id: String, requested: String?, resuming: Bool, grant: Grant) -> Result<any EngineAdapter, RPCError> {
+        guard let account = accounts[id] else { return .failure(RPCError(code: RPCError.invalidParams, message: "This app isn't allowed to use that account")) }
+        let engine: String
         if resuming {
-            guard adapters[requested] != nil || downloading[requested] != nil else {
-                return .failure(RPCError(code: RPCError.invalidParams, message: "This task ran on \(requested), which isn't on this Mac now",
-                                         data: ["agneta": ["engineChanged": ["saved": .string(requested), "current": accountEngines[account].map(JSONValue.string) ?? .null]]]))
+            guard let saved = requested else { return .failure(RPCError(code: RPCError.invalidParams, message: "This session can't be resumed")) }
+            guard grant.engines.allows(saved) else { return .failure(accessRefusal(.notAllowed(saved), account: id, grant: grant)) }
+            engine = saved
+        } else {
+            switch Access.engine(for: account.kind, requested: requested, allowed: grant.engines, catalog: catalog) {
+            case .success(let chosen): engine = chosen
+            case .failure(let refusal): return .failure(accessRefusal(refusal, account: id, grant: grant))
             }
-            return .success(requested)
         }
-        let supported = accounts[account]?.kind.flatMap(AccountKind.init(rawValue:)).map(ProviderEngines.supported(by:)) ?? []
-        let label = accounts[account]?.label ?? "This account"
-        guard supported.contains(requested) else {
-            return .failure(RPCError(code: RPCError.invalidParams, message: "\(label) can't run on \(requested); it can run on \(supported.joined(separator: ", "))",
-                                     data: ["agneta": ["engines": .array(supported.map(JSONValue.string))]]))
+        let name = catalog.entries[engine]?.name ?? engine
+        switch catalog.entries[engine]?.state {
+        case .ready?:
+            if let adapter = catalog.adapter(engine) { return .success(adapter) }
+        case .downloading(let received, let total)?:
+            return .failure(Self.downloadingError(engine, name: name, received: received, total: total))
+        case .downloadable?, .failed?:
+            onEvent(.engineWanted(engine))
+            return .failure(Self.downloadingError(engine, name: name, received: 0, total: nil))
+        case .unavailable?, nil:
+            break
         }
-        guard adapters[requested] != nil || downloading[requested] != nil else {
-            let here = engines(for: account).map(\.id)
-            return .failure(RPCError(code: RPCError.invalidParams, message: "\(requested) isn't on this Mac; \(label) can run on \(here.joined(separator: ", "))",
-                                     data: ["agneta": ["engines": .array(here.map(JSONValue.string))]]))
-        }
-        return .success(requested)
+        return .failure(accessRefusal(.unavailable(engine), account: id, grant: grant))
     }
 
-    /// Each account's engine by id, even one that isn't here yet.
-    var accountEngines: [String: String] = [:]
-    /// Engines being downloaded, with their progress: a session that needs one is told to try again shortly, with how
-    /// far along it is, rather than that Agneta lacks the engine.
-    var downloading: [String: JSONValue] = [:]
+    static func downloadingError(_ engine: String, name: String, received: Int64, total: Int64?) -> RPCError {
+        RPCError(code: engineDownloading, message: "Agneta is downloading what \(name) needs; try again shortly",
+                 data: ["agneta": ["engineDownloading": ["engine": .string(engine), "received": .int(received), "total": total.map(JSONValue.int) ?? .null]]])
+    }
+
+    /// A refused engine, said plainly, with what the app may use on that provider now (`data.agneta.access`).
+    func accessRefusal(_ refusal: Access.Refusal, account id: String, grant: Grant) -> RPCError {
+        let label = accounts[id]?.label ?? "This account"
+        func name(_ engine: String) -> String { catalog.entries[engine]?.name ?? engine }
+        let message = switch refusal {
+        case .unsupported(let engine): "\(label) can't run on \(name(engine))"
+        case .notAllowed(let engine): "This app isn't allowed to use \(name(engine))"
+        case .unavailable(let engine): {
+            if case .unavailable(let reason)? = catalog.entries[engine]?.state { return "\(name(engine)) isn't available: \(reason)" }
+            return "\(name(engine)) isn't on this Mac"
+        }()
+        case .noEngine: "\(label) has no engine this app may use on this Mac"
+        }
+        return RPCError(code: RPCError.invalidParams, message: message, data: ["agneta": ["access": access(grant)]])
+    }
+
     static let engineDownloading: Int64 = -32015
 
-    /// `progress` (`{"received", "total"}`) while the engine downloads; nil once it's done or has failed.
-    public func setDownloading(_ engine: String, progress: JSONValue?) { downloading[engine] = progress }
-
-    /// Engines that run their own tools; Agneta answers their permission requests from the policy.
+    /// Engines that run their own tools; Agneta answers their permission requests from the policy.    /// Engines that run their own tools; Agneta answers their permission requests from the policy.
     static let nativeEngines: Set<String> = ["claude-code", "codex"]
 
     /// Whether a session's tools are run by the engine itself (Agneta gating each call) or brokered by Agneta.
@@ -305,17 +370,20 @@ public actor Router {
     public func setPaused(_ account: String, _ isPaused: Bool) {
         guard isPaused else {
             paused.remove(account)
+            accessChanged()
             return
         }
         paused.insert(account)
         for waiter in waiting where waiter.account == account { waiter.resume.resume(returning: .paused) }
         waiting.removeAll { $0.account == account }
+        accessChanged()
     }
 
     static let accountPaused: Int64 = -32013
     public func remove(account id: String) async {
         accounts.removeValue(forKey: id)
         for (session, entry) in sessions where entry.account == id { await stop(session) }
+        accessChanged()
     }
 
     public func observe(_ handler: @escaping @Sendable (Event) -> Void) { onEvent = handler }
@@ -444,7 +512,7 @@ public actor Router {
     /// engine stops in time, and marked so the app knows the session is gone.
     static func enforced(_ hit: (limit: String, value: JSONValue), session id: String) -> JSONValue {
         ["sessionId": .string(id), "stopReason": hit.limit == "maxTurns" ? "max_turn_requests" : "cancelled",
-         "_meta": ["agneta/limit@1": ["limit": .string(hit.limit), "value": hit.value, "sessionEnded": true]]]
+         "_meta": ["agneta/limit": ["limit": .string(hit.limit), "value": hit.value, "sessionEnded": true]]]
     }
 
     static let notPaired = RPCError(code: -32001, message: "Pair with Agneta first", data: ["agneta": ["needsPairing": true]])
@@ -490,8 +558,8 @@ public actor Router {
             guard !shutDown, apps[appID] != nil else { return .failure(RPCError(code: RPCError.internalError, message: "The app disconnected")) }
             let token = Self.newToken(), hash = Self.hash(token)
             var grant = Grant(app: name, identifier: verified ? peer?.identifier : nil, team: verified ? peer?.team : nil, verified: verified,
-                              accounts: answer.accounts, tools: scope.tools, folders: scope.folders.map { $0.path(percentEncoded: false) },
-                              remembered: answer.remember)
+                              accounts: answer.accounts, engines: answer.engines, tools: scope.tools,
+                              folders: scope.folders.map { $0.path(percentEncoded: false) }, remembered: answer.remember)
             // The app's own workspace, inside its grant whatever else it asked for.
             if let root = context.appWorkspaces {
                 let workspace = root.appending(path: grant.id, directoryHint: .isDirectory)
@@ -512,8 +580,7 @@ public actor Router {
             if !answer.remember { onceTokens[appID] = hash }
             onEvent(.paired(tokenHash: hash, grant: grant))
             apps[appID]?.grant = grant // the live entry, not a copy from before the approval
-            return .success(["token": .string(token), "accounts": .array(answer.accounts.map { .string($0) }),
-                             "workspace": Self.workspace(of: grant, in: context).map { .string($0.path(percentEncoded: false)) } ?? .null])
+            return .success(["token": .string(token), "access": access(grant)])
         }
         if method == "initialize" {
             guard let token = params?["_meta"]?["agneta"]?["token"]?.stringValue, let grant = tokens[Self.hash(token)] else {
@@ -535,6 +602,7 @@ public actor Router {
             return .success(initializeResult(grant))
         }
         guard let grant = app.grant else { return .failure(Self.notPaired) }
+        if method == "agneta/access" { return .success(access(grant)) }
         if method == "session/new" { return await newSession(appID, grant: grant, params: params) }
         if method == "agneta/trace/read" { return await readTrace(grant: grant, params: params) }
         if method == "session/load" { return await loadSession(appID, grant: grant, params: params) }
@@ -621,13 +689,13 @@ public actor Router {
                 if let hit = sessions[id]?.limitHit {
                     // ACP has a stop reason for too many model turns; time and cost stop as cancelled, with the reason beside it.
                     if hit.limit == "maxTurns" { result = result.setting("stopReason", to: "max_turn_requests") }
-                    result = result.setting("_meta", to: (result["_meta"] ?? [:]).setting("agneta/limit@1", to: ["limit": .string(hit.limit), "value": hit.value]))
+                    result = result.setting("_meta", to: (result["_meta"] ?? [:]).setting("agneta/limit", to: ["limit": .string(hit.limit), "value": hit.value]))
                     sessions[id]?.limitHit = nil
                 }
                 let reason = result["stopReason"]?.stringValue ?? "end_turn"
                 sessions[id]?.activeRun = nil
                 if let summary = await trace?.turnEnded(stopReason: reason, usage: result["usage"]) {
-                    result = result.setting("_meta", to: (result["_meta"] ?? [:]).setting("agneta/usage@1", to: usage(summary, account: session.account)))
+                    result = result.setting("_meta", to: (result["_meta"] ?? [:]).setting("agneta/usage", to: usage(summary, account: session.account)))
                 }
                 if current(id, generation) { onEvent(.turnEnded(id, stopReason: reason)) }
             }
@@ -697,6 +765,7 @@ public actor Router {
     /// Says so to Agneta's UI and puts it in the app's error data, so the app can ask the user to open Agneta.
     func signInNeeded(_ error: RPCError, account: String) -> RPCError {
         onEvent(.needsSignIn(account: account))
+        if needsSignIn.insert(account).inserted { accessChanged() }
         let data = (error.data?.objectValue != nil ? error.data! : [:]).setting("agneta", to: ["needsSignIn": .string(account)])
         return RPCError(code: error.code, message: "\(accounts[account]?.label ?? "This account") needs you to sign in again in Agneta", data: data)
     }
@@ -767,25 +836,18 @@ public actor Router {
             "authMethods": [],
             "agentInfo": ["name": "agneta", "title": "Agneta", "version": .string(Router.version)],
             "_meta": ["agneta": [
-                "extensions": [.string(SessionPolicy.key), "agneta/task@1", "agneta/instructions", "agneta/instructions@1",
-                               "agneta/steer@1", "agneta/usage@1", "agneta/trace@1", "agneta/limit@1", "agneta/queue@1", "agneta/rateLimited@1", "agneta/fork@1"],
-                "accounts": .array(grant.accounts.compactMap { id in
-                    accounts[id].map { account in
-                        ["id": .string(id), "label": .string(account.label), "paused": .bool(paused.contains(id)),
-                         "capabilities": account.engine.map(Self.capabilities) ?? .null,
-                         // What its tasks may run on (`_meta.agneta.engine` in session/new), the default first.
-                         "engines": .array(engines(for: id).map { ["id": .string($0.id), "name": .string($0.displayName), "capabilities": Self.capabilities($0)] })]
-                    }
-                }),
-                // What the user allowed, and the app's own workspace (within it).
-                "scope": ["tools": .string(grant.tools.rawValue), "folders": .array(grant.folders.map(JSONValue.string))],
-                "workspace": Self.workspace(of: grant, in: context).map { .string($0.path(percentEncoded: false)) } ?? .null,
+                "extensions": .array(Self.extensions.map(JSONValue.string)),
+                "access": access(grant),
             ]],
         ]
     }
 
-    /// Agneta's version, in `initialize` and every trace's `meta`.
-    public static let version = "0.1.0"
+    /// Agneta's version, in `initialize` and every trace's `meta`: the app's, or "dev" outside one.
+    public static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+
+    /// Agneta's additions to ACP, listed in `initialize` (docs/APP_PROTOCOL.md).
+    static let extensions = [SessionPolicy.key, "agneta/access", "agneta/task", "agneta/instructions", "agneta/steer", "agneta/usage",
+                             "agneta/trace", "agneta/limit", "agneta/queue", "agneta/rateLimited", "agneta/fork"]
 
     static func newToken() -> String {
         var bytes = [UInt8](repeating: 0, count: 32)

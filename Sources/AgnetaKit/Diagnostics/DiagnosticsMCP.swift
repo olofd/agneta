@@ -99,7 +99,7 @@ public final class DiagnosticsMCP: @unchecked Sendable {
               "errors_only": ["type": "boolean"], "turn": ["type": "integer"], "full": ["type": "boolean"], "json": json], required: ["task"]),
         tool("model_calls", "A task's model calls from the engine's ledger: model, input, output, cache tokens, cost, compaction.",
              ["task": task, "turn": ["type": "integer"], "json": json], required: ["task"]),
-        tool("read_trace", "A task's trace records (agneta/trace@1) after a sequence number, filtered by type. Raw ACP frames only when types includes acp.",
+        tool("read_trace", "A task's trace records (agneta/trace) after a sequence number, filtered by type. Raw ACP frames only when types includes acp.",
              ["task": task, "after": ["type": "integer"], "types": ["type": "array", "items": ["type": "string"]], "limit": ["type": "integer"]], required: ["task"]),
         tool("tail", "Waits up to wait_ms (at most 8000) for records after a sequence number of a running task, then returns them; call it again to keep following.",
              ["task": task, "after": ["type": "integer"], "wait_ms": ["type": "integer"]], required: ["task", "after"]),
@@ -198,7 +198,7 @@ public final class DiagnosticsMCP: @unchecked Sendable {
             if let app, meta["app"]?["name"]?.stringValue?.lowercased() != app.lowercased() { continue }
             let last = TraceWriter.lastRecord(of: file)
             rows.append(["task": .string(task), "app": meta["app"]?["name"] ?? .null,
-                         "title": meta["request"]?["_meta"]?["agneta/task@1"]?["title"] ?? "AI task", "account": meta["account"]?["label"] ?? .null,
+                         "title": meta["request"]?["_meta"]?["agneta/task"]?["title"] ?? "AI task", "account": meta["account"]?["label"] ?? .null,
                          "started": meta["t"] ?? .null, "turns": last?["turn"] ?? 0, "ended": .bool(last?["type"]?.stringValue == "end")])
             if rows.count >= limit { break }
         }

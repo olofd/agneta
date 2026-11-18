@@ -16,7 +16,6 @@ public actor AgnetaRuntime {
 
     public struct Configuration: Sendable {
         public var store: AgnetaStore
-        public var engines: [any EngineAdapter]
         public var shellTool: URL
         /// Where each paired app's own workspace is made, if apps get one.
         public var appWorkspaces: URL?
@@ -24,10 +23,9 @@ public actor AgnetaRuntime {
         public var engineLoopbackPorts: [Int]
         public var concurrency: Router.Concurrency
 
-        public init(store: AgnetaStore, engines: [any EngineAdapter], shellTool: URL, appWorkspaces: URL? = nil,
+        public init(store: AgnetaStore, shellTool: URL, appWorkspaces: URL? = nil,
                     engineLoopbackPorts: [Int] = [], concurrency: Router.Concurrency = .init()) {
             self.store = store
-            self.engines = engines
             self.shellTool = shellTool
             self.appWorkspaces = appWorkspaces
             self.engineLoopbackPorts = engineLoopbackPorts
@@ -67,7 +65,7 @@ public actor AgnetaRuntime {
         if stopped.count + interrupted > 0 { log?.log("recovered", ["engines": .int(Int64(stopped.count)), "tasks": .int(Int64(interrupted))]) }
 
         let traces = Traces(folder: store.tracesFolder)
-        let supervisor = EngineSupervisor(.init(engines: configuration.engines, shellTool: configuration.shellTool, root: store.root,
+        let supervisor = EngineSupervisor(.init(shellTool: configuration.shellTool, root: store.root,
                                                 engineLoopbackPorts: configuration.engineLoopbackPorts, ledger: database, traces: traces))
         let router = Router(context: PolicyContext(userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [store.root],
                                                    appWorkspaces: configuration.appWorkspaces),
@@ -95,8 +93,6 @@ public actor AgnetaRuntime {
             log?.error("trace-write-failed", ["task": .string(task), "reason": .string(reason)])
             Task { await self?.emit(.traceProblem(task: task, reason: reason)) }
         }
-        // Every engine Agneta runs: a task may ask for any its account's provider supports.
-        for engine in configuration.engines { await router.register(engine: engine) }
         prune(olderThan: historyDays)
         await sweepEngineHomes()
         // Retention also runs daily while Agneta stays open.
@@ -116,20 +112,21 @@ public actor AgnetaRuntime {
 
     // MARK: Accounts
 
-    /// Adds or replaces an engine (Claude Code once its adapter is installed, OpenCode once downloaded).
-    public func register(_ engine: any EngineAdapter) async {
-        await supervisor.register(engine)
-        await router.register(engine: engine)
+    /// The host's snapshot of its engines and each provider's default, whenever either changes (EngineCatalog).
+    public func setCatalog(_ catalog: EngineCatalog) async { await router.setCatalog(catalog) }
+
+    /// Changes which providers and engines an app may use, and saves it.
+    public func setAccess(grant: String, accounts: [String], engines: EngineAllowance) async throws {
+        try await router.setAccess(grant: grant, accounts: accounts, engines: engines)
+        // Removed meanwhile (Remove Access while the change was saved): its row must not come back on the next launch.
+        if await !router.hasGrant(grant) { try database.deleteGrant(id: grant) }
     }
 
-    /// An engine's download progress (`{"received", "total"}`), or nil once it's done or has failed.
-    public func setDownloading(_ engine: String, progress: JSONValue?) async { await router.setDownloading(engine, progress: progress) }
-
-    /// Serves an account: its engine and provider, how its tools run, and whether it's paused. Replaces what was there.
-    public func serve(account id: String, label: String, setup: AccountSetup, runner: Router.ToolRunner, kind: String?, billing: String, paused: Bool) async {
-        await supervisor.add(account: id, setup: setup)
-        let engine = await supervisor.engine(for: id)
-        await router.add(account: id, label: label, runner: runner, kind: kind, billing: billing, engine: engine, engineID: setup.engine)
+    /// Serves an account: its provider, how its tools run, and whether it's paused. Replaces what was there.
+    public func serve(account id: String, label: String, provider: ProviderSetup, runner: Router.ToolRunner, kind: AccountKind, billing: String,
+                      paused: Bool) async {
+        await supervisor.add(account: id, provider: provider)
+        await router.add(account: id, label: label, runner: runner, kind: kind, billing: billing)
         await router.setPaused(id, paused)
     }
 
@@ -231,7 +228,7 @@ public actor AgnetaRuntime {
         traces.delete(tasks: tasks)
     }
 
-    /// Engine homes nothing refers to any more (a crash, older builds), after the retention period.
+    /// Engine homes nothing refers to any more (after a crash), after the retention period.
     private func sweepEngineHomes() async {
         let keep = await supervisor.runningKeys
         EngineHomes.sweep(root: store.root, traces: traces, before: Date().addingTimeInterval(-Double(max(historyDays, 1)) * 86_400), keep: keep)

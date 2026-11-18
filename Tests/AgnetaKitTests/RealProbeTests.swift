@@ -31,16 +31,18 @@ import Testing
     print("PROBE Claude Code:", claudeCLI.label)
     let bin = GooseHarness.repo.appending(path: "Engines/bin/\(GooseHarness.arch)")
     let codex = CLILocator.codex().first(where: \.supported).map { CodexAdapter(node: bin.appending(path: "node-runtime/bin/node"), script: bin.appending(path: "codex-acp/dist/index.js"), cli: $0) }
-    let supervisor = EngineSupervisor(.init(engines: [goose, claudeCode] + (codex.map { [$0] } ?? []), shellTool: BuiltTools.shell, root: root.appending(path: "agneta"), traces: traces), accounts: [
-        "codex": AccountSetup(engine: "codex", provider: ProviderSetup(kind: .chatGPT, subscription: SubscriptionAccount(route: .chatGPT, home: accounts.appending(path: "chatgpt", directoryHint: .isDirectory)))),
-        "claude-direct": AccountSetup(engine: "claude-code", provider: ProviderSetup(kind: .claudeCode, subscription: SubscriptionAccount(route: .claudeCode, home: accounts.appending(path: "claude", directoryHint: .isDirectory), adapter: adapterPath))),
-        "claude": AccountSetup(engine: "goose", provider: ProviderSetup(kind: .claudeCode, subscription: SubscriptionAccount(route: .claudeCode, home: accounts.appending(path: "claude", directoryHint: .isDirectory), adapter: adapterPath, claudeCode: claudeCLI.path))),
+    let supervisor = EngineSupervisor(.init(shellTool: BuiltTools.shell, root: root.appending(path: "agneta"), traces: traces), accounts: [
+        "codex": ProviderSetup(kind: .chatGPT, subscription: SubscriptionAccount(route: .chatGPT, home: accounts.appending(path: "chatgpt", directoryHint: .isDirectory))),
+        "claude-direct": ProviderSetup(kind: .claudeCode, subscription: SubscriptionAccount(route: .claudeCode, home: accounts.appending(path: "claude", directoryHint: .isDirectory), adapter: adapterPath)),
+        "claude": ProviderSetup(kind: .claudeCode, subscription: SubscriptionAccount(route: .claudeCode, home: accounts.appending(path: "claude", directoryHint: .isDirectory), adapter: adapterPath, claudeCode: claudeCLI.path)),
     ])
     let router = Router(context: PolicyContext(userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [root.appending(path: "agneta")]),
                         engines: supervisor, traces: traces) { _ in Router.PairingAnswer(accounts: ["claude", "claude-direct", "codex"], remember: true) }
-    await router.add(account: "claude", label: "Claude", runner: .native, kind: "claude", billing: "subscription", engine: goose)
-    await router.add(account: "claude-direct", label: "Claude (Claude Code)", runner: .native, kind: "claude", billing: "subscription", engine: claudeCode)
-    if let codex { await router.add(account: "codex", label: "ChatGPT (Codex)", runner: .native, kind: "chatgpt", billing: "subscription", engine: codex) }
+    // "claude" runs on Goose (its default here), "claude-direct" asks for Claude Code: both are the one Claude plan.
+    await router.setCatalog(EngineCatalog(ready: [goose, claudeCode] + (codex.map { [$0] } ?? []), defaults: ProviderEngines(selected: [.claude: "goose"])))
+    await router.add(account: "claude", label: "Claude", runner: .native, kind: .claude, billing: "subscription")
+    await router.add(account: "claude-direct", label: "Claude (Claude Code)", runner: .native, kind: .claude, billing: "subscription")
+    if codex != nil { await router.add(account: "codex", label: "ChatGPT (Codex)", runner: .native, kind: .chatGPT, billing: "subscription") }
     let server = try WebSocketServer(port: 47488)
     try await server.start()
     defer { server.stop() }
@@ -55,8 +57,8 @@ import Testing
             let created = try await app.request("session/new", [
                 "cwd": .string(root.appending(path: "work").path(percentEncoded: false)),
                 "mcpServers": [["type": "http", "name": "app", "url": "http://127.0.0.1:47489/mcp", "headers": [["name": "Authorization", "value": "Bearer realprobe-bearer-123"]]]],
-                "_meta": ["agneta": ["account": .string(account)], SessionPolicy.key: ["tools": .string(env["AGNETA_REAL_PROBE_TOOLS"] ?? "app-only"), "approval": "never-ask"],
-                          "agneta/instructions": ["text": "You are testing a tool connection. Be very brief."], "agneta/trace@1": ["live": true]],
+                "_meta": ["agneta": ["account": .string(account), "engine": account == "claude-direct" ? "claude-code" : .null], SessionPolicy.key: ["tools": .string(env["AGNETA_REAL_PROBE_TOOLS"] ?? "app-only"), "approval": "never-ask"],
+                          "agneta/instructions": ["text": "You are testing a tool connection. Be very brief."], "agneta/trace": ["live": true]],
             ])
             let session = try #require(created["sessionId"]?.stringValue)
             // The raw trace, for measuring: kept whether the round succeeds or fails.
@@ -73,7 +75,7 @@ import Testing
             let started = ContinuousClock.now
             let first = try await app.prompt(session, "Reply with exactly: agneta works")
             print("PROBE \(account) reply:", app.text(session).suffix(160), "in", ContinuousClock.now - started)
-            var t = ""; TraceJSON.encode(first["_meta"]?["agneta/usage@1"] ?? .null, into: &t); print("PROBE \(account) usage:", t)
+            var t = ""; TraceJSON.encode(first["_meta"]?["agneta/usage"] ?? .null, into: &t); print("PROBE \(account) usage:", t)
             let second = try await app.prompt(session, env["AGNETA_REAL_PROBE_PROMPT"] ?? "Call the app echo tool with the text 'agneta', then say what it returned.")
             print("PROBE \(account) second reply:", app.text(session).suffix(300).replacingOccurrences(of: "\n", with: " "))
             print("PROBE \(account) work folder:", (try? FileManager.default.contentsOfDirectory(atPath: root.appending(path: "work").path(percentEncoded: false))) ?? [])

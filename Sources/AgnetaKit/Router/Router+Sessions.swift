@@ -50,16 +50,17 @@ extension Router {
     /// What an authorized session runs with.
     struct Plan {
         var account: String
-        /// The engine the task runs on (ProviderEngines: the one it asked for, else its provider's).
-        var engine: String?
+        /// The engine the task runs on (Router.taskEngine).
+        var engine: any EngineAdapter
         var policy: SessionPolicy
         var servers: [JSONValue]
         var instructions: String?
     }
 
-    /// Every check a session passes before an engine starts: an account the app was granted, not paused; a policy
-    /// that parses and fits the grant; tool servers Agneta can confine; and a cost limit only where the engine
-    /// reports cost (on another it would silently never trip). `sent`: the policy came from the app (or the task
+    /// Every check a session passes before an engine starts: an account the app was granted, not paused; an engine
+    /// the grant allows that the account's provider supports and that's here (`taskEngine`); a policy that parses and
+    /// fits the grant; tool servers Agneta can confine; and a cost limit only where the engine reports cost (on
+    /// another it would silently never trip). `sent`: the policy came from the app (or the task
     /// it resumes), so it's held to the grant as it is; one Agneta supplies gets no more tools than granted.
     func authorize(grant: Grant, account: String?, engine requested: String? = nil, resuming: Bool = false, cwd: String?, policy value: JSONValue?, sent: Bool,
                            servers: [JSONValue], instructions: String?) -> Result<Plan, RPCError> {
@@ -79,25 +80,19 @@ extension Router {
         case .failure(let refusal): return .failure(refusal)
         }
         if let refusal = Self.refuseServers(servers) { return .failure(refusal) }
-        let engineID: String?
-        switch taskEngine(account: account, requested: requested, resuming: resuming) {
-        case .success(let id): engineID = id
+        let engine: any EngineAdapter
+        switch taskEngine(account: account, requested: requested, resuming: resuming, grant: grant) {
+        case .success(let adapter): engine = adapter
         case .failure(let refusal): return .failure(refusal)
         }
-        let engine = engineID.flatMap { adapters[$0] } ?? accounts[account]?.engine
-        if let wanted = engineID, let progress = downloading[wanted] {
-            return .failure(RPCError(code: Self.engineDownloading, message: "Agneta is still downloading what this engine needs; try again shortly",
-                                     data: ["agneta": ["engineDownloading": progress.setting("engine", to: .string(wanted))]]))
-        }
-        if let engine,
-           let taken = servers.compactMap({ $0["name"]?.stringValue }).first(where: engine.reservedToolServers.contains) {
+        if let taken = servers.compactMap({ $0["name"]?.stringValue }).first(where: engine.reservedToolServers.contains) {
             return .failure(RPCError(code: RPCError.invalidParams, message: "\(engine.displayName) uses the tool server name \(taken) for its own tools",
                                      data: ["agneta": ["unenforceable": ["mcpServers"], "reason": .string("reserved name \(taken)")]]))
         }
-        if policy.limits.maxCostUSD != nil, let engine, !engine.capabilities.reportsCost {
+        if policy.limits.maxCostUSD != nil, !engine.capabilities.reportsCost {
             return .failure(PolicyRejection(field: "limits", reason: "\(engine.displayName) doesn't report cost, so maxCostUSD can't be enforced").rpcError)
         }
-        return .success(Plan(account: account, engine: engineID, policy: policy, servers: servers, instructions: instructions))
+        return .success(Plan(account: account, engine: engine, policy: policy, servers: servers, instructions: instructions))
     }
 
     /// The refusal for anything new on a paused account, or nil when it isn't paused.
@@ -108,13 +103,13 @@ extension Router {
                  data: ["agneta": ["paused": .string(account)]])
     }
 
-    /// Why a saved task can't continue on the engine that saved it, or nil: a task resumes (or is forked) only there,
-    /// in a state format that engine still reads. Traces from before the format was recorded are compared by engine.
-    func savedStateRefusal(_ meta: JSONValue) -> RPCError? {
-        guard let saved = meta["engine"]?["id"]?.stringValue, let engine = adapters[saved] else { return nil } // a host that doesn't say: the supervisor decides
-        guard let format = meta["engine"]?["stateFormat"]?.stringValue, format != engine.stateFormat else { return nil }
+    /// Why a saved task can't continue on its engine, or nil: a task resumes (or is forked) only in a state format
+    /// the engine that saved it still reads.
+    func savedStateRefusal(_ meta: JSONValue, engine: any EngineAdapter) -> RPCError? {
+        let format = meta["engine"]?["stateFormat"]?.stringValue ?? "unknown"
+        guard format != engine.stateFormat else { return nil }
         return RPCError(code: RPCError.invalidParams, message: "This task can't continue: \(engine.displayName) now stores sessions as \(engine.stateFormat), not \(format)",
-                        data: ["agneta": ["engineChanged": ["saved": .string(saved), "current": .string(engine.id)]]])
+                        data: ["agneta": ["stateChanged": ["engine": .string(engine.id), "saved": .string(format), "current": .string(engine.stateFormat)]]])
     }
 
     /// Starts (or joins) the plan's engine and routes its messages. `key` returns to an earlier engine home.
@@ -189,6 +184,7 @@ extension Router {
         let instructions = meta?["agneta/instructions"]?["text"]?.stringValue
             ?? params?["systemPrompt"]?["content"]?.arrayValue?.compactMap { $0["text"]?.stringValue }.joined(separator: "\n")
         let plan: Plan, lease: EngineLease
+        // Without an account named: the first one the app may use that's here.
         switch authorize(grant: grant, account: requested ?? grant.accounts.first { accounts[$0] != nil },
                          engine: params?["_meta"]?["agneta"]?["engine"]?.stringValue, cwd: params?["cwd"]?.stringValue,
                          policy: meta?[SessionPolicy.key], sent: meta?[SessionPolicy.key] != nil,
@@ -205,7 +201,7 @@ extension Router {
         let engineSession: String, result: JSONValue
         do {
             let engineParams = lease.engine.newSession(cwd: plan.policy.workspace, servers: plan.servers, policy: plan.policy,
-                                                       title: meta?["agneta/task@1"]?["title"], instructions: plan.instructions)
+                                                       title: meta?["agneta/task"]?["title"], instructions: plan.instructions)
             result = try await lease.peer.request("session/new", engineParams)
             guard let created = result["sessionId"]?.stringValue else { throw RPCError(code: RPCError.internalError, message: "The engine didn't create a session") }
             engineSession = created
@@ -232,8 +228,8 @@ extension Router {
             openTrace(traces, task: id, grant: grant, accountID: plan.account, lease: lease, engineSession: engineSession,
                       policy: plan.policy, request: params, result: result, instructions: plan.instructions)
         }
-        announce(id, grant: grant, account: plan.account, title: meta?["agneta/task@1"]?["title"]?.stringValue ?? "AI task",
-                 stopWarning: meta?["agneta/task@1"]?["stopWarning"]?.stringValue)
+        announce(id, grant: grant, account: plan.account, title: meta?["agneta/task"]?["title"]?.stringValue ?? "AI task",
+                 stopWarning: meta?["agneta/task"]?["stopWarning"]?.stringValue)
         return .success(reply(result, id: id, plan: plan, lease: lease))
     }
 
@@ -268,7 +264,7 @@ extension Router {
         if EngineKeys.isShared(engineKey), plan.policy.tools != .appOnly {
             return .failure(PolicyRejection(field: "tools", reason: "this task ran without built-in tools; resume it the same way").rpcError)
         }
-        if let refusal = savedStateRefusal(meta) { return .failure(refusal) }
+        if let refusal = savedStateRefusal(meta, engine: plan.engine) { return .failure(refusal) }
         switch await launch(plan, key: engineKey) {
         case .success(let started): lease = started
         case .failure(let error): return .failure(error)
@@ -288,8 +284,8 @@ extension Router {
             // Ended while the engine replayed it (the app went or lost access, or the user stopped it): end() has
             // already let it go, and nothing may announce it now.
             guard current(id, generation) else { return .failure(Self.endedWhileOpening) }
-            announce(id, grant: grant, account: plan.account, title: original?["_meta"]?["agneta/task@1"]?["title"]?.stringValue ?? "AI task",
-                     stopWarning: original?["_meta"]?["agneta/task@1"]?["stopWarning"]?.stringValue, resumed: true)
+            announce(id, grant: grant, account: plan.account, title: original?["_meta"]?["agneta/task"]?["title"]?.stringValue ?? "AI task",
+                     stopWarning: original?["_meta"]?["agneta/task"]?["stopWarning"]?.stringValue, resumed: true)
             return .success(reply(result, id: nil, plan: plan, lease: lease, adding: ["resumed": true]))
         } catch {
             if current(id, generation) { trace.writer.record("lifecycle", ["event": "resume-failed", "reason": .string("\(error)")]) }
@@ -323,8 +319,8 @@ extension Router {
         case .success(let authorized): plan = authorized
         case .failure(let refusal): return .failure(refusal)
         }
-        // The copy is made by the engine that saved the task and imported by the account's engine: they must be one.
-        if let refusal = savedStateRefusal(meta) { return .failure(refusal) }
+        // The copy is made, and imported, by the engine that saved the task.
+        if let refusal = savedStateRefusal(meta, engine: plan.engine) { return .failure(refusal) }
 
         // 1. The conversation, from the engine that holds it.
         let exported: JSONValue
@@ -333,7 +329,7 @@ extension Router {
                 guard let request = open.lease.engine.exportSession(open.engineSession) else { return .failure(Self.unsupported(open.lease.engine, "fork a session")) }
                 exported = try await open.lease.peer.request(request.method, request.params)
             } else {
-                let holder = try await engines.open(account: plan.account, policy: plan.policy, mcpPorts: [], key: sourceKey)
+                let holder = try await engines.open(account: plan.account, engine: plan.engine, policy: plan.policy, mcpPorts: [], key: sourceKey, session: nil)
                 defer { Task { await self.engines.release(holder) } }
                 guard let request = holder.engine.exportSession(sourceSession) else { return .failure(Self.unsupported(holder.engine, "fork a session")) }
                 exported = try await holder.peer.request(request.method, request.params)
@@ -378,8 +374,8 @@ extension Router {
                       policy: plan.policy, request: request, result: result, instructions: plan.instructions)
             traces.session(id)?.writer.record("lifecycle", ["event": "forked", "from": .string(source), "messages": imported["messageCount"] ?? .null])
             announce(id, grant: grant, account: plan.account,
-                     title: params?["_meta"]?["agneta/task@1"]?["title"]?.stringValue
-                         ?? "Review of " + (original?["_meta"]?["agneta/task@1"]?["title"]?.stringValue ?? "a task"),
+                     title: params?["_meta"]?["agneta/task"]?["title"]?.stringValue
+                         ?? "Review of " + (original?["_meta"]?["agneta/task"]?["title"]?.stringValue ?? "a task"),
                      stopWarning: nil)
             return .success(reply(result, id: id, plan: plan, lease: lease, adding: ["forkOf": .string(source)]))
         } catch {
@@ -397,7 +393,7 @@ extension Router {
             for header in server["headers"]?.arrayValue ?? [] { if let value = header["value"]?.stringValue { traces.mask.register(value) } }
         }
         var forwarder: TraceForwarder?
-        if let live = request?["_meta"]?["agneta/trace@1"], live["live"]?.boolValue == true, let peer = apps[sessions[task]?.app ?? UUID()]?.peer {
+        if let live = request?["_meta"]?["agneta/trace"], live["live"]?.boolValue == true, let peer = apps[sessions[task]?.app ?? UUID()]?.peer {
             let include = live["include"]?.arrayValue.map { Traces.defaultTypes.union($0.compactMap(\.stringValue)) } ?? Traces.defaultTypes
             forwarder = TraceForwarder(include: include, send: { records in
                 try? await peer.notify("agneta/trace", ["sessionId": .string(task), "records": .array(records)])
@@ -424,12 +420,12 @@ extension Router {
         let account = accounts[accountID]
         func paths(_ urls: [URL]) -> JSONValue { .array(urls.map { .string($0.path(percentEncoded: false)) }) }
         let meta: [String: JSONValue] = [
-            "format": "agneta/trace@1",
+            "format": "agneta/trace",
             "agneta": ["version": .string(Self.version)],
             "app": ["name": .string(grant.app), "identifier": grant.identifier.map(JSONValue.string) ?? .null, "verified": .bool(grant.verified),
                     "grant": .string(grant.id)],
             "account": ["id": .string(accountID), "label": account.map { .string($0.label) } ?? .null,
-                        "kind": account?.kind.map(JSONValue.string) ?? .null, "billing": .string(account?.billing ?? "unknown"),
+                        "kind": account.map { .string($0.kind.rawValue) } ?? .null, "billing": .string(account?.billing ?? "unknown"),
                         "runner": runner(account: accountID, engine: lease.engine) == .native ? "native" : "brokered"],
             "engine": ["id": .string(lease.engine.id), "stateFormat": .string(lease.engine.stateFormat), "info": lease.engineInfo ?? .null,
                        "pid": .int(Int64(lease.pid)), "dedicated": .bool(lease.dedicated), "key": .string(lease.key),

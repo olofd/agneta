@@ -48,10 +48,11 @@ func endablePeerPair(gate: Gate? = nil) -> (RPCPeer, RPCPeer, @Sendable () -> Vo
 /// An engine that follows its prompts: "permission <kind>" asks Agneta about a tool of that
 /// kind, "slow" runs until steered (or 3 s), anything else replies with text.
 /// An engine with only plain ACP: no steering, fork or instructions between turns.
+/// A plain engine, standing in for one of Agneta's (Goose by default) so a provider supports it.
 struct PlainAdapter: EngineAdapter {
     let base = GooseAdapter(executable: URL(filePath: "/usr/bin/false"))
     var stateFormat = "plain/1"
-    var id: String { "plain" }
+    var id = "goose"
     var displayName: String { "Plain" }
     var capabilities: EngineCapabilities { EngineCapabilities(steer: false, fork: false, instructionsBetweenTurns: false, processPerSession: true) }
     func launch(_ context: EngineLaunchContext) throws -> EngineLaunch { try base.launch(context) }
@@ -69,10 +70,6 @@ struct PlainAdapter: EngineAdapter {
 }
 
 actor FakeEngines: EngineSource {
-    /// The engine each account's leases report (default: Goose's dialect).
-    var adapters: [String: any EngineAdapter] = [:]
-    func use(_ adapter: any EngineAdapter, for account: String) { adapters[account] = adapter }
-
     private(set) var permissionAnswers: [String: JSONValue] = [:]
     private(set) var steers: [JSONValue] = []
     private(set) var instructions: [JSONValue] = []
@@ -100,13 +97,12 @@ actor FakeEngines: EngineSource {
     private var steered: CheckedContinuation<Void, Never>?
     private var cancelled = false
 
-    /// The engine each open asked for instead of the account's own (nil: the account's).
-    private(set) var askedEngines: [String?] = []
+    /// The engine each open was for.
+    private(set) var askedEngines: [String] = []
 
-    func open(account: String, engine: String?, policy: SessionPolicy, mcpPorts: [Int], key: String?, session: EngineSessionSpec?) async throws -> EngineLease {
+    func open(account: String, engine adapter: any EngineAdapter, policy: SessionPolicy, mcpPorts: [Int], key: String?, session: EngineSessionSpec?) async throws -> EngineLease {
         opened += 1
-        askedEngines.append(engine)
-        let chosen = engine
+        askedEngines.append(adapter.id)
         if openDelay > .zero { try? await Task.sleep(for: openDelay) }
         let gate = Gate()
         gates.append(gate)
@@ -123,7 +119,7 @@ actor FakeEngines: EngineSource {
         })
         // Speaks Goose's dialect, so Goose's adapter describes it.
         // App-only sessions get the shared key, as the real supervisor gives them.
-        return EngineLease(key: key ?? (policy.tools == .appOnly ? EngineKeys.shared(account: account, engine: chosen ?? "goose") : "\(account)/fake-\(n)"), peer: agneta, pid: getpid(), dedicated: true, engine: adapters[account] ?? GooseAdapter(executable: URL(filePath: "/usr/bin/false")), startMs: 12.5,
+        return EngineLease(key: key ?? (policy.tools == .appOnly ? EngineKeys.shared(account: account, engine: adapter.id) : "\(account)/fake-\(n)"), peer: agneta, pid: getpid(), dedicated: true, engine: adapter, startMs: 12.5,
                            engineInfo: ["name": "fake", "version": "1"])
     }
 
@@ -246,10 +242,10 @@ actor FakeEngines: EngineSource {
                 PairingCodes.shared.add(request.code)
                 return await approve?(request) ?? Router.PairingAnswer(accounts: ["brokered", "native"], remember: true)
             }
-            await router.add(account: "brokered", label: "API", kind: "openai-key", billing: "api-key")
-            await router.add(account: "native", label: "Claude", runner: .native, kind: "claude", billing: "subscription")
-            // The fake engine reports itself as Goose (the leases' default), so tasks resume on an engine that's here.
-            await router.register(engine: GooseAdapter(executable: URL(filePath: "/usr/bin/false")))
+            await router.add(account: "brokered", label: "API", kind: .openAIKey, billing: "api-key")
+            await router.add(account: "native", label: "Claude", runner: .native, kind: .claude, billing: "subscription")
+            // Goose only, as a fresh Agneta has; the fake engine speaks its dialect.
+            await router.setCatalog(EngineCatalog(ready: [GooseAdapter(executable: URL(filePath: "/usr/bin/false"))]))
             let server = try WebSocketServer(port: port)
             try await server.start()
             Task { for await connection in server.connections { Task { await router.serve(connection) } } }
@@ -322,38 +318,44 @@ actor FakeEngines: EngineSource {
         #expect(asked["decision"]?.stringValue == "asked-app" && asked["toolKind"]?.stringValue == "read")
     }
 
-    /// A task runs on the engine it asks for when its account's provider supports it and Agneta has it, else on the
-    /// provider's selected one; initialize lists each account's engines. A task from a shared engine resumes there only
-    /// without built-in tools.
+    static let goose = GooseAdapter(executable: URL(filePath: "/usr/bin/false"))
+    static let opencode = OpenCodeAdapter(executable: URL(filePath: "/usr/bin/false"))
+
+    /// An app picks the provider and engine of each task, among what its grant allows and the provider supports; one
+    /// that names no engine runs on the provider's default. `agneta/access` (and `initialize`) says what it may use;
+    /// anything else is refused with that. A task from a shared engine resumes there only without built-in tools.
     @Test func aTaskRunsOnAnEngineItsProviderSupports() async throws {
         let stack = try await Stack.start(port: 47645)
         defer { stack.stop() }
-        await stack.router.register(engine: OpenCodeAdapter(executable: URL(filePath: "/usr/bin/false")))
-        await stack.router.register(engine: GooseAdapter(executable: URL(filePath: "/usr/bin/false")))
+        await stack.router.setCatalog(EngineCatalog([.init(ready: Self.goose), .init(ready: Self.opencode),
+                                                     .init(id: "codex", name: "Codex", state: .unavailable("Install Codex"))]))
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Contract")
-        let initialize = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
-        let accounts = initialize["_meta"]?["agneta"]?["accounts"]?.arrayValue ?? []
-        let engines = accounts.first { $0["id"]?.stringValue == "brokered" }?["engines"]?.arrayValue?.compactMap { $0["id"]?.stringValue }
-        #expect(engines == ["goose", "opencode"]) // an OpenAI key's engines that are here; Codex isn't
+        let access = try await app.request("agneta/access", [:])
+        let brokered = access["providers"]?.arrayValue?.first { $0["id"]?.stringValue == "brokered" }
+        #expect(brokered?["engines"]?.arrayValue?.compactMap(\.stringValue) == ["goose", "opencode"]) // Codex isn't here
+        #expect(brokered?["defaultEngine"]?.stringValue == "goose" && brokered?["kind"]?.stringValue == "openai-key")
+        let states = Dictionary(uniqueKeysWithValues: (access["engines"]?.arrayValue ?? []).map { ($0["id"]?.stringValue ?? "", $0["state"]?.stringValue ?? "") })
+        #expect(states == ["goose": "ready", "opencode": "ready", "codex": "unavailable"])
+        #expect(access["allowedEngines"]?.stringValue == "all")
 
         func meta(_ account: String, _ engine: String) -> [String: JSONValue] { ["agneta": ["account": .string(account), "engine": .string(engine)]] }
         _ = try await stack.session(app, account: "brokered", meta: meta("brokered", "opencode"))
-        #expect(await stack.engines.askedEngines.last == .some("opencode"))
+        #expect(await stack.engines.askedEngines.last == "opencode")
         _ = try await stack.session(app, account: "brokered")
-        #expect(await stack.engines.askedEngines.last == .some(nil)) // the provider's selected engine
-        for (account, engine) in [("native", "opencode"), ("brokered", "codex"), ("brokered", "claude-code")] {
+        #expect(await stack.engines.askedEngines.last == "goose") // the provider's default
+        for (account, engine) in [("native", "opencode"), ("brokered", "codex"), ("brokered", "claude-code"), ("brokered", "nonsense")] {
             do {
                 _ = try await stack.session(app, account: account, meta: meta(account, engine))
                 Issue.record("\(account) ran on \(engine)")
             } catch let error as RPCError {
-                #expect(error.code == RPCError.invalidParams && error.data?["agneta"]?["engines"] != nil, "\(error.message)")
+                #expect(error.code == RPCError.invalidParams && error.data?["agneta"]?["access"]?["providers"] != nil, "\(error.message)")
             }
         }
 
-        // A task from a shared engine named for its engine resumes only without built-in tools, like any shared task:
-        // built-ins there would run outside the broker's confinement.
+        // A task from a shared engine resumes only without built-in tools, like any shared task: built-ins there would
+        // run outside the broker's confinement.
         let shared = try await stack.session(app, account: "brokered")
         _ = try await app.request("session/close", ["sessionId": .string(shared)])
         do {
@@ -365,27 +367,92 @@ actor FakeEngines: EngineSource {
         }
     }
 
+    /// The grant's engines are a list the user may narrow (Advanced): a task may run only on those, its default is the
+    /// provider's when allowed, else the first allowed; resuming needs the saving engine still allowed. Narrowing the
+    /// grant stops what no longer fits and tells the app; Remove Access while the change is saved wins.
+    @Test func theGrantLimitsTheEnginesAnAppMayPick() async throws {
+        let saved = SavedGrants()
+        let stack = try await Stack.start(port: 47652, commit: { hash, grant in await saved.commit(hash, grant) }) { _ in
+            Router.PairingAnswer(accounts: ["brokered"], engines: .only(["opencode"]), remember: true)
+        }
+        defer { stack.stop() }
+        await stack.router.setCatalog(EngineCatalog(ready: [Self.goose, Self.opencode]))
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Picky")
+        let grant = try #require(await saved.last)
+        #expect(grant.engines == .only(["opencode"]) && grant.accounts == ["brokered"])
+
+        let initialize = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
+        let access = initialize["_meta"]?["agneta"]?["access"]
+        #expect(access?["providers"]?.arrayValue?.first?["engines"]?.arrayValue == ["opencode"])
+        #expect(access?["engines"]?.arrayValue?.compactMap { $0["id"]?.stringValue } == ["opencode"])
+
+        let task = try await stack.session(app, account: "brokered")
+        #expect(await stack.engines.askedEngines.last == "opencode") // the provider's default (Goose) isn't allowed
+        do {
+            _ = try await stack.session(app, account: "brokered", meta: ["agneta": ["account": "brokered", "engine": "goose"]])
+            Issue.record("ran on an engine the grant doesn't allow")
+        } catch let error as RPCError {
+            #expect(error.code == RPCError.invalidParams && error.message.contains("isn't allowed"), "\(error.message)")
+        }
+
+        // Narrowed to Goose: the OpenCode task stops, the app hears its access changed, and the grant is saved.
+        try await stack.router.setAccess(grant: grant.id, accounts: ["brokered"], engines: .only(["goose"]))
+        #expect(await saved.last?.engines == .only(["goose"]))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(app.notifications("agneta/sessionStopped").contains { $0["sessionId"]?.stringValue == task })
+        let changed = app.notifications("agneta/accessChanged").last
+        #expect(changed?["access"]?["providers"]?.arrayValue?.first?["engines"]?.arrayValue == ["goose"])
+        do {
+            _ = try await app.request("session/load", ["sessionId": .string(task), "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": []])
+            Issue.record("resumed on an engine the grant no longer allows")
+        } catch let error as RPCError {
+            #expect(error.message.contains("isn't allowed"), "\(error.message)")
+        }
+
+        // Remove Access while the change is being saved: the grant stays removed.
+        await saved.revoking(stack.router, grant.id)
+        try await stack.router.setAccess(grant: grant.id, accounts: ["brokered"], engines: .all)
+        #expect(await !stack.router.hasGrant(grant.id))
+    }
+
     /// While the engine a session needs is downloading, the app hears that, with the progress, instead of that
-    /// Agneta lacks the engine; once it's done, the session opens.
+    /// Agneta lacks the engine; one that downloads but hasn't started is asked for (`engineWanted`); once it's ready,
+    /// the session opens. A new catalog that changes what the app may do reaches it as `agneta/accessChanged`.
     @Test func aSessionWaitingOnADownloadSaysSo() async throws {
+        let wanted = Wanted()
         let stack = try await Stack.start(port: 47648)
         defer { stack.stop() }
-        await stack.router.register(engine: OpenCodeAdapter(executable: URL(filePath: "/usr/bin/false")))
-        await stack.router.setDownloading("opencode", progress: ["received": 10, "total": 40])
+        await stack.router.observe { if case .engineWanted(let engine) = $0 { Task { await wanted.add(engine) } } }
+        await stack.router.setCatalog(EngineCatalog([.init(ready: Self.goose), .init(id: "opencode", name: "OpenCode", state: .downloadable(size: 40))]))
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Patient")
         let asking: [String: JSONValue] = ["agneta": ["account": "brokered", "engine": "opencode"]]
         do {
             _ = try await stack.session(app, account: "brokered", meta: asking)
+            Issue.record("a session opened before its engine was downloaded")
+        } catch let error as RPCError {
+            #expect(error.code == -32015 && error.data?["agneta"]?["engineDownloading"]?["engine"]?.stringValue == "opencode")
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await wanted.engines == ["opencode"])
+
+        await stack.router.setCatalog(EngineCatalog([.init(ready: Self.goose), .init(id: "opencode", name: "OpenCode", state: .downloading(received: 10, total: 40))]))
+        do {
+            _ = try await stack.session(app, account: "brokered", meta: asking)
             Issue.record("a session opened while its engine was downloading")
         } catch let error as RPCError {
-            #expect(error.code == -32015)
-            #expect(error.data?["agneta"]?["engineDownloading"]?["engine"]?.stringValue == "opencode")
-            #expect(error.data?["agneta"]?["engineDownloading"]?["received"]?.intValue == 10)
+            #expect(error.code == -32015 && error.data?["agneta"]?["engineDownloading"]?["received"]?.intValue == 10)
         }
-        await stack.router.setDownloading("opencode", progress: Optional<JSONValue>.none)
+        await stack.router.setCatalog(EngineCatalog(ready: [Self.goose, Self.opencode]))
         _ = try await stack.session(app, account: "brokered", meta: asking)
+        try await Task.sleep(for: .milliseconds(50))
+        let states = app.notifications("agneta/accessChanged").compactMap {
+            $0["access"]?["engines"]?.arrayValue?.first { $0["id"]?.stringValue == "opencode" }?["state"]?.stringValue
+        }
+        #expect(states == ["downloading", "ready"])
     }
 
     @Test func promptResultsCarryTheTurnsUsage() async throws {
@@ -396,11 +463,11 @@ actor FakeEngines: EngineSource {
         try await app.pairAndInitialize("Contract")
         let initialize = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
         let extensions = Set(initialize["_meta"]?["agneta"]?["extensions"]?.arrayValue?.compactMap(\.stringValue) ?? [])
-        #expect(extensions.isSuperset(of: ["agneta/usage@1", "agneta/trace@1", "agneta/steer@1", "agneta/instructions@1"]))
+        #expect(extensions.isSuperset(of: ["agneta/usage", "agneta/trace", "agneta/steer", "agneta/instructions"]))
 
         let session = try await stack.session(app, account: "native")
         let result = try await app.prompt(session, "hello")
-        let usage = try #require(result["_meta"]?["agneta/usage@1"])
+        let usage = try #require(result["_meta"]?["agneta/usage"])
         #expect(usage["billing"]?.stringValue == "subscription" && usage["costKind"]?.stringValue == "plan-equivalent")
         #expect(usage["modelCalls"]?.intValue == 0) // the fake engine has no ledger: zero calls seen, not a guess
         #expect(usage["cost"] == .null && usage["basis"]?.stringValue == "engine-ledger")
@@ -415,7 +482,7 @@ actor FakeEngines: EngineSource {
         defer { app.close(); other.close() }
         try await app.pairAndInitialize("Owner")
         try await other.pairAndInitialize("Other")
-        let session = try await stack.session(app, account: "brokered", meta: ["agneta/trace@1": ["live": true]])
+        let session = try await stack.session(app, account: "brokered", meta: ["agneta/trace": ["live": true]])
         _ = try await app.prompt(session, "hello")
         _ = try await app.prompt(session, "permission read")
         _ = try await app.request("session/close", ["sessionId": .string(session)])
@@ -502,11 +569,11 @@ actor FakeEngines: EngineSource {
         let result = try await app.prompt(session, "slow")
         #expect(ContinuousClock.now - started < .milliseconds(2_500))
         #expect(result["stopReason"]?.stringValue == "cancelled")
-        #expect(result["_meta"]?["agneta/limit@1"]?["limit"]?.stringValue == "maxSeconds")
+        #expect(result["_meta"]?["agneta/limit"]?["limit"]?.stringValue == "maxSeconds")
         #expect(try stack.records(session).contains { $0["event"]?.stringValue == "limit" && $0["limit"]?.stringValue == "maxSeconds" })
         // The next turn starts clean.
         let next = try await app.prompt(session, "hello")
-        #expect(next["_meta"]?["agneta/limit@1"] == nil)
+        #expect(next["_meta"]?["agneta/limit"] == nil)
     }
 
     /// A limit holds even when the engine ignores the cancel: after the grace the session ends, which stops a
@@ -526,8 +593,8 @@ actor FakeEngines: EngineSource {
         let result = try await app.prompt(session, "deaf")
         #expect(ContinuousClock.now - started < .seconds(4))
         #expect(result["stopReason"]?.stringValue == "cancelled")
-        #expect(result["_meta"]?["agneta/limit@1"]?["limit"]?.stringValue == "maxSeconds")
-        #expect(result["_meta"]?["agneta/limit@1"]?["sessionEnded"]?.boolValue == true)
+        #expect(result["_meta"]?["agneta/limit"]?["limit"]?.stringValue == "maxSeconds")
+        #expect(result["_meta"]?["agneta/limit"]?["sessionEnded"]?.boolValue == true)
         await #expect(throws: RPCError.self) { _ = try await app.prompt(session, "hello") }
     }
 
@@ -609,7 +676,7 @@ actor FakeEngines: EngineSource {
         await stack.router.setPaused("brokered", true)
 
         let initialize = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
-        let listed = initialize["_meta"]?["agneta"]?["accounts"]?.arrayValue?.first { $0["id"]?.stringValue == "brokered" }
+        let listed = initialize["_meta"]?["agneta"]?["access"]?["providers"]?.arrayValue?.first { $0["id"]?.stringValue == "brokered" }
         #expect(listed?["paused"]?.boolValue == true)
         func expectPaused(_ what: String, _ work: () async throws -> Void) async {
             do {
@@ -641,29 +708,29 @@ actor FakeEngines: EngineSource {
     @Test func aTaskContinuesOnlyOnTheEngineThatSavedIt() async throws {
         let stack = try await Stack.start(port: 47615)
         defer { stack.stop() }
-        await stack.engines.use(PlainAdapter(), for: "brokered")
-        await stack.router.add(account: "brokered", label: "API", kind: "openai-key", billing: "api-key", engine: PlainAdapter())
+        await stack.router.setCatalog(EngineCatalog(ready: [PlainAdapter(), Self.opencode]))
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Mover")
         let session = try await stack.session(app, account: "brokered")
         _ = try await app.request("session/close", ["sessionId": .string(session)])
         let params: JSONValue = ["sessionId": .string(session), "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": []]
-        // The provider now runs on Goose: the task still resumes, on the engine that saved it.
-        await stack.router.add(account: "brokered", label: "API", kind: "openai-key", billing: "api-key", engine: GooseAdapter(executable: URL(filePath: "/usr/bin/false")))
+        // The provider's default is now OpenCode: the task still resumes, on the engine that saved it.
+        await stack.router.setCatalog(EngineCatalog(ready: [PlainAdapter(), Self.opencode], defaults: ProviderEngines(selected: [.openAIKey: "opencode"])))
         #expect(try await app.request("session/load", params)["_meta"]?["agneta"]?["resumed"]?.boolValue == true)
+        #expect(await stack.engines.askedEngines.last == "goose")
         _ = try await app.request("session/close", ["sessionId": .string(session)])
         // That engine stores sessions differently now: refused, naming it.
-        await stack.router.register(engine: PlainAdapter(stateFormat: "plain/2"))
+        await stack.router.setCatalog(EngineCatalog(ready: [PlainAdapter(stateFormat: "plain/2"), Self.opencode]))
         for method in ["session/load", "agneta/fork"] {
             do {
                 _ = try await app.request(method, params)
                 Issue.record("\(method) went ahead on plain/2")
             } catch let error as RPCError {
-                #expect(error.code == RPCError.invalidParams && error.data?["agneta"]?["engineChanged"]?["saved"]?.stringValue == "plain", "\(method): \(error.message)")
+                #expect(error.code == RPCError.invalidParams && error.data?["agneta"]?["stateChanged"]?["saved"]?.stringValue == "plain/1", "\(method): \(error.message)")
             }
         }
-        await stack.router.register(engine: PlainAdapter())
+        await stack.router.setCatalog(EngineCatalog(ready: [PlainAdapter(), Self.opencode]))
         #expect(try await app.request("session/load", params)["_meta"]?["agneta"]?["resumed"]?.boolValue == true)
     }
 
@@ -688,14 +755,15 @@ actor FakeEngines: EngineSource {
     @Test func sessionsAdvertiseTheirEnginesFeatures() async throws {
         let stack = try await Stack.start(port: 47440)
         defer { stack.stop() }
-        await stack.engines.use(PlainAdapter(), for: "native")
-        await stack.router.add(account: "native", label: "Claude", runner: .native, kind: "claude", billing: "subscription", engine: PlainAdapter())
+        // The Claude plan ("native") runs on a plain engine standing in for Claude Code; the API key on Goose.
+        await stack.router.setCatalog(EngineCatalog(ready: [Self.goose, PlainAdapter(id: "claude-code")]))
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Features")
         let initialize = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
-        let listed = initialize["_meta"]?["agneta"]?["accounts"]?.arrayValue?.first { $0["id"]?.stringValue == "native" }
-        #expect(listed?["capabilities"]?["engine"]?.stringValue == "plain" && listed?["capabilities"]?["steer"]?.boolValue == false)
+        let access = initialize["_meta"]?["agneta"]?["access"]
+        let listed = access?["engines"]?.arrayValue?.first { $0["id"]?.stringValue == "claude-code" }
+        #expect(listed?["capabilities"]?["engine"]?.stringValue == "claude-code" && listed?["capabilities"]?["steer"]?.boolValue == false)
 
         let rich = try await app.request("session/new", ["cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
                                                          "_meta": ["agneta": ["account": "brokered"]]])
@@ -985,7 +1053,7 @@ actor FakeEngines: EngineSource {
         let stack = try await Stack.start(port: 47437)
         defer { stack.stop() }
         let claude = ClaudeCodeAdapter(executable: URL(filePath: "/usr/bin/false"), cli: InstalledCLI(path: URL(filePath: "/usr/bin/false"), version: "2", source: "path"))
-        await stack.engines.use(claude, for: "native")
+        await stack.router.setCatalog(EngineCatalog(ready: [Self.goose, claude]))
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Modes")
@@ -1071,8 +1139,28 @@ final class Recorder: @unchecked Sendable {
 @Suite struct EngineKeyTests {
     @Test func sharedKeysAreRecognisedInEveryShape() {
         #expect(EngineKeys.shared(account: "acct", engine: "goose") == "acct/shared-goose")
-        #expect(EngineKeys.isShared("acct/shared-goose") && EngineKeys.isShared("acct/shared-opencode") && EngineKeys.isShared("acct/shared"))
+        #expect(EngineKeys.isShared("acct/shared-goose") && EngineKeys.isShared("acct/shared-opencode") && !EngineKeys.isShared("acct/shared"))
         #expect(!EngineKeys.isShared("acct/1f0c-shared") && !EngineKeys.isShared("acct/0e9b2c") && !EngineKeys.isShared("shared-acct/abc"))
     }
 }
 
+
+/// Grants the router saves, in order; `revoking` removes the grant while the next one is being saved.
+actor SavedGrants {
+    private(set) var last: Router.Grant?
+    private var revoke: (Router, String)?
+    func commit(_ hash: String, _ grant: Router.Grant) async {
+        last = grant
+        if let (router, id) = revoke {
+            revoke = nil
+            await router.revoke(grant: id)
+        }
+    }
+    func revoking(_ router: Router, _ id: String) { revoke = (router, id) }
+}
+
+/// Engines the router asked the host for.
+actor Wanted {
+    private(set) var engines: [String] = []
+    func add(_ engine: String) { engines.append(engine) }
+}

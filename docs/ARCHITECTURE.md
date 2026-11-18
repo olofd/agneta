@@ -29,7 +29,7 @@ App (sandboxed or not) ──ACP over a local WebSocket, paired──▶ Agneta 
 | `  Runtime/` | `AgnetaRuntime`: the router, engines and records wired together; it records grants and task history, cleans up after a crash and applies retention |
 | `  Router/` | The router: pairing and app connections (`Router.swift`), opening sessions (`+Sessions`), engine messages and permissions (`+Engines`), the turn queue and limits (`+Turns`), grant scopes, rate-limit detection |
 | `  Engine/` | `EngineAdapter` and one adapter per engine, `BuiltinTools` (the built-in tools each policy permits, the contract every engine is tested against), the supervisor, CLI discovery, usage readers, crash recovery |
-| `  Policy/` | `agneta/policy@1` parsing, Seatbelt profiles, the tool broker |
+| `  Policy/` | `agneta/policy` parsing, Seatbelt profiles, the tool broker |
 | `  Pairing/` | Who is on the other end of a loopback connection |
 | `  SignIn/` | Plan sign-ins and token refresh |
 | `  Store/` | SQLite store, Keychain, Reset |
@@ -74,12 +74,12 @@ Agneta's job is to let an app use the user's AI accounts without the app or the 
 
 ### Pairing
 
-An app must be paired before anything else. `agneta/pair` opens Agneta's approval window, where the user chooses which accounts the app may use.
+An app must be paired before anything else. `agneta/pair` opens Agneta's approval window, where the user ticks the providers (accounts) the app may use. Its engines are all allowed unless the user narrows them under Advanced, so the window asks nothing technical by default.
 
 - **Who is asking.** Agneta finds the process that owns the client end of the established loopback connection to its port (both ends must match), and reads its code signature. It's **verified** only when signed with an Apple-issued certificate (Developer ID or App Store) and a team ID; ad hoc and self-signed code is valid but anyone could sign it with any identifier. A verified app is shown by its signing identifier.
 - **When it can't verify,** the app is sent a six-digit code to show, and Agneta's window shows the same code. The user allows the app only if they match.
 - **The scope.** The app says at pairing what it will need: the most built-in tools and the user's folders (`GrantScope`). The window shows it in plain words. The grant keeps it, plus a workspace of the app's own beside Agneta's data, and every session's policy must fit inside: no more tools, no folder outside. A session can't widen what the user saw.
-- **The grant.** The app gets a 32-byte random token. Agneta stores only its SHA-256 hash, with the accounts, scope and signing identity, and saves it before the token goes out. Allow Once keeps nothing and ends with the connection. When a verified app reconnects, its code signature is checked again: the token alone isn't enough. Remove Access revokes it, stops the app's sessions and closes its open connections; nothing more runs on them. Reset closes every app connection.
+- **The grant.** The app gets a 32-byte random token. Agneta stores only its SHA-256 hash, with the providers and engines it may use, the scope and the signing identity, and saves it before the token goes out. Allow Once keeps nothing and ends with the connection. When a verified app reconnects, its code signature is checked again: the token alone isn't enough. Remove Access revokes it, stops the app's sessions and closes its open connections; nothing more runs on them. Reset closes every app connection.
 - **Browsers can't connect.** The WebSocket server refuses upgrades with an `Origin` header, and the diagnostics server refuses requests with one.
 
 ### The session policy
@@ -133,6 +133,16 @@ Claude Code and Codex run their own tools. For them Agneta checks every permissi
 
 Each account's folder is used only by that account's engines. Claude Code's transcripts of other tasks are denied to each Claude Code engine ([ENGINES.md](ENGINES.md#claude-code)).
 
+## Providers, engines and access
+
+Three things decide where a task runs, each kept in one place:
+
+- **Which engines can serve which provider** is a fixed table, `ProviderEngines` (below, and [ENGINES.md](ENGINES.md)). A provider names no engine of its own; each kind has a default the user can change in Settings → Engines.
+- **What this Mac can run** is the `EngineCatalog`: each engine's state (ready, downloading, downloadable, failed, unavailable and why) and the providers' defaults. Only the host knows where engines come from (the bundle, the user's Claude Code and Codex installs, downloads), so the menu bar app builds the catalog whenever any of that changes and hands the whole snapshot to the runtime; the router, the supervisor and every window read the same one.
+- **What an app may use** is its grant: a list of providers and a list of engines (`all`, or some), independent of each other.
+
+`Access` combines them: a task's provider must be in the grant, and its engine in the grant, supported by the provider, and in the catalog. The app picks both per task, from what `agneta/access` lists, and gets the provider's default engine when it names none. Every check (session/new, load, fork, initialize, the approval window, Settings) goes through it ([APP_PROTOCOL.md](APP_PROTOCOL.md#access)).
+
 ## Accounts and billing
 
 | Account | Engines | Billing | Cost means |
@@ -156,14 +166,14 @@ Everything is in Agneta's Application Support folder, named by its bundle identi
 | `Runtimes/` | Downloaded runtimes (`claude-agent-acp`) |
 | `Traces/` | Task traces ([DIAGNOSTICS.md](DIAGNOSTICS.md)) |
 
-- **The database** is SQLite through GRDB. Migrations run in transactions after a file backup (`agneta.sqlite.before-<last applied>`). A database from a newer Agneta is refused untouched.
+- **The database** is SQLite through GRDB, with one schema. **Before 1.0 nothing is kept compatible:** no migrations, imports or readers of old shapes in the database, the protocol or files. A schema change edits the schema in place under a new id, and a database made with another id is refused untouched; the user resets. Compatibility starts at 1.0.
 - **Retention.** Task history, traces and engine homes are kept 30 days by default (or a week, 90 days, or none), pruned at launch and daily.
 - **Reset** deletes Agneta's Keychain items, data, caches and logs, preferences and the login item. A marker file beside the data folder makes an interrupted reset resume at the next launch.
 - **Isolated instances.** A build started with `AGNETA_HOME=<folder>` and `AGNETA_PORT=<port>` keeps its data, Keychain items (a service of its own, derived from the folder), logs and Reset inside that folder, so tests never touch the user's own Agneta or each other. The port is required, and it and the diagnostics port two above it must stay clear of the user's own Agneta (47321, 47323, 47331, 47333); otherwise the instance listens on nothing and says why.
 
 ## The app
 
-A menu bar app (`LSUIElement`) with no Dock icon. Its own `NSStatusItem` and a borderless glass panel show the accounts, running tasks with Stop, and anything needing attention. Settings has panes for general settings, accounts, engines (which engine each kind of provider runs on, and each engine's source, version and install), apps, activity with task details, privacy and retention, advanced diagnostics, and about. Approval and sign-in open as their own windows. Reduce Motion and Reduce Transparency are respected, and every control is labelled for VoiceOver.
+A menu bar app (`LSUIElement`) with no Dock icon. Its own `NSStatusItem` and a borderless glass panel show the accounts, running tasks with Stop, and anything needing attention. Settings has panes for general settings, providers, engines (each kind of provider's default engine, and each engine's source, version, install and download), apps (each app's providers and, under Advanced, engines), activity with task details, privacy and retention, advanced diagnostics, and about. Approval and sign-in open as their own windows. Reduce Motion and Reduce Transparency are respected, and every control is labelled for VoiceOver.
 
 Release builds update themselves with Sparkle, from the latest published GitHub release; development builds never do ([RELEASING.md](RELEASING.md#3-updates-in-the-app-sparkle-2)).
 

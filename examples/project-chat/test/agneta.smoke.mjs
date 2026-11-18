@@ -102,6 +102,10 @@ test('Project Chat pairs, reads a brief, stages a draft, and stops a turn', { ti
 
   await chat.connect();
   assert.equal(chat.view.phase, 'ready', chat.view.status);
+  // What agnetad lets it use: its one development provider, on Goose.
+  assert.deepEqual(chat.view.providers.map((provider) => provider.id), ['dev']);
+  assert.equal(chat.view.account, 'dev');
+  assert.equal(chat.view.engine, 'goose');
 
   // The fake provider recognizes CALL so this checks the wire flow without
   // depending on a live model's tool choices.

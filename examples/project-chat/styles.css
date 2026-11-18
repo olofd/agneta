@@ -71,13 +71,17 @@ button:disabled { opacity: .48; cursor: default; }
   border: 4px solid var(--accent);
   border-radius: 50%;
 }
-#account {
-  max-width: 190px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--muted);
   font-size: 13px;
+}
+.picker select {
+  max-width: 160px;
+  font: inherit;
+  color: var(--text, inherit);
 }
 main {
   display: grid;

@@ -79,6 +79,13 @@ Proposal: keep the choice per account, since that's where sign-in and credential
   - The `engineUnavailable` error of 0.2.0 is gone too.
 - **Tested** by `ProviderEngineTests`, `RouterContractTests.aTaskRunsOnAnEngineItsProviderSupports` (asking, defaulting, unsupported, missing) and `aTaskContinuesOnlyOnTheEngineThatSavedIt` (still resumes after the provider's engine changes).
 
+**Then the grant (2026-11-18), the design that stands.** The maintainer: "one list of providers that the user can select and one list of engines that we give it access to. No combination, and then the app can later choose a valid combination", and "my mom should be able to use this": engines under Advanced, all ticked.
+- **The grant is two lists:** providers (accounts) and engines (`all`, which includes engines added later, or some). The approval window shows the providers; the engines are behind **Advanced…** (a popover, so the dialog keeps its size). Settings → Apps edits both; narrowing stops sessions that no longer fit.
+- **The app picks** each task's provider and engine. `Access` (AgnetaKit) is the one place that combines the grant, `ProviderEngines` and what's on this Mac; `agneta/access` and `agneta/accessChanged` tell the app.
+- **What's on this Mac** is one `EngineCatalog` snapshot the app builds and hands to the runtime; the router, supervisor and windows all read it, which removes the drift the cold review found (capabilities after a download, the UI and router naming different engines, Goose shown for a Claude plan without Claude Code).
+- **Pre-1.0, no compatibility:** one database schema (no migrations, no JSON import), unversioned extension names, no readers of old key or grant shapes. A database from another build is refused, and the user resets.
+- **Tested** by `aTaskRunsOnAnEngineItsProviderSupports`, `theGrantLimitsTheEnginesAnAppMayPick`, `aSessionWaitingOnADownloadSaysSo` (downloadable → wanted, downloading → progress, ready → opens, `accessChanged` in order), `StoreTests.refusesADatabaseFromAnotherSchema`, and Project Chat's smoke test (it reads its access and runs on the default engine).
+
 ## 6. Check for Updates is missing
 
 > "I know we implement a check-for-updates flow, but I don't have the button here. I expect to be able to check for updates in the app." (2026-11-18, screenshot of Agneta Dev's ⋯ menu)
@@ -137,3 +144,17 @@ The maintainer brought a second, cold review (2026-11-18) with five findings. Al
   - Codex 0.167 can keep the sign-in in the Keychain (`cli_auth_credentials_store = "keyring"`), as Claude Code already does. That would end the file exposure, but every ChatGPT account would have to sign in again, and it needs testing with a real account.
   - The other sessions need their own design, since Codex must keep them to resume tasks.
 
+
+## Cold review after 0.2.0 (2026-11-18)
+
+A review of `v0.2.0..3133e96`, judged here:
+1. **ChatGPT sign-in from 0.2.0's file.** Moot: nothing carries over before 1.0, and Reset starts clean. Signing out without a Codex install now logs `codex-sign-out-skipped` instead of returning silently; the "Codex Auth" Keychain entry stays then, since only Codex's own logout knows its key.
+2. **`capabilities: null` after a download.** Fixed by design: capabilities come from the catalog, which every download step rebuilds.
+3. **UI and router disagreeing after an install appears or goes.** Fixed by design: one catalog snapshot. A Claude plan without Claude Code no longer shows Goose (Goose needs that same Claude Code): the catalog marks Claude Code unavailable and the panel says "Needs Claude Code".
+4. **Apps can't start a download; resumed tasks stuck.** Fixed: asking for a downloadable or failed engine starts it (`engineWanted`) and answers `-32015`.
+5. **Download state.** Try Again no longer loses what the download was for (selecting a default takes effect at once; tasks wait on `-32015`). A failed card can be put away and Reset clears it. The router's state comes from the same snapshot as the progress, delivered in order with only the newest kept, so a late progress update can't leave it stuck.
+6. **Downloads never checked again; runtime version not tracking content.** Fixed: each downloaded engine is checked against its pin (archive hash and installed program hash) at each launch before it runs, and Codex's runtime version ends in a hash of its contents before signing.
+7. **v5 dropping per-app engines.** Moot: no migrations before 1.0.
+8. **Docs disagreeing with the code.** Rewritten with this change (APP_PROTOCOL, ENGINES, ARCHITECTURE).
+9. **Codex reading the login Keychain** (needed for its keyring sign-in): already stated in CONTAINMENT.md ("On a Claude or ChatGPT plan the engine reads `~/Library/Keychains`").
+10. **Provider→engine split between app and kit.** Done as `EngineCatalog` plus `Access`, with the host building the snapshot (only it knows the bundle and installs). Still duplicated: each adapter's own refusal of kinds it can't serve, and the Engines pane's per-engine rows. Open, low.

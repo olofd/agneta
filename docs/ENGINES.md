@@ -2,7 +2,7 @@
 
 Agneta doesn't run the agent loop itself. An **engine** does: an agent program that speaks ACP over stdio, calls the model, and calls tools. Agneta starts it in a sandbox, configures it for the session, and routes its stream to the app. 
 
-**Providers and engines.** The one link between them is per kind of provider (`ProviderEngines`): the engines that can serve it, and the one selected.
+**Providers and engines.** Which engines can serve which kind of provider is one fixed table (`ProviderEngines`):
 
 | Provider | Engines, most preferred first | Why |
 | --- | --- | --- |
@@ -11,16 +11,19 @@ Agneta doesn't run the agent loop itself. An **engine** does: an agent program t
 | OpenAI API key | Goose, OpenCode, Codex | Any engine that speaks OpenAI |
 | Anthropic API key | Goose, OpenCode, Claude Code | Any engine that speaks Anthropic |
 
-- **Selecting:** in Settings → Engines, per kind of provider (saved as `engine.<kind>`). Otherwise the most preferred available engine is used.
-- **Per task:** a task runs on its account's provider's selected engine, unless it asks for another that provider supports (`_meta.agneta.engine` in `session/new`). A resumed or forked task runs on the engine that saved it.
-- **Nothing else names an engine.** Accounts and app grants carry none, and adding an account asks nothing about engines.
+- **The app picks** each task's provider and engine, among what its grant allows: the providers the user ticked, and the engines (all of them unless the user narrowed them under Advanced). The pair must be in this table and on this Mac ([APP_PROTOCOL.md](APP_PROTOCOL.md#access)).
+- **The default** is the provider's, set per kind of provider in Settings → Engines (saved as `engine.<kind>`), else the most preferred one here; when the grant doesn't allow it, the first allowed one. A task that names no engine runs on it.
+- **A resumed or forked task** always runs on the engine that saved it, which the grant must still allow.
+- **Downloads.** An engine that downloads first (OpenCode, Claude Code's adapter, Codex's runtime in releases) starts downloading when it becomes a provider's default for a provider in use, or a task asks for it; tasks meanwhile are told to try again shortly (`-32015`, with the progress). Once installed, it's checked against its pin at each launch before it runs.
+
+Accounts name no engine, and adding one asks nothing about engines.
 
 Everything an engine does its own way lives behind one adapter (`Sources/AgnetaKit/Engine/*Adapter.swift`, protocol `EngineAdapter`): how it starts and what its sandbox must allow, the shape of `session/new` and `session/load`, how instructions and steering are sent, how a tool's identity is read, how a conversation is exported for a fork, and where per-call usage is recorded. Apps see one contract; the `capabilities` on each session say which extras its engine has ([APP_PROTOCOL.md](APP_PROTOCOL.md#the-result)).
 
 | | Goose | OpenCode | Claude Code | Codex |
 | --- | --- | --- | --- | --- |
 | Version | `goose-acp` 1.59.2 | 2.3.0 | The user's install (2.1.x measured), through `claude-agent-acp` 0.107.2 | The user's install (0.166 or later), through `codex-acp` 2.7.0 on Node 24.19.0 |
-| Shipped | Bundled, pinned (`Engines/goose.lock`) | Downloaded when an account is set to it, pinned (`Engines/opencode.lock`) | Adapter downloaded on first use, pinned (`Engines/runtimes.lock`); Claude Code is the user's own | Adapter and Node pinned (`Engines/codex.lock`): bundled in development builds, downloaded on first use in releases; Codex is the user's own |
+| Shipped | Bundled, pinned (`Engines/goose.lock`) | Downloaded when first picked or asked for, pinned (`Engines/opencode.lock`) | Adapter downloaded on first use, pinned (`Engines/runtimes.lock`); Claude Code is the user's own | Adapter and Node pinned (`Engines/codex.lock`): bundled in development builds, downloaded on first use in releases; Codex is the user's own |
 | Accounts | Claude plan, OpenAI key, Anthropic key | OpenAI key, Anthropic key | Claude plan, Anthropic key | ChatGPT plan, OpenAI key |
 | Processes | One per session with built-in tools; app-only sessions share one per account | One per session | One per session | One per session |
 | Built-in tools run by | Agneta's tool broker | Agneta's tool broker | The engine (Agneta checks each call) | The engine (Agneta checks each call) |

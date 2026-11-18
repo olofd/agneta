@@ -131,6 +131,9 @@ struct PanelView: View {
             Spacer(minLength: 6)
             if failed {
                 Button("Try Again") { model.retryDownload(download.engine) }.glassButton(prominent: true).tint(Palette.accent).controlSize(.small)
+                Button { model.dismissDownload(download.engine) } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.borderless).foregroundStyle(.secondary).help("Hide; it downloads again when it's needed")
+                    .accessibilityLabel("Hide")
             }
         }
         .padding(12)
@@ -164,23 +167,23 @@ struct PanelView: View {
         if Date().timeIntervalSince(task.started) > 120 { confirmStop = task } else { model.stop(task) }
     }
 
-    // MARK: Accounts
+    // MARK: Providers
 
     private var accountsCard: some View {
         VStack(spacing: 2) {
-            SectionTitle(text: "Accounts").padding(.top, 8)
+            SectionTitle(text: "Providers").padding(.top, 8)
             if model.accounts.isEmpty {
                 VStack(spacing: 10) {
                     Text("Connect the AI account you already pay for, and the apps you allow can use it.")
                         .font(.system(size: 12.5)).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Button("Connect an Account…") { open { WindowPresenter.shared.showWelcome(model) } }.glassButton(prominent: true).tint(Palette.accent)
+                    Button("Connect a Provider…") { open { WindowPresenter.shared.showWelcome(model) } }.glassButton(prominent: true).tint(Palette.accent)
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
             ForEach(model.accounts) { account in
-                AccountRow(account: account, engine: model.engineName(of: account), needsSignIn: model.needsSignIn.contains(account.id),
+                AccountRow(account: account, engine: model.engineName(model.engine(for: account.kind)), needsSignIn: model.needsSignIn.contains(account.id),
                            limitedUntil: model.limited[account.id], planUsage: model.planUsage[account.id]) {
-                    open { WindowPresenter.shared.showSettings(model, section: .accounts) }
+                    open { WindowPresenter.shared.showSettings(model, section: .providers) }
                 }
             }
         }
