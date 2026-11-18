@@ -167,4 +167,6 @@ A menu bar app (`LSUIElement`) with no Dock icon. Its own `NSStatusItem` and a b
 
 Release builds update themselves with Sparkle, from the latest published GitHub release; development builds never do ([RELEASING.md](RELEASING.md#3-updates-in-the-app-sparkle-2)).
 
-**Not supported yet:** a published release (the pipeline is in [RELEASING.md](RELEASING.md); development builds are signed ad hoc), and limits set in Settings (the defaults apply).
+Releases are built, signed with a Developer ID and notarized on GitHub ([RELEASING.md](RELEASING.md)); development builds are signed ad hoc.
+
+**Not supported yet:** limits set in Settings (the defaults apply).

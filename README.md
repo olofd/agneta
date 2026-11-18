@@ -12,9 +12,8 @@ For app developers, this means agent features without running an agent loop, bui
   <img src="docs/images/approval.png" width="400" alt="An app asks to use Agneta; the user picks which accounts it may use">
 </p>
 
-> **Status: early, and built from source only.** Agneta runs real tasks on real ChatGPT and Claude plans. Before you rely on it, know that:
-> - there's no signed or notarized release yet, so you build it yourself;
-> - the app protocol may still change;
+> **Status: early.** Agneta runs real tasks on real ChatGPT and Claude plans. Before you rely on it, know that:
+> - the app protocol may still change before 1.0;
 > - an engine can reach any HTTPS host, not only its provider's (a per-provider host allowlist isn't built yet);
 > - the tests, the sandbox acceptance test among them, pass on macOS 15 and 26, Apple silicon and Intel ([CI.md](docs/CI.md)), but the app has been used day to day only on an Intel Mac with macOS 26, and macOS 14 is untested.
 
@@ -69,6 +68,20 @@ Plain ACP works unchanged. Agneta's own extensions (`agneta/policy@1`, `agneta/u
 **Without Claude Code or Codex,** Agneta still works with an OpenAI or Anthropic API key, on the bundled Goose and OpenCode. A Claude plan needs Claude Code (the Claude desktop app includes it), and a ChatGPT plan needs Codex 0.166 or later.
 
 Goose and OpenCode come bundled, pinned by version and SHA-256. Claude Code and Codex are your own installs: Agneta finds them, including the copy inside the Claude desktop app, and never redistributes them. Engines differ in what they can do (steering, forking, cost reporting), and Agneta exposes each one's extras instead of hiding them behind a common subset. See [docs/ENGINES.md](docs/ENGINES.md).
+
+## Install
+
+Download the DMG for your Mac (Apple silicon or Intel) from the [latest release](https://github.com/olofd/agneta/releases/latest), open it and drag Agneta to Applications. Or, with [Homebrew](https://brew.sh):
+
+```bash
+brew install olofd/tap/agneta
+```
+
+Releases are signed with a Developer ID and notarized by Apple, and need macOS 14 or later. Agneta asks before it first checks for updates; after that it keeps itself current, installing an update only when no task is running.
+
+- The connected-rings symbol appears in the menu bar. Connect an account from its panel.
+- To see the app side, choose **Run a Test Task** from the panel's ⋯ menu. A small sandboxed test app asks for access; once you allow it, it runs one short task and shows the reply.
+- Apps connect at `ws://127.0.0.1:47321/acp`. Agneta keeps its data in `~/Library/Application Support/com.objectivecoder.agneta/`.
 
 ## Build and run
 
