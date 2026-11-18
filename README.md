@@ -7,11 +7,11 @@
 <p align="center"><strong>Give Mac apps an AI agent you control.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/olofd/agneta/releases/latest"><img src="https://img.shields.io/github/v/release/olofd/agneta?color=c4325f" alt="Latest release"></a>
+  <a href="https://github.com/olofd/agneta/releases/latest"><img src="https://img.shields.io/github/v/release/olofd/agneta?color=b0365f" alt="Latest release"></a>
   <a href="https://github.com/olofd/agneta/actions/workflows/ci.yml"><img src="https://github.com/olofd/agneta/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
-  <a href="docs/CONTAINMENT.md#supported-macos-versions"><img src="https://img.shields.io/badge/macOS-14%2B%20%C2%B7%20Apple%20silicon%20and%20Intel-c4325f" alt="macOS 14 or later, Apple silicon and Intel"></a>
-  <a href="https://github.com/olofd/homebrew-tap"><img src="https://img.shields.io/badge/Homebrew-olofd%2Ftap%2Fagneta-c4325f" alt="Homebrew: olofd/tap/agneta"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/olofd/agneta?color=c4325f" alt="Apache License 2.0"></a>
+  <a href="docs/CONTAINMENT.md#supported-macos-versions"><img src="https://img.shields.io/badge/macOS-14%2B%20%C2%B7%20Apple%20silicon%20and%20Intel-b0365f" alt="macOS 14 or later, Apple silicon and Intel"></a>
+  <a href="https://github.com/olofd/homebrew-tap"><img src="https://img.shields.io/badge/Homebrew-olofd%2Ftap%2Fagneta-b0365f" alt="Homebrew: olofd/tap/agneta"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/olofd/agneta?color=b0365f" alt="Apache License 2.0"></a>
 </p>
 
 <p align="center">

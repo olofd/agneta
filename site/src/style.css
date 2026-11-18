@@ -1,4 +1,5 @@
-/* agneta.dahlbom.io. System fonts, the app icon's evening rose and violet, and the system's light or dark appearance. */
+/* agneta.dahlbom.io. System fonts, the app's own rose accent with its icon's evening in small touches, and the system's
+   light or dark appearance. */
 
 :root {
   color-scheme: light dark;
@@ -12,9 +13,9 @@
   --text-2: #6e6e73;
   --line: rgba(0, 0, 0, 0.1);
   --line-strong: rgba(0, 0, 0, 0.16);
-  --accent: #b4235a;
-  --button: #c4325f;
-  --button-hover: #ab2853;
+  --accent: #b0365f;
+  --button: #b0365f;
+  --button-hover: #9a2d52;
   --button-text: #ffffff;
   --code-key: #7a3db0;
   --code-dim: #8a8a8f;
@@ -24,6 +25,8 @@
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --gutter: 20px;
   --width: 1160px;
+  /* The icon's evening, as the app draws its rings: only in small marks, never behind text. */
+  --evening: linear-gradient(135deg, #ff9a5a, #ff5f7e 50%, #8b3dff);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -38,9 +41,9 @@
     --text-2: #a1a1a6;
     --line: rgba(255, 255, 255, 0.11);
     --line-strong: rgba(255, 255, 255, 0.18);
-    --accent: #ff9bb3;
-    --button: #c4325f;
-    --button-hover: #d03e6b;
+    --accent: #ff9db4;
+    --button: #b8466e;
+    --button-hover: #a63d62;
     --button-text: #ffffff;
     --code-key: #d7a6f5;
     --code-dim: #7c7c82;
@@ -158,17 +161,16 @@ h1, h2, h3 { text-wrap: balance; }
 .meta li:first-child { flex-basis: 100%; }
 .meta li + li + li::before { content: "·"; margin: 0 8px; }
 
-/* The screenshots on one desktop: the app's own showcase backdrop (Sources/Agneta/Snapshots.swift), which both
-   were captured over, so each window's glass shows the colours behind it. The images keep the backdrop's edge
+/* The screenshots on one desktop: the app's own showcase backdrop (Sources/Agneta/Snapshots.swift), the muted dusk
+   both were captured over, so each window's glass shows the colours behind it. The images keep the backdrop's edge
    around the window; clip-path cuts it off at the window's hairline and corners (23 px in, radius 24 and 28). */
 .stage { margin: 0; min-width: 0; }
 .desk {
   position: relative; container-type: inline-size; aspect-ratio: 720 / 600; overflow: hidden; border-radius: 20px;
   background:
-    radial-gradient(42% 50% at 8% 86%, rgb(237 140 97 / 0.95), rgb(237 140 97 / 0) 100%),
-    radial-gradient(34% 40% at 44% 104%, rgb(250 219 140 / 0.95), rgb(250 219 140 / 0) 100%),
-    radial-gradient(40% 46% at 98% 96%, rgb(92 158 122 / 0.75), rgb(92 158 122 / 0) 100%),
-    linear-gradient(160deg, rgb(41 84 120), rgb(70 112 145) 55%, rgb(140 176 189));
+    radial-gradient(46% 52% at 4% 96%, rgb(255 158 122 / 0.5), rgb(255 158 122 / 0) 100%),
+    radial-gradient(50% 56% at 100% 100%, rgb(140 61 255 / 0.22), rgb(140 61 255 / 0) 100%),
+    linear-gradient(196deg, #dccccf, #c8b8c3 38%, #ab9cb4 72%, #978aa8);
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.06);
 }
 .menubar {
@@ -238,7 +240,10 @@ h1, h2, h3 { text-wrap: balance; }
 }
 .node strong { font-size: 17px; }
 .node span { font-size: 14px; color: var(--text-2); line-height: 1.38; }
-.node-agneta { border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 7%, var(--bg)); }
+.node-agneta {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, #ff7f8f 9%, var(--bg)), var(--bg) 70%);
+}
 .edge { position: relative; text-align: center; padding: 0 10px 14px; font-size: 13px; color: var(--text-2); }
 .edge::after {
   content: ""; position: absolute; left: 0; right: 6px; bottom: 4px; height: 1px; background: var(--text-2);
@@ -284,7 +289,7 @@ h1, h2, h3 { text-wrap: balance; }
 .download:hover { text-decoration: none; border-color: var(--accent); }
 .download::before {
   content: ""; position: absolute; left: 20px; top: 50%; width: 22px; height: 22px; margin-top: -11px;
-  background: var(--accent);
+  background: var(--evening);
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 1.6a8.4 8.4 0 1 1 0 16.8 8.4 8.4 0 0 1 0-16.8Zm-.8 3.9v7.1l-2.6-2.6-1.1 1.1 4.5 4.5 4.5-4.5-1.1-1.1-2.6 2.6V7.5h-1.6Z'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 1.6a8.4 8.4 0 1 1 0 16.8 8.4 8.4 0 0 1 0-16.8Zm-.8 3.9v7.1l-2.6-2.6-1.1 1.1 4.5 4.5 4.5-4.5-1.1-1.1-2.6 2.6V7.5h-1.6Z'/%3E%3C/svg%3E") center / contain no-repeat;
 }
