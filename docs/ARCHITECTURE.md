@@ -138,8 +138,10 @@ Each account's folder is used only by that account's engines. Claude Code's tran
 Three things decide where a task runs, each kept in one place:
 
 - **Which engines can serve which provider** is a fixed table, `ProviderEngines` (below, and [ENGINES.md](ENGINES.md)). A provider names no engine of its own; each kind has a default the user can change in Settings → Engines.
-- **What this Mac can run** is the `EngineCatalog`: each engine's state (ready, downloading, downloadable, failed, unavailable and why) and the providers' defaults. Only the host knows where engines come from (the bundle, the user's Claude Code and Codex installs, downloads), so the menu bar app builds the catalog whenever any of that changes and hands the whole snapshot to the runtime; the router, the supervisor and every window read the same one.
+- **What this Mac can run** is the `EngineCatalog`: each engine's state (ready, downloading, downloadable, failed, unavailable and why) and the providers' defaults. Only the host knows where engines come from (the bundle, the user's Claude Code and Codex installs, downloads), so the menu bar app's `EngineLibrary` builds the catalog whenever any of that changes and hands the whole snapshot to the runtime; the router, the supervisor and every window read the same one. It builds it from one description per engine (`EngineSource.all`: how it gets onto this Mac, what it downloads, which of the user's programs it runs through), and also runs the downloads and checks each downloaded runtime's whole tree against its pin at launch, off the main thread.
 - **What an app may use** is its grant: a list of providers and a list of engines (`all`, or some), independent of each other.
+
+What each engine can do (steer, fork, run its own tools) is its adapter's (`EngineCapabilities`); what an app sees of it is typed (`AccessReport`, `SessionCapabilities`).
 
 `Access` combines them: a task's provider must be in the grant, and its engine in the grant, supported by the provider, and in the catalog. The app picks both per task, from what `agneta/access` lists, and gets the provider's default engine when it names none. Every check (session/new, load, fork, initialize, the approval window, Settings) goes through it ([APP_PROTOCOL.md](APP_PROTOCOL.md#access)).
 

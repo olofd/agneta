@@ -18,6 +18,8 @@ Agneta doesn't run the agent loop itself. An **engine** does: an agent program t
 
 Accounts name no engine, and adding one asks nothing about engines.
 
+**Adding an engine** takes three things: its adapter (`Sources/AgnetaKit/Engine/*Adapter.swift`), its row in `ProviderEngines`, and its entry in `EngineSource.all` (`Sources/Agneta/EngineLibrary.swift`: how it gets onto this Mac and how Settings describes it). `AccessTests.theTableIsWhatTheAdaptersAccept` fails until the table and the adapter agree on which providers it serves.
+
 Everything an engine does its own way lives behind one adapter (`Sources/AgnetaKit/Engine/*Adapter.swift`, protocol `EngineAdapter`): how it starts and what its sandbox must allow, the shape of `session/new` and `session/load`, how instructions and steering are sent, how a tool's identity is read, how a conversation is exported for a fork, and where per-call usage is recorded. Apps see one contract; the `capabilities` on each session say which extras its engine has ([APP_PROTOCOL.md](APP_PROTOCOL.md#the-result)).
 
 | | Goose | OpenCode | Claude Code | Codex |

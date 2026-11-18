@@ -157,4 +157,8 @@ A review of `v0.2.0..3133e96`, judged here:
 7. **v5 dropping per-app engines.** Moot: no migrations before 1.0.
 8. **Docs disagreeing with the code.** Rewritten with this change (APP_PROTOCOL, ENGINES, ARCHITECTURE).
 9. **Codex reading the login Keychain** (needed for its keyring sign-in): already stated in CONTAINMENT.md ("On a Claude or ChatGPT plan the engine reads `~/Library/Keychains`").
-10. **Provider→engine split between app and kit.** Done as `EngineCatalog` plus `Access`, with the host building the snapshot (only it knows the bundle and installs). Still duplicated: each adapter's own refusal of kinds it can't serve, and the Engines pane's per-engine rows. Open, low.
+10. **Provider→engine split between app and kit.** Done as `EngineCatalog` plus `Access`, with the host building the snapshot (only it knows the bundle and installs). The duplication left is gone too: each engine is described once (`EngineSource.all`, which the catalog, the Engines pane and downloads loop over), running its own tools is an engine capability, and a test proves `ProviderEngines` and the adapters' own refusals agree both ways.
+
+## Architecture review after the grant (2026-11-18)
+
+Fixed: Allow blocked for a provider whose engine isn't installed; a dismissed failed download restarting at once; a ~1 s main-thread hash at launch; a failed default stalling tasks while another engine was ready; small ones (checkbox flicker, the access log line, engines no provider can run listed to apps). Then the debt: `EngineLibrary` takes engines out of `AppModel` (1,100 → 860 lines); one `EngineSource` per engine; `AccessReport` and `SessionCapabilities` type what apps see; a downloaded runtime's whole tree is checked at launch, not only its program (codex-acp's JavaScript beside Node).

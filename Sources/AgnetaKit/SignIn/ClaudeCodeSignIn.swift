@@ -96,10 +96,12 @@ public struct RuntimeInstaller: Sendable {
             .min(by: { $0.pathComponents.count < $1.pathComponents.count }) else {
             throw SignInError.provider("\(name) wasn't in its archive")
         }
-        // The markers go in before the folder is published: archive and content hashes, checked on every later use.
+        // The markers go in before the folder is published: the archive's hash and the whole installed tree's, checked
+        // on every later use.
         let prepared = found.deletingLastPathComponent()
+        guard let contents = Self.treeHash(prepared) else { throw SignInError.provider("couldn't read \(name) after unpacking it") }
         try asset.sha256.write(to: prepared.appending(path: ".sha256"), atomically: true, encoding: .utf8)
-        try Self.sha256(Data(contentsOf: found, options: .mappedIfSafe)).write(to: prepared.appending(path: ".content-sha256"), atomically: true, encoding: .utf8)
+        try contents.write(to: prepared.appending(path: ".content-sha256"), atomically: true, encoding: .utf8)
         try FileManager.default.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
         // A bad copy already in place is moved aside first (removed once the new one is in), then the new folder
         // takes its name in one rename. If another process published meanwhile, its copy is used.
@@ -114,13 +116,40 @@ public struct RuntimeInstaller: Sendable {
         return executable
     }
 
-    /// Installed, and still what was installed: the archive pin matches and the executable hashes as recorded.
+    /// Installed, and still what was installed: the archive pin matches and everything installed with the program
+    /// (codex-acp's JavaScript beside Node, say) hashes as recorded, not only the program.
     static func isInstalled(executable: URL, folder: URL, asset: Asset) -> Bool {
         guard FileManager.default.isExecutableFile(atPath: executable.path(percentEncoded: false)),
               (try? String(contentsOf: folder.appending(path: ".sha256"), encoding: .utf8)) == asset.sha256,
-              let recorded = try? String(contentsOf: folder.appending(path: ".content-sha256"), encoding: .utf8),
-              let data = try? Data(contentsOf: executable, options: .mappedIfSafe) else { return false }
-        return sha256(data) == recorded
+              let recorded = try? String(contentsOf: folder.appending(path: ".content-sha256"), encoding: .utf8) else { return false }
+        return treeHash(folder) == recorded
+    }
+
+    /// One hash of a folder's whole tree, in path order: each file's path, permissions and content, and each symbolic
+    /// link's target (never followed). The markers at its top aren't part of it. Nil when something can't be read.
+    static func treeHash(_ folder: URL) -> String? {
+        let root = folder.standardizedFileURL.path(percentEncoded: false)
+        guard let walker = FileManager.default.enumerator(atPath: root) else { return nil }
+        var lines: [String] = []
+        while let relative = walker.nextObject() as? String {
+            guard relative != ".sha256", relative != ".content-sha256" else { continue }
+            let path = root + (root.hasSuffix("/") ? "" : "/") + relative
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: path), let type = attributes[.type] as? FileAttributeType else { return nil }
+            let mode = String((attributes[.posixPermissions] as? Int) ?? 0, radix: 8)
+            switch type {
+            case .typeSymbolicLink:
+                guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: path) else { return nil }
+                lines.append("\(relative)\u{0}link\u{0}\(target)")
+            case .typeRegular:
+                guard let data = try? Data(contentsOf: URL(filePath: path), options: .mappedIfSafe) else { return nil }
+                lines.append("\(relative)\u{0}\(mode)\u{0}\(sha256(data))")
+            case .typeDirectory:
+                lines.append("\(relative)\u{0}dir")
+            default:
+                return nil
+            }
+        }
+        return sha256(Data(lines.sorted().joined(separator: "\n").utf8))
     }
 
     static func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }

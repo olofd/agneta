@@ -106,6 +106,14 @@ import Testing
         #expect(node.path(percentEncoded: false).hasSuffix("Runtimes/codex-runtime/node-1-codex-acp-2/node"))
         #expect(FileManager.default.fileExists(atPath: node.deletingLastPathComponent().appending(path: "codex-acp/dist/index.js").path(percentEncoded: false)))
         #expect(installer.installed("codex-runtime", executable: "node") == node)
+        // What sits beside the program is checked too: changed JavaScript fails the check, and an install replaces it.
+        #expect(installer.verified("codex-runtime", executable: "node") == node)
+        let script = node.deletingLastPathComponent().appending(path: "codex-acp/dist/index.js")
+        try "// changed".write(to: script, atomically: true, encoding: .utf8)
+        #expect(installer.verified("codex-runtime", executable: "node") == nil)
+        _ = try await installer.install("codex-runtime", executable: "node")
+        #expect(try String(contentsOf: script, encoding: .utf8) == "// adapter")
+        #expect(installer.verified("codex-runtime", executable: "node") == node)
     }
 
     @Test func aDownloadThatDoesntMatchItsPinIsRefused() async throws {
