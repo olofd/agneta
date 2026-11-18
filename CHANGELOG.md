@@ -2,19 +2,9 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
-## Unreleased
-
-**For you**
-
-- **Default model and effort, chosen from a list:** each provider's menu in Settings → Providers has **Model and Effort…**, with the models and effort levels its engine actually offers. With none seen yet, Agneta asks the engine once, without sending a prompt. New tasks start with them unless the app picks its own. They replace the old free-text default model, which only Goose and OpenCode on an API key ever used.
-
-**For apps**
-
-- A new session arrives with the provider's default model and effort already set, where the user chose them; the app can still change both ([APP_PROTOCOL.md](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md)).
-
 ## 0.4.0 (2026-11-18)
 
-A new look, and a website.
+A new look, a website, and a default model and effort for each provider.
 
 **Updating from 0.3** keeps your providers, apps and history. As a new minor version, the update is shown with these notes rather than installed silently.
 
@@ -26,10 +16,12 @@ A new look, and a website.
 - **Nothing left of an unfinished sign-in:** one cancelled, failed or cut short by quitting no longer leaves its folder behind; Agneta removes any at launch.
 - **Agneta and Agneta Dev side by side:** a development build keeps its own port, data, Keychain items and logs, and now shows a small hammer on its icon and menu bar mark, so the two tell apart.
 - **[agneta.dahlbom.io](https://agneta.dahlbom.io):** Agneta's website, with the documentation, built from this repository's own documents.
+- **Default model and effort, chosen from a list:** each provider's menu in Settings → Providers has **Model and Effort…**, with the models and effort levels its engine actually offers. With none seen yet, Agneta asks the engine once, without sending a prompt. New tasks start with them unless the app picks its own. They replace the old free-text default model, which only Goose and OpenCode on an API key ever used.
 - **Smaller fixes:** a finished task's line in Activity wraps instead of being cut short.
 
 **For apps**
 
+- A new session arrives with the provider's default model and effort already set, where the user chose them; the app can still change both ([APP_PROTOCOL.md](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md)).
 - **Project Chat**, the example app, picks the Agneta it uses (**Use**: Agneta or Agneta Dev), remembers the choice, and names it in what it shows ([examples/project-chat](https://github.com/olofd/agneta/tree/v0.4.0/examples/project-chat)).
 
 ## 0.3.1 (2026-11-18)
