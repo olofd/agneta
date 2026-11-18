@@ -112,6 +112,9 @@ final class StatusItemController: NSObject {
         var x = anchor.midX - size.width / 2
         x = min(max(x, screen.minX + 8), screen.maxX - size.width - 8)
         panel.setFrame(NSRect(x: x, y: anchor.minY - size.height - 6, width: size.width, height: size.height), display: true)
+        // A borderless window's shadow follows the shape it had when the shadow was made: after a resize it's made
+        // again, or an outline of the old size shows around the rounded glass.
+        panel.invalidateShadow()
     }
 }
 
