@@ -89,19 +89,27 @@ test('Project Chat pairs, reads a brief, stages a draft, and stops a turn', { ti
 
   const port = await availablePort();
   const tokens = memoryTokens();
-  chat = new ProjectChat(port, { tokens });
+  // Agneta isn't running: Project Chat asks whether to open it. "Not Now" leaves it disconnected; "Open" starts the
+  // headless host here (the app opens agneta-dev://), and Project Chat waits for it, then connects.
+  let asked = 0, open = false;
+  const openAgneta = async () => {
+    asked += 1;
+    if (!open) return false;
+    children.push(start(hostBinary, [
+      '--goose', goose, '--home', join(root, 'host'), '--port', String(port),
+      '--env', 'GOOSE_MODEL=gpt-4o', '--env', 'OPENAI_API_KEY=fake', '--env', `OPENAI_BASE_URL=${modelURL}`
+    ]));
+    return true;
+  };
+  chat = new ProjectChat(port, { tokens, openAgneta });
   await chat.connect();
   assert.equal(chat.view.phase, 'disconnected');
   assert.match(chat.view.status, /Open Agneta and try again/);
+  assert.equal(asked, 1);
 
-  const host = start(hostBinary, [
-    '--goose', goose, '--home', join(root, 'host'), '--port', String(port),
-    '--env', 'GOOSE_MODEL=gpt-4o', '--env', 'OPENAI_API_KEY=fake', '--env', `OPENAI_BASE_URL=${modelURL}`
-  ]);
-  children.push(host);
-  await waitFor(() => host.output.includes(`listening on ws://127.0.0.1:${port}/acp`), 'The headless Agneta host did not start.', host);
-
+  open = true;
   await chat.connect();
+  assert.equal(asked, 2);
   assert.equal(chat.view.phase, 'ready', chat.view.status);
   // What agnetad lets it use: its one development provider, on Goose.
   assert.deepEqual(chat.view.providers.map((provider) => provider.id), ['dev']);

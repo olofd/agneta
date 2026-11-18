@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { createConnection } from 'node:net';
 import { AcpConnection } from './acp.mjs';
 import { project, startProjectTools } from './project-tools.mjs';
 
@@ -34,6 +35,19 @@ export function memoryTokens() {
   };
 }
 
+/** Waits until something listens on the port (Agneta, just opened), up to `seconds`. */
+async function listening(port, seconds) {
+  for (const started = Date.now(); Date.now() - started < seconds * 1000; ) {
+    const up = await new Promise((resolve) => {
+      const probe = createConnection({ host: '127.0.0.1', port }, () => { probe.destroy(); resolve(true); });
+      probe.on('error', () => resolve(false));
+    });
+    if (up) return true;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
+}
+
 /** Bytes as people read them: "45 MB". */
 function size(bytes) {
   return Number.isFinite(bytes) ? `${Math.round(bytes / 1e6)} MB` : '';
@@ -47,16 +61,20 @@ export class ProjectChat extends EventEmitter {
   #reply;
   #access;
   #tokens;
+  #openAgneta;
   /** Connected with a kept token: when the connection drops, a quiet reconnect finds out whether access was removed. */
   #remembered = false;
 
   /**
    * @param tokens where the token from Always Allow is kept between launches (`load`, `save`, `clear`).
+   * @param openAgneta when Agneta isn't running: asks the user whether to open it and, if they say yes, opens it;
+   *   resolves to whether it did (main.mjs: a dialog, then `agneta-dev://open`). Without it, the app only says so.
    */
-  constructor(port, { tokens = memoryTokens() } = {}) {
+  constructor(port, { tokens = memoryTokens(), openAgneta = null } = {}) {
     super();
     this.port = port;
     this.#tokens = tokens;
+    this.#openAgneta = openAgneta;
     this.view = {
       project,
       phase: 'disconnected',
@@ -149,8 +167,21 @@ export class ProjectChat extends EventEmitter {
       if (!this.view.account) throw new Error('No active provider was granted. Connect one in Agneta and pair again.');
       this.#update({ phase: 'ready', status: 'Ready', code: '' });
     } catch (error) {
-      if (this.#connection === connection) this.disconnect(describeError(error));
+      if (this.#connection !== connection) return;
+      this.disconnect(describeError(error));
+      // Agneta isn't running: offer to open it (at launch only to someone who has used it, a token kept), then connect.
+      if (error.notRunning && this.#openAgneta && (!quiet || await this.#tokens.load())) await this.#offerToOpen(quiet);
     }
+  }
+
+  async #offerToOpen(quiet) {
+    if (!await this.#openAgneta()) return;
+    this.#update({ status: 'Opening Agneta…' });
+    if (!await listening(this.port, 20)) {
+      this.#update({ status: 'Agneta didn\'t start. Open it, then connect.' });
+      return;
+    }
+    await this.connect({ quiet });
   }
 
   #initialize(connection, token) {

@@ -21,7 +21,9 @@ export class AcpConnection {
       }, { once: true });
       const unavailable = () => {
         clearTimeout(timer);
-        reject(new Error(`Could not connect on port ${port}. Open Agneta and try again.`));
+        const error = new Error(`Could not connect on port ${port}. Open Agneta and try again.`);
+        error.notRunning = true; // nothing listens: Agneta isn't running
+        reject(error);
       };
       socket.addEventListener('error', unavailable, { once: true });
       socket.addEventListener('close', unavailable, { once: true });
