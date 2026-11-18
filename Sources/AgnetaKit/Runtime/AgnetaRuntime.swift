@@ -125,6 +125,8 @@ public actor AgnetaRuntime {
     /// Changes the engine an app's tasks on an account run on (nil: the account's own), and saves it.
     public func setEngine(grant: String, account: String, engine: String?) async throws {
         try await router.setEngine(grant: grant, account: account, engine: engine)
+        // Removed meanwhile (Remove Access while the change was saved): its row must not come back on the next launch.
+        if await !router.hasGrant(grant) { try database.deleteGrant(id: grant) }
     }
 
     /// Serves an account: its engine and provider, how its tools run, and whether it's paused. Replaces what was there.

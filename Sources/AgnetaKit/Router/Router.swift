@@ -262,6 +262,9 @@ public actor Router {
         accounts[account]?.runner == .native || engine.map { Self.nativeEngines.contains($0.id) } == true ? .native : .brokered
     }
 
+    /// Whether any connection still holds this grant.
+    public func hasGrant(_ id: String) -> Bool { tokens.values.contains { $0.id == id } }
+
     /// Sets the engine an app's tasks on `account` run on (nil: the account's own), for every connection holding
     /// the grant, and saves it. Sessions already open keep their engine.
     public func setEngine(grant id: String, account: String, engine: String?) async throws {
@@ -269,6 +272,8 @@ public actor Router {
             var changed = grant
             changed.engines[account] = engine
             if changed.remembered, let commit { try await commit(hash, changed) }
+            // Access removed while the change was saved stays removed (AgnetaRuntime.setEngine deletes the saved row again).
+            guard tokens[hash]?.id == id else { continue }
             tokens[hash] = changed
             for (appID, app) in apps where app.grant?.id == id { apps[appID]?.grant = changed }
             onEvent(.paired(tokenHash: hash, grant: changed))
