@@ -135,6 +135,7 @@ enum GlassBackground {
     }
 
     @MainActor static func make(content: NSView, cornerRadius: CGFloat, surface: Surface = .panel) -> NSView {
+        let content = EveningGlow.wrapping(content)
         // With Reduce Transparency, a visual effect view, which macOS draws opaque.
         if #available(macOS 26, *), !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
             let glass = NSGlassEffectView()

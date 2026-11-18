@@ -221,11 +221,12 @@ struct AppIcon: View {
     }
 }
 
-/// Agneta's mark in a glass tile.
+/// Agneta's mark in a glass tile, in the app icon's evening colours.
 struct MarkTile: View {
     var size: CGFloat = 30
     var body: some View {
-        Image(nsImage: Mark.image(size: size * 0.62)).renderingMode(.template).foregroundStyle(.primary)
+        Image(nsImage: Mark.image(size: size * 0.62)).renderingMode(.template)
+            .foregroundStyle(LinearGradient(colors: Palette.evening.map { Color(nsColor: $0) }, startPoint: .topLeading, endPoint: .bottomTrailing))
             .frame(width: size, height: size)
             .glassSurface(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
             .accessibilityHidden(true)

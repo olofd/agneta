@@ -186,7 +186,7 @@ struct WelcomeView: View {
             }
             .padding(.horizontal, 30)
             Button("Use an API key instead") { WindowPresenter.shared.showSettings(model) }
-                .buttonStyle(.link).font(.system(size: 12.5)).padding(.top, 14)
+                .buttonStyle(.link).foregroundStyle(Palette.accent).font(.system(size: 12.5)).padding(.top, 14)
         } actions: {
             HStack(spacing: 6) {
                 Image(nsImage: Mark.image(size: 13)).renderingMode(.template)
@@ -383,7 +383,7 @@ struct ApprovalView: View {
                     // popover, so the dialog keeps its size.
                     HStack(spacing: 6) {
                         Button("Advanced…") { showsAdvanced = true }
-                            .buttonStyle(.link)
+                            .buttonStyle(.link).foregroundStyle(Palette.accent)
                             .popover(isPresented: $showsAdvanced, arrowEdge: .bottom) {
                                 EngineAccessList(model: model, allowed: approval.allowed,
                                                  engines: Binding(get: { model.approvals.current?.engines ?? [] }, set: { model.approvals.current?.engines = $0 }))
@@ -461,7 +461,7 @@ struct NoProviderYet: View {
                 WindowPresenter.shared.lowerApproval()
                 WindowPresenter.shared.showSettings(model, section: .providers)
             }
-            .buttonStyle(.link).font(.system(size: 12))
+            .buttonStyle(.link).foregroundStyle(Palette.accent).font(.system(size: 12))
         }
         .padding(.horizontal, 30)
     }

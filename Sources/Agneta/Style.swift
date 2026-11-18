@@ -1,16 +1,22 @@
-// Agneta's visual language (design/proposal): Swedish restraint on native
-// materials. Winter-sea blue accent, pine for running, amber for attention, quiet
-// provider monograms, the connected-rings mark.
+// Agneta's visual language: Swedish restraint on native materials, warmed by the app
+// icon's summer evening (coral, rose, violet). A deep rose accent, the evening as a
+// faint glow along the top of the panel and dialogs and on the rings mark; pine for
+// running, amber for attention, quiet provider monograms.
 import AgnetaKit
 import AppKit
 import SwiftUI
 
 enum Palette {
-    static let accent = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 0.55, green: 0.75, blue: 0.86, alpha: 1) : NSColor(red: 0.18, green: 0.37, blue: 0.48, alpha: 1) })
+    /// The icon's rose, deepened to read as text and symbols: #B0365F in light mode (5:1 on the panel), #FF9DB4 in dark
+    /// mode (8:1 on a dark panel).
+    static let accent = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 1.0, green: 0.616, blue: 0.706, alpha: 1) : NSColor(red: 0.690, green: 0.212, blue: 0.373, alpha: 1) })
     /// The accent as a fill behind white text (a prominent button): deep enough in both modes for the label to read
-    /// clearly (about 5:1 in dark mode, 6.5:1 in light). The accent itself, pale in dark mode, is for text and symbols
-    /// on dark backgrounds; as a fill it made a default button look disabled.
-    static let fill = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 0.20, green: 0.44, blue: 0.58, alpha: 1) : NSColor(red: 0.18, green: 0.37, blue: 0.48, alpha: 1) })
+    /// clearly (#B8466E, 5:1, in dark mode; #B0365F, 5.9:1, in light). The accent itself, pale in dark mode, is for text
+    /// and symbols on dark backgrounds; as a fill it made a default button look disabled.
+    static let fill = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 0.722, green: 0.275, blue: 0.431, alpha: 1) : NSColor(red: 0.690, green: 0.212, blue: 0.373, alpha: 1) })
+    /// The app icon's evening, corner to corner: coral, rose, violet (scripts/dev/app-icon.swift).
+    static let evening: [NSColor] = [NSColor(red: 1.0, green: 0.604, blue: 0.353, alpha: 1), NSColor(red: 1.0, green: 0.373, blue: 0.494, alpha: 1),
+                                     NSColor(red: 0.545, green: 0.239, blue: 1.0, alpha: 1)]
     static let running = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 0.53, green: 0.79, blue: 0.64, alpha: 1) : NSColor(red: 0.25, green: 0.49, blue: 0.36, alpha: 1) })
     static let attention = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 0.91, green: 0.71, blue: 0.42, alpha: 1) : NSColor(red: 0.66, green: 0.41, blue: 0.11, alpha: 1) })
 
@@ -106,3 +112,60 @@ extension Date {
         return "\(seconds / 3600) h \(String(format: "%02d", (seconds % 3600) / 60)) min"
     }
 }
+
+/// The app icon's evening as a faint glow along the top of a glass surface (the panel and dialogs): coral to rose to
+/// violet across, fading out downward within the header. Faint enough that text over it reads as on plain glass; a
+/// little stronger in dark mode, where the same tint reads weaker.
+final class EveningGlow: NSView {
+    private let sky = CAGradientLayer(), fade = CAGradientLayer()
+    /// How far down the glow reaches, in points.
+    static let depth: CGFloat = 150
+
+    static func wrapping(_ content: NSView) -> NSView {
+        let view = EveningGlow()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(content)
+        NSLayoutConstraint.activate([content.leadingAnchor.constraint(equalTo: view.leadingAnchor), content.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                                     content.topAnchor.constraint(equalTo: view.topAnchor), content.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
+        return view
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        sky.colors = Palette.evening.map(\.cgColor)
+        sky.locations = [0, 0.55, 1]
+        sky.startPoint = CGPoint(x: 0, y: 0.5)
+        sky.endPoint = CGPoint(x: 1, y: 0.5)
+        // Opaque at the top edge, clear by the glow's depth.
+        fade.colors = [NSColor.black.cgColor, NSColor.black.withAlphaComponent(0.35).cgColor, NSColor.clear.cgColor]
+        fade.locations = [0, 0.45, 1]
+        fade.startPoint = CGPoint(x: 0.5, y: 1)
+        fade.endPoint = CGPoint(x: 0.5, y: 0)
+        sky.mask = fade
+        layer?.addSublayer(sky)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let depth = min(Self.depth, bounds.height)
+        sky.frame = CGRect(x: 0, y: isFlipped ? 0 : bounds.height - depth, width: bounds.width, height: depth)
+        fade.frame = sky.bounds
+        CATransaction.commit()
+        updateStrength()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateStrength()
+    }
+
+    private func updateStrength() {
+        sky.opacity = effectiveAppearance.bestMatch(from: [.darkAqua]) == .darkAqua ? 0.16 : 0.11
+    }
+}
+

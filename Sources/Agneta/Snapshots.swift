@@ -121,10 +121,12 @@ private func write(_ image: CGImage, to file: URL) -> String {
 private struct Backdrop: View {
     var body: some View {
         ZStack {
-            LinearGradient(colors: [Color(red: 0.16, green: 0.33, blue: 0.47), Color(red: 0.55, green: 0.69, blue: 0.74)], startPoint: .topLeading, endPoint: .bottomTrailing)
-            Circle().fill(Color(red: 0.93, green: 0.55, blue: 0.38)).frame(width: 520).offset(x: -380, y: -220).blur(radius: 40)
-            Circle().fill(Color(red: 0.36, green: 0.62, blue: 0.48)).frame(width: 600).offset(x: 360, y: 180).blur(radius: 50)
-            Circle().fill(Color(red: 0.98, green: 0.86, blue: 0.55)).frame(width: 380).offset(x: 80, y: -280).blur(radius: 30)
+            // A muted dusk after the app icon's evening, so every screenshot shares one calm backdrop: glass takes on
+            // what's behind it, and a vivid one would tint every panel instead of showing Agneta's own colours.
+            LinearGradient(colors: [Color(red: 0.86, green: 0.80, blue: 0.80), Color(red: 0.62, green: 0.56, blue: 0.68), Color(red: 0.38, green: 0.34, blue: 0.48)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            Circle().fill(Color(red: 1.0, green: 0.62, blue: 0.48)).frame(width: 520).offset(x: -380, y: -230).blur(radius: 70).opacity(0.45)
+            Circle().fill(Color(red: 0.55, green: 0.24, blue: 1.0)).frame(width: 560).offset(x: 420, y: 260).blur(radius: 80).opacity(0.3)
             Text("Agneta").font(.system(size: 160, weight: .heavy)).foregroundStyle(.white.opacity(0.35)).offset(y: 120)
             // AGNETA_BACKDROP=text: a busy page of text behind the windows, the hardest case for reading glass.
             if ProcessInfo.processInfo.environment["AGNETA_BACKDROP"] == "text" {
