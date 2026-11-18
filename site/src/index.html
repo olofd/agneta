@@ -1,37 +1,40 @@
 <main id="main">
-  <section class="hero wrap">
-    <img class="hero-icon" src="/assets/icon-256.png" width="128" height="128" alt="">
-    <h1>Give Mac apps an AI agent you control.</h1>
-    <p class="lede">Agneta is an open-source menu bar app for macOS. Connect the AI you already pay for once: a ChatGPT or Claude plan, or an OpenAI or Anthropic API key. Then decide which apps may use it. Agneta runs each task on your Mac, in a sandbox, on your account, and shows you every task with a stop button.</p>
-    <div class="actions">
-      <a class="button primary" href="#install">Download</a>
-      <a class="button" href="/docs/apps/">Add it to your app</a>
+  <section class="hero">
+    <div class="hero-text">
+      <img class="hero-icon" src="/assets/icon-256.png" width="72" height="72" alt="">
+      <h1>Give Mac apps an AI agent you control.</h1>
+      <p class="lede">Agneta is an open-source menu bar app for macOS. Connect the AI you already pay for once: a ChatGPT or Claude plan, or an OpenAI or Anthropic API key. Then decide which apps may use it. Agneta runs each task on your Mac, in a sandbox, on your account, and shows you every task with a stop button.</p>
+      <div class="actions">
+        <a class="button primary" href="#install">Download</a>
+        <a class="button" href="/docs/apps/">Add it to your app</a>
+      </div>
+      <ul class="meta"><li>{{release_line}}</li><li>macOS 14 or later</li><li>Apple silicon and Intel</li><li>Apache 2.0</li></ul>
     </div>
-    <ul class="meta"><li>{{release_line}}</li><li>macOS 14 or later</li><li>Apple silicon and Intel</li><li>Apache 2.0</li></ul>
+    <figure class="stage" data-shots>
+      <div class="desk">
+        <div class="menubar" aria-hidden="true"><span class="status-item"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M12.89 15.6A5.6 5.6 0 1 0 10.52 17.26M11.11 8.4A5.6 5.6 0 1 0 13.48 6.74"/></svg></span></div>
+        <div class="win win-approval">
+          <img class="light" src="/images/approval.png" width="508" height="648" alt="An app asks to use Agneta. The window shows what it may do and that it’s verified, and the user ticks which providers it may use">
+          <img class="dark" src="/images/approval-dark.png" width="508" height="648" loading="lazy" alt="An app asks to use Agneta. The window shows what it may do and that it’s verified, and the user ticks which providers it may use">
+        </div>
+        <div class="win win-panel">
+          <img class="light" src="/images/panel.png" width="408" height="485" fetchpriority="high" alt="Agneta’s menu bar panel: two running tasks from Example App, each with a stop button, and three connected providers with the engine each runs on">
+          <img class="dark" src="/images/panel-dark.png" width="408" height="485" loading="lazy" alt="Agneta’s menu bar panel: two running tasks from Example App, each with a stop button, and three connected providers with the engine each runs on">
+        </div>
+      </div>
+      <figcaption>
+        <span>An app asks first: you see what it may do, and tick the plans and keys it may use.</span>
+        <span>The menu bar panel shows each running task, its app and provider, and a stop button.</span>
+      </figcaption>
+      <div class="appearance" role="group" aria-label="Screenshot appearance" hidden>
+        <button type="button" data-appearance="light" aria-pressed="false">Light</button>
+        <button type="button" data-appearance="dark" aria-pressed="false">Dark</button>
+      </div>
+    </figure>
   </section>
-
-  <section class="shots-section wrap" aria-label="Screenshots">
-    {{demo}}
-    <div class="shots" data-shots>
-      <figure class="shot shot-panel">
-        <img class="light" src="/images/panel.png" width="408" height="485" alt="Agneta’s menu bar panel: two running tasks from Example App, each with a stop button, and three connected providers with the engine each runs on">
-        <img class="dark" src="/images/panel-dark.png" width="408" height="485" loading="lazy" alt="Agneta’s menu bar panel: two running tasks from Example App, each with a stop button, and three connected providers with the engine each runs on">
-        <figcaption>The menu bar panel: each running task, its app and provider, and a stop button.</figcaption>
-      </figure>
-      <figure class="shot shot-approval">
-        <img class="light" src="/images/approval.png" width="508" height="648" alt="An app asks to use Agneta. The window shows what it may do and that it’s verified, and the user ticks which providers it may use">
-        <img class="dark" src="/images/approval-dark.png" width="508" height="648" loading="lazy" alt="An app asks to use Agneta. The window shows what it may do and that it’s verified, and the user ticks which providers it may use">
-        <figcaption>An app asks first. You see what it may do, and tick the plans and keys it may use.</figcaption>
-      </figure>
-    </div>
-    <div class="appearance" role="group" aria-label="Screenshot appearance" hidden>
-      <button type="button" data-appearance="light" aria-pressed="false">Light</button>
-      <button type="button" data-appearance="dark" aria-pressed="false">Dark</button>
-    </div>
-  </section>
-
+{{demo}}
   <section class="audiences wrap" aria-label="Who it’s for">
-    <div>
+    <div class="card glow">
       <h2>For you, with your own AI plan</h2>
       <p>Use the plan or key you already pay for in the apps you choose, see what each one does with it, and stop it.</p>
       <ul class="points">
@@ -40,7 +43,7 @@
         <li>Every task shows the app it belongs to, the provider it runs on and what it costs.</li>
       </ul>
     </div>
-    <div>
+    <div class="card glow">
       <h2>For app developers</h2>
       <p>Agent features without running an agent loop, building sign-in for every provider, or putting a model bill on your own credit card.</p>
       <ul class="points">
@@ -71,7 +74,7 @@
     </div>
   </section>
 
-  <section class="private band" aria-labelledby="private">
+  <section class="private night" aria-labelledby="private">
     <div class="wrap">
       <h2 id="private">What stays on your Mac</h2>
       <p class="section-lede">Agneta has no servers of its own and sends no telemetry. What leaves your Mac is the task itself: its prompts, and what its tools return, go to your AI provider over HTTPS, because that’s how the model sees it.</p>
@@ -100,6 +103,33 @@
 {{not_list}}
   </section>
 
+  <section class="dev wrap" aria-labelledby="dev">
+    <h2 id="dev">Add it to your app</h2>
+    <p class="section-lede">Your app is an ACP client and Agneta is the ACP agent. Connect to <code>ws://127.0.0.1:47321/acp</code>, pair once, and start sessions with your own tools and a policy. Any WebSocket and JSON-RPC 2.0 code will do.</p>
+    <div class="dev-code">
+      <p class="code-title">Pairing, once</p>
+{{dev_snippet}}
+    </div>
+    <div class="dev-grid">
+      <ul class="link-list">
+        <li><a href="/docs/apps/">Developer guide</a>: the conversation, step by step</li>
+        <li><a href="/docs/app-protocol/">App protocol</a>: every field, limit and error</li>
+        <li><a href="/docs/diagnostics/">Diagnostics</a>: traces, <code>agneta-diag</code> and the diagnostics MCP server</li>
+        <li><a href="https://github.com/olofd/agneta/blob/main/Sources/agneta-testclient/main.swift" rel="noopener">The test client</a>: the whole exchange in about 170 lines of Swift</li>
+      </ul>
+      <figure class="dev-shot">
+        <img src="/images/project-chat.png" width="1960" height="1560" loading="lazy" alt="Project Chat: a conversation with the agent, the project tools it called, and a proposed note with Dismiss and Save note buttons">
+        <figcaption><a href="https://github.com/olofd/agneta/tree/main/examples/project-chat" rel="noopener">Project Chat</a>, the example app: it pairs with Agneta, streams a conversation, and lets the agent propose a note for you to review.</figcaption>
+      </figure>
+    </div>
+  </section>
+  <section class="status wrap" aria-labelledby="status">
+    <h2 id="status" class="visually-hidden">Status</h2>
+    <div class="callout">
+{{status_quote}}
+    </div>
+  </section>
+
   <section class="install band" id="install" aria-labelledby="install-title">
     <div class="wrap">
       <h2 id="install-title">Install</h2>
@@ -125,31 +155,4 @@
     </div>
   </section>
 
-  <section class="status wrap" aria-labelledby="status">
-    <h2 id="status" class="visually-hidden">Status</h2>
-    <div class="callout">
-{{status_quote}}
-    </div>
-  </section>
-
-  <section class="dev wrap" aria-labelledby="dev">
-    <h2 id="dev">Add it to your app</h2>
-    <p class="section-lede">Your app is an ACP client and Agneta is the ACP agent. Connect to <code>ws://127.0.0.1:47321/acp</code>, pair once, and start sessions with your own tools and a policy. Any WebSocket and JSON-RPC 2.0 code will do.</p>
-    <div class="dev-code">
-      <p class="code-title">Pairing, once</p>
-{{dev_snippet}}
-    </div>
-    <div class="dev-grid">
-      <ul class="link-list">
-        <li><a href="/docs/apps/">Developer guide</a>: the conversation, step by step</li>
-        <li><a href="/docs/app-protocol/">App protocol</a>: every field, limit and error</li>
-        <li><a href="/docs/diagnostics/">Diagnostics</a>: traces, <code>agneta-diag</code> and the diagnostics MCP server</li>
-        <li><a href="https://github.com/olofd/agneta/blob/main/Sources/agneta-testclient/main.swift" rel="noopener">The test client</a>: the whole exchange in about 170 lines of Swift</li>
-      </ul>
-      <figure class="dev-shot">
-        <img src="/images/project-chat.png" width="1960" height="1560" loading="lazy" alt="Project Chat: a conversation with the agent, the project tools it called, and a proposed note with Dismiss and Save note buttons">
-        <figcaption><a href="https://github.com/olofd/agneta/tree/main/examples/project-chat" rel="noopener">Project Chat</a>, the example app: it pairs with Agneta, streams a conversation, and lets the agent propose a note for you to review.</figcaption>
-      </figure>
-    </div>
-  </section>
 </main>

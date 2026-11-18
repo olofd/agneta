@@ -7,10 +7,11 @@
 <meta name="description" content="{{description}}">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#151516" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#141215" media="(prefers-color-scheme: dark)">
 <link rel="canonical" href="{{canonical}}">
 <link rel="icon" href="/favicon.ico" sizes="32x32">
 <link rel="icon" href="/assets/icon-64.png" type="image/png">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <link rel="stylesheet" href="/style.css">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Agneta">
@@ -32,14 +33,16 @@
     <a class="brand" href="/"><img src="/assets/icon-64.png" width="28" height="28" alt="">Agneta</a>
     <nav aria-label="Site">
       <a href="/docs/"{{nav_docs}}>Docs</a>
-      <a href="/changelog/"{{nav_changelog}}>Changelog</a>
+      <a class="bar-optional" href="/changelog/"{{nav_changelog}}>Changelog</a>
       <a href="https://github.com/olofd/agneta" rel="noopener">GitHub</a>
+      <a class="bar-download" href="/#install">Download</a>
     </nav>
   </div>
 </header>
 {{body}}
 <footer class="foot">
   <div class="wrap">
+    <p class="foot-brand"><img src="/assets/icon-64.png" width="32" height="32" alt=""><span><strong>Agneta</strong>Give Mac apps an AI agent you control.</span></p>
     <nav aria-label="Project">
       <a href="/#install">Download</a>
       <a href="/docs/">Documentation</a>

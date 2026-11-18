@@ -326,7 +326,7 @@ The documents below are also on [agneta.dahlbom.io/docs](https://agneta.dahlbom.
 
 | Document | For |
 | --- | --- |
-| [docs/APP_PROTOCOL.md](docs/APP_PROTOCOL.md) | Integrating an app |
+| [docs/APP_PROTOCOL.md](docs/APP_PROTOCOL.md) | The protocol in full, for integrating an app: connecting and pairing, sessions and their policy, model choice, turns, permissions, the trace, and every error |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How Agneta is built, and its security model |
 | [docs/ENGINES.md](docs/ENGINES.md) | Goose, OpenCode, Claude Code and Codex behind the engine boundary |
 | [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) | Traces, `agneta-diag` and the diagnostics MCP server |
