@@ -261,6 +261,18 @@ final class EngineLibrary {
         }
     }
 
+    /// Why a provider can't run anything with these engines now, or nil when it can: none of the engines it supports is
+    /// ticked, or none of those is on this Mac (with what to install). Allowing it anyway is fine: it runs once it can.
+    func cantRun(_ account: AccountRecord, engines: Set<String>) -> String? {
+        guard Access.engines(for: account.kind, allowed: allowance(engines), catalog: catalog).isEmpty else { return nil }
+        let ticked = ProviderEngines.supported(by: account.kind).filter(engines.contains)
+        if ticked.isEmpty { return "\(account.label) can't run on any engine ticked here" }
+        if ticked.count == 1, case .unavailable(let reason)? = catalog.entries[ticked[0]]?.state {
+            return "Needs \(name(ticked[0])): \(reason.prefix(1).lowercased() + reason.dropFirst())"
+        }
+        return "Needs \(ticked.map(name).joined(separator: " or ")), which isn't on this Mac"
+    }
+
     // MARK: Choosing
 
     /// Sets a kind of provider's default engine. New tasks that don't ask for an engine run on it; running ones keep

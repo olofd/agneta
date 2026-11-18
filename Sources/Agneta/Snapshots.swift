@@ -17,7 +17,7 @@ enum Snapshots {
         let presenter = WindowPresenter.shared
         showBackdrop()
         presenter.showPanelPreview(model)
-        presenter.showApproval(model, request: model.approval?.id ?? UUID())
+        presenter.showApproval(model, request: model.approvals.current?.id ?? UUID())
         presenter.showSignIn(model, attempt: UUID())
         presenter.showWelcome(model) // after sign-in, which closes the welcome window
         // AGNETA_SHOWCASE_PANE picks the Settings pane, e.g. Activity or Privacy.

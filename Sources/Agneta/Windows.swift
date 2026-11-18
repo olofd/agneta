@@ -76,12 +76,12 @@ final class WindowPresenter {
     /// Closing the window cancels the sign-in it shows (one left running would hold its sign-in callback port).
     func showSignIn(_ model: AppModel, attempt: UUID) {
         closeWelcome()
-        show("signin", title: "Sign In", size: NSSize(width: 420, height: 340), onClose: { model.signInWindowClosed(attempt) }) { SignInView(model: model) }
+        show("signin", title: "Sign In", size: NSSize(width: 420, height: 340), onClose: { model.signIn.windowClosed(attempt) }) { SignInView(model: model) }
     }
     func closeSignIn() { close("signin") }
     /// Closing the window is Don't Allow for the request it shows; the next waiting request then appears.
     func showApproval(_ model: AppModel, request: UUID) {
-        show("approval", title: "Allow an App", size: NSSize(width: 460, height: 600), onClose: { model.settleApproval(request, with: nil) }) { ApprovalView(model: model) }
+        show("approval", title: "Allow an App", size: NSSize(width: 460, height: 600), onClose: { model.approvals.settle(request, with: nil) }) { ApprovalView(model: model) }
         windows["approval"]?.level = .floating
     }
     func closeApproval() { close("approval") }
@@ -236,7 +236,7 @@ struct SignInView: View {
     @State private var code = ""
 
     var body: some View {
-        if let signIn = model.signIn {
+        if let signIn = model.signIn.state {
             DialogLayout(title: signIn.finished ? "You're signed in" : "Sign in to \(signIn.kind.provider)",
                          message: signIn.failed == nil ? signIn.text : nil) {
                 ZStack(alignment: .bottomTrailing) {
@@ -273,10 +273,10 @@ struct SignInView: View {
                         Button { NSWorkspace.shared.open(page) } label: { Text("Open the Page Again").frame(maxWidth: .infinity) }.glassButton()
                     }
                     if signIn.finished || signIn.failed != nil {
-                        Button { model.cancelSignIn() } label: { Text("Done").frame(maxWidth: .infinity) }
+                        Button { model.signIn.cancel() } label: { Text("Done").frame(maxWidth: .infinity) }
                             .glassButton(prominent: true).tint(Palette.accent).keyboardShortcut(.defaultAction)
                     } else {
-                        Button { model.cancelSignIn() } label: { Text("Cancel").frame(maxWidth: .infinity) }.glassButton().keyboardShortcut(.cancelAction)
+                        Button { model.signIn.cancel() } label: { Text("Cancel").frame(maxWidth: .infinity) }.glassButton().keyboardShortcut(.cancelAction)
                     }
                 }
                 .controlSize(.large)
@@ -287,7 +287,7 @@ struct SignInView: View {
 
     private func submit() {
         guard !code.isEmpty else { return }
-        model.submitCode(code)
+        model.signIn.submit(code)
         code = ""
     }
 }
@@ -334,7 +334,7 @@ struct ApprovalView: View {
     @State private var showsAdvanced = false
 
     var body: some View {
-        if let approval = model.approval {
+        if let approval = model.approvals.current {
             DialogLayout(title: "Let \(approval.app) use your AI?",
                          message: "\(approval.app) can start AI tasks that count against your plan limits or API credit. You see and can stop every task, and can remove access at any time.") {
                 HStack(spacing: 14) {
@@ -351,14 +351,14 @@ struct ApprovalView: View {
                         ForEach(model.accounts) { account in
                             let on = approval.allowed.contains(account.id)
                             Button {
-                                if on { model.approval?.allowed.remove(account.id) } else { model.approval?.allowed.insert(account.id) }
+                                if on { model.approvals.current?.allowed.remove(account.id) } else { model.approvals.current?.allowed.insert(account.id) }
                             } label: {
                                 HStack(spacing: 11) {
                                     ProviderIcon(kind: account.kind, size: 28)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(account.label).font(.system(size: 13, weight: .semibold))
                                         // What it needs before it can run, where something's missing; its plan otherwise.
-                                        if on, let reason = model.cantRun(account, engines: approval.engines) {
+                                        if on, let reason = model.library.cantRun(account, engines: approval.engines) {
                                             Text(reason).font(.system(size: 11.5)).foregroundStyle(Palette.attention).lineLimit(2)
                                         } else {
                                             Text(account.kind.plan).font(.system(size: 11.5)).foregroundStyle(.secondary)
@@ -386,7 +386,7 @@ struct ApprovalView: View {
                             .buttonStyle(.link)
                             .popover(isPresented: $showsAdvanced, arrowEdge: .bottom) {
                                 EngineAccessList(model: model, allowed: approval.allowed,
-                                                 engines: Binding(get: { model.approval?.engines ?? [] }, set: { model.approval?.engines = $0 }))
+                                                 engines: Binding(get: { model.approvals.current?.engines ?? [] }, set: { model.approvals.current?.engines = $0 }))
                                     .padding(16).frame(width: 320)
                             }
                         if model.library.allowance(approval.engines) != .all {
@@ -418,16 +418,16 @@ struct ApprovalView: View {
             } actions: {
                 HStack(spacing: 8) {
                     // The labels fill the width so the glass bezels do too.
-                    Button { model.answerApproval(remember: nil) } label: { Text("Don't Allow").frame(maxWidth: .infinity) }
+                    Button { model.approvals.answer(remember: nil) } label: { Text("Don't Allow").frame(maxWidth: .infinity) }
                         .glassButton().keyboardShortcut(.cancelAction)
                     // Once: for this connection only, nothing kept. Return chooses it, and only for a verified app.
                     // A provider that can't run yet (Codex not installed) may still be allowed: it runs once it can.
                     let nothing = approval.allowed.isEmpty
-                    Button { model.answerApproval(remember: false) } label: { Text("Allow Once").frame(maxWidth: .infinity) }
+                    Button { model.approvals.answer(remember: false) } label: { Text("Allow Once").frame(maxWidth: .infinity) }
                         .glassButton()
                         .defaultAction(when: approval.verified)
                         .disabled(nothing)
-                    Button { model.answerApproval(remember: true) } label: { Text("Always Allow").frame(maxWidth: .infinity) }
+                    Button { model.approvals.answer(remember: true) } label: { Text("Always Allow").frame(maxWidth: .infinity) }
                         .glassButton(prominent: true).tint(Palette.accent)
                         .disabled(nothing)
                 }
@@ -490,7 +490,7 @@ struct EngineAccessList: View {
                 .toggleStyle(.checkbox)
             }
             ForEach(model.accounts.filter { allowed.contains($0.id) }) { account in
-                if let reason = model.cantRun(account, engines: engines) {
+                if let reason = model.library.cantRun(account, engines: engines) {
                     Label(reason, systemImage: "exclamationmark.triangle.fill").font(.system(size: 11.5)).foregroundStyle(Palette.attention)
                 }
             }

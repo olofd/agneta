@@ -1,8 +1,8 @@
-// Agneta's state for its UI: accounts, app access, running tasks, sign-in.
-// Underneath, the runtime (AgnetaKit's AgnetaRuntime) owns the router, the
-// engines and everything Agneta records; this model observes it, tells it which
-// accounts to serve, and keeps what the windows show. The UI only reads this
-// model and calls its methods.
+// Agneta's state for its UI: providers (accounts), app access, running tasks, history, reset and diagnostics.
+// Underneath, the runtime (AgnetaKit's AgnetaRuntime) owns the router, the engines' processes and everything Agneta
+// records; this model starts it, tells it which accounts to serve, and keeps what the windows show. Three parts have
+// types of their own, which it holds: the engines on this Mac (EngineLibrary), apps asking for access (Approvals) and
+// signing in to a plan (SignInFlow). The UI only reads these and calls their methods.
 import AgnetaKit
 import AppKit
 import Foundation
@@ -23,30 +23,6 @@ final class AppModel {
         var stopWarning: String?
         var cost: Double?
         var lastStopReason: String?
-    }
-
-    struct Approval: Identifiable, Sendable {
-        /// The router's pairing request id.
-        let id: UUID
-        var app: String
-        var identifier: String?
-        var verified: Bool
-        var code: String
-        var allowed: Set<String>
-        /// The engines the app may use (Advanced): every one to start with.
-        var engines: Set<String>
-        /// What the app asks to do: the most built-in tools, and folders of the user's beyond its own workspace.
-        var tools: SessionPolicy.Tools = .appOnly
-        var folders: [URL] = []
-    }
-
-    struct SignIn {
-        var kind: AccountKind
-        var text: String
-        var page: URL?
-        var needsCode = false
-        var finished = false
-        var failed: String?
     }
 
     // MARK: State
@@ -73,14 +49,10 @@ final class AppModel {
     /// What the last launch cleaned up after a crash, for one quiet line in Activity.
     private(set) var recovered: (engines: Int, tasks: Int) = (0, 0)
     /// The pairing request on screen; edits change its allowed accounts.
-    var approval: Approval? {
-        get { approvals.current }
-        set { approvals.current = newValue }
-    }
-    private var approvals = ApprovalQueue<Approval, Router.PairingAnswer>()
-    /// A request the user hasn't answered is refused after this long, as a dialog nobody saw shouldn't wait forever.
-    static let approvalTimeout: Duration = .seconds(300)
-    var signIn: SignIn?
+    /// Apps asking for access, one at a time.
+    let approvals = Approvals()
+    /// Signing in to a plan.
+    let signIn: SignInFlow
     private(set) var serverProblem: String?
     /// A task's record couldn't be written (the disk is full, say): tasks run on, but their traces are incomplete.
     private(set) var traceProblem: String?
@@ -113,10 +85,6 @@ final class AppModel {
     var diagnosticsURL: String { "http://127.0.0.1:\(diagnosticsPort)/mcp" }
     private var supervisor: EngineSupervisor? { runtime?.supervisor }
     private var server: WebSocketServer?
-    private var codeAnswer: CheckedContinuation<String?, Never>?
-    private var signInTask: _Concurrency.Task<Void, Never>?
-    /// The sign-in on screen: a cancelled one finishing late must not touch a newer one's sheet.
-    private var signInAttempt = UUID()
 
     init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -144,7 +112,12 @@ final class AppModel {
         log = OperationalLog(folder: isolated ? store.root.appending(path: "Logs", directoryHint: .isDirectory)
                                               : libraryFolder.appending(path: "Logs/\(id.hasSuffix(".dev") ? "Agneta Dev" : "Agneta")", directoryHint: .isDirectory))
         library = EngineLibrary(runtimes: store.runtimesFolder, log: log)
+        signIn = SignInFlow(library: library, log: log)
         library.kindsInUse = { [weak self] in Set(self?.accounts.map(\.kind) ?? []) }
+        approvals.present = { [weak self] id in if let self { WindowPresenter.shared.showApproval(self, request: id) } }
+        approvals.dismiss = { WindowPresenter.shared.closeApproval() }
+        approvals.order = { [weak self] in self?.accounts.map(\.id) ?? [] }
+        approvals.allowance = { [weak self] engines in self?.library.allowance(engines) ?? .all }
     }
 
     var dataFolder: URL { store.root }
@@ -337,7 +310,7 @@ final class AppModel {
         case .planUsage(let account, let limits):
             planUsage[account] = PlanUsage.describe(limits)
         case .pairingWithdrawn(let request):
-            settleApproval(request, with: nil)
+            approvals.settle(request, with: nil)
         case .needsSignIn(let account):
             needsSignIn.insert(account)
             log.log("needs-sign-in", ["account": .string(account)])
@@ -366,49 +339,9 @@ final class AppModel {
 
     // MARK: App access
 
+    /// One provider ticked to start with (the user adds more deliberately), and every engine: the app picks per task.
     private func askForApproval(_ pairing: Router.PairingRequest) async -> Router.PairingAnswer? {
-        await withCheckedContinuation { continuation in
-            // One provider to start with (the user adds more deliberately), and every engine: the app picks per task.
-            let request = Approval(id: pairing.id, app: pairing.app, identifier: pairing.peer?.identifier, verified: pairing.code == nil,
-                                   code: pairing.code ?? "", allowed: Set(accounts.first { !$0.paused }.map { [$0.id] } ?? []),
-                                   engines: Set(library.catalog.entries.keys), tools: pairing.tools, folders: pairing.folders)
-            if approvals.add(id: pairing.id, request, answer: { continuation.resume(returning: $0) }) {
-                WindowPresenter.shared.showApproval(self, request: pairing.id)
-            }
-            _Concurrency.Task { [weak self] in
-                try? await _Concurrency.Task.sleep(for: Self.approvalTimeout)
-                self?.settleApproval(pairing.id, with: nil)
-            }
-        }
-    }
-
-    /// The user's answer to the request on screen: nil for Don't Allow, else Allow Once (`remember` false) or Always Allow.
-    func answerApproval(remember: Bool?) {
-        guard let pending = approvals.current else { return }
-        // In account order, so "the first allowed account" (the default for new sessions) is stable.
-        let allowed = accounts.map(\.id).filter { pending.allowed.contains($0) }
-        let answer = remember.map { Router.PairingAnswer(accounts: allowed, engines: library.allowance(pending.engines), remember: $0) }
-        settleApproval(pending.id, with: answer)
-    }
-
-    /// Why a provider can't run anything with these engines now, or nil when it can: none of the engines it supports is
-    /// ticked, or none of those is on this Mac (with what to install). Allowing it anyway is fine: it runs once it can.
-    func cantRun(_ account: AccountRecord, engines: Set<String>) -> String? {
-        let supported = ProviderEngines.supported(by: account.kind)
-        guard Access.engines(for: account.kind, allowed: library.allowance(engines), catalog: library.catalog).isEmpty else { return nil }
-        let ticked = supported.filter(engines.contains)
-        if ticked.isEmpty { return "\(account.label) can't run on any engine ticked here" }
-        if ticked.count == 1, case .unavailable(let reason)? = library.catalog.entries[ticked[0]]?.state { return "Needs \(library.name(ticked[0])): \(reason.prefix(1).lowercased() + reason.dropFirst())" }
-        return "Needs \(ticked.map(library.name).joined(separator: " or ")), which isn't on this Mac"
-    }
-
-    /// Answers a pairing request, shown or waiting; nil is Don't Allow. Answering one already answered does nothing.
-    func settleApproval(_ id: UUID, with answer: Router.PairingAnswer?) {
-        guard approvals.answer(id, with: answer) else { return }
-        WindowPresenter.shared.closeApproval()
-        if let next = approvals.current {
-            DispatchQueue.main.async { WindowPresenter.shared.showApproval(self, request: next.id) }
-        }
+        await approvals.ask(pairing, allowed: Set(accounts.first { !$0.paused }.map { [$0.id] } ?? []), engines: Set(library.catalog.entries.keys))
     }
 
     /// Changes which providers and engines an app may use (Settings → Apps). Its sessions that no longer fit stop.
@@ -443,118 +376,16 @@ final class AppModel {
 
     /// Signs in a new account, or `again` signs an existing one in again (same account, folder and settings).
     func startSignIn(_ kind: AccountKind, again existing: AccountRecord? = nil) {
-        abandonSignIn()
-        let attempt = UUID()
-        signInAttempt = attempt
         var record = existing ?? AccountRecord(kind: kind, label: kind.provider)
         if existing == nil, accounts.contains(where: { $0.kind == kind }) { record.label = "\(kind.provider) \(accounts.filter { $0.kind.provider == kind.provider }.count + 1)" }
-        let home = store.home(of: record)
-        signIn = SignIn(kind: kind, text: "Starting…")
-        WindowPresenter.shared.showSignIn(self, attempt: attempt)
-        signInTask = _Concurrency.Task { [weak self] in
+        let attempt = signIn.start(kind, home: store.home(of: record), account: record.id) { [weak self] in
             guard let self else { return }
-            let progress: SignInProgress = { step in _Concurrency.Task { @MainActor in self.show(step, attempt: attempt) } }
-            do {
-                switch kind {
-                case .chatGPT:
-                    // A ChatGPT plan runs on the user's own Codex, signed in with Codex's own login.
-                    guard let cli = library.program("codex") else {
-                        throw SignInError.provider((library.installs["codex"] ?? []).isEmpty ? "Codex isn't installed. Install Codex, then try again"
-                                                   : "Your Codex is older than \(CLILocator.codexMinimum), which Agneta needs. Update Codex, then try again")
-                    }
-                    try await CodexSignIn(cli: cli.path, codexHome: CodexAdapter.codexHome(account: home))
-                        .run(progress: progress)
-                case .claude:
-                    // The user's own Claude Code signs in; the adapter its engines run it through is fetched now too.
-                    guard let cli = library.program("claude") else {
-                        throw SignInError.provider("Claude Code isn't installed. Install the Claude app or Claude Code, then try again")
-                    }
-                    _ = try await library.install("claude-code", progress: progress)
-                    try await ClaudeCodeSignIn(cli: cli.path, configDirectory: home.appending(path: "claude", directoryHint: .isDirectory))
-                        .run(progress: progress, code: { await self.waitForCode() })
-                default: return
-                }
-                guard signInAttempt == attempt, !_Concurrency.Task.isCancelled else { return }
-                log.log("signed-in", ["account": .string(record.id), "kind": .string(kind.rawValue)])
-                if let index = accounts.firstIndex(where: { $0.id == record.id }) { accounts[index] = record } else { added(record) }
-                needsSignIn.remove(record.id)
-                try? database?.save(record)
-                await configure(record)
-                signIn?.finished = true
-                signIn?.text = "\(kind.provider) is connected."
-            } catch {
-                if signInFailed(error, attempt: attempt) {
-                    log.error("sign-in-failed", ["kind": .string(kind.rawValue), "reason": .string(String(describing: type(of: error)))])
-                }
-            }
+            if let index = accounts.firstIndex(where: { $0.id == record.id }) { accounts[index] = record } else { added(record) }
+            needsSignIn.remove(record.id)
+            try? database?.save(record)
+            await configure(record)
         }
-    }
-
-    /// Shows a sign-in's failure on its own sheet; a cancelled or replaced one shows nothing. True when shown.
-    @discardableResult
-    private func signInFailed(_ error: Error, attempt: UUID) -> Bool {
-        guard signInAttempt == attempt else { return false }
-        if error is CancellationError || (error as? SignInError) == .cancelled {
-            signIn = nil
-            return false
-        }
-        signIn?.failed = "\(error)"
-        return true
-    }
-
-    private func show(_ step: SignInStep, attempt: UUID) {
-        guard signIn != nil, signInAttempt == attempt else { return }
-        switch step {
-        case .openBrowser(let url):
-            signIn?.page = url
-            NSWorkspace.shared.open(url)
-        case .browserOpened(let url):
-            signIn?.page = url
-        case .confirmCode(let code, let page, _):
-            signIn?.page = page
-            signIn?.text = "Confirm the code \(code) on the page that opened."
-            NSWorkspace.shared.open(page)
-        case .pasteCode(let text):
-            signIn?.needsCode = true
-            signIn?.text = text
-        case .waiting(let text):
-            signIn?.text = text
-        case .signedIn:
-            break
-        }
-    }
-
-    private func waitForCode() async -> String? {
-        await withCheckedContinuation { codeAnswer = $0 }
-    }
-
-    func submitCode(_ code: String) {
-        signIn?.needsCode = false
-        signIn?.text = "Checking the code…"
-        codeAnswer?.resume(returning: code)
-        codeAnswer = nil
-    }
-
-    func cancelSignIn() {
-        abandonSignIn()
-        signIn = nil
-        WindowPresenter.shared.closeSignIn()
-    }
-
-    /// Stops the sign-in under way: its code prompt answered (nobody will type it), its task cancelled, its attempt retired.
-    private func abandonSignIn() {
-        codeAnswer?.resume(returning: nil)
-        codeAnswer = nil
-        signInTask?.cancel()
-        signInTask = nil
-        signInAttempt = UUID()
-    }
-
-    /// The sign-in window closed: closing it is cancelling, unless that sign-in finished or another replaced it.
-    func signInWindowClosed(_ attempt: UUID) {
-        guard signInAttempt == attempt, signIn?.finished != true else { return }
-        abandonSignIn()
-        signIn = nil
+        WindowPresenter.shared.showSignIn(self, attempt: attempt)
     }
 
     /// Adds an API-key account. It names no engine: it runs on its provider's (Settings → Engines).
@@ -569,7 +400,7 @@ final class AppModel {
     /// A new provider. An app asking for access while there was none to offer gets it ticked.
     private func added(_ record: AccountRecord) {
         accounts.append(record)
-        if approval?.allowed.isEmpty == true { approval?.allowed.insert(record.id) }
+        approvals.providerAdded(record.id)
     }
 
     func signOut(_ account: AccountRecord) {
@@ -685,9 +516,8 @@ final class AppModel {
         accounts = []; grants = [:]; tasks = []; history = []; needsSignIn = []
         library.reset()
         approvals.refuseAll()
-        WindowPresenter.shared.closeApproval()
-        abandonSignIn()
-        signIn = nil; serverProblem = nil; storeProblem = nil
+        signIn.clear()
+        serverProblem = nil; storeProblem = nil
         await finishReset(reset)
         guard resetProblem == nil else { return }
         await start()
@@ -830,11 +660,10 @@ final class AppModel {
                  Task(id: "2", app: "Example App", appIdentifier: nil, account: "b", title: "Naming a project", started: Date(), running: true)]
         grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"])]
         let sample = UUID()
-        _ = approvals.add(id: sample, Approval(id: sample, app: "Example App", identifier: "com.example.app", verified: true, code: "123456",
-                                               allowed: ["a", "c"], engines: Set(library.catalog.entries.keys), tools: .workspace,
-                                               folders: [FileManager.default.homeDirectoryForCurrentUser.appending(path: "Documents/Example Project")]),
-                          answer: { _ in })
-        signIn = SignIn(kind: .claude, text: "When Claude shows you a code, paste it here.", page: URL(string: "https://claude.com"), needsCode: true)
+        approvals.addSample(Approvals.Request(id: sample, app: "Example App", identifier: "com.example.app", verified: true, code: "123456",
+                                              allowed: ["a", "c"], engines: Set(library.catalog.entries.keys), tools: .workspace,
+                                              folders: [FileManager.default.homeDirectoryForCurrentUser.appending(path: "Documents/Example Project")]))
+        signIn.showSample(SignInFlow.State(kind: .claude, text: "When Claude shows you a code, paste it here.", page: URL(string: "https://claude.com"), needsCode: true))
         history = [TaskRecord(id: "3", app: "Example App", account: "a", title: "Drafting release notes", started: Date().addingTimeInterval(-7_200),
                               ended: Date().addingTimeInterval(-6_100), outcome: .finished, turns: 6, cost: 0.42),
                    TaskRecord(id: "4", app: "Example App", account: "b", title: "Naming a folder", started: Date().addingTimeInterval(-90_000),
