@@ -37,7 +37,7 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
 
 - **Result:** standard `agentCapabilities` (`loadSession: true`, images in prompts, HTTP MCP servers, `session/close`), plus:
   - `_meta.agneta.extensions`: the extensions below;
-  - `_meta.agneta.accounts`: `[{"id", "label", "paused", "capabilities"}]`, the accounts this app may use. A paused account starts nothing new (**Pause**, under [Turns](#turns)). `capabilities` describes the account's engine (see [the session result](#the-result)).
+  - `_meta.agneta.accounts`: `[{"id", "label", "paused", "capabilities"}]`, the accounts this app may use. A paused account starts nothing new (**Pause**, under [Turns](#turns)). `capabilities` describes the engine this app's sessions on the account run on (see [the session result](#the-result)): the account's own, or the one the user chose for this app when allowing it or later in Settings → Apps. If that engine can't run now (OpenCode removed, Codex uninstalled), `session/new` fails with `data.agneta.engineUnavailable` naming it, rather than quietly running another engine.
   - `_meta.agneta.scope` (`{"tools", "folders"}`, what the user allowed) and `_meta.agneta.workspace` (the app's own workspace).
 - **Error `-32001`** with `data.agneta.needsPairing: true` means the token is unknown, access was removed, an Allow Once grant has ended, or (for a verified app) the connecting program isn't the one that paired. Pair again.
 

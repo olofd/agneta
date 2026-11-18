@@ -5,6 +5,7 @@
 // and exact; the real-engine paths are in RouterIntegrationTests and
 // AppScenarioTests.
 import Foundation
+import os
 import Testing
 @testable import AgnetaKit
 
@@ -99,8 +100,12 @@ actor FakeEngines: EngineSource {
     private var steered: CheckedContinuation<Void, Never>?
     private var cancelled = false
 
-    func open(account: String, policy: SessionPolicy, mcpPorts: [Int], key: String?, session: EngineSessionSpec?) async throws -> EngineLease {
+    /// The engine each open asked for instead of the account's own (nil: the account's).
+    private(set) var askedEngines: [String?] = []
+
+    func open(account: String, engine: String?, policy: SessionPolicy, mcpPorts: [Int], key: String?, session: EngineSessionSpec?) async throws -> EngineLease {
         opened += 1
+        askedEngines.append(engine)
         if openDelay > .zero { try? await Task.sleep(for: openDelay) }
         let gate = Gate()
         gates.append(gate)
@@ -309,6 +314,36 @@ actor FakeEngines: EngineSource {
         #expect(decisions == ["refused-by-policy", "allowed-by-policy"])
         let asked = try #require(try stack.records(asking).first { $0["type"]?.stringValue == "permission" })
         #expect(asked["decision"]?.stringValue == "asked-app" && asked["toolKind"]?.stringValue == "read")
+    }
+
+    /// An app set to another engine than its account's: its sessions open that engine, initialize reports that
+    /// engine's abilities, a change applies to the next session and is saved, and an engine Agneta can't run is refused
+    /// with a reason rather than quietly replaced.
+    @Test func anAppRunsOnTheEngineChosenForIt() async throws {
+        let saved = OSAllocatedUnfairLock<[Router.Grant]>(initialState: [])
+        let stack = try await Stack.start(port: 47645, commit: { _, grant in saved.withLock { $0.append(grant) } }) { _ in
+            Router.PairingAnswer(accounts: ["brokered", "native"], remember: true, engines: ["brokered": "opencode", "native": "missing"])
+        }
+        defer { stack.stop() }
+        await stack.router.register(engine: OpenCodeAdapter(executable: URL(filePath: "/usr/bin/false")))
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Contract")
+        let initialize = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
+        let accounts = initialize["_meta"]?["agneta"]?["accounts"]?.arrayValue ?? []
+        #expect(accounts.first { $0["id"]?.stringValue == "brokered" }?["capabilities"]?["engine"]?.stringValue == "opencode")
+        #expect(saved.withLock { $0.last?.engines } == ["brokered": "opencode", "native": "missing"])
+
+        _ = try await stack.session(app, account: "brokered")
+        #expect(await stack.engines.askedEngines.last == .some("opencode"))
+        await #expect(throws: RPCError.self) { _ = try await stack.session(app, account: "native") }
+
+        // Back to the account's own engine: saved, and the next session asks for no other.
+        let grant = try #require(saved.withLock { $0.last })
+        try await stack.router.setEngine(grant: grant.id, account: "brokered", engine: nil)
+        #expect(saved.withLock { $0.last?.engines["brokered"] } == nil)
+        _ = try await stack.session(app, account: "brokered")
+        #expect(await stack.engines.askedEngines.last == .some(nil))
     }
 
     @Test func promptResultsCarryTheTurnsUsage() async throws {

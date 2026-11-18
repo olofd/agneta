@@ -50,6 +50,8 @@ extension Router {
     /// What an authorized session runs with.
     struct Plan {
         var account: String
+        /// The engine the app chose for this account, or nil for the account's own.
+        var engine: String?
         var policy: SessionPolicy
         var servers: [JSONValue]
         var instructions: String?
@@ -77,15 +79,21 @@ extension Router {
         case .failure(let refusal): return .failure(refusal)
         }
         if let refusal = Self.refuseServers(servers) { return .failure(refusal) }
-        if let engine = accounts[account]?.engine,
+        let engine = self.engine(for: account, in: grant)
+        if grant.engines[account] != nil, engine == nil {
+            return .failure(RPCError(code: RPCError.internalError,
+                                     message: "\(grant.app) is set to run on \(grant.engines[account] ?? "an engine") with this account, which this Agneta can't run now; change it in Agneta's Settings → Apps",
+                                     data: ["agneta": ["engineUnavailable": .string(grant.engines[account] ?? "")]]))
+        }
+        if let engine,
            let taken = servers.compactMap({ $0["name"]?.stringValue }).first(where: engine.reservedToolServers.contains) {
             return .failure(RPCError(code: RPCError.invalidParams, message: "\(engine.displayName) uses the tool server name \(taken) for its own tools",
                                      data: ["agneta": ["unenforceable": ["mcpServers"], "reason": .string("reserved name \(taken)")]]))
         }
-        if policy.limits.maxCostUSD != nil, let engine = accounts[account]?.engine, !engine.capabilities.reportsCost {
+        if policy.limits.maxCostUSD != nil, let engine, !engine.capabilities.reportsCost {
             return .failure(PolicyRejection(field: "limits", reason: "\(engine.displayName) doesn't report cost, so maxCostUSD can't be enforced").rpcError)
         }
-        return .success(Plan(account: account, policy: policy, servers: servers, instructions: instructions))
+        return .success(Plan(account: account, engine: grant.engines[account], policy: policy, servers: servers, instructions: instructions))
     }
 
     /// The refusal for anything new on a paused account, or nil when it isn't paused.
@@ -100,8 +108,8 @@ extension Router {
     /// engine that saved it, in a state format that engine still reads: the account may have moved to another
     /// engine since, or the engine may store its sessions differently now. Traces from before the format was
     /// recorded are compared by engine alone.
-    func savedStateRefusal(_ meta: JSONValue, account: String) -> RPCError? {
-        guard let engine = accounts[account]?.engine else { return nil } // a host that doesn't say: the supervisor decides
+    func savedStateRefusal(_ meta: JSONValue, account: String, grant: Grant) -> RPCError? {
+        guard let engine = engine(for: account, in: grant) else { return nil } // a host that doesn't say: the supervisor decides
         let saved = meta["engine"]?["id"]?.stringValue
         let format = meta["engine"]?["stateFormat"]?.stringValue
         guard saved != engine.id || (format != nil && format != engine.stateFormat) else { return nil }
@@ -114,7 +122,7 @@ extension Router {
     /// Starts (or joins) the plan's engine and routes its messages. `key` returns to an earlier engine home.
     func launch(_ plan: Plan, key: String?) async -> Result<EngineLease, RPCError> {
         do {
-            let lease = try await engines.open(account: plan.account, policy: plan.policy, mcpPorts: Self.loopbackPorts(plan.servers), key: key,
+            let lease = try await engines.open(account: plan.account, engine: plan.engine, policy: plan.policy, mcpPorts: Self.loopbackPorts(plan.servers), key: key,
                                                session: EngineSessionSpec(policy: plan.policy, servers: plan.servers, instructions: plan.instructions))
             await wire(lease)
             return .success(lease)
@@ -260,7 +268,7 @@ extension Router {
         if engineKey.hasSuffix("/shared"), plan.policy.tools != .appOnly {
             return .failure(PolicyRejection(field: "tools", reason: "this task ran without built-in tools; resume it the same way").rpcError)
         }
-        if let refusal = savedStateRefusal(meta, account: plan.account) { return .failure(refusal) }
+        if let refusal = savedStateRefusal(meta, account: plan.account, grant: grant) { return .failure(refusal) }
         switch await launch(plan, key: engineKey) {
         case .success(let started): lease = started
         case .failure(let error): return .failure(error)
@@ -315,7 +323,7 @@ extension Router {
         case .failure(let refusal): return .failure(refusal)
         }
         // The copy is made by the engine that saved the task and imported by the account's engine: they must be one.
-        if let refusal = savedStateRefusal(meta, account: plan.account) { return .failure(refusal) }
+        if let refusal = savedStateRefusal(meta, account: plan.account, grant: grant) { return .failure(refusal) }
 
         // 1. The conversation, from the engine that holds it.
         let exported: JSONValue
@@ -421,7 +429,7 @@ extension Router {
                     "grant": .string(grant.id)],
             "account": ["id": .string(accountID), "label": account.map { .string($0.label) } ?? .null,
                         "kind": account?.kind.map(JSONValue.string) ?? .null, "billing": .string(account?.billing ?? "unknown"),
-                        "runner": account?.runner == .native ? "native" : "brokered"],
+                        "runner": runner(account: accountID, engine: lease.engine) == .native ? "native" : "brokered"],
             "engine": ["id": .string(lease.engine.id), "stateFormat": .string(lease.engine.stateFormat), "info": lease.engineInfo ?? .null,
                        "pid": .int(Int64(lease.pid)), "dedicated": .bool(lease.dedicated), "key": .string(lease.key),
                        "startMs": lease.startMs.map(JSONValue.double) ?? .null, "session": .string(engineSession)],

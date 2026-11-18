@@ -27,9 +27,13 @@ public actor Router {
         public var folders: [String]
         /// Kept across launches ("Always Allow"), or only for the connection that paired ("Allow Once").
         public var remembered: Bool
+        /// The engine this app's tasks run on, per account, where the user chose one for this app; any other account
+        /// runs on its own engine.
+        public var engines: [String: String]
 
         public init(id: String = UUID().uuidString, app: String, identifier: String? = nil, team: String? = nil, verified: Bool = false,
-                    accounts: [String], created: Date = Date(), tools: SessionPolicy.Tools = .appOnly, folders: [String] = [], remembered: Bool = true) {
+                    accounts: [String], created: Date = Date(), tools: SessionPolicy.Tools = .appOnly, folders: [String] = [], remembered: Bool = true,
+                    engines: [String: String] = [:]) {
             self.id = id
             self.app = app
             self.identifier = identifier
@@ -40,6 +44,7 @@ public actor Router {
             self.tools = tools
             self.folders = folders
             self.remembered = remembered
+            self.engines = engines
         }
 
         /// Grants saved before scopes existed read as app-only with no folders: the app pairs again to ask for more.
@@ -49,7 +54,8 @@ public actor Router {
                       identifier: try c.decodeIfPresent(String.self, forKey: .identifier), team: try c.decodeIfPresent(String.self, forKey: .team),
                       verified: try c.decode(Bool.self, forKey: .verified), accounts: try c.decode([String].self, forKey: .accounts),
                       created: try c.decode(Date.self, forKey: .created), tools: try c.decodeIfPresent(SessionPolicy.Tools.self, forKey: .tools) ?? .appOnly,
-                      folders: try c.decodeIfPresent([String].self, forKey: .folders) ?? [], remembered: try c.decodeIfPresent(Bool.self, forKey: .remembered) ?? true)
+                      folders: try c.decodeIfPresent([String].self, forKey: .folders) ?? [], remembered: try c.decodeIfPresent(Bool.self, forKey: .remembered) ?? true,
+                      engines: try c.decodeIfPresent([String: String].self, forKey: .engines) ?? [:])
         }
     }
 
@@ -120,9 +126,12 @@ public actor Router {
         public var accounts: [String]
         /// "Always Allow": kept across launches. Otherwise only this connection may use it.
         public var remember: Bool
-        public init(accounts: [String], remember: Bool) {
+        /// The engine the user chose for this app, per account, where it isn't the account's own.
+        public var engines: [String: String]
+        public init(accounts: [String], remember: Bool, engines: [String: String] = [:]) {
             self.accounts = accounts
             self.remember = remember
+            self.engines = engines
         }
     }
 
@@ -225,9 +234,45 @@ public actor Router {
     ///   - kind: the account kind for traces, e.g. `chatgpt`.
     ///   - billing: `subscription` or `api-key`, so traces can say what a cost means.
     ///   - engine: the engine serving the account, so apps can see what its sessions can do.
+    ///   - runner: `.native` when the account's provider runs its own tools whatever the engine (a Claude plan runs
+    ///     Claude Code); engines that always do (Claude Code, Codex) are native on any account (`runner(account:engine:)`).
     public func add(account id: String, label: String, runner: ToolRunner = .brokered, kind: String? = nil, billing: String = "unknown",
                     engine: (any EngineAdapter)? = nil) {
         accounts[id] = (label, runner, kind, billing, engine)
+        if let engine { adapters[engine.id] = engine }
+    }
+
+    /// Makes an engine available for apps that are set to it, beyond the accounts' own engines.
+    public func register(engine: any EngineAdapter) { adapters[engine.id] = engine }
+
+    /// The engines Agneta can run, by id: any an app may be set to.
+    var adapters: [String: any EngineAdapter] = [:]
+
+    /// The engine an app's tasks on an account run on: the one chosen for the app, else the account's own.
+    func engine(for account: String, in grant: Grant) -> (any EngineAdapter)? {
+        if let chosen = grant.engines[account] { return adapters[chosen] }
+        return accounts[account]?.engine
+    }
+
+    /// Engines that run their own tools; Agneta answers their permission requests from the policy.
+    static let nativeEngines: Set<String> = ["claude-code", "codex"]
+
+    /// Whether a session's tools are run by the engine itself (Agneta gating each call) or brokered by Agneta.
+    func runner(account: String, engine: (any EngineAdapter)?) -> ToolRunner {
+        accounts[account]?.runner == .native || engine.map { Self.nativeEngines.contains($0.id) } == true ? .native : .brokered
+    }
+
+    /// Sets the engine an app's tasks on `account` run on (nil: the account's own), for every connection holding
+    /// the grant, and saves it. Sessions already open keep their engine.
+    public func setEngine(grant id: String, account: String, engine: String?) async throws {
+        for (hash, grant) in tokens where grant.id == id {
+            var changed = grant
+            changed.engines[account] = engine
+            if changed.remembered, let commit { try await commit(hash, changed) }
+            tokens[hash] = changed
+            for (appID, app) in apps where app.grant?.id == id { apps[appID]?.grant = changed }
+            onEvent(.paired(tokenHash: hash, grant: changed))
+        }
     }
 
     /// Pausing an account starts nothing more on it: no session opens (new, load or fork) and no turn begins,
@@ -415,7 +460,7 @@ public actor Router {
             let token = Self.newToken(), hash = Self.hash(token)
             var grant = Grant(app: name, identifier: verified ? peer?.identifier : nil, team: verified ? peer?.team : nil, verified: verified,
                               accounts: answer.accounts, tools: scope.tools, folders: scope.folders.map { $0.path(percentEncoded: false) },
-                              remembered: answer.remember)
+                              remembered: answer.remember, engines: answer.engines.filter { answer.accounts.contains($0.key) })
             // The app's own workspace, inside its grant whatever else it asked for.
             if let root = context.appWorkspaces {
                 let workspace = root.appending(path: grant.id, directoryHint: .isDirectory)
@@ -690,7 +735,7 @@ public actor Router {
                 "accounts": .array(grant.accounts.compactMap { id in
                     accounts[id].map { account in
                         ["id": .string(id), "label": .string(account.label), "paused": .bool(paused.contains(id)),
-                         "capabilities": account.engine.map(Self.capabilities) ?? .null]
+                         "capabilities": engine(for: id, in: grant).map(Self.capabilities) ?? .null]
                     }
                 }),
                 // What the user allowed, and the app's own workspace (within it).

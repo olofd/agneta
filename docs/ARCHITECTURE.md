@@ -63,7 +63,7 @@ The only third-party library linked in is [GRDB.swift](https://github.com/groue/
 The `EngineSupervisor` starts engines on demand and never replays work.
 
 - **Dedicated engines.** A session with built-in tools, every OpenCode, Claude Code and Codex session, and a Claude plan on Goose get an engine process of their own. Its home is `Engines/<account>-<id>` in Agneta's data folder, and it lives as long as the task's history, since `session/load` needs the conversation kept there.
-- **Shared engines.** App-only sessions on Goose share one engine per account, in the account's home. Concurrent starts of the same engine are merged into one.
+- **Shared engines.** App-only sessions on Goose share one engine per account (one per account and engine, when an app is set to another engine than the account's), in the account's home. Concurrent starts of the same engine are merged into one.
 - **The environment is explicit.** Nothing is inherited from Agneta or the user's shell: a private `HOME` and `TMPDIR`, a minimal `PATH`, the provider's settings, and nothing that would load the user's own configuration of that engine.
 - **Every engine runs in its own process group** under `sandbox-exec`, and is stopped by its recorded group, never by name. Its stderr goes to `engine.log` in its home, kept under 1 MB.
 - **Crash recovery.** Every engine started is recorded with its pid and process start time. At the next launch, a recorded engine is stopped only if its pid, start time and group leadership all still match, so a reused pid is never touched. Tasks that were running become "Stopped when Agneta quit".
@@ -163,7 +163,7 @@ Everything is in Agneta's Application Support folder, named by its bundle identi
 
 ## The app
 
-A menu bar app (`LSUIElement`) with no Dock icon. Its own `NSStatusItem` and a borderless glass panel show the accounts, running tasks with Stop, and anything needing attention. Settings has panes for general settings, accounts (with each account's engine and Claude Code or Codex install), apps, activity with task details, privacy and retention, advanced diagnostics, and about. Approval and sign-in open as their own windows. Reduce Motion and Reduce Transparency are respected, and every control is labelled for VoiceOver.
+A menu bar app (`LSUIElement`) with no Dock icon. Its own `NSStatusItem` and a borderless glass panel show the accounts, running tasks with Stop, and anything needing attention. Settings has panes for general settings, accounts (with each account's default engine and Claude Code or Codex install), apps (with the engine each app runs on, per account), activity with task details, privacy and retention, advanced diagnostics, and about. Approval and sign-in open as their own windows. Reduce Motion and Reduce Transparency are respected, and every control is labelled for VoiceOver.
 
 Release builds update themselves with Sparkle, from the latest published GitHub release; development builds never do ([RELEASING.md](RELEASING.md#3-updates-in-the-app-sparkle-2)).
 

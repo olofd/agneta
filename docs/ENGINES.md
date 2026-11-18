@@ -1,6 +1,6 @@
 # Engines
 
-Agneta doesn't run the agent loop itself. An **engine** does: an agent program that speaks ACP over stdio, calls the model, and calls tools. Agneta starts it in a sandbox, configures it for the session, and routes its stream to the app. Each account runs on one engine, chosen in Settings → Accounts.
+Agneta doesn't run the agent loop itself. An **engine** does: an agent program that speaks ACP over stdio, calls the model, and calls tools. Agneta starts it in a sandbox, configures it for the session, and routes its stream to the app. Each account has a default engine: Codex for a ChatGPT plan, Claude Code for a Claude plan when it's installed (else Goose), Goose for an API key. The user can change it in Settings → Accounts, and can choose another for a single app when allowing it, or later in Settings → Apps (`Router.Grant.engines`). Adding an account asks nothing about engines.
 
 Everything an engine does its own way lives behind one adapter (`Sources/AgnetaKit/Engine/*Adapter.swift`, protocol `EngineAdapter`): how it starts and what its sandbox must allow, the shape of `session/new` and `session/load`, how instructions and steering are sent, how a tool's identity is read, how a conversation is exported for a fork, and where per-call usage is recorded. Apps see one contract; the `capabilities` on each session say which extras its engine has ([APP_PROTOCOL.md](APP_PROTOCOL.md#the-result)).
 

@@ -95,6 +95,8 @@ public actor AgnetaRuntime {
             log?.error("trace-write-failed", ["task": .string(task), "reason": .string(reason)])
             Task { await self?.emit(.traceProblem(task: task, reason: reason)) }
         }
+        // Every engine Agneta runs, so an app set to one other than its account's gets it.
+        for engine in configuration.engines { await router.register(engine: engine) }
         prune(olderThan: historyDays)
         await sweepEngineHomes()
         // Retention also runs daily while Agneta stays open.
@@ -113,6 +115,17 @@ public actor AgnetaRuntime {
     private func emit(_ event: Event) { observer(event) }
 
     // MARK: Accounts
+
+    /// Adds or replaces an engine (Claude Code once its adapter is installed, OpenCode once downloaded).
+    public func register(_ engine: any EngineAdapter) async {
+        await supervisor.register(engine)
+        await router.register(engine: engine)
+    }
+
+    /// Changes the engine an app's tasks on an account run on (nil: the account's own), and saves it.
+    public func setEngine(grant: String, account: String, engine: String?) async throws {
+        try await router.setEngine(grant: grant, account: account, engine: engine)
+    }
 
     /// Serves an account: its engine and provider, how its tools run, and whether it's paused. Replaces what was there.
     public func serve(account id: String, label: String, setup: AccountSetup, runner: Router.ToolRunner, kind: String?, billing: String, paused: Bool) async {

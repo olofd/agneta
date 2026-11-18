@@ -337,7 +337,8 @@ struct ApprovalView: View {
                                     ProviderIcon(kind: account.kind, size: 28)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(account.label).font(.system(size: 13, weight: .semibold))
-                                        Text("\(account.kind.plan) · \(model.engineName(of: account))").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                        Text("\(account.kind.plan) · \(model.engineName(approval.engines[account.id] ?? account.engine, for: account))")
+                                            .font(.system(size: 11.5)).foregroundStyle(.secondary)
                                     }
                                     Spacer()
                                     Image(systemName: on ? "checkmark.circle.fill" : "circle").font(.system(size: 18))
@@ -348,6 +349,16 @@ struct ApprovalView: View {
                             }
                             .buttonStyle(RowButtonStyle())
                             .accessibilityAddTraits(on ? .isSelected : [])
+                            // Which engine this app's tasks on the account run on, where there's a choice; the
+                            // account's own is preselected.
+                            if on, model.engines(for: account).count > 1 {
+                                Picker("Runs on", selection: Binding(get: { approval.engines[account.id] ?? account.engine },
+                                                                     set: { model.approval?.engines[account.id] = $0 })) {
+                                    ForEach(model.engines(for: account), id: \.id) { engine in Text(model.engineChoice(engine, for: account)).tag(engine.id) }
+                                }
+                                .font(.system(size: 11.5)).controlSize(.small).fixedSize()
+                                .padding(.leading, 49).padding(.bottom, 4).frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                     }
                     .padding(5)
@@ -496,7 +507,7 @@ struct SettingsView: View {
                     if model.engines(for: account).count > 1 {
                         Picker("Engine", selection: Binding(get: { account.engine }, set: { model.setEngine(account, $0) })) {
                             ForEach(model.engines(for: account), id: \.id) { engine in
-                                let notes = [engine.id == model.defaultEngine(for: account.kind) ? "default" : nil, model.downloadNote(for: engine.id)].compactMap { $0 }
+                                let notes = [engine.id == model.defaultEngine(for: account.kind) ? "recommended" : nil, model.downloadNote(for: engine.id)].compactMap { $0 }
                                 Text(notes.isEmpty ? engine.displayName : "\(engine.displayName) (\(notes.joined(separator: ", ")))").tag(engine.id)
                             }
                         }
@@ -608,6 +619,19 @@ struct SettingsView: View {
                     Button("Remove Access") { model.removeAccess(grant.id) }
                 }
                 .padding(.vertical, 3)
+                // The engine this app's tasks run on, per account it may use.
+                ForEach(model.accounts.filter { grant.accounts.contains($0.id) }) { account in
+                    if model.engines(for: account).count > 1 {
+                        Picker("With \(account.label)", selection: Binding(get: { model.engine(of: account, for: grant) },
+                                                                                    set: { model.setEngine($0, for: account, in: grant) })) {
+                            ForEach(model.engines(for: account), id: \.id) { engine in Text(model.engineChoice(engine, for: account)).tag(engine.id) }
+                        }
+                        .padding(.leading, 44)
+                    } else {
+                        LabeledContent("With \(account.label)") { Text(model.engineName(of: account)).foregroundStyle(.secondary) }
+                            .padding(.leading, 44)
+                    }
+                }
             }
         } header: {
             Text("Apps that can use Agneta")

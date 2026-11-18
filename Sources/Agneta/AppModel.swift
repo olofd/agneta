@@ -37,6 +37,8 @@ final class AppModel {
         /// What the app asks to do: the most built-in tools, and folders of the user's beyond its own workspace.
         var tools: SessionPolicy.Tools = .appOnly
         var folders: [URL] = []
+        /// The engine chosen for this app, per account, where it isn't the account's own.
+        var engines: [String: String] = [:]
     }
 
     struct SignIn {
@@ -176,7 +178,7 @@ final class AppModel {
             let found = await Self.lookUpInstalls()
             guard found.0 != claudeCodeInstalls || found.1 != codexInstalls else { return }
             (claudeCodeInstalls, codexInstalls) = found
-            for engine in availableEngines { await supervisor?.register(engine) }
+            for engine in availableEngines { await runtime?.register(engine) }
         }
     }
 
@@ -199,7 +201,7 @@ final class AppModel {
         chosenCLI[name] = install.id
         try? database?.set(install.id, for: "cli.\(name)")
         log.log("cli-chosen", ["cli": .string(name), "version": install.version.map(JSONValue.string) ?? .null, "source": .string(install.source)])
-        _Concurrency.Task { for engine in availableEngines { await supervisor?.register(engine) } }
+        _Concurrency.Task { for engine in availableEngines { await runtime?.register(engine) } }
     }
 
     /// The engines this Agneta can run now: its own, plus OpenCode once downloaded and Claude Code when the user has it.
@@ -244,8 +246,16 @@ final class AppModel {
     }
 
     /// The engine an account runs on, by name ("Codex"), as the panel, the approval window and Settings show it.
-    func engineName(of account: AccountRecord) -> String {
-        engines(for: account).first { $0.id == account.engine }?.displayName ?? Self.engineNames[account.engine] ?? account.engine
+    func engineName(of account: AccountRecord) -> String { engineName(account.engine, for: account) }
+
+    func engineName(_ engine: String, for account: AccountRecord) -> String {
+        engines(for: account).first { $0.id == engine }?.displayName ?? Self.engineNames[engine] ?? engine
+    }
+
+    /// An engine's choice label: its name, marked when it's the account's own and with what it downloads first.
+    func engineChoice(_ engine: any EngineAdapter, for account: AccountRecord) -> String {
+        let notes = [engine.id == account.engine ? "account default" : nil, downloadNote(for: engine.id)].compactMap { $0 }
+        return notes.isEmpty ? engine.displayName : "\(engine.displayName) (\(notes.joined(separator: ", ")))"
     }
     /// Names for engines that aren't available right now (Claude Code or Codex not installed).
     static let engineNames = ["goose": "Goose", "opencode": "OpenCode", "claude-code": "Claude Code", "codex": "Codex"]
@@ -271,7 +281,7 @@ final class AppModel {
                     _ = try await installer.install("opencode")
                     log.log("engine-downloaded", ["engine": .string(engine), "seconds": .int(Int64(Date().timeIntervalSince(started)))])
                     engineDownload = nil
-                    for adapter in availableEngines { await supervisor?.register(adapter) }
+                    for adapter in availableEngines { await runtime?.register(adapter) }
                     if let current = accounts.first(where: { $0.id == account.id }) { setEngine(current, engine) }
                 } catch {
                     log.error("engine-download-failed", ["engine": .string(engine), "reason": .string("\(error)")])
@@ -323,7 +333,7 @@ final class AppModel {
         historyDays = await runtime.historyDays
         for name in ["claude", "codex"] { if let path = try? database.setting("cli.\(name)") { chosenCLI[name] = path } }
         (claudeCodeInstalls, codexInstalls) = await Self.lookUpInstalls()
-        for engine in availableEngines { await runtime.supervisor.register(engine) }
+        for engine in availableEngines { await runtime.register(engine) }
         await runtime.observe { [weak self] event in _Concurrency.Task { @MainActor in self?.handle(event) } }
         reloadHistory()
         for account in accounts { await configure(account) }
@@ -419,7 +429,7 @@ final class AppModel {
         case .claude:
             let adapter = try? await installer().install("claude-agent-acp")
             guard current() else { return }
-            for engine in availableEngines { await runtime.supervisor.register(engine) }
+            for engine in availableEngines { await runtime.register(engine) }
             provider = ProviderSetup(kind: .claudeCode, model: account.model,
                                      subscription: SubscriptionAccount(route: .claudeCode, home: home, adapter: adapter,
                                                                        claudeCode: chosen("claude", from: claudeCodeInstalls)?.path))
@@ -435,7 +445,7 @@ final class AppModel {
             do {
                 _ = try await installer.install("opencode")
                 guard current() else { return }
-                for engine in availableEngines { await runtime.supervisor.register(engine) }
+                for engine in availableEngines { await runtime.register(engine) }
             } catch {
                 log.error("engine-download-failed", ["engine": .string("opencode"), "reason": .string("\(error)")])
                 engineDownloadProblem = (account.id, "OpenCode couldn't be downloaded: \(error.localizedDescription)")
@@ -443,8 +453,8 @@ final class AppModel {
         }
         guard current() else { return }
         for secret in provider.secrets { runtime.traces.mask.register(secret) }
-        // Claude Code and Codex run their own tools; Agneta answers their permission requests from the policy.
-        if ["claude-code", "codex"].contains(account.engine) { runner = .native }
+        // Claude Code and Codex run their own tools whatever the account; the router decides per session, since an app
+        // may be set to another engine than the account's (Router.runner(account:engine:)).
         await runtime.serve(account: account.id, label: account.label, setup: AccountSetup(engine: account.engine, provider: provider),
                             runner: runner, kind: account.kind.rawValue, billing: billing, paused: account.paused)
     }
@@ -534,7 +544,11 @@ final class AppModel {
     func answerApproval(remember: Bool?) {
         guard let pending = approvals.current else { return }
         // In account order, so "the first allowed account" (the default for new sessions) is stable.
-        let answer = remember.map { Router.PairingAnswer(accounts: accounts.map(\.id).filter { pending.allowed.contains($0) }, remember: $0) }
+        let allowed = accounts.map(\.id).filter { pending.allowed.contains($0) }
+        // Only engines that differ from the account's own: an app on the default follows the account if it changes.
+        let engines = pending.engines.filter { id, engine in allowed.contains(id) && accounts.first { $0.id == id }?.engine != engine }
+        if remember != nil { for engine in Set(engines.values) { ensureEngine(engine) } }
+        let answer = remember.map { Router.PairingAnswer(accounts: allowed, remember: $0, engines: engines) }
         settleApproval(pending.id, with: answer)
     }
 
@@ -544,6 +558,39 @@ final class AppModel {
         WindowPresenter.shared.closeApproval()
         if let next = approvals.current {
             DispatchQueue.main.async { WindowPresenter.shared.showApproval(self, request: next.id) }
+        }
+    }
+
+    /// The engine an app's tasks on an account run on.
+    func engine(of account: AccountRecord, for grant: Router.Grant) -> String { grant.engines[account.id] ?? account.engine }
+
+    /// Sets the engine an app's tasks on an account run on; the account's own engine clears the choice.
+    func setEngine(_ engine: String, for account: AccountRecord, in grant: Router.Grant) {
+        guard let runtime else { return }
+        let chosen = engine == account.engine ? nil : engine
+        if let chosen { ensureEngine(chosen) }
+        log.log("app-engine-changed", ["grant": .string(grant.id), "account": .string(account.id), "engine": .string(engine)])
+        let log = log
+        _Concurrency.Task {
+            do { try await runtime.setEngine(grant: grant.id, account: account.id, engine: chosen) } catch {
+                log.error("app-engine-not-saved", ["grant": .string(grant.id), "reason": .string("\(error)")])
+            }
+        }
+    }
+
+    /// Makes sure an engine an app was set to is here: OpenCode downloads the first time. A failure is logged, and the
+    /// app's tasks are refused with a reason until it's fixed.
+    func ensureEngine(_ engine: String) {
+        guard engine == "opencode", !openCodeInstalled, let installer = openCodeInstaller else { return }
+        log.log("engine-download", ["engine": .string(engine), "reason": .string("app")])
+        _Concurrency.Task {
+            do {
+                _ = try await installer.install("opencode")
+                for adapter in availableEngines { await runtime?.register(adapter) }
+                log.log("engine-downloaded", ["engine": .string(engine)])
+            } catch {
+                log.error("engine-download-failed", ["engine": .string(engine), "reason": .string("\(error)")])
+            }
         }
     }
 
@@ -912,10 +959,10 @@ final class AppModel {
                     AccountRecord(id: "c", kind: .openAIKey, label: "OpenAI API")]
         tasks = [Task(id: "1", app: "Example App", appIdentifier: nil, account: "a", title: "Summarizing meeting notes", started: Date().addingTimeInterval(-840), running: true),
                  Task(id: "2", app: "Example App", appIdentifier: nil, account: "b", title: "Naming a project", started: Date(), running: true)]
-        grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b"])]
+        grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"], engines: ["c": "opencode"])]
         let sample = UUID()
         _ = approvals.add(id: sample, Approval(id: sample, app: "Example App", identifier: "com.example.app", verified: true, code: "123456",
-                                               choices: accounts, allowed: ["a"], tools: .workspace,
+                                               choices: accounts, allowed: ["a", "c"], tools: .workspace,
                                                folders: [FileManager.default.homeDirectoryForCurrentUser.appending(path: "Documents/Example Project")]),
                           answer: { _ in })
         signIn = SignIn(kind: .claude, text: "When Claude shows you a code, paste it here.", page: URL(string: "https://claude.com"), needsCode: true)

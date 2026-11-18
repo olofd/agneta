@@ -86,7 +86,7 @@ extension Router {
               let session = sessions[id], let app = apps[session.app] else {
             return (.failure(RPCError(code: RPCError.invalidParams, message: "Unknown session")), "unknown-session")
         }
-        if method == "session/request_permission", accounts[session.account]?.runner == .native,
+        if method == "session/request_permission", runner(account: session.account, engine: session.lease.engine) == .native,
            let kind = params?["toolCall"]?["kind"]?.stringValue, !Self.isAppTool(params, in: session),
            !BuiltinTools.nativeRunnerMayUse(kind: kind, policy: session.policy) {
             // Claude Code and Codex run their own tools inside the engine sandbox, which allows port 443:

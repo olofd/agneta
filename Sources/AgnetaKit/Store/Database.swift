@@ -162,6 +162,10 @@ public final class AgnetaDatabase: Sendable {
                 t.add(column: "folders", .jsonText).notNull().defaults(to: "[]")
             }
         }
+        migrator.registerMigration("v4") { db in
+            // The engine an app's tasks run on, per account, where the user chose one for the app (Router.Grant.engines).
+            try db.alter(table: "grants") { t in t.add(column: "engines", .jsonText).notNull().defaults(to: "{}") }
+        }
         return migrator
     }
 
@@ -227,9 +231,10 @@ public final class AgnetaDatabase: Sendable {
             for row in try Row.fetchAll(db, sql: "SELECT * FROM grants") {
                 let accounts = (try? JSONDecoder().decode([String].self, from: Data((row["accounts"] as String).utf8))) ?? []
                 let folders = (try? JSONDecoder().decode([String].self, from: Data((row["folders"] as String).utf8))) ?? []
+                let engines = (try? JSONDecoder().decode([String: String].self, from: Data((row["engines"] as String).utf8))) ?? [:]
                 grants[row["tokenHash"]] = Router.Grant(id: row["id"], app: row["app"], identifier: row["identifier"], team: row["team"],
                                                         verified: row["verified"], accounts: accounts, created: row["created"],
-                                                        tools: SessionPolicy.Tools(rawValue: row["tools"]) ?? .appOnly, folders: folders)
+                                                        tools: SessionPolicy.Tools(rawValue: row["tools"]) ?? .appOnly, folders: folders, engines: engines)
             }
             return grants
         }
@@ -242,11 +247,12 @@ public final class AgnetaDatabase: Sendable {
     private static func insert(_ grant: Router.Grant, hash: String, _ db: GRDB.Database) throws {
         let accounts = String(decoding: try JSONEncoder().encode(grant.accounts), as: UTF8.self)
         let folders = String(decoding: try JSONEncoder().encode(grant.folders), as: UTF8.self)
+        let engines = String(decoding: try JSONEncoder().encode(grant.engines), as: UTF8.self)
         try db.execute(sql: """
-            INSERT OR REPLACE INTO grants (tokenHash, id, app, identifier, team, verified, accounts, created, tools, folders)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO grants (tokenHash, id, app, identifier, team, verified, accounts, created, tools, folders, engines)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, arguments: [hash, grant.id, grant.app, grant.identifier, grant.team, grant.verified, accounts, grant.created,
-                             grant.tools.rawValue, folders])
+                             grant.tools.rawValue, folders, engines])
     }
 
     public func deleteGrant(id: String) throws {

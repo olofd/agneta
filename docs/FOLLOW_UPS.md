@@ -8,7 +8,7 @@ Changes the maintainer asked for after 0.1.0, collected as they come in and work
 | 2 | Settings: scrolled content runs into the window title | Done; checked in the running app (2026-11-18) |
 | 3 | Run a Test Task: the code dialog appears off to the left and shows a spinning cursor | Done; checked in the running app (2026-11-18) |
 | 4 | The app is too big: download OpenCode only when it's chosen | OpenCode done (download 177 → 59 MB); Node and codex-acp next |
-| 5 | Which engine a connection runs on: should the user choose it? | Done (in the next build) |
+| 5 | Which engine a connection runs on: should the user choose it? | Done (in the next build): defaults per account, a choice per app |
 | 6 | No Check for Updates in the app | Done (in the next build) |
 | 7 | Quit Agneta from the menu never quits (development and 0.1.0) | Fixed in code; proven in a standalone reproduction |
 | 8 | No app icon: a frosty, Swedish icon from the two rings, flat and glassy | Done (in the next build) |
@@ -74,7 +74,12 @@ Proposal: keep the choice per account, since that's where sign-in and credential
 - **Where the engine shows:** in the panel's account rows ("ChatGPT plan · Codex") and in the approval window's account choices. `AppModel.engineName(of:)` names it, even for an engine that isn't installed right now.
 - **Settings → Accounts:** each account row shows its engine in plain sight: a picker when the account has a choice (with OpenCode's download size), otherwise just the name. The picker is no longer in the ⋯ menu.
 - **Adding an account asks nothing about engines** (the maintainer: "Why is it connected to adding an API key? You should be able to add a provider and then, when it's time to do work, choose the engine. And we should have good defaults."). A new account starts on its kind's default, `AppModel.defaultEngine(for:)`: Codex for a ChatGPT plan; Claude Code for a Claude plan when it's installed, else Goose; Goose for an API key, since it's bundled and needs nothing else. The Settings picker marks the default. A first version had an engine picker in the add-key form; it's gone.
-- **Open question:** where else "when it's time to do work" should offer the choice. The candidate is the approval window: an engine per app, for the accounts it may use.
+- **An engine per app** (the maintainer chose it, 2026-11-18). When an app asks for access, each account you allow gets a "Runs on" picker, with the account's own engine preselected; Settings → Apps shows and changes it later, per account.
+  - The grant stores only choices that differ from the account's (`Router.Grant.engines`, database migration v4), so an app on the default follows the account if the account changes.
+  - The router opens the chosen engine with the account's provider. Its shared engine is its own (`<account>/shared-<engine>`), and `initialize` reports that engine's abilities.
+  - Whether an engine runs its own tools (Claude Code, Codex) is now decided per session, not per account.
+  - An engine that can't run now is refused with a reason (`engineUnavailable`), never quietly swapped. Choosing OpenCode for an app downloads it.
+  - Covered by `RouterContractTests.anAppRunsOnTheEngineChosenForIt` and `StoreTests`. Checked in rendered snapshots of the approval window and Settings → Apps.
 - **Checked** in rendered snapshots of the panel, the approval window and Settings. The design-review sample accounts now sit on the engines they would really use (a ChatGPT plan on Codex, a Claude plan on Claude Code).
 
 ## 6. Check for Updates is missing
