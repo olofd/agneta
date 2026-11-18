@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # By hand (Actions → CI → Run workflow): a fresh run, not a re-run. The status badge follows a run's first
+  # attempt, so a run cancelled by a newer push and passed on re-run still shows as failing.
+  workflow_dispatch:
 
 permissions:
   contents: read
