@@ -17,35 +17,34 @@ const assets = new Map([
 
 protocol.registerSchemesAsPrivileged([{ scheme, privileges: { standard: true, secure: true } }]);
 app.setName('Project Chat');
-app.on('window-all-closed', () => app.quit());
+// macOS: closing the window leaves the app running in the Dock, and clicking it opens the window again.
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});
+app.on('activate', () => {
+  if (app.isReady() && !window) openWindow().catch((error) => console.error('Project Chat could not open:', error));
+});
 
 // Electron finishes loading this module before it emits ready.
-app.whenReady().then(openWindow).catch((error) => {
+app.whenReady().then(() => {
+  setUp();
+  return openWindow();
+}).catch((error) => {
   console.error('Project Chat could not open:', error);
   app.exit(1);
 });
 
-async function openWindow() {
+/** The open window, if any: IPC answers only its main frame. */
+let window;
+/** The chat of the open window; a new window starts a new one. */
+let chat;
+
+/** Once per launch: the app's own scheme and the renderer's actions. */
+function setUp() {
   protocol.handle(scheme, (request) => {
     const file = assets.get(request.url);
     if (request.method !== 'GET' || !file) return new Response(null, { status: 404 });
     return net.fetch(file.href);
-  });
-
-  const chat = new ProjectChat(port);
-  const window = new BrowserWindow({
-    title: 'Project Chat',
-    width: 980,
-    height: 710,
-    minWidth: 740,
-    minHeight: 560,
-    backgroundColor: '#f7f6f2',
-    webPreferences: {
-      preload: fileURLToPath(new URL('./preload.cjs', import.meta.url)),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true
-    }
   });
 
   // The renderer gets a fixed set of actions. The WebSocket, pairing token and
@@ -63,23 +62,47 @@ async function openWindow() {
   };
   for (const [name, action] of Object.entries(actions)) {
     ipcMain.handle(`chat:${name}`, (event, value) => {
-      if (event.sender !== window.webContents || event.senderFrame?.url !== entry ||
+      if (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame?.url !== entry ||
           event.senderFrame !== window.webContents.mainFrame) {
         throw new Error('Unexpected IPC sender.');
       }
       return action(value);
     });
   }
+}
 
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  window.webContents.on('will-navigate', (event) => event.preventDefault());
-  window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  chat.on('change', (state) => {
-    if (!window.isDestroyed()) window.webContents.send('chat:state-changed', state);
+async function openWindow() {
+  const current = new ProjectChat(port);
+  const opened = new BrowserWindow({
+    title: 'Project Chat',
+    width: 980,
+    height: 710,
+    minWidth: 740,
+    minHeight: 560,
+    backgroundColor: '#f7f6f2',
+    webPreferences: {
+      preload: fileURLToPath(new URL('./preload.cjs', import.meta.url)),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
   });
-  window.once('close', () => {
-    chat.removeAllListeners('change');
-    chat.disconnect();
+  window = opened;
+  chat = current;
+
+  opened.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  opened.webContents.on('will-navigate', (event) => event.preventDefault());
+  opened.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  current.on('change', (state) => {
+    if (!opened.isDestroyed()) opened.webContents.send('chat:state-changed', state);
   });
-  await window.loadURL(entry);
+  // Closing the window ends its chat (and an Allow Once grant with it).
+  opened.once('close', () => {
+    current.removeAllListeners('change');
+    current.disconnect();
+  });
+  opened.once('closed', () => {
+    if (window === opened) window = undefined;
+  });
+  await opened.loadURL(entry);
 }
