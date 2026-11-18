@@ -25,6 +25,8 @@ final class SignInFlow {
     private(set) var attempt = UUID()
     private var task: _Concurrency.Task<Void, Never>?
     private var codeAnswer: CheckedContinuation<String?, Never>?
+    /// Undoes what the attempt under way made (a new provider's folder) if it ends without signing in.
+    private var discard: (@MainActor () -> Void)?
     private let library: EngineLibrary
     private let log: OperationalLog
 
@@ -34,11 +36,14 @@ final class SignInFlow {
     }
 
     /// Signs in with `kind`'s own login into the account folder `home`, then runs `signedIn` (which keeps the account).
-    /// Returns the attempt, for the window to name.
-    func start(_ kind: AccountKind, home: URL, account: String, signedIn: @escaping @MainActor () async -> Void) -> UUID {
+    /// `discard` runs if the attempt ends any other way: cancelled, failed, closed or replaced. Returns the attempt, for
+    /// the window to name.
+    func start(_ kind: AccountKind, home: URL, account: String, discard: (@MainActor () -> Void)? = nil,
+               signedIn: @escaping @MainActor () async -> Void) -> UUID {
         abandon()
         let attempt = UUID()
         self.attempt = attempt
+        self.discard = discard
         state = State(kind: kind, text: "Starting…")
         task = _Concurrency.Task { [weak self] in
             guard let self else { return }
@@ -47,6 +52,7 @@ final class SignInFlow {
                 try await signIn(kind, home: home, progress: progress)
                 guard self.attempt == attempt, !_Concurrency.Task.isCancelled else { return }
                 log.log("signed-in", ["account": .string(account), "kind": .string(kind.rawValue)])
+                self.discard = nil
                 await signedIn()
                 state?.finished = true
                 state?.text = "\(kind.provider) is connected."
@@ -85,6 +91,8 @@ final class SignInFlow {
     /// Shows a sign-in's failure on its own window; a cancelled or replaced one shows nothing. True when shown.
     private func failed(_ error: Error, attempt: UUID) -> Bool {
         guard self.attempt == attempt else { return false }
+        discard?()
+        discard = nil
         if error is CancellationError || (error as? SignInError) == .cancelled {
             state = nil
             return false
@@ -149,6 +157,8 @@ final class SignInFlow {
         task?.cancel()
         task = nil
         attempt = UUID()
+        discard?()
+        discard = nil
     }
 
     /// Reset: nothing in progress, nothing shown.

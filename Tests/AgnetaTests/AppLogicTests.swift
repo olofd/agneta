@@ -92,6 +92,27 @@ import Testing
         signIn.windowClosed(second)
         #expect(signIn.state == nil)
     }
+
+    /// What a new provider's sign-in made is undone when the attempt ends without signing in: once when it fails, once
+    /// when it's cancelled or replaced, never twice.
+    @Test func anAttemptThatEndsWithoutSigningInDiscardsItsFolder() async throws {
+        let signIn = flow()
+        var discarded: [String] = []
+        _ = signIn.start(.openAIKey, home: FileManager.default.temporaryDirectory, account: "failed", discard: { discarded.append("failed") }) {}
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(discarded == ["failed"] && signIn.state?.failed != nil)
+        signIn.cancel() // closing the failed window discards nothing more
+        #expect(discarded == ["failed"])
+
+        let replaced = signIn.start(.claude, home: FileManager.default.temporaryDirectory, account: "replaced", discard: { discarded.append("replaced") }) {}
+        _ = signIn.start(.anthropicKey, home: FileManager.default.temporaryDirectory, account: "next", discard: { discarded.append("next") }) {}
+        #expect(discarded.prefix(2) == ["failed", "replaced"])
+        signIn.windowClosed(replaced) // the replaced attempt's window: already discarded
+        #expect(discarded.filter { $0 == "replaced" }.count == 1)
+        signIn.cancel()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(discarded.filter { $0 == "next" }.count == 1)
+    }
 }
 
 /// The engine library's answers the windows rely on, with every engine present (the showcase's engines).

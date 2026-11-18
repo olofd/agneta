@@ -155,7 +155,10 @@ final class AppModel {
         self.runtime = runtime
         recovered = runtime.recovered
         let database = runtime.database
-        accounts = (try? database.accounts()) ?? []
+        let saved = try? database.accounts()
+        accounts = saved ?? []
+        // Only with the saved providers actually read: a failed read must never look like "no providers".
+        if let saved { sweepAbandonedHomes(keeping: saved) }
         grants = (try? database.grants()) ?? [:]
         historyDays = await runtime.historyDays
         await library.start(runtime)
@@ -395,7 +398,18 @@ final class AppModel {
     func startSignIn(_ kind: AccountKind, again existing: AccountRecord? = nil) {
         var record = existing ?? AccountRecord(kind: kind, label: kind.provider)
         if existing == nil, accounts.contains(where: { $0.kind == kind }) { record.label = "\(kind.provider) \(accounts.filter { $0.kind.provider == kind.provider }.count + 1)" }
-        let attempt = signIn.start(kind, home: store.home(of: record), account: record.id) { [weak self] in
+        // A new provider's folder is made by its sign-in; one cancelled, failed or replaced removes it again, so nothing
+        // is left of a provider that never was. Signing in again keeps the existing provider's folder.
+        let home = store.home(of: record)
+        var discard: (@MainActor () -> Void)?
+        if existing == nil {
+            let id = record.id
+            discard = { [weak self] in
+                guard let self, !accounts.contains(where: { $0.id == id }) else { return }
+                try? FileManager.default.removeItem(at: home)
+            }
+        }
+        let attempt = signIn.start(kind, home: home, account: record.id, discard: discard) { [weak self] in
             guard let self else { return }
             if let index = accounts.firstIndex(where: { $0.id == record.id }) { accounts[index] = record } else { added(record) }
             needsSignIn.remove(record.id)
@@ -403,6 +417,15 @@ final class AppModel {
             await configure(record)
         }
         WindowPresenter.shared.showSignIn(self, attempt: attempt)
+    }
+
+    /// Account folders no saved provider owns: left by a sign-in that never finished (the app quit, or crashed, midway).
+    /// Removed at launch, before anything could start a new one.
+    private func sweepAbandonedHomes(keeping saved: [AccountRecord]) {
+        let owned = Set(saved.map(\.id))
+        let abandoned = accountHomes.filter { !owned.contains($0.lastPathComponent) }
+        for folder in abandoned { try? FileManager.default.removeItem(at: folder) }
+        if !abandoned.isEmpty { log.log("abandoned-homes-removed", ["count": .int(Int64(abandoned.count))]) }
     }
 
     /// Adds an API-key account. It names no engine: it runs on its provider's (Settings → Engines).
