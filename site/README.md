@@ -15,7 +15,7 @@
 | The version, its date and each DMG's link and size | The latest published release, read from GitHub when the site is built |
 | Screenshots | docs/images/ and examples/project-chat/preview.png |
 
-The start page's own prose is in `src/index.html`; everything it says is taken from the README and docs/PRIVACY.md, so change it when they change. The rest of `src/` is the layout, the stylesheet, a small script (the screenshots' light and dark switch, copy buttons, the current section in a page's contents) and the icons, made from packaging/AppIcon.png.
+The start page's own prose is in `src/index.html`; everything it says is taken from the README and docs/PRIVACY.md, so change it when they change. The rest of `src/` is the layout, the stylesheet, a small script (the screenshots' light and dark switch, copy buttons, the current section in a page's contents) and the icons, made from packaging/AppIcon.png by `site/icons` (run it after the app icon changes, then `site/social/render` for the social preview).
 
 Links between documents become links between pages, and links to anything else go to the file on GitHub. The build fails on a link to a file or heading that doesn't exist, and on Markdown it doesn't render (raw HTML, images), so it can't publish something broken.
 

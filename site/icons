@@ -1,0 +1,20 @@
+#!/bin/sh
+# Makes the site's icons from the app icon as macOS renders it (packaging/AppIcon.png, written by scripts/dev/app-icon):
+# site/src/assets/icon-32.png, icon-64.png and icon-256.png, and favicon.ico (a 32-pixel PNG inside an ICO). Run it
+# after the app icon changes, then render the social preview again (site/social/render), which embeds the icon too.
+#   site/icons
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd)
+source=$root/packaging/AppIcon.png
+assets=$root/site/src/assets
+[ -f "$source" ] || { echo "icons: no $source; run scripts/dev/app-icon" >&2; exit 1; }
+for size in 32 64 256; do
+  sips -s format png -z "$size" "$size" "$source" --out "$assets/icon-$size.png" >/dev/null
+done
+# An ICO holding one PNG: a 6-byte header, one 16-byte directory entry, then the PNG itself.
+python3 - "$assets/icon-32.png" "$assets/favicon.ico" <<'PY'
+import struct, sys
+png = open(sys.argv[1], 'rb').read()
+open(sys.argv[2], 'wb').write(struct.pack('<HHH', 0, 1, 1) + struct.pack('<BBBBHHII', 32, 32, 0, 0, 1, 32, len(png), 22) + png)
+PY
+echo "site/src/assets: icon-32.png, icon-64.png, icon-256.png, favicon.ico"
