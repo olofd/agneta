@@ -40,6 +40,10 @@ Then open http://127.0.0.1:8642. Pages are served at `/<path>/`, as on GitHub Pa
 
 It runs from `main` only, which the `github-pages` environment requires.
 
+## The demo video
+
+Put a short recording at `docs/images/demo.mp4` (H.264, muted, about 20 seconds: an app pairs, its task runs in the panel, Stop ends it), and optionally its first frame at `docs/images/demo-poster.png`. The build then shows it above the screenshots, with controls and without autoplay. Until it exists, the screenshots stand alone. The README has a marked spot for the same video, uploaded through GitHub's editor.
+
 ## The social preview
 
 `docs/images/social-preview.png` (1280 × 640) is the image GitHub shows when the repository is shared, and the site's `og:image`. It's `social/social-preview.html` rendered with the Google Chrome on your Mac:

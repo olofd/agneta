@@ -11,6 +11,7 @@
   </section>
 
   <section class="shots-section wrap" aria-label="Screenshots">
+    {{demo}}
     <div class="shots" data-shots>
       <figure class="shot shot-panel">
         <img class="light" src="/images/panel.png" width="408" height="485" alt="Agneta’s menu bar panel: two running tasks from Example App, each with a stop button, and three connected providers with the engine each runs on">
@@ -113,7 +114,10 @@
         <div>
           <h3>Or with Homebrew</h3>
           <pre data-copy><code>brew install olofd/tap/agneta</code></pre>
-          <p>Agneta asks before it first checks for updates. After that it keeps itself current, installing an update only when no task is running. Homebrew leaves updating to it.</p>
+          <h3>Updates</h3>
+          <p>Agneta updates itself with Sparkle. It asks before it first checks GitHub, then checks about once a day and installs an update only when no task is running; Settings → General turns checks or installs off. Homebrew leaves updating to it.</p>
+          <h3>Check a download</h3>
+          <p>Each release lists every file’s SHA-256 in <code>SHA256SUMS.txt</code>, and GitHub records how each was built: <code>gh attestation verify</code> checks a DMG against this repository.</p>
           <h3>Or build it</h3>
           <p>With Xcode 26 or later, from the source: <a href="https://github.com/olofd/agneta#build-and-run" rel="noopener">Build and run</a>.</p>
         </div>

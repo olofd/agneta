@@ -3,6 +3,9 @@ contact_links:
   - name: Report a vulnerability
     url: https://github.com/olofd/agneta/security/advisories/new
     about: Privately, never in a public issue (SECURITY.md).
+  - name: Questions and app integration
+    url: https://github.com/olofd/agneta/discussions
+    about: How to use Agneta, or how to connect your app to it.
   - name: Documentation
     url: https://agneta.dahlbom.io/docs/
     about: The developer guide, the app protocol, privacy and how Agneta works.

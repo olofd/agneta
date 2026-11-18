@@ -1,5 +1,5 @@
-name: Something doesn't work
-description: Agneta, an engine or the app protocol behaves differently than it should.
+name: Bug report
+description: Agneta itself misbehaves, its windows, settings, pairing or the app protocol. For a task that fails on one engine or provider, use "Engine or provider problem".
 labels: [bug]
 body:
   - type: markdown
@@ -10,7 +10,7 @@ body:
     id: what
     attributes:
       label: What happened
-      description: What you did, what you expected, and what happened instead.
+      description: What you did, what you expected, and what happened instead. For the app protocol, the JSON-RPC messages involved, with tokens and bearers removed.
     validations:
       required: true
   - type: input
@@ -28,29 +28,9 @@ body:
       placeholder: "macOS 26.1, Apple silicon"
     validations:
       required: true
-  - type: dropdown
-    id: provider
-    attributes:
-      label: Provider
-      options:
-        - Not about a task
-        - ChatGPT plan
-        - Claude plan
-        - OpenAI API key
-        - Anthropic API key
-  - type: dropdown
-    id: engine
-    attributes:
-      label: Engine
-      options:
-        - Not about a task
-        - Codex
-        - Claude Code
-        - Goose
-        - OpenCode
   - type: textarea
-    id: trace
+    id: log
     attributes:
-      label: Trace or log
-      description: |
-        For a task, a redacted trace helps most: `agneta-diag export <task> --out trace.jsonl --redact-content`, or Export Diagnostics in the task's details with "Leave out content, names and paths" on. It keeps structure and timing and removes content, names and paths ([what it keeps](https://agneta.dahlbom.io/docs/privacy/#sharing-a-trace)). Look it over before you attach it. For Agneta itself, `agneta-diag log --errors`.
+      label: Agneta's log
+      description: The relevant lines of `agneta-diag log --errors`. It holds events, ids and timing, never content or keys.
+      render: text

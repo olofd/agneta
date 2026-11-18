@@ -1,5 +1,5 @@
-name: A change or a feature
-description: Something Agneta should do differently. Describe the problem before the solution.
+name: Feature request
+description: Something Agneta should do, or do differently. Describe the problem before the solution.
 labels: [enhancement]
 body:
   - type: textarea

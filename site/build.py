@@ -46,6 +46,7 @@ GROUPS = [
     ]),
 ]
 CHANGELOG = ("CHANGELOG.md", None, "changelog", "Changelog")
+DEMO, DEMO_POSTER = "docs/images/demo.mp4", "docs/images/demo-poster.png"
 PAGES = [page for _, pages in GROUPS for page in pages] + [CHANGELOG]
 WHOLE_FILES = {source: path for source, section, path, _ in PAGES if section is None}
 
@@ -550,7 +551,17 @@ def landing(site):
     else:
         release_line = f'<a href="{REPO}/releases/latest">Latest release</a>'
 
+    # The demo video, once there is one: above the screenshots, which stay.
+    demo = ""
+    if os.path.exists(os.path.join(ROOT, DEMO)):
+        poster = ' poster="/images/demo-poster.png"' if os.path.exists(os.path.join(ROOT, DEMO_POSTER)) else ""
+        demo = (f'<figure class="demo"><video src="/images/demo.mp4"{poster} controls muted playsinline '
+                'preload="metadata" aria-describedby="demo-caption"></video>'
+                '<figcaption id="demo-caption">An app pairs with Agneta, its task runs in the menu bar panel, '
+                'and Stop ends it.</figcaption></figure>')
+
     body = fill(read("site/src/index.html"), {
+        "demo": demo,
         "release_line": release_line,
         "downloads": "".join(downloads),
         "how_steps": part("How it works", "list"),
@@ -596,6 +607,9 @@ def build(out, release, commit):
     os.makedirs(os.path.join(out, "images"))
     for name in ("panel.png", "panel-dark.png", "approval.png", "approval-dark.png", "social-preview.png"):
         shutil.copy(os.path.join(ROOT, "docs", "images", name), os.path.join(out, "images", name))
+    for optional in (DEMO, DEMO_POSTER):
+        if os.path.exists(os.path.join(ROOT, optional)):
+            shutil.copy(os.path.join(ROOT, optional), os.path.join(out, "images", os.path.basename(optional)))
     shutil.copy(os.path.join(ROOT, "examples", "project-chat", "preview.png"),
                 os.path.join(out, "images", "project-chat.png"))
     urls = [""] + ["docs"] + [p for _, _, p, _ in PAGES]

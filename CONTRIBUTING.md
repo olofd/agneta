@@ -20,7 +20,7 @@ swift build && swift test    # everything, with fake models; no accounts needed
 
 ## Reporting a bug
 
-Open an issue with the bug template: the Agneta version (Settings → About), your macOS and Mac, and for a task a redacted trace (`agneta-diag export <task> --out trace.jsonl --redact-content`). Security problems go privately, as [SECURITY.md](SECURITY.md) says, and conduct is covered by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Open an issue with the bug template, or the engine or provider template when a task fails on one of them: the Agneta version (Settings → About), your macOS and Mac, and for a task a redacted trace (`agneta-diag export <task> --out trace.jsonl --redact-content`). Security problems go privately, as [SECURITY.md](SECURITY.md) says, and conduct is covered by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## What a change should come with
 

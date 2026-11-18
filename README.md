@@ -10,6 +10,7 @@
   <a href="https://github.com/olofd/agneta/releases/latest"><img src="https://img.shields.io/github/v/release/olofd/agneta?color=1f5a7a" alt="Latest release"></a>
   <a href="https://github.com/olofd/agneta/actions/workflows/ci.yml"><img src="https://github.com/olofd/agneta/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="docs/CONTAINMENT.md#supported-macos-versions"><img src="https://img.shields.io/badge/macOS-14%2B%20%C2%B7%20Apple%20silicon%20and%20Intel-1f5a7a" alt="macOS 14 or later, Apple silicon and Intel"></a>
+  <a href="https://github.com/olofd/homebrew-tap"><img src="https://img.shields.io/badge/Homebrew-olofd%2Ftap%2Fagneta-1f5a7a" alt="Homebrew: olofd/tap/agneta"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/olofd/agneta?color=1f5a7a" alt="Apache License 2.0"></a>
 </p>
 
@@ -23,6 +24,10 @@
 Agneta is an open-source macOS menu bar app. You connect the AI you already pay for once: a ChatGPT or Claude plan, or an OpenAI or Anthropic API key. Then you decide which apps may use them. When an allowed app needs an AI agent to do some work, it asks Agneta. Agneta runs the agent on your Mac, in a sandbox, on your account, and shows you every task with a stop button.
 
 For app developers, this means agent features without running an agent loop, building sign-in for every provider, or putting a model bill on your own credit card. Your app speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) to Agneta over a local WebSocket, and Agneta does the rest.
+
+<!-- The demo video goes here, above the screenshots: 20 seconds of an app pairing, a task running in the panel, and
+     Stop. Drag the .mp4 into this file in GitHub's web editor, which uploads it and puts its URL on a line of its own;
+     GitHub shows that line as a player. On the website, put the same file at docs/images/demo.mp4 (site/README.md). -->
 
 <p align="center">
   <picture>
