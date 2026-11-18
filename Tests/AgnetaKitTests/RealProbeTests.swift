@@ -83,7 +83,7 @@ import Testing
             let s = TraceSummary(records: traces.records(task: session) ?? [])
             print("PROBE \(account) trace: turns", s.turns.map { "\($0.n):\($0.stopReason):\(Int($0.ms ?? 0))ms:\($0.modelCalls)calls:in\($0.input)" },
                   "tools", s.toolStats.map { "\($0.name)×\($0.calls)" }, "model calls", s.modelCalls, "live records", app.traceRecords(session).count, "of", s.records,
-                  "bearer in trace:", (try? String(contentsOf: traces.file(for: session), encoding: .utf8))?.contains("realprobe-bearer-123") ?? false)
+                  "bearer in trace:", (try? traces.text(of: session))?.contains("realprobe-bearer-123") ?? false)
         } catch { print("PROBE \(account) failed:", error) }
     }
     await supervisor.stopAll()

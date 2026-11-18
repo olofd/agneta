@@ -8,7 +8,7 @@ import Testing
 extension RouterIntegrationTests {
     /// The engine's process id, from the task's trace.
     static func enginePID(_ stack: Stack, _ session: String) throws -> pid_t {
-        let meta = try #require(String(contentsOf: stack.traces.file(for: session), encoding: .utf8).split(separator: "\n").first)
+        let meta = try #require(stack.traces.text(of: session).split(separator: "\n").first)
         return pid_t(try #require(try JSONCoding.decode(Data(meta.utf8))["engine"]?["pid"]?.intValue))
     }
 
@@ -37,7 +37,7 @@ extension RouterIntegrationTests {
             _ = await turn.value
             #expect(ended.all == ["\(session) stopped"])
             #expect(await stack.runtime.history().first { $0.id == session }?.outcome == .stopped)
-            let last = try String(contentsOf: stack.traces.file(for: session), encoding: .utf8).split(separator: "\n").last.map { try JSONCoding.decode(Data($0.utf8)) }
+            let last = try stack.traces.text(of: session).split(separator: "\n").last.map { try JSONCoding.decode(Data($0.utf8)) }
             #expect(last?["type"]?.stringValue == "end")
             #expect(await stack.supervisor.processCount == 0)
         } catch {

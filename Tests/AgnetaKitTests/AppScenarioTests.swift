@@ -25,7 +25,7 @@ struct AppScenarioTests {
             #expect(live["_meta"]?["agneta"]?["forkOf"]?.stringValue == run)
             _ = try await client.request("session/close", ["sessionId": .string(run)])
             try await Task.sleep(for: .milliseconds(300))
-            let originalLines = try String(contentsOf: stack.traces.file(for: run), encoding: .utf8).split(separator: "\n").count
+            let originalLines = try stack.traces.text(of: run).split(separator: "\n").count
 
             let review = try await client.request("agneta/fork", ["sessionId": .string(run), "mcpServers": []])
             let fork = try #require(review["sessionId"]?.stringValue)
@@ -36,8 +36,8 @@ struct AppScenarioTests {
             #expect(lastRequest.contains("remember the word fjord"))
 
             // The original is untouched; the fork is its own task, read-only by default, linked to its source.
-            #expect(try String(contentsOf: stack.traces.file(for: run), encoding: .utf8).split(separator: "\n").count == originalLines)
-            let forkTrace = try String(contentsOf: stack.traces.file(for: fork), encoding: .utf8).split(separator: "\n").map { try JSONCoding.decode(Data($0.utf8)) }
+            #expect(try stack.traces.text(of: run).split(separator: "\n").count == originalLines)
+            let forkTrace = try stack.traces.text(of: fork).split(separator: "\n").map { try JSONCoding.decode(Data($0.utf8)) }
             #expect(forkTrace.first?["policy"]?["tools"]?.stringValue == "read")
             #expect(forkTrace.contains { $0["event"]?.stringValue == "forked" && $0["from"]?.stringValue == run })
             // Only the owner can fork.
@@ -90,7 +90,7 @@ struct AppScenarioTests {
             _ = try await client.request("session/close", ["sessionId": .string(session)])
             try await Task.sleep(for: .milliseconds(300))
 
-            let records = try String(contentsOf: stack.traces.file(for: session), encoding: .utf8).split(separator: "\n").map { try JSONCoding.decode(Data($0.utf8)) }
+            let records = try stack.traces.text(of: session).split(separator: "\n").map { try JSONCoding.decode(Data($0.utf8)) }
             #expect(records.map { $0["seq"]?.intValue } == (1...Int64(records.count)).map { $0 })
             #expect(records.filter { $0["type"]?.stringValue == "event" && $0["kind"]?.stringValue == "turn" }.map { $0["n"]?.intValue } == [1, 2])
             #expect(records.contains { $0["event"]?.stringValue == "resumed" })
@@ -202,7 +202,7 @@ struct AppScenarioTests {
             #expect(read.first?["instructions"]?.stringValue == "You are the app's agent. Use the app's tools.")
             #expect(events("init").first?["model"]?.stringValue?.hasSuffix("gpt-4o") == true)
             // The app's bearer never reaches the trace.
-            let file = try String(contentsOf: stack.traces.file(for: session), encoding: .utf8)
+            let file = try stack.traces.text(of: session)
             #expect(!file.contains(bearer))
             // The MCP server saw every call with its bearer (it refuses calls without it).
             let mcpLog = try String(contentsOf: stack.root.appending(path: "mcp.log"), encoding: .utf8)

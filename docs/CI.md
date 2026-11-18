@@ -12,11 +12,12 @@ Each job:
 
 1. selects Xcode 26 (Swift 6.2, the macOS 26 SDK);
 2. fetches the pinned engines with `scripts/fetch-engines --engine all`, checking their SHA-256;
-3. builds, then runs the whole test suite with `AGNETA_REQUIRE_ENGINES=1`. That makes the real-engine suites mandatory: Goose and OpenCode against the fake model (`RouterIntegrationTests`, `AppScenarioTests`, `GooseIntegrationTests`) and the sandbox acceptance test (`ContainmentTests`, [CONTAINMENT.md](CONTAINMENT.md)). Without the variable, those suites skip when an engine is missing, which suits a first local build but not CI;
-4. builds the app bundle with `scripts/dev/build-app`, which also fetches Codex's adapter and checks the bundle's signature;
-5. uses the bundled Node to [test Project Chat](../examples/project-chat/README.md#check-it-without-an-account), including a session against Goose and a fake provider.
+3. builds, then runs the whole test suite with `AGNETA_REQUIRE_ENGINES=1`. That makes the real-engine suites mandatory: Goose and OpenCode against the fake model and tool server (`RouterIntegrationTests`, `AppScenarioTests`, `GooseIntegrationTests`) and the sandbox acceptance test (`ContainmentTests`, [CONTAINMENT.md](CONTAINMENT.md)). Without the variable, those suites skip when an engine is missing, which suits a first local build but not CI. The fakes (`AgnetaFakes`) are served from the test process: Python servers on GitHub's runners often never accept a loopback connection (measured 2026-11-18);
+4. if a test fails, uploads every test's folder (the fakes' request logs, engine logs and traces; `AGNETA_KEEP_TEST_FILES=1` keeps them) as the artifact `test-folders-<runner>`;
+5. builds the app bundle with `scripts/dev/build-app`, which also fetches Codex's adapter and checks the bundle's signature;
+6. uses the bundled Node to [test Project Chat](../examples/project-chat/README.md#check-it-without-an-account), including a session against Goose and the fake model (`agneta-fakes`).
 
-The only actions used are GitHub's own `actions/checkout`. Nothing else is downloaded except the pinned engines and the npm lockfile's packages.
+The only actions used are GitHub's own `actions/checkout` and `actions/upload-artifact`, each pinned to a commit. Nothing else is downloaded except the pinned engines and the npm lockfile's packages.
 
 ## Not covered yet
 

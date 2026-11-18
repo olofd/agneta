@@ -257,7 +257,7 @@ struct RouterIntegrationTests {
             _ = try await app.request("session/close", ["sessionId": .string(session)])
             try await Task.sleep(for: .milliseconds(300))
 
-            let lines = try String(contentsOf: stack.traces.file(for: session), encoding: .utf8).split(separator: "\n")
+            let lines = try stack.traces.text(of: session).split(separator: "\n")
             let records = try lines.map { try JSONCoding.decode(Data($0.utf8)) }
             // Gapless, versioned, one task, starting with what shaped the run.
             #expect(records.map { $0["seq"]?.intValue } == (1...Int64(records.count)).map { $0 })
@@ -345,7 +345,7 @@ struct RouterIntegrationTests {
             try await app.pairAndInitialize("App")
             let session = try await app.newSession(cwd: try stack.workspace("Killed"), tools: "workspace")
             #expect(await stack.supervisor.processCount == 1)
-            let meta = try #require(String(contentsOf: stack.traces.file(for: session), encoding: .utf8).split(separator: "\n").first)
+            let meta = try #require(stack.traces.text(of: session).split(separator: "\n").first)
             let pid = try #require(try JSONCoding.decode(Data(meta.utf8))["engine"]?["pid"]?.intValue)
             kill(pid_t(pid), SIGKILL)
             for _ in 0..<60 where app.notifications("agneta/sessionStopped").isEmpty { try await Task.sleep(for: .milliseconds(50)) }

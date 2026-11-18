@@ -42,11 +42,12 @@ See [Agneta’s app protocol](../../docs/APP_PROTOCOL.md) for the complete wire 
 
 ## Check it without an account
 
-`npm test` checks tool authentication and the draft contract using only a local server. The integration check runs the example client against real Goose and a fake provider. It starts its own headless Agneta, uses temporary storage, and leaves your running Agneta alone. From the repository root, with `python3` installed:
+`npm test` checks tool authentication and the draft contract using only a local server. The integration check runs the example client against real Goose and a fake provider. It starts its own headless Agneta and fake provider (`agneta-fakes`), uses temporary storage, and leaves your running Agneta alone. From the repository root:
 
 ```sh
 scripts/fetch-engines
 swift build --product agnetad
+swift build --product agneta-fakes
 cd examples/project-chat
 npm run test:integration
 ```

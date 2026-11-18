@@ -15,7 +15,7 @@ import Testing
     }
 
     private func read(_ traces: Traces, _ task: String) throws -> [JSONValue] {
-        try String(contentsOf: traces.file(for: task), encoding: .utf8).split(separator: "\n").map { try JSONCoding.decode(Data($0.utf8)) }
+        try traces.text(of: task).split(separator: "\n").map { try JSONCoding.decode(Data($0.utf8)) }
     }
 
     private func events(_ records: [JSONValue], _ kind: String) -> [JSONValue] {
