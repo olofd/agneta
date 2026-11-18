@@ -29,7 +29,7 @@ Status: not done.
 - **The smoke test runs on what a user gets:** the app is copied out of the mounted DMG and marked as downloaded (quarantined), Gatekeeper must accept it, Agneta must start and serve apps, and every bundled engine must start and answer `initialize` under the hardened runtime.
 - **Files per architecture:** `Agneta-<version>-arm64.dmg` and `-x86_64.dmg` for people, the matching `.zip` for Sparkle, plus one `SHA256SUMS.txt`.
 
-Status: signing (without per-program entitlements) and notarizing a zip are scripted; the rest is not done.
+Status: built and run without a Developer ID (2026-11-18): the version, the DMG, the zip, the sums and the smoke test of the DMG all pass with ad hoc signing, and Node and OpenCode run under their entitlements. Developer ID signing and notarization have not run yet: they need step 0.
 
 ### 2. The release workflow (`.github/workflows/release.yml`)
 
@@ -40,7 +40,7 @@ Status: signing (without per-program entitlements) and notarizing a zip are scri
 - On publishing, a second workflow bumps the Homebrew tap and checks that the update feed serves the new version.
 - Every action is pinned by commit, and each job has only the permissions it needs.
 
-Status: not done.
+Status: drafted, not yet in the repository: the update feeds need Sparkle's tools, which wait for the maintainer's go-ahead to download.
 
 ### 3. Updates in the app (Sparkle 2)
 
@@ -57,7 +57,7 @@ Status: not done. Today there are no automatic updates: a new release replaces t
 - A cask in `olofd/homebrew-tap` (`brew install olofd/tap/agneta`), one per architecture through `arch arm: "arm64", intel: "x86_64"`, marked `auto_updates true` so `brew` leaves updating to Sparkle. The publish workflow bumps its version and checksums; the tap's CI runs `brew audit --cask --strict` and installs it.
 - Homebrew's own cask repository needs public interest first (for a project submitted by its author: 225 stars, 90 forks or 90 watchers; [policy](https://docs.brew.sh/Package-Acceptance-Policy)). Once it's there, Homebrew's bots keep it current.
 
-Status: not done.
+Status: the cask is in `packaging/homebrew/agneta.rb`; the workflow that fills it in and pushes it is drafted with the release workflow.
 
 ### 5. The first release
 
@@ -65,17 +65,17 @@ A dry run, installed on an Intel and an Apple silicon Mac: it opens without a Ga
 
 ## Building a release by hand
 
-Until the workflow exists, on each architecture:
+Until the workflow exists, on each architecture, from a commit tagged `v<version>`:
 
 ```bash
 AGNETA_SIGN_IDENTITY="Developer ID Application: …" AGNETA_NOTARY_PROFILE=agneta scripts/dev/release --previous <last release's zip>
 ```
 
-It builds `build/Agneta.app` with the release identity (`com.objectivecoder.agneta`, port 47321), signs it, zips it, notarizes and staples it, writes the zip's SHA-256 and runs the smoke test. It refuses an uncommitted checkout. `AGNETA_NOTARY_PROFILE` is a profile stored once with `xcrun notarytool store-credentials`. Without `AGNETA_SIGN_IDENTITY` the build is signed ad hoc: fine for testing, refused by Gatekeeper on other Macs.
+It builds `build/Agneta.app` with the release identity (`com.objectivecoder.agneta`, port 47321) and does part 1 above, leaving the DMG, the zip and `SHA256SUMS-<arch>.txt` in `build/release/`. It refuses an uncommitted checkout. `AGNETA_NOTARY_PROFILE` is a profile stored once with `xcrun notarytool store-credentials`; `AGNETA_NOTARY_KEY`, `AGNETA_NOTARY_KEY_ID` and `AGNETA_NOTARY_ISSUER` use an API key instead. Without `AGNETA_SIGN_IDENTITY` everything is signed ad hoc and nothing is notarized: fine for testing, refused by Gatekeeper on other Macs.
 
 ## The smoke test
 
-`scripts/dev/smoke-test <Agneta.app> [--previous <zip>]` installs the app into a temporary folder and checks it as a user gets it: the signature holds, it starts and listens for apps, writes its database and log without errors, `agneta-diag` reads that data, and it starts again on the same data. With `--previous`, the previous release runs first on the same data folder, so the new build starts on what an older one left: the upgrade path. Every run is an isolated instance (its own data folder, Keychain service and port) and stops what it started. Database migrations are also tested on their own (`StoreTests`).
+`scripts/dev/smoke-test <Agneta.app|Agneta.dmg> [--gatekeeper] [--previous <zip>]` installs the app into a temporary folder and checks it as a user gets it: given a DMG, the app is copied out of the mounted image; with `--gatekeeper`, the DMG and the app (marked as downloaded) must pass Gatekeeper and carry stapled tickets; the signature holds; each bundled engine starts as signed (`goose-acp` and `opencode` answer ACP `initialize`, Node runs JavaScript); Agneta starts and listens for apps, writes its database and log without errors, `agneta-diag` reads that data, and it starts again on the same data. With `--previous`, the previous release runs first on the same data folder, so the new build starts on what an older one left: the upgrade path. Every run is an isolated instance (its own data folder, Keychain service and port) and stops what it started. Database migrations are also tested on their own (`StoreTests`).
 
 ## What a release weighs
 
@@ -95,6 +95,6 @@ Releases ship every engine: a ChatGPT plan needs Codex's adapter and Node. Shipp
 
 | | |
 | --- | --- |
-| macOS | 14 and later. Tested on 26 ([CONTAINMENT.md](CONTAINMENT.md#supported-macos-versions) lists each version's status) |
+| macOS | 14 and later. The tests pass on 15 and 26 ([CONTAINMENT.md](CONTAINMENT.md#supported-macos-versions) lists each version's status) |
 | Architectures | Apple silicon and Intel, one build each: a universal app would carry both architectures' engines and double the download |
 | Building | Xcode 26 or later |

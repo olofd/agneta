@@ -16,7 +16,7 @@ For app developers, this means agent features without running an agent loop, bui
 > - there's no signed or notarized release yet, so you build it yourself;
 > - the app protocol may still change;
 > - an engine can reach any HTTPS host, not only its provider's (a per-provider host allowlist isn't built yet);
-> - it's tested on Intel Macs with macOS 26; Apple silicon and macOS 14 and 15 are untested.
+> - the tests, the sandbox acceptance test among them, pass on macOS 15 and 26, Apple silicon and Intel ([CI.md](docs/CI.md)), but the app has been used day to day only on an Intel Mac with macOS 26, and macOS 14 is untested.
 
 ## What it is
 

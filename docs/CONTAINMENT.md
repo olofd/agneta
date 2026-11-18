@@ -40,8 +40,8 @@ The test names the macOS version it ran on. It runs in CI on every supported maj
 
 | macOS | Intel | Apple silicon |
 | --- | --- | --- |
-| 26 | Passed (26.6.2, 2026-11-17) | Not yet run |
-| 15 | Not yet run | Not yet run |
+| 26 | Passed (26.6.2, 2026-11-17) | Passed (26.7.2, CI, 2026-11-18) |
+| 15 | Passed (15.7.9, CI, 2026-11-18) | Passed (15.8.2, CI, 2026-11-18) |
 | 14 | Not yet run | Not yet run |
 
 A version is supported once the acceptance test passes on it. Until then, the README says it's untested.
