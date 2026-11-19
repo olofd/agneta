@@ -4,6 +4,7 @@
 // the run id in `session_info_update`, tool identity in `_meta.goose.toolCall`,
 // export/import for fork, and per-call usage in its session database.
 import Foundation
+import GRDB
 
 public struct GooseAdapter: EngineAdapter {
     public let executable: URL
@@ -115,5 +116,29 @@ public struct GooseAdapter: EngineAdapter {
 
     public func ledger(stateRoot: URL, engineSession: String) -> (any UsageLedger)? {
         GooseLedgerReader(database: stateRoot.appending(path: "data/sessions/sessions.db"), session: engineSession)
+    }
+
+    /// Measured: `session/delete` removes a session's rows, but the deleted text stays in the database's free pages
+    /// and in stale frames of its WAL log. A checkpoint, a vacuum (which rewrites the file without the free pages)
+    /// and a checkpoint that truncates the log leave no file with it. None changes a row, SQLite allows them beside
+    /// Goose's own connection, and Goose went on opening and running sessions after them; while it's mid-write
+    /// they wait up to 2 s, then report the log in use.
+    public func sessionsDeleted(stateRoot: URL) -> String? {
+        let file = stateRoot.appending(path: "data/sessions/sessions.db").path(percentEncoded: false)
+        guard FileManager.default.fileExists(atPath: file) else { return nil }
+        do {
+            var configuration = Configuration()
+            configuration.busyMode = .timeout(2)
+            let queue = try DatabaseQueue(path: file, configuration: configuration)
+            defer { try? queue.close() }
+            let busy = try queue.writeWithoutTransaction { db -> Int? in
+                try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+                try db.execute(sql: "VACUUM")
+                return try Int.fetchOne(db, sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+            }
+            return busy == 0 ? nil : "its log is still in use"
+        } catch {
+            return "\(error)"
+        }
     }
 }

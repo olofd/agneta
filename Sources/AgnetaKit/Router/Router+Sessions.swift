@@ -203,9 +203,7 @@ extension Router {
         do {
             let engineParams = lease.engine.newSession(cwd: plan.policy.workspace, servers: plan.servers, policy: plan.policy,
                                                        title: meta?["agneta/task"]?["title"], instructions: plan.instructions)
-            result = try await lease.peer.request("session/new", engineParams)
-            guard let created = result["sessionId"]?.stringValue else { throw RPCError(code: RPCError.internalError, message: "The engine didn't create a session") }
-            engineSession = created
+            (engineSession, result) = try await freshSession(lease, EngineRequest("session/new", engineParams)) { $0["sessionId"]?.stringValue }
         } catch {
             await engines.release(lease)
             return .failure(engineFailure(error, account: plan.account, otherwise: "The engine stopped"))
@@ -353,9 +351,8 @@ extension Router {
         let engineSession: String, imported: JSONValue
         do {
             guard let request = lease.engine.importSession(exported) else { throw Self.unsupported(lease.engine, "fork a session") }
-            imported = try await lease.peer.request(request.method, request.params)
-            guard let created = lease.engine.importedSession(imported) else { throw RPCError(code: RPCError.internalError, message: "The engine didn't import the conversation") }
-            engineSession = created
+            let engine = lease.engine
+            (engineSession, imported) = try await freshSession(lease, request) { engine.importedSession($0) }
         } catch {
             await engines.release(lease)
             return .failure(engineFailure(error, account: plan.account, otherwise: "The engine couldn't fork the session"))

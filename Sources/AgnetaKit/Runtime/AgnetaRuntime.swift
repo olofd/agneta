@@ -223,11 +223,20 @@ public actor AgnetaRuntime {
         forget(tasks: Self.attempt(log, "prune-history") { try database.pruneHistory(olderThan: days) } ?? [])
     }
 
-    /// A task leaves history: its engine home (its conversation) and its trace go too.
+    /// A task leaves history: its conversation and its trace go too. Its engine home and files go here; a shared
+    /// engine is asked to delete it (Router+Forget), from what the trace said before it went.
     private func forget(tasks: [String]) {
         guard !tasks.isEmpty else { return }
+        let shared = tasks.compactMap { traces.meta(task: $0).flatMap(Router.sharedConversation) }
         EngineHomes.remove(tasks: tasks, traces: traces, root: store.root)
         traces.delete(tasks: tasks)
+        guard !shared.isEmpty else { return }
+        _Concurrency.Task { [router, log] in
+            let outcome = await router.deleteConversations(shared)
+            log?.log("conversations-deleted", level: outcome.problems.isEmpty ? "info" : "error",
+                     ["asked": .int(Int64(shared.count)), "deleted": .int(Int64(outcome.deleted)),
+                      "problems": .array(outcome.problems.map(JSONValue.string))])
+        }
     }
 
     /// Engine homes nothing refers to any more (after a crash), after the retention period.

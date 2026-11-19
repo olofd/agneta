@@ -140,6 +140,7 @@ extension EngineAdapter {
         toolIdentity(in: params?["toolCall"] ?? .null).server ?? params?["toolCall"]?["toolCallId"]?.stringValue.flatMap { calls[$0] }
     }
     public var reservedToolServers: Set<String> { [] }
+    public func sessionsDeleted(stateRoot: URL) -> String? { nil }
 }
 
 public protocol EngineAdapter: Sendable {
@@ -183,6 +184,9 @@ public protocol EngineAdapter: Sendable {
 
     /// The engine's own per-call usage records for a session, under its state root.
     func ledger(stateRoot: URL, engineSession: String) -> (any UsageLedger)?
+    /// After the engine deleted sessions (`session/delete`): clears what its storage under the state root still holds
+    /// of them. Nil when done, else why not.
+    func sessionsDeleted(stateRoot: URL) -> String?
     /// Whether a session may switch to this mode: false for modes that skip permission requests.
     /// The MCP server a permission request's tool belongs to: from the request, or from `calls` (each call's server,
     /// from the engine's earlier updates) when it names only the call. Nil for the engine's own tools. Only what the

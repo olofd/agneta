@@ -243,6 +243,47 @@ struct RouterIntegrationTests {
         await stack.stop()
     }
 
+    /// Deleting a task deletes its conversation in the account's shared engine too: Goose deletes the session
+    /// (`session/delete`), and no file of its database still holds the conversation's words. The engine keeps
+    /// serving afterwards.
+    @Test func deletingATaskDeletesItsConversationInASharedEngine() async throws {
+        let stack = try await Stack.start(port: 47425, modelPort: 47435)
+        do {
+            let app = AppClient(port: stack.port)
+            try await app.pairAndInitialize("Forgetful")
+            let words = "quokka-zanzibar-\(UUID().uuidString.prefix(6))"
+            let session = try await app.newSession(cwd: try stack.workspace("F"), tools: "app-only")
+            _ = try await app.prompt(session, "Please remember \(words)")
+            let meta = try #require(stack.traces.meta(task: session))
+            let conversation = try #require(Router.sharedConversation(meta))
+            let sessions = URL(filePath: try #require(meta["engine"]?["stateRoot"]?.stringValue)).appending(path: "data/sessions")
+            func holding() -> [String] {
+                let names = (try? FileManager.default.contentsOfDirectory(atPath: sessions.path(percentEncoded: false))) ?? []
+                return names.filter { (try? Data(contentsOf: sessions.appending(path: $0)))?.range(of: Data(words.utf8)) != nil }
+            }
+            #expect(!holding().isEmpty)
+            _ = try await app.request("session/close", ["sessionId": .string(session)])
+
+            await stack.runtime.clearHistory()
+            let deadline = Date().addingTimeInterval(10)
+            while !holding().isEmpty, Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+            #expect(holding().isEmpty)
+            #expect(stack.traces.meta(task: session) == nil)
+            // Asking again finds nothing to delete, and says so rather than failing silently.
+            let again = await stack.runtime.router.deleteConversations([conversation])
+            #expect(again.deleted == 0 && !again.problems.isEmpty)
+
+            let next = try await app.newSession(cwd: try stack.workspace("F"), tools: "app-only")
+            let reply = try await app.prompt(next, "hello")
+            #expect(reply["stopReason"]?.stringValue == "end_turn")
+            app.close()
+        } catch {
+            await stack.stop()
+            throw error
+        }
+        await stack.stop()
+    }
+
     /// D1's acceptance check (docs/DIAGNOSTICS.md): one task with a shell call, a second turn and a
     /// close leaves a trace whose events, model calls and timings match what happened.
     @Test func traceRecordsAWholeTask() async throws {

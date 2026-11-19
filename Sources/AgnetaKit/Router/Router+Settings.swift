@@ -51,12 +51,7 @@ extension Router {
     public func probeSettings(account: String, engine id: String) async throws -> JSONValue {
         guard accounts[account] != nil else { throw RPCError(code: RPCError.invalidParams, message: "Unknown provider") }
         guard let adapter = catalog.adapter(id) else { throw RPCError(code: RPCError.invalidParams, message: "That engine isn't here") }
-        // An empty folder of Agneta's own to open the session in; nothing is written there.
-        let root = context.appWorkspaces ?? FileManager.default.temporaryDirectory
-        let folder = root.appending(path: ".agneta-settings-probe", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        var policy = SessionPolicy.fallback(workspace: folder.realFileURL)
-        policy.tools = .appOnly
+        let policy = try ownPolicy("settings-probe")
         let plan = Plan(account: account, engine: adapter, policy: policy, servers: [], instructions: nil)
         let lease: EngineLease
         switch await launch(plan, key: nil) {
