@@ -18,8 +18,10 @@ public struct CodexSignIn: Sendable {
     /// What Codex says (`codex login status`): the sign-in is in the Keychain, not a file Agneta could check.
     public func isSignedIn() async -> Bool { await codex(["login", "status"]) == 0 }
 
-    /// Codex's own logout, which removes the Keychain entry; deleting the folder alone would leave it behind.
-    public func signOut() async { _ = await codex(["logout"]) }
+    /// Codex's own logout, which removes the Keychain entry; deleting the folder alone would leave it behind. Returns
+    /// whether it exited cleanly.
+    @discardableResult
+    public func signOut() async -> Bool { await codex(["logout"]) == 0 }
 
     private func codex(_ arguments: [String]) async -> Int32? {
         guard (try? CodexAdapter.prepareAccountHome(codexHome)) != nil else { return nil }

@@ -158,8 +158,8 @@ import Testing
 /// failure does to the default, and what putting a failure away means.
 @MainActor @Suite struct EngineDownloadTests {
     /// A build's folders with `opencode.lock` pinning a local zip of a tiny `opencode`; `pinned: false` pins the wrong
-    /// hash, so the download fails its check.
-    func library(pinned: Bool = true) throws -> (EngineLibrary, URL) {
+    /// hash, so the download fails its check. With a server, the zip is downloaded from it.
+    func library(pinned: Bool = true, server: SlowServer? = nil) throws -> (EngineLibrary, URL) {
         let root = FileManager.default.temporaryDirectory.appending(path: "agneta-downloads-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
         let payload = root.appending(path: "payload/opencode", directoryHint: .isDirectory)
         let resources = root.appending(path: "Resources", directoryHint: .isDirectory)
@@ -176,7 +176,8 @@ import Testing
         ditto.waitUntilExit()
         let digest = SHA256.hash(data: try Data(contentsOf: zip)).map { String(format: "%02x", $0) }.joined()
         let sha = pinned ? digest : String(repeating: "0", count: 64)
-        let asset: JSONValue = ["url": .string(zip.absoluteString), "sha256": .string(sha), "size": 100]
+        server?.body = try Data(contentsOf: zip)
+        let asset: JSONValue = ["url": .string(server?.url ?? zip.absoluteString), "sha256": .string(sha), "size": 100]
         try JSONCoding.encode(["engine": "opencode", "version": "1", "assets": .object([RuntimeInstaller.architecture: asset])] as JSONValue)
             .write(to: resources.appending(path: "opencode.lock"))
         let library = EngineLibrary(runtimes: root.appending(path: "Runtimes", directoryHint: .isDirectory), log: OperationalLog(folder: root),
@@ -239,5 +240,77 @@ import Testing
         library.download("opencode", reason: "task")
         try await waitUntil { self.state(library) == "failed" }
         #expect(state(library) == "failed")
+    }
+
+    /// Reset stops downloads: one that would finish after it (the server answers late) neither installs anything nor
+    /// shows up again, and a sign-in waiting on the same install is told it was cancelled.
+    @Test func resetStopsDownloadsForGood() async throws {
+        let server = try SlowServer(delay: 1.0)
+        defer { server.stop() }
+        let (library, root) = try library(server: server)
+        defer { try? FileManager.default.removeItem(at: root) }
+        library.download("opencode", reason: "task")
+        let signIn = Task { try await library.install("opencode") }
+        #expect(library.downloads["opencode"] != nil && state(library) == "downloading")
+        try await waitUntil { server.asked }
+
+        await library.reset()
+        #expect(library.downloads.isEmpty)
+        await #expect(throws: (any Error).self) { _ = try await signIn.value }
+        try await Task.sleep(for: .milliseconds(1500)) // past when the server answers
+        #expect(library.downloads.isEmpty && library.verified("opencode") == nil)
+        #expect(!FileManager.default.fileExists(atPath: root.appending(path: "Runtimes/opencode").path(percentEncoded: false)))
+    }
+}
+
+/// A loopback HTTP server that answers one request after `delay`, with `body`.
+final class SlowServer: @unchecked Sendable {
+    private let fd: Int32
+    let port: Int
+    private let lock = NSLock()
+    private var _body = Data()
+    private var _asked = false
+    var body: Data {
+        get { lock.withLock { _body } }
+        set { lock.withLock { _body = newValue } }
+    }
+    /// A request arrived.
+    var asked: Bool { lock.withLock { _asked } }
+    var url: String { "http://127.0.0.1:\(port)/opencode.zip" }
+
+    init(delay: TimeInterval) throws {
+        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        self.fd = fd
+        var address = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: 0,
+                                  sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let bound = withUnsafeMutablePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, length) == 0 && getsockname(fd, $0, &length) == 0 } }
+        port = Int(UInt16(bigEndian: address.sin_port))
+        guard bound, listen(fd, 8) == 0 else {
+            close(fd)
+            throw POSIXError(.EADDRINUSE)
+        }
+        let listener = fd
+        Thread { [weak self] in
+            while true {
+                let client = accept(listener, nil, nil)
+                guard client >= 0 else { return }
+                var on: Int32 = 1
+                setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                _ = read(client, &buffer, buffer.count)
+                self?.lock.withLock { self?._asked = true }
+                Thread.sleep(forTimeInterval: delay)
+                let body = self?.body ?? Data()
+                let response = Data("HTTP/1.1 200 OK\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8) + body
+                _ = response.withUnsafeBytes { write(client, $0.baseAddress, $0.count) }
+                close(client)
+            }
+        }.start()
+    }
+
+    func stop() {
+        shutdown(fd, SHUT_RDWR)
+        close(fd)
     }
 }

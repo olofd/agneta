@@ -76,6 +76,9 @@ public actor EngineSupervisor: EngineSource {
         var engineInfo: JSONValue?
         var engine: any EngineAdapter
         var temporary: [URL] = []
+        /// Its account, and the account's setup generation when it started (`renew`).
+        var account = ""
+        var generation = 0
     }
 
     private let configuration: Configuration
@@ -84,6 +87,8 @@ public actor EngineSupervisor: EngineSource {
     private var running: [String: Running] = [:]
     private var starting: [String: Task<EngineLease, Error>] = [:]
     private var holders: [String: Int] = [:]
+    /// Each account's setup generation, bumped by `renew`: a shared engine from an earlier one stops once nothing holds it.
+    private var generations: [String: Int] = [:]
     private var broker: ToolBroker?
     private let grants = GrantTable()
 
@@ -92,10 +97,28 @@ public actor EngineSupervisor: EngineSource {
         self.accounts = accounts
     }
 
-    /// Serves `account` with this provider. Engines already running keep their setup.
-    public func add(account: String, provider: ProviderSetup) {
+    /// Serves `account` with this provider. When the setup differs from before (its model, key, endpoint or sign-in),
+    /// the account's shared engines are renewed: a running engine keeps the setup it started with.
+    public func add(account: String, provider: ProviderSetup) async {
+        let previous = accounts[account]
         accounts[account] = provider
+        if let previous, previous != provider { await renew(account: account) }
     }
+
+    /// The account's settings changed (its setup, or the defaults a session starts with): its shared engines stop, at
+    /// once when nothing holds them, else when the last session on them ends, so the next session starts one afresh.
+    /// An engine left running would keep what it started with (Goose its GOOSE_MODEL) even after a setting is cleared.
+    public func renew(account: String) async {
+        generations[account, default: 0] += 1
+        let idle = running.filter { $0.value.account == account && EngineKeys.isShared($0.key) && holders[$0.key, default: 0] <= 0 }
+        for (key, engine) in idle where running[key]?.process.pid == engine.process.pid {
+            running.removeValue(forKey: key)
+            await retire(engine, "the provider's settings changed")
+        }
+    }
+
+    /// A shared engine started before its account's settings last changed.
+    private func isStale(_ engine: Running) -> Bool { engine.generation != generations[engine.account, default: 0] }
 
     /// Stops every engine serving `account` and forgets it.
     public func remove(account: String) async {
@@ -148,6 +171,11 @@ public actor EngineSupervisor: EngineSource {
                 try? await Task.sleep(for: .milliseconds(25))
             }
         }
+        // An idle shared engine from before a settings change (one still starting then) is replaced now.
+        if !dedicated, let existing = running[key], isStale(existing), holders[key, default: 0] <= 0 {
+            running.removeValue(forKey: key)
+            await retire(existing, "the provider's settings changed")
+        }
         if let existing = running[key], !existing.process.hasExited {
             holders[key, default: 0] += 1
             return EngineLease(key: key, peer: existing.peer, pid: existing.process.pid, dedicated: dedicated, engine: existing.engine,
@@ -160,8 +188,9 @@ public actor EngineSupervisor: EngineSource {
             holders[key, default: 0] += 1
             return lease
         }
+        let generation = generations[account, default: 0]
         let start = Task { try await self.spawn(key: key, account: account, adapter: adapter, provider: provider, dedicated: dedicated,
-                                                policy: policy, mcpPorts: mcpPorts, session: session) }
+                                                policy: policy, mcpPorts: mcpPorts, session: session, generation: generation) }
         starting[key] = start
         defer { starting[key] = nil }
         let lease = try await start.value
@@ -170,7 +199,7 @@ public actor EngineSupervisor: EngineSource {
     }
 
     private func spawn(key: String, account: String, adapter: any EngineAdapter, provider: ProviderSetup, dedicated: Bool,
-                       policy: SessionPolicy, mcpPorts: [Int], session: EngineSessionSpec?) async throws -> EngineLease {
+                       policy: SessionPolicy, mcpPorts: [Int], session: EngineSessionSpec?, generation: Int) async throws -> EngineLease {
         let accountHome = configuration.root.appending(path: "Accounts/\(account)", directoryHint: .isDirectory)
         // Each engine process gets its own state so concurrent processes don't share a session database.
         // Agneta's own folders for this engine, each made a real folder at exactly its path and written into the
@@ -306,7 +335,8 @@ public actor EngineSupervisor: EngineSource {
             throw RPCError(code: RPCError.internalError, message: "The engine didn't start: \(error)")
         }
         running[key] = Running(process: process, peer: peer, token: token, grant: grant, workspace: dedicated ? policy.workspace : nil,
-                               stateRoot: launch.stateRoot, engineInfo: initialized["agentInfo"], engine: adapter, temporary: launch.temporary + (tokenFile.map { [$0] } ?? []))
+                               stateRoot: launch.stateRoot, engineInfo: initialized["agentInfo"], engine: adapter, temporary: launch.temporary + (tokenFile.map { [$0] } ?? []),
+                               account: account, generation: generation)
         let elapsed = ContinuousClock.now - spawned
         return EngineLease(key: key, peer: peer, pid: process.pid, dedicated: dedicated, engine: adapter, stateRoot: launch.stateRoot,
                            startMs: Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15,
@@ -330,6 +360,12 @@ public actor EngineSupervisor: EngineSource {
         holders[lease.key, default: 1] -= 1
         guard holders[lease.key, default: 0] <= 0 else { return }
         holders[lease.key] = nil
+        // A shared engine stays, unless its account's settings changed while sessions held it.
+        if !lease.dedicated, let engine = running[lease.key], engine.process.pid == lease.pid, isStale(engine) {
+            running.removeValue(forKey: lease.key)
+            await retire(engine, "the provider's settings changed")
+            return
+        }
         guard lease.dedicated, let engine = running.removeValue(forKey: lease.key) else { return }
         stopping.insert(lease.key)
         defer { stopping.remove(lease.key) }

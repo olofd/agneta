@@ -42,6 +42,8 @@ final class AppModel {
     /// Set while Reset Agneta runs, and the failed step if it stopped.
     private(set) var resetting = false
     private(set) var resetProblem: String?
+    /// Plan sign-ins Reset or Sign Out couldn't remove from the login Keychain, until the user dismisses them.
+    private(set) var leftoverSignIns: [PlanSignOut.Leftover] = []
     /// The database couldn't be opened (for example, made by another build of Agneta).
     private(set) var storeProblem: String?
     /// Every engine: where each comes from, downloads, and each provider's default (EngineLibrary).
@@ -56,6 +58,9 @@ final class AppModel {
     private(set) var serverProblem: String?
     /// A task's record couldn't be written (the disk is full, say): tasks run on, but their traces are incomplete.
     private(set) var traceProblem: String?
+    /// Conversations of tasks gone from history that a shared engine didn't delete: how many are still queued (asked
+    /// for again), and why.
+    private(set) var conversationsLeft: (count: Int, problem: String)?
     let port: UInt16
     /// Why an isolated instance has no usable port (AGNETA_PORT missing or unsafe): it then listens on none.
     private var portProblem: String?
@@ -219,7 +224,8 @@ final class AppModel {
         save(accounts[index])
     }
 
-    /// The model new tasks on this account start with (nil: the provider's default). Running engines keep theirs.
+    /// The model new tasks on this account start with (nil: the provider's default). An engine running a task keeps
+    /// its model until the task ends; the account's shared engines then start afresh (EngineSupervisor.renew).
     func setDefaultModel(_ account: AccountRecord, _ model: String?) {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
         let trimmed = model?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -243,7 +249,7 @@ final class AppModel {
         try? database?.set(chosen == Defaults() ? nil : text, for: "defaults.\(account.id)")
         log.log("defaults-set", ["account": .string(account.id), "model": .bool(chosen.model != nil), "effort": .bool(chosen.effort != nil)])
         guard let runtime else { return }
-        _Concurrency.Task { await runtime.router.setDefaults(account: account.id, model: chosen.model, effort: chosen.effort) }
+        _Concurrency.Task { await runtime.setDefaults(account: account.id, model: chosen.model, effort: chosen.effort) }
     }
 
     /// The config options an engine last offered on an account (its models and efforts), kept between launches so
@@ -320,7 +326,7 @@ final class AppModel {
         await runtime.serve(account: account.id, label: account.label, provider: provider, runner: runner, kind: account.kind,
                             billing: billing, paused: account.paused)
         let wanted = defaults(of: account)
-        await runtime.router.setDefaults(account: account.id, model: wanted.model, effort: wanted.effort)
+        await runtime.setDefaults(account: account.id, model: wanted.model, effort: wanted.effort)
         // Its default engine downloads now if it isn't here.
         library.refresh()
     }
@@ -334,6 +340,8 @@ final class AppModel {
             reloadHistory()
         case .traceProblem(_, let reason):
             traceProblem = reason
+        case .conversationsLeft(let count, let problem):
+            conversationsLeft = problem.map { (count, $0) }
         case .router(let event):
             handle(event)
         }
@@ -530,8 +538,8 @@ final class AppModel {
         let home = store.home(of: account)
         _Concurrency.Task {
             await runtime.remove(account: account.id)
-            if account.kind == .claude { await self.signOutOfClaudeCode(homes: [home]) }
-            if account.kind == .chatGPT { await self.signOutOfCodex(homes: [home]) }
+            let leftovers = await self.signOutOfPlans(homes: [home])
+            self.leftoverSignIns += leftovers
             try? FileManager.default.removeItem(at: home)
         }
     }
@@ -546,6 +554,12 @@ final class AppModel {
     func clearHistory() {
         guard let runtime else { return }
         _Concurrency.Task { await runtime.clearHistory() }
+    }
+
+    func retryForgetting() {
+        conversationsLeft = nil
+        guard let runtime else { return }
+        _Concurrency.Task { await runtime.retryForgetting() }
     }
 
     func setHistoryDays(_ days: Int) {
@@ -631,15 +645,24 @@ final class AppModel {
         server = nil
         await runtime?.shutdown()
         runtime = nil
-        accounts = []; grants = [:]; tasks = []; history = []; needsSignIn = []
-        library.reset()
+        accounts = []; grants = [:]; tasks = []; history = []; needsSignIn = []; conversationsLeft = nil
         approvals.refuseAll()
         signIn.clear()
+        // Downloads stop before anything is deleted, so none finishes afterwards and puts files back.
+        await library.reset()
         serverProblem = nil; storeProblem = nil
         await finishReset(reset)
         guard resetProblem == nil else { return }
         await start()
         WindowPresenter.shared.showWelcome(self)
+        if let explanation = PlanSignOut.explanation(leftoverSignIns) {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Some sign-ins may still be in your Keychain"
+            alert.informativeText = "Agneta reset everything else.\n\n" + explanation
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
     }
 
     /// The steps after engines are stopped; also resumes an interrupted reset at launch.
@@ -652,8 +675,10 @@ final class AppModel {
             _ = await EngineReaper.reap(recorded)
             try? leftover.close()
         }
-        await signOutOfClaudeCode(homes: accountHomes)
-        await signOutOfCodex(homes: accountHomes)
+        // At launch (an interrupted reset) nothing has looked for the user's Claude Code and Codex yet, and only their
+        // own logout removes a plan's sign-in.
+        if library.installs.isEmpty { await library.findInstalls() }
+        let leftovers = await signOutOfPlans(homes: accountHomes)
         do {
             try reset.wipe()
         } catch {
@@ -661,6 +686,7 @@ final class AppModel {
             log.error("reset-failed", ["step": .string(error.description)])
             return
         }
+        leftoverSignIns += leftovers
         if !isolated {
             UserDefaults.standard.removePersistentDomain(forName: bundleID)
             if SMAppService.mainApp.status == .enabled { try? await SMAppService.mainApp.unregister() }
@@ -670,28 +696,18 @@ final class AppModel {
         log.log("reset-finished")
     }
 
-    /// Claude Code keeps each account's sign-in in the login Keychain, keyed by the account's folder.
-    /// Its own logout removes it; deleting the folder alone would leave it behind.
-    private func signOutOfClaudeCode(homes: [URL]) async {
-        let claudeHomes = homes.filter { FileManager.default.fileExists(atPath: $0.appending(path: "claude").path(percentEncoded: false)) }
-        guard !claudeHomes.isEmpty, let cli = library.program("claude") else { return }
-        for home in claudeHomes {
-            await ClaudeCodeSignIn(cli: cli.path, configDirectory: home.appending(path: "claude", directoryHint: .isDirectory)).signOut()
+    /// Claude Code and Codex keep each plan account's sign-in in the login Keychain, keyed by the account's folder,
+    /// and only their own logout removes it (PlanSignOut). Returns the sign-ins that may remain.
+    private func signOutOfPlans(homes: [URL]) async -> [PlanSignOut.Leftover] {
+        let leftovers = await PlanSignOut.signOut(homes: homes, claudeCode: library.program("claude")?.path, codex: library.program("codex")?.path)
+        for leftover in leftovers {
+            log.error("sign-out-incomplete", ["program": .string(leftover.program),
+                                              "reason": .string(leftover.reason == .noProgram ? "no supported install" : "logout failed")])
         }
+        return leftovers
     }
 
-    /// Codex keeps each ChatGPT account's sign-in in the login Keychain, keyed by the account's CODEX_HOME. Its own
-    /// logout removes it.
-    private func signOutOfCodex(homes: [URL]) async {
-        let codexHomes = homes.map(CodexAdapter.codexHome(account:)).filter { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
-        guard !codexHomes.isEmpty else { return }
-        // Codex's own logout removes its Keychain entry; without a Codex install it can't run, and the entry stays.
-        guard let cli = library.program("codex") else {
-            log.error("codex-sign-out-skipped", ["accounts": .int(Int64(codexHomes.count)), "reason": "no supported Codex install"])
-            return
-        }
-        for home in codexHomes { await CodexSignIn(cli: cli.path, codexHome: home).signOut() }
-    }
+    func dismissLeftoverSignIns() { leftoverSignIns = [] }
 
     /// Every account folder on disk (Reset, including one resumed after an interruption).
     private var accountHomes: [URL] {
@@ -738,7 +754,10 @@ final class AppModel {
         return apps == 0 ? accountsText : "\(accountsText) · \(apps == 1 ? "1 app" : "\(apps) apps")"
     }
 
-    var needsAttention: Bool { serverProblem != nil || !needsSignIn.isEmpty || resetProblem != nil || storeProblem != nil }
+    var needsAttention: Bool {
+        serverProblem != nil || !needsSignIn.isEmpty || resetProblem != nil || storeProblem != nil || !leftoverSignIns.isEmpty
+            || conversationsLeft != nil
+    }
 
     /// The one thing that needs the user, as a title, a sentence and one action.
     var attentionMessage: (title: String, detail: String, action: String, run: () -> Void)? {
@@ -750,12 +769,27 @@ final class AppModel {
             return ("Agneta needs a reset", "\(problem) Reset Agneta to start fresh; you'll connect your providers and allow your apps again.", "Reset…",
                     { self.confirmReset() })
         }
+        if let explanation = PlanSignOut.explanation(leftoverSignIns) {
+            return ("Sign-ins may remain in your Keychain", explanation, "Dismiss", { self.dismissLeftoverSignIns() })
+        }
         if let problem = serverProblem {
             return ("Apps can't connect", problem, "Settings", { WindowPresenter.shared.showSettings(self, section: .general) })
         }
         if let problem = traceProblem {
             return ("Task records are incomplete", "Agneta couldn't save a task's record (\(problem)). Tasks keep running; check that the disk has space.",
                     "Dismiss", { self.traceProblem = nil })
+        }
+        if let left = conversationsLeft {
+            if left.count == 0 {
+                return ("Some conversations weren't deleted",
+                        "Clearing history couldn't delete every conversation from its engine's storage (\(left.problem)).",
+                        "Dismiss", { self.conversationsLeft = nil })
+            }
+            let count = left.count == 1 ? "1 conversation" : "\(left.count) conversations"
+            return ("Some conversations aren't deleted yet",
+                    "\(count) from cleared history are still in an engine's storage (\(left.problem)). Agneta tries again "
+                    + "each time it starts and whenever history is cleared.",
+                    "Try Again", { self.retryForgetting() })
         }
         if let account = accounts.first(where: { needsSignIn.contains($0.id) }) {
             let kind = account.kind

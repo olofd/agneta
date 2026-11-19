@@ -1,12 +1,13 @@
 // Deleting a task from history deletes its conversation. A dedicated engine's home goes whole, and Claude Code's and
 // Codex's files in the account folder are removed (EngineHomes). A shared engine keeps every task of an account in
 // its own storage, so it's asked to delete the task's session (ACP `session/delete`), started if it isn't running,
-// and then to clear what its storage still holds of it (`EngineAdapter.sessionsDeleted`).
+// and then to clear what its storage still holds of it (`EngineAdapter.sessionsDeleted`). The runtime keeps the
+// conversations still to delete (AgnetaRuntime, `pendingConversations`) until they are.
 import Foundation
 
 extension Router {
     /// A task's conversation in an account's shared engine, read from its trace before the trace goes.
-    public struct SharedConversation: Sendable, Hashable {
+    public struct SharedConversation: Sendable, Hashable, Codable {
         public var account: String
         public var engine: String
         public var session: String
@@ -16,6 +17,9 @@ extension Router {
     public struct ConversationDeletion: Sendable {
         public var deleted = 0
         public var problems: [String] = []
+        /// Conversations nothing more can be done for: deleted, or on an engine that can't delete one. The rest are
+        /// worth asking again (the engine wasn't here or failed, or their provider isn't served yet).
+        public var done: Set<SharedConversation> = []
     }
 
     /// The shared engine's conversation of a task, from its trace's `meta`; nil for a task on its own engine.
@@ -28,14 +32,14 @@ extension Router {
     }
 
     /// Asks each account's shared engine to delete these conversations, starting it where it isn't running (it then
-    /// stays, as after any task). An engine without `session/delete`, a provider signed out meanwhile (its engine
-    /// state went with it) or an engine that fails is reported, never retried behind the user's back.
+    /// stays, as after any task). An engine without `session/delete` or one that fails is reported; a provider not
+    /// served (not yet, at launch, or signed out: its engine state went with it) is left for the runtime to decide.
     public func deleteConversations(_ conversations: [SharedConversation]) async -> ConversationDeletion {
         var outcome = ConversationDeletion()
         let groups = Dictionary(grouping: Set(conversations)) { [$0.account, $0.engine] }
         for (pair, group) in groups {
             let (account, engine) = (pair[0], pair[1])
-            guard accounts[account] != nil else { continue } // signed out: the engine's state is gone already
+            guard accounts[account] != nil else { continue }
             guard let adapter = catalog.adapter(engine) else {
                 outcome.problems.append("\(group.count) on \(engine): that engine isn't here")
                 continue
@@ -59,8 +63,10 @@ extension Router {
                     _ = try await lease.peer.request("session/delete", ["sessionId": .string(conversation.session)])
                     deletedSessions[Self.process(lease), default: []].insert(conversation.session)
                     deleted += 1
+                    outcome.done.insert(conversation)
                 } catch let error as RPCError where error.code == RPCError.methodNotFound {
                     outcome.problems.append("\(adapter.displayName) can't delete a session")
+                    outcome.done.formUnion(group) // asking again can't help
                     break
                 } catch {
                     outcome.problems.append("\(adapter.displayName) didn't delete a session: \(error)")

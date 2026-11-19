@@ -56,6 +56,13 @@ public struct RuntimeInstaller: Sendable {
         }
     }
 
+    /// Reset: stops every install into `runtimes` going in this process and waits until each has, so none puts files
+    /// back after the reset deletes them. Whoever waited on one gets `CancellationError`.
+    public static func cancelAll(in runtimes: URL) async {
+        let folder = runtimes.path(percentEncoded: false)
+        await InstallGate.shared.cancelAll(under: folder.hasSuffix("/") ? folder : folder + "/")
+    }
+
     /// Where `name`'s program is (or will be) installed, for checking before a download.
     public func installed(_ name: String, executable: String? = nil) -> URL? {
         guard let asset = try? asset(name) else { return nil }
@@ -80,6 +87,7 @@ public struct RuntimeInstaller: Sendable {
         progress?(.waiting("Downloading \(name) \(asset.version)…"))
         let download = try await Download.fetch(asset.url, expected: asset.size.map(Int64.init), received: received)
         defer { try? FileManager.default.removeItem(at: download) }
+        try Task.checkCancellation()
         let data = try Data(contentsOf: download, options: .mappedIfSafe)
         guard Self.sha256(data) == asset.sha256 else { throw SignInError.provider("\(name) download didn't match its pinned checksum") }
         let staging = runtimes.appending(path: ".staging-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -102,6 +110,8 @@ public struct RuntimeInstaller: Sendable {
         guard let contents = Self.treeHash(prepared) else { throw SignInError.provider("couldn't read \(name) after unpacking it") }
         try asset.sha256.write(to: prepared.appending(path: ".sha256"), atomically: true, encoding: .utf8)
         try contents.write(to: prepared.appending(path: ".content-sha256"), atomically: true, encoding: .utf8)
+        // Cancelled (Reset) while unpacking: nothing is published.
+        try Task.checkCancellation()
         try FileManager.default.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
         // A bad copy already in place is moved aside first (removed once the new one is in), then the new folder
         // takes its name in one rename. If another process published meanwhile, its copy is used.
@@ -165,6 +175,7 @@ final class Download: NSObject, URLSessionDownloadDelegate, @unchecked Sendable 
     private let lock = NSLock()
     private var continuation: CheckedContinuation<URL, Error>?
     private var file: URL?
+    private var cancelled = false
 
     private init(expected: Int64?, report: (@Sendable (Int64, Int64?) -> Void)?) {
         self.expected = expected
@@ -176,13 +187,23 @@ final class Download: NSObject, URLSessionDownloadDelegate, @unchecked Sendable 
         let download = Download(expected: expected, report: received)
         let session = URLSession(configuration: .ephemeral, delegate: download, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
+        // Starting and cancelling take turns under the lock: a session cancelled (invalidated) first never gets a task,
+        // which would raise an exception.
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                download.lock.withLock { download.continuation = continuation }
-                session.downloadTask(with: url).resume()
+                let started = download.lock.withLock { () -> Bool in
+                    guard !download.cancelled else { return false }
+                    download.continuation = continuation
+                    session.downloadTask(with: url).resume()
+                    return true
+                }
+                if !started { continuation.resume(throwing: CancellationError()) }
             }
         } onCancel: {
-            session.invalidateAndCancel()
+            download.lock.withLock {
+                download.cancelled = true
+                session.invalidateAndCancel()
+            }
         }
     }
 
@@ -214,17 +235,28 @@ final class Download: NSObject, URLSessionDownloadDelegate, @unchecked Sendable 
     }
 }
 
-/// Runs one install per key at a time; callers asking meanwhile wait for the same result.
+/// Runs one install per key at a time; callers asking meanwhile wait for the same result. The install runs in a task
+/// of its own (a caller going away doesn't stop it for the others); `cancelAll` stops them all.
 actor InstallGate {
     static let shared = InstallGate()
-    private var running: [String: Task<URL, Error>] = [:]
+    private var running: [String: (id: UUID, task: Task<URL, Error>)] = [:]
 
     func run(_ key: String, _ work: @escaping @Sendable () async throws -> URL) async throws -> URL {
-        if let task = running[key] { return try await task.value }
-        let task = Task { try await work() }
-        running[key] = task
-        defer { running[key] = nil }
+        if let entry = running[key] { return try await entry.task.value }
+        let id = UUID(), task = Task { try await work() }
+        running[key] = (id, task)
+        // Only its own entry: after `cancelAll` a new install of the same key may be running.
+        defer { if running[key]?.id == id { running[key] = nil } }
         return try await task.value
+    }
+
+    /// Cancels the installs whose key (their folder) starts with `prefix`, and waits for them to end.
+    func cancelAll(under prefix: String) async {
+        let keys = running.keys.filter { $0.hasPrefix(prefix) }
+        let tasks = keys.compactMap { running[$0]?.task }
+        for key in keys { running[key] = nil }
+        for task in tasks { task.cancel() }
+        for task in tasks { _ = try? await task.value }
     }
 }
 

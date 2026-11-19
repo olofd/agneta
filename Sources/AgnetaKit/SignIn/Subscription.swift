@@ -11,7 +11,7 @@ public enum SubscriptionRoute: String, Sendable, CaseIterable {
     case claudeCode = "claude"
 }
 
-public struct SubscriptionAccount: Sendable {
+public struct SubscriptionAccount: Sendable, Equatable {
     public var route: SubscriptionRoute
     /// The account's home: codex/ for Codex, claude/ for Claude Code.
     public var home: URL

@@ -141,6 +141,10 @@ final class EngineLibrary {
     private var sink: AsyncStream<EngineCatalog>.Continuation?
     /// The showcase's engines: every one, as if installed. Nil in use.
     private var sample: [any EngineAdapter]?
+    /// Background downloads going, by engine, so Reset can stop them.
+    private var downloading: [String: _Concurrency.Task<Void, Never>] = [:]
+    /// Bumped by Reset: a download or install begun before it finishes without touching what's shown or checked.
+    private var generation = 0
 
     init(runtimes: URL, log: OperationalLog, bundled: Bundled = .app) {
         self.runtimes = runtimes
@@ -173,8 +177,16 @@ final class EngineLibrary {
         refresh()
     }
 
-    /// Reset: forgets everything; `start` begins again.
-    func reset() {
+    /// Finds the user's installs without a runtime: a reset interrupted at launch signs plans out before anything starts.
+    func findInstalls() async { installs = await lookUpInstalls() }
+
+    /// Reset: stops every download and install (and waits until each has stopped, so none puts files back after the
+    /// reset deletes them), then forgets everything; `start` begins again.
+    func reset() async {
+        generation += 1
+        for task in downloading.values { task.cancel() }
+        downloading = [:]
+        await RuntimeInstaller.cancelAll(in: runtimes)
         sink?.finish()
         sink = nil
         database = nil
@@ -380,16 +392,19 @@ final class EngineLibrary {
         downloads[engine] = EngineDownload(engine: engine, title: download.title, total: asset.size.map(Int64.init))
         log.log("engine-download", ["engine": .string(engine), "version": .string(asset.version), "reason": .string(reason)])
         refresh()
-        let started = Date()
-        _Concurrency.Task {
+        let started = Date(), generation = generation
+        downloading[engine] = _Concurrency.Task {
+            defer { if self.generation == generation { downloading[engine] = nil } }
             do {
                 let program = try await download.installer.install(download.name, executable: download.executable, received: { received, total in
                     _Concurrency.Task { @MainActor [weak self] in self?.progressed(engine, received: received, total: total) }
                 })
+                guard self.generation == generation else { return } // Reset meanwhile: it deleted what this installed
                 log.log("engine-downloaded", ["engine": .string(engine), "seconds": .int(Int64(Date().timeIntervalSince(started)))])
                 downloads[engine] = nil
                 checked[engine] = .some(program) // just checked by the install
             } catch {
+                guard self.generation == generation else { return }
                 log.error("engine-download-failed", ["engine": .string(engine), "reason": .string("\(error)")])
                 downloads[engine]?.problem = "\(download.title) couldn't be downloaded: \(error.localizedDescription)"
             }
@@ -415,8 +430,11 @@ final class EngineLibrary {
             _Concurrency.Task { @MainActor [weak self] in self?.progressed(engine, received: received, total: total) }
         }
         let received = tracked ? report : nil
+        let generation = generation
         do {
             let program = try await download.installer.install(download.name, executable: download.executable, progress: progress, received: received)
+            // Reset meanwhile: what this installed is gone, and nothing of it is shown or remembered.
+            guard self.generation == generation else { throw CancellationError() }
             // Installed, whoever started the download: no progress or earlier failure is left on a card.
             downloads[engine] = nil
             checked[engine] = .some(program)
@@ -424,7 +442,7 @@ final class EngineLibrary {
             return program
         } catch {
             // The sign-in window says what went wrong; no card is left behind for a download it started.
-            if tracked { downloads[engine] = nil; refresh() }
+            if tracked, self.generation == generation { downloads[engine] = nil; refresh() }
             throw error
         }
     }
