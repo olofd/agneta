@@ -219,13 +219,14 @@ The user can limit each app in Settings → Apps. Every limit is optional, and n
 | `approval` | `ask-app` (the default): tool permission requests reach the app as `session/request_permission`. `never-ask`: the policy is the permission, and Agneta answers |
 | `readable`, `writable`, `readOnly`, `denied` | Absolute paths. `readOnly` stays read-only even inside the workspace; `denied` is neither readable nor writable, even inside allowed folders |
 | `toolEnvironment` | Variables for shell commands, which run through Agneta's broker on every engine: your toolchain's `PATH` (each entry an absolute path inside the session's folders, no empty entries; it goes ahead of everything else), `CARGO_HOME`, `PYTHONPATH`, your kit's settings. Your values win over the ones developer access sets. Refused: `HOME`, `TMPDIR`, `USER`, `LOGNAME`, `SHELL`, `BASH_ENV`, `ENV`, `ZDOTDIR`, `PROMPT_COMMAND`, `IFS`, and anything starting `DYLD_`, `LD_`, `AGNETA_`, `CLAUDE_CODE_`, `CODEX_`, `GOOSE_` or `OPENCODE_`. Commands also get the selected Xcode's own tools on `PATH` and `SDKROOT` |
-| `toolPorts`, `toolSockets` | Loopback ports and Unix sockets that shell commands may reach (every engine's commands run through Agneta's broker). A socket follows the folder rules: one inside other apps' containers, Agneta's data, `~/.ssh`, LaunchAgents or Keychains is refused |
+| `toolPorts`, `toolSockets` | Loopback ports and Unix sockets that shell commands may reach (every engine's commands run through Agneta's broker). A socket follows the folder rules: one inside other apps' containers, Agneta's data, `~/.ssh`, LaunchAgents or Keychains is refused. In a `contained` session they are also held to the app ([Tool ports and sockets](#tool-ports-and-sockets)): a socket must be inside a folder the app was granted (its own workspace included) or served by the app itself, and a port served by the app itself. Developer access isn't checked |
 | `limits` | `maxTurns`: model calls within one prompt (default 200). `maxSeconds`: a prompt's wall time (default 4 hours). `maxCostUSD`: the task's known cost so far, across resumes (no default) |
 
 - **Nothing is weakened silently.** A policy Agneta can't enforce is refused with `-32602` and `data.agneta.unenforceable: ["<field>"]`. That covers:
   - unknown fields, fields of the wrong type (`"tools": 5`), and malformed or non-positive limits;
   - relative paths, and folders that contain the home folder, other apps' containers, Agneta's own data, `~/Library/LaunchAgents`, `~/Library/Keychains` or `~/.ssh`;
   - a writable folder inside a denied one, or a denied workspace;
+  - in a `contained` session, a `toolSockets` entry outside the granted folders, or a `toolPorts` entry, that the app doesn't serve itself ([Tool ports and sockets](#tool-ports-and-sockets));
   - `maxCostUSD` on an engine that doesn't report cost per call (Claude Code, Codex).
 - **Sending no policy** gives `workspace` tools in `cwd`, the grant's sandbox and `ask-app` approval.
 
@@ -254,7 +255,7 @@ Under each mode:
 | Files read | The workspace and the policy's folders | Also the whole home folder, except credentials and private data (`~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`, `~/.git-credentials`, `~/.config/gh`, `~/.npmrc`, `~/.pypirc`, cargo credentials, `~/.claude*`, `~/.codex`, other agents' sign-ins such as Goose's and OpenCode's, shell histories, the Keychains folder, Cookies, Mail, Messages, Safari and other browsers' profiles, other apps' containers and group containers, `~/Library/LaunchAgents`) and all of Agneta's own data: every build's data, caches, logs and preferences, and other apps' workspaces. It's a list: another app's own data that it doesn't name (an unsandboxed app's folder under `~/Library/Application Support`) is readable, as in Terminal |
 | Files written | The workspace and `writable` | The same, plus the app's own build caches: one folder per app, kept across its sessions so its builds stay warm. Cargo, pip, uv, npm, yarn, bun, go, gradle, deno, clang, Homebrew and tools that follow `XDG_CACHE_HOME` are pointed there; a tool that keeps its cache in `~/Library/Caches` or `~/.cache` with no variable to move it (SwiftPM, poetry, Playwright and the like) can't write it. Never the user's own caches, where a planted entry would later run as the user, outside any sandbox |
 | Toolchains | Only what the policy's folders hold | The user's own: `PATH` has `~/.cargo/bin`, `~/.local/bin`, `~/.volta/bin`, `/opt/homebrew/bin` and the like, with `RUSTUP_HOME` set (your `~/.cargo/config.toml` isn't read: the app's cargo folder is its own). The toolchains are read-only: a project that pins a toolchain you haven't installed can't install it |
-| Loopback | `toolPorts` only | Any port (every local server, as in a terminal), and commands may listen on loopback |
+| Loopback and sockets | `toolPorts` the app serves itself, and `toolSockets` it serves itself or that are inside its granted folders ([Tool ports and sockets](#tool-ports-and-sockets)) | Any port (every local server, as in a terminal), and commands may listen on loopback; `toolSockets` as listed |
 | Still never | | Credentials, opening apps or Apple Events, the user's own Claude Code settings, skills, hooks and MCP servers, writes outside the session's folders and the app's caches |
 
 Something the agent reads could try to get it to send files online, exactly as with an approved command in a terminal: ask for `contained` where your app doesn't need more, and tell your users what developer access means. Every tool call is still in the task's trace.
@@ -267,6 +268,27 @@ Known limits, each the same as in a terminal:
 - **Other processes' environments are readable,** in both modes. macOS lets any process of the user's, sandboxed or not, read the environment of another one that isn't Apple's own (measured: no sandbox rule stops it). So a command can read what the user's own programs were started with, and the provider key of an engine on an API-key account. Plan sign-ins are in the Keychain, and Agneta's broker tokens are in files, so neither is exposed.
 
 **Changing the engine's mode** (`session/set_mode`, or `session/set_config_option` with `configId: "mode"`) is refused where the mode would leave what Agneta set up: on Claude Code and Codex, a mode that stops the engine asking permission, since Agneta checks each tool call from those questions; on OpenCode, any agent but Agneta's, which carries the session's instructions.
+
+#### Tool ports and sockets
+
+A Unix socket or a loopback port reaches whatever serves it: Docker's socket can start a container that mounts the user's home, and a local service's port does what that service does. So in a `contained` session (as the task really runs: `_meta.agneta.sandbox` is `contained`) the policy's `toolSockets` and `toolPorts` are held to what the user granted the app:
+
+- **A socket inside a folder the app was granted** (the folders the approval window showed, and the app's own workspace) is allowed, whoever serves it. Paths are compared as real paths, and a link in a writable folder pointing to another socket gets nothing: the sandbox matches the socket the link resolves to (measured).
+- **Any other socket, and every port, must be served by the app itself.** When the session opens, Agneta finds every process bound to that socket path, or listening on that port, and every one must be the app:
+  - for a verified app, any process with a valid Apple-issued signature from the app's team (its helpers and XPC services count);
+  - for an app Agneta can't verify, the process holding its connection to Agneta, or one that process started (a child, at any depth).
+- Nothing listening counts as not served: **start your server before you open the session.** Processes Agneta can't inspect (another user's, or the system's) count as not the app.
+
+A session that names one it can't allow is refused when it opens (or is loaded or forked) with `-32602`, `data.agneta.unenforceable: ["toolSockets"]` or `["toolPorts"]`, and a reason naming the socket or port, for example:
+
+```json
+{"code": -32602, "message": "Agneta can't enforce toolPorts: loopback port 8125 isn't served by Example's own process or one it started: a contained task reaches only its app's own ports; developer access allows it",
+ "data": {"agneta": {"unenforceable": ["toolPorts"], "reason": "loopback port 8125 isn't served by …"}}}
+```
+
+It's checked when the session opens, is loaded or is forked, and again if the app's grant changes (a narrowed grant stops a session that no longer fits). It isn't checked before each command: if your server stops during the session and another program then takes its port, or binds its socket path, the session's commands can reach that program until the session ends. Keep your server running for as long as its sessions are open.
+
+The app's own MCP servers (`mcpServers`, which the engine calls) aren't affected by any of this.
 
 ### Instructions
 

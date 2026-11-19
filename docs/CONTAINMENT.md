@@ -63,6 +63,7 @@ None of these is built. The acceptance test is written against behaviour, not ag
 ## Known limits
 
 - **Developer access is a terminal's reach.** Commands and the engine's own tools get the internet, the home folder (credentials and Agneta's data excepted) and every loopback port. It's the default for an app with `workspace` tools, unless the user chooses Contained.
+- **A contained task's sockets and ports are checked when it opens,** not before each command: the app's own server, or a socket in its granted folders, is what it may reach. If the app's server stops and another program takes its port or socket path during the session, its commands reach that program until the session ends ([APP_PROTOCOL.md](APP_PROTOCOL.md#tool-ports-and-sockets)).
 - **A command that detaches** (`setsid`, `set -m`) can outlive its engine and Agneta, in both modes: the sandbox can't refuse it without breaking ordinary tools.
 - **Engines reach any host on port 443.** Seatbelt filters connections by port, not host name, and engines need HTTPS for their provider. A per-host allowlist needs a network layer Agneta owns (a proxy, or the virtual machine route above).
 - **Claude Code's and Codex's other built-in tools (reading, editing, fetching) run inside the engine's profile,** not the stricter shell profile; their commands go through the broker. Agneta refuses what the policy forbids in their permission requests ([APP_PROTOCOL.md](APP_PROTOCOL.md#permissions)). The acceptance test hasn't yet run with their real programs; it needs signed-in accounts.

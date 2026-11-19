@@ -253,9 +253,9 @@ export interface Policy {
   denied?: string[];
   /** Variables for shell commands (some names are refused: see the protocol). */
   toolEnvironment?: Record<string, string>;
-  /** Loopback ports shell commands may reach. */
+  /** Loopback ports shell commands may reach. In a contained session, only ports your app serves itself (start them first). */
   toolPorts?: number[];
-  /** Unix sockets shell commands may reach. */
+  /** Unix sockets shell commands may reach. In a contained session, only those in granted folders or your app serves itself. */
   toolSockets?: string[];
   limits?: PolicyLimits;
 }
