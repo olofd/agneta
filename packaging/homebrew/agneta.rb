@@ -9,7 +9,7 @@ cask "agneta" do
 
   url "https://github.com/olofd/agneta/releases/download/v#{version}/Agneta-#{version}-#{arch}.dmg"
   name "Agneta"
-  desc "The AI you already pay for, in the Mac apps you choose"
+  desc "Give Mac apps an AI agent you control"
   homepage "https://agneta.dahlbom.io"
 
   livecheck do
