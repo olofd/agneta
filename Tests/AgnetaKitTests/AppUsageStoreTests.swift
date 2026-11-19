@@ -60,4 +60,34 @@ struct AppUsageStoreTests {
         try database.addUsage(grant: "g1", hour: AppMeter.hour(of: Date()), .init(tasks: 1))
         #expect(try database.usage(since: .distantPast)["g1"] != nil)
     }
+
+    /// The runtime records what the router counts, so an app's usage counts after a restart; Remove Access clears it.
+    @Test func usageCountsAfterARestartAndGoesWithAccess() async throws {
+        let root = try Self.folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = AgnetaStore(root: root.appending(path: "agneta", directoryHint: .isDirectory))
+        func open() async throws -> AgnetaRuntime {
+            try await AgnetaRuntime(.init(store: store, shellTool: URL(filePath: "/usr/bin/true"))) { _ in nil }
+        }
+        let grant = Router.Grant(app: "Example App", accounts: ["a1"], limits: AppLimits(spend: .init(max: 5, period: .day), newTasks: .init(max: 2, period: .day)))
+        var runtime = try await open()
+        try runtime.database.save(grant, tokenHash: "h1")
+        await runtime.shutdown()
+
+        runtime = try await open()
+        let router = runtime.router
+        await router.taskCommitted(meter: grant.id, at: await router.reserveTask(meter: grant.id))
+        await router.addUsage(meter: grant.id, AppMeter.Usage(cost: 3, inputTokens: 10, outputTokens: 2, turns: 1))
+        #expect(await runtime.appStatus(grant: grant.id).today == AppMeter.Usage(cost: 3, inputTokens: 10, outputTokens: 2, turns: 1, tasks: 1))
+        for _ in 0..<100 where (try? runtime.database.usage(since: .distantPast)[grant.id]?.values.first?.turns) != 1 { try await Task.sleep(for: .milliseconds(10)) }
+        await runtime.shutdown()
+
+        runtime = try await open()
+        let restored = await runtime.appStatus(grant: grant.id)
+        #expect(restored.today.tasks == 1 && restored.spent == 3 && restored.started == 1)
+        try await runtime.revoke(grant: grant.id)
+        #expect(try runtime.database.usage(since: .distantPast).isEmpty)
+        #expect(await runtime.appStatus(grant: grant.id).today.isEmpty)
+        await runtime.shutdown()
+    }
 }

@@ -60,4 +60,42 @@ struct LimitMeasurementTests {
         }
         await stack.stop()
     }
+
+    /// The user's limits for an app hold on a real engine and runtime: a second turn waits for the app's "at once", and
+    /// a new task past its limit is refused with -32016. (Spending needs a priced model, so an API key: not here.)
+    @Test func limitsHoldOnARealEngine() async throws {
+        let stack = try await RouterIntegrationTests.Stack.start(port: UInt16(47428), modelPort: 47429)
+        do {
+            let client = AppClient(port: stack.port)
+            try await client.pairAndInitialize("Limited")
+            let grant = try #require(await stack.runtime.router.tokens.values.first { $0.app == "Limited" }?.id)
+            try await stack.runtime.setLimits(grant: grant, limits: AppLimits(atOnce: 1, newTasks: .init(max: 2, period: .hour)))
+            let project = try stack.workspace("Limited")
+            let one = try await client.newSession(cwd: project, tools: "workspace", sandbox: "contained")
+            let two = try await client.newSession(cwd: project, tools: "workspace", sandbox: "contained")
+            let started = ContinuousClock.now
+            async let first = client.prompt(one, #"CALL shell {"command": "sleep 2; echo done"}"#)
+            try await Task.sleep(for: .milliseconds(300))
+            async let second = client.prompt(two, "hello")
+            let results = try await [first, second]
+            #expect(results.allSatisfy { $0["stopReason"]?.stringValue == "end_turn" })
+            let queued = client.notifications("agneta/queued").first { $0["sessionId"]?.stringValue == two }
+            print("MEASURE at once on Goose: queued", queued.map { "\($0)" } ?? "none", "both done after", ContinuousClock.now - started)
+            #expect(queued?["waitingFor"]?.stringValue == "app")
+            do {
+                _ = try await client.newSession(cwd: project, tools: "workspace", sandbox: "contained")
+                Issue.record("a third new task started")
+            } catch let error as RPCError {
+                print("MEASURE new tasks on Goose:", error.code, error.message)
+                #expect(error.code == -32016)
+            }
+            let status = await stack.runtime.appStatus(grant: grant)
+            #expect(status.today.tasks == 2 && status.today.turns == 2)
+            client.close()
+        } catch {
+            await stack.stop()
+            throw error
+        }
+        await stack.stop()
+    }
 }
