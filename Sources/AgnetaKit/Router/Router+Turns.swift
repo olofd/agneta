@@ -18,14 +18,11 @@ extension Router {
     /// Whether the app's "at once" is full.
     func appFull(_ meter: String) -> Bool { limits(meter: meter).atOnce.map { running(meter: meter) >= $0 } ?? false }
 
-    /// Whether the waiter at `index` is held by its own app: its "at once" is full, or an earlier turn of the app is
-    /// held so (the app's turns for its limit go in order). One held so doesn't hold up other apps' turns on its
-    /// account; one waiting for a full account doesn't hold up the app's turns elsewhere.
-    func heldByApp(_ index: Int) -> Bool {
-        let meter = waiting[index].meter
-        guard limits(meter: meter).atOnce != nil else { return false }
-        return appFull(meter) || waiting[..<index].indices.contains { waiting[$0].meter == meter && heldByApp($0) }
-    }
+    /// Whether the waiter at `index` is held by its own app: its "at once" is full. (An app's turns held by its limit
+    /// go in order, and an earlier one held so is held for the same reason, so this is the whole rule; it's checked for
+    /// every waiter on every admission, so it must stay this cheap.) One held so doesn't hold up other apps' turns on
+    /// its account; one waiting for a full account doesn't hold up the app's turns elsewhere.
+    func heldByApp(_ index: Int) -> Bool { appFull(waiting[index].meter) }
 
     /// Whether a turn wanting this room waits behind the waiter at `index`: one of its own app held by the app's limit,
     /// or one on its account that isn't.
@@ -36,7 +33,7 @@ extension Router {
 
     /// What a turn waits for, from what holds it: its app's "at once", its account, or Agneta's room.
     func waitingFor(account: String, meter: String) -> String {
-        if appFull(meter) || waiting.indices.contains(where: { waiting[$0].meter == meter && heldByApp($0) }) { return "app" }
+        if appFull(meter) { return "app" }
         if runningTurns.values.count(where: { $0.account == account }) >= concurrency.perAccount { return "account" }
         return runningTurns.count >= concurrency.global ? "agneta" : "account"
     }
@@ -94,8 +91,8 @@ extension Router {
         var index = 0
         while index < waiting.count {
             let waiter = waiting[index]
-            if hasRoom(for: waiter.account, meter: waiter.meter)
-                && !waiting[..<index].indices.contains(where: { waiting[$0].meter == waiter.meter && heldByApp($0) }) {
+            // Room for its account and its app; in order, so an app's turns held by its limit run oldest first.
+            if hasRoom(for: waiter.account, meter: waiter.meter) {
                 waiting.remove(at: index)
                 start(waiter.session, account: waiter.account, meter: waiter.meter)
                 waiter.resume.resume(returning: .admitted)

@@ -380,10 +380,17 @@ public actor Router {
     /// sessions that no longer fit stop, and its apps hear what they may use.
     func apply(_ grant: Grant) async {
         for (appID, app) in apps where app.grant?.id == grant.id { apps[appID]?.grant = grant }
-        for (session, entry) in sessions where apps[entry.app]?.grant?.id == grant.id
-            && (!Self.fits(account: entry.account, engine: entry.lease.engine.id, policy: entry.policy, sandbox: entry.sandbox, grant: grant)
-                || uncounted(grant, account: entry.account).contains(entry.lease.engine.id)) {
-            await stop(session)
+        for (session, entry) in sessions where apps[entry.app]?.grant?.id == grant.id {
+            if !Self.fits(account: entry.account, engine: entry.lease.engine.id, policy: entry.policy, sandbox: entry.sandbox, grant: grant) {
+                await stop(session)
+            } else if uncounted(grant, account: entry.account).contains(entry.lease.engine.id), let spend = grant.limits.spend {
+                // A spending limit set while it ran, on an engine that can't be counted: stopped by that limit.
+                let name = catalog.entries[entry.lease.engine.id]?.name ?? entry.lease.engine.id
+                let hit = LimitHit(limit: "appSpend", value: .double(spend.max), setBy: "user",
+                                   extra: ["period": .string(spend.period.rawValue),
+                                           "reason": .string("\(name) reports no cost, so it can't run under the spending limit you set for this app in Agneta")])
+                await stop(session, byLimit: hit)
+            }
         }
         accessChanged(grant: grant.id)
     }
@@ -607,15 +614,23 @@ public actor Router {
     }
 
     /// Stops a session from Agneta's UI. The app sees the turn end as cancelled by the user.
-    public func stop(_ id: String) async {
+    public func stop(_ id: String) async { await stop(id, byLimit: nil) }
+
+    /// Stops a session: by the user, or by a limit the user set for its app (`byLimit`), which the app hears as
+    /// `stoppedBy: "limit"` with the limit, and its running prompt's answer names.
+    func stop(_ id: String, byLimit hit: LimitHit?) async {
         guard let session = sessions[id] else { return }
-        traces?.session(id)?.writer.record("lifecycle", ["event": "stop", "by": "user"])
-        // The app hears it was the user before the engine answers the cancelled prompt, so its turn ends as stopped by
-        // the user. Queued before anything that follows (messages leave in order); waited for briefly, since an app
-        // that stopped reading mustn't hold up Stop.
+        traces?.session(id)?.writer.record("lifecycle", ["event": "stop", "by": hit == nil ? "user" : "limit"])
+        // Its running prompt is answered as stopped by the limit (and only a running one: nothing is left for a later).
+        if let hit, inFlight[id] != nil { enforcedLimits[id] = hit }
+        // The app hears who stopped it before the engine answers the cancelled prompt, so its turn ends as stopped by
+        // them. Queued before anything that follows (messages leave in order); waited for briefly, since an app that
+        // stopped reading mustn't hold up Stop.
         if let app = apps[session.app] {
             let peer = app.peer
-            await Self.bounded(seconds: 1) { try? await peer.notify("agneta/sessionStopped", ["sessionId": .string(id), "stoppedBy": "user"]) }
+            let base: JSONValue = ["sessionId": .string(id), "stoppedBy": hit == nil ? "user" : "limit"]
+            let params = hit.map { base.setting("limit", to: $0.report) } ?? base
+            await Self.bounded(seconds: 1) { try? await peer.notify("agneta/sessionStopped", params) }
         }
         await Self.closeOnEngine(session)
         await end(id, .stopped)

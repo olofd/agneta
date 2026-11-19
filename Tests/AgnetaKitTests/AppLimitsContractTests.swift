@@ -301,6 +301,10 @@ final class TestLedger: UsageLedger, @unchecked Sendable {
         try await AppLimitsContractTests.until("sessionStopped") {
             app.notifications("agneta/sessionStopped").contains { $0["sessionId"]?.stringValue == session }
         }
+        // Stopped by the limit the user set, and the app is told why.
+        let stopped = app.notifications("agneta/sessionStopped").first { $0["sessionId"]?.stringValue == session }
+        #expect(stopped?["stoppedBy"] == "limit" && stopped?["limit"]?["limit"] == "appSpend" && stopped?["limit"]?["setBy"] == "user")
+        #expect(stopped?["limit"]?["reason"]?.stringValue?.hasPrefix("Codex reports no cost") == true, "\(String(describing: stopped))")
         #expect(await AppLimitsContractTests.refusal { try await app.prompt(session, "hello") } != nil)
     }
 
@@ -327,6 +331,37 @@ final class TestLedger: UsageLedger, @unchecked Sendable {
         // The fake's slow turn ends by itself after 3 s, and the waiting one runs.
         _ = try await holding.value
         #expect(try await queued.value["stopReason"] == "end_turn")
+    }
+
+    /// Many turns of an app with "at once" set (not reached) waiting for a full account: each joins the queue at once.
+    /// (Checking whether a waiting turn was held by its app once recursed over the app's earlier waiters: 20 took a
+    /// second, 24 took 20, with the router blocked for every app.)
+    @Test func queueingManyTurnsOfACappedApp() async throws {
+        let stack = try await Stack.start(port: 47680, concurrency: .init(perAccount: 1, limitGrace: .seconds(60)))
+        defer { stack.stop() }
+        let capped = AppClient(port: stack.port), other = AppClient(port: stack.port)
+        defer { capped.close(); other.close() }
+        try await capped.pairAndInitialize("Capped")
+        try await other.pairAndInitialize("Other")
+        try await stack.router.setLimits(grant: try await AppLimitsContractTests.grant(stack, "Capped"), limits: AppLimits(atOnce: 8))
+        let busy = try await stack.session(other, account: "brokered")
+        let holding = Task { try await other.prompt(busy, "deaf") }
+        defer { holding.cancel() }
+        try await AppLimitsContractTests.running(stack, busy)
+        var turns: [Task<JSONValue, Error>] = []
+        defer { turns.forEach { $0.cancel() } }
+        var slowest = Duration.zero
+        for _ in 1...30 {
+            let session = try await stack.session(capped, account: "brokered")
+            let started = ContinuousClock.now
+            turns.append(Task { try await capped.prompt(session, "hello") })
+            while await !stack.router.waiting.contains(where: { $0.session == session }), ContinuousClock.now - started < .seconds(5) {
+                try await Task.sleep(for: .milliseconds(2))
+            }
+            slowest = max(slowest, ContinuousClock.now - started)
+        }
+        #expect(await stack.router.waiting.count == 30)
+        #expect(slowest < .milliseconds(100), "the slowest took \(slowest)")
     }
 
     /// A turn that called a model its engine gave no price for is marked, not silently counted as free.

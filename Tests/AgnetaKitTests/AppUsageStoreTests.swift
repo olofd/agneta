@@ -109,5 +109,26 @@ struct AppUsageStoreTests {
         await runtime.shutdown() // the recorded events drain first
         #expect(try AgnetaDatabase(file: runtime.database.file).usage(since: .distantPast).isEmpty)
     }
+
+    /// A database made by the branch's first build, whose usage table had no `unpriced` column, opens, and adds and
+    /// reads usage: the column came in a migration of its own.
+    @Test func anEarlierBranchDatabaseOpens() throws {
+        let folder = try Self.folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appending(path: "agneta.sqlite")
+        let queue = try DatabaseQueue(path: file.path(percentEncoded: false))
+        try AgnetaDatabase.migrator.migrate(queue, upTo: "2026-11-20-app-limits")
+        let hour = AppMeter.hour(of: Date())
+        try queue.write { db in
+            #expect(try !db.columns(in: "app_usage").contains { $0.name == "unpriced" })
+            try db.execute(sql: "INSERT INTO grants (tokenHash, id, app, verified, accounts, engines, created, tools, folders) VALUES ('h1', 'g1', 'App', 0, '[]', '\"all\"', ?, 'app-only', '[]')",
+                           arguments: [Date()])
+            try db.execute(sql: "INSERT INTO app_usage (grantID, hour, cost, turns) VALUES ('g1', ?, 1.5, 1)", arguments: [hour])
+        }
+        try queue.close()
+        let database = try AgnetaDatabase(file: file)
+        try database.addUsage(grant: "g1", hour: hour, .init(cost: 0.5, turns: 1, unpriced: 1))
+        #expect(try database.usage(since: hour.addingTimeInterval(-3600))["g1"]?[hour] == AppMeter.Usage(cost: 2, turns: 2, unpriced: 1))
+    }
 }
 

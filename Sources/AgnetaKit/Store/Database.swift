@@ -174,9 +174,13 @@ public final class AgnetaDatabase: Sendable {
                 t.column("outputTokens", .integer).notNull().defaults(to: 0)
                 t.column("turns", .integer).notNull().defaults(to: 0)
                 t.column("tasks", .integer).notNull().defaults(to: 0)
-                t.column("unpriced", .integer).notNull().defaults(to: 0)
                 t.primaryKey(["grantID", "hour"])
             }
+        }
+        // Turns on API keys whose models had no price (AppMeter.Usage.unpriced). A migration of its own: a database that
+        // ran the one above already won't run it again.
+        migrator.registerMigration("2026-11-21-app-usage-unpriced") { db in
+            try db.alter(table: "app_usage") { t in t.add(column: "unpriced", .integer).notNull().defaults(to: 0) }
         }
         return migrator
     }
@@ -294,7 +298,7 @@ public final class AgnetaDatabase: Sendable {
             for row in try Row.fetchAll(db, sql: "SELECT * FROM app_usage WHERE hour >= ?", arguments: [since]) {
                 usage[row["grantID"], default: [:]][row["hour"]] = AppMeter.Usage(cost: row["cost"], inputTokens: row["inputTokens"],
                                                                                  outputTokens: row["outputTokens"], turns: row["turns"], tasks: row["tasks"],
-                                                                                 unpriced: row["unpriced"])
+                                                                                 unpriced: (row["unpriced"] as Int?) ?? 0)
             }
             return usage
         }

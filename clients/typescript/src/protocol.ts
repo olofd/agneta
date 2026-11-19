@@ -454,6 +454,8 @@ export type StoppedBy = 'user' | 'engine' | 'limit';
 export interface SessionStoppedParams {
   sessionId: string;
   stoppedBy: StoppedBy;
+  /** For `limit` when the user's spending limit for the app stopped it (Codex on an API key can't be counted): which, and why. */
+  limit?: LimitHit & { reason?: string };
 }
 
 export interface RateLimitDetails {

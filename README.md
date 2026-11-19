@@ -267,7 +267,7 @@ The engine's standard ACP `session/update` notifications arrive unchanged, under
 | `agneta/queued {"sessionId", "position", "waitingFor"}` | The provider is busy, or (`waitingFor: "app"`) your app is at the user's limit of tasks at once; the turn waits its place and runs later |
 | `agneta/sessionStopped {"stoppedBy": "user"}` | The user pressed Stop in Agneta. Show it as stopped, not as an error |
 | `agneta/sessionStopped {"stoppedBy": "engine"}` | The engine ended on its own; resume the task with `session/load` |
-| `agneta/sessionStopped {"stoppedBy": "limit"}` | A limit ended the session (the policy's, or the spending limit the user set for your app); load it again to go on |
+| `agneta/sessionStopped {"stoppedBy": "limit"}` | A limit ended the session (the policy's, or the spending limit the user set for your app, named in `limit`); load it again to go on, on an engine that limit can count |
 | `agneta/rateLimited {"account", "resetsAt"}` | The provider's limit stopped the turn. Retry after `resetsAt`, or use another provider |
 | Error with `data.agneta.needsSignIn` | The provider must sign in again; ask the user to open Agneta |
 | `-32011` | A turn is already running in this session: steer it, or wait |
