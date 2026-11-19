@@ -125,6 +125,9 @@ test('presence: running, blocked, installed (and where), on a disk image, transl
   assert.deepEqual(await look({ ...installed, path: '/Users/someone/Applications/Agneta.app' }), { state: 'notRunning', location: 'applications', version: '0.5.0' });
   assert.deepEqual(await look({ ...installed, path: '/Users/someone/src/agneta/build/Agneta.app' }), { state: 'notRunning', location: 'elsewhere', version: '0.5.0' });
   assert.deepEqual(await look({ ...installed, path: '/Volumes/Agneta 1/Agneta.app' }), { state: 'onDiskImage' });
+  assert.deepEqual(await look({ ...installed, path: '/Volumes/Agneta 1/Agneta.app', readOnly: true }), { state: 'onDiskImage' });
+  // A writable volume under /Volumes (an external drive someone keeps apps on) isn't a disk image, as Agneta decides.
+  assert.deepEqual(await look({ ...installed, path: '/Volumes/External/Apps/Agneta.app', readOnly: false }), { state: 'notRunning', location: 'elsewhere', version: '0.5.0' });
   assert.deepEqual(await look({ ...installed, path: '/private/var/folders/x/T/AppTranslocation/AB12/d/Agneta.app' }), { state: 'onDiskImage' });
   assert.deepEqual(await look({ ...installed, identifier: 'com.example.impostor' }), { state: 'notInstalled' });
   assert.deepEqual(await look(null), { state: 'notInstalled' });
@@ -190,6 +193,8 @@ test('outdated: from the bundle before opening, from the catalog\'s version, and
   await assert.rejects(running().connect(), (error) => error instanceof OutdatedError && error.version === '0.4.9');
   versions.current = null;
   await assert.rejects(running().connect(), (error) => error instanceof OutdatedError && error.version === null);
+  // Without agneta/catalog it's 0.4.0 or earlier: too old for 0.5.0, not for 0.3.0.
+  assert.ok((await client(t, agneta.port, environment({ handler: installed }), { minimumVersion: '0.3.0' }).connect()).providers.length);
   versions.current = '0.5.1';
   assert.ok((await running().connect()).providers.length);
 });
@@ -296,4 +301,71 @@ test('versions and places', () => {
   assert.equal(placement('/Users/someone/Applications/Agneta.app', '/Users/someone/'), 'applications');
   assert.equal(placement('/Applications/Utilities/Agneta.app', '/Users/someone'), 'elsewhere');
   assert.equal(placement('/Volumes/Agneta/Agneta.app'), 'diskImage');
+});
+
+test('cancelling stops everything: a guide still asking, a late yes, a lookup under way; nothing is opened after', async (t) => {
+  const port = await freePort();
+  // A guide that never answers: Cancel ends the connect at once.
+  let env = environment();
+  const controller = new AbortController();
+  const hanging = client(t, port, env).connect({ guide: () => new Promise(() => {}), signal: controller.signal });
+  setTimeout(() => controller.abort(), 50);
+  await assert.rejects(hanging, AbortedError);
+  assert.deepEqual(env.opened, []);
+  // A yes that comes after Cancel counts for nothing: the install page isn't opened.
+  env = environment();
+  const late = new AbortController();
+  const answer = client(t, port, env).connect({ signal: late.signal, guide: () => new Promise((resolve) => { late.abort(); setTimeout(() => resolve(true), 20); }) });
+  await assert.rejects(answer, AbortedError);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.deepEqual(env.opened, []);
+  // Cancel while the install wait looks: Agneta, found installed, isn't opened.
+  env = environment();
+  const looking = new AbortController();
+  let looks = 0;
+  env.findHandler = async () => {
+    if (++looks === 1) return null;
+    looking.abort();
+    return installed;
+  };
+  await assert.rejects(client(t, port, env).connect({ guide: () => true, signal: looking.signal }), AbortedError);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.deepEqual(env.opened, [`${installPage}#arm64`], 'only the page the user asked for');
+});
+
+test('opening Agneta once installed is tried again when it fails', async (t) => {
+  const port = await freePort();
+  const behaviour = agnetaLike();
+  let agneta = null;
+  t.after(async () => { await agneta?.close(); });
+  let tries = 0;
+  const env = environment({ handler: installed, onOpen: () => {
+    if (++tries === 1) return false;
+    setTimeout(async () => { agneta = await standIn(behaviour.answer, { port }); }, 50);
+    return true;
+  } });
+  const app = client(t, port, env);
+  const connection = await app.waitForAgneta({ installing: true, openWhenInstalled: true, timeout: 8000 });
+  assert.ok(connection.isOpen);
+  assert.equal(tries, 2);
+});
+
+test('minimumVersion must be a version', () => {
+  for (const bad of ['', 'latest', '0.5.0-beta', '1.2.3.4', 'v1']) {
+    assert.throws(() => new AgnetaClient({ name: 'Example', minimumVersion: bad }), TypeError, bad);
+  }
+  assert.equal(new AgnetaClient({ name: 'Example', minimumVersion: '1' }).options.minimumVersion, '1');
+  // Found versions compare by their numbers only.
+  assert.equal(compareVersions('0.5.0-beta', '0.5.0'), 0);
+});
+
+test('waiting for Agneta while something else opens the connection leaves one socket', async (t) => {
+  const behaviour = agnetaLike();
+  const agneta = await standIn(behaviour.answer);
+  t.after(() => agneta.close());
+  const app = client(t, agneta.port, environment({ handler: installed }));
+  const [opened, waited] = await Promise.all([app.open(), app.waitForAgneta()]);
+  assert.equal(opened, waited);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(agneta.peers.length, 1);
 });

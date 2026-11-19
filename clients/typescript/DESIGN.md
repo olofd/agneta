@@ -43,7 +43,9 @@ Every app that talks to Agneta used to write the same hundred careful lines: ope
 - **Where it is, never the path.** `presence()` says `applications`, `elsewhere` or `onDiskImage`; the path (which holds the user's home folder name) stays inside the library.
 - **A yes to getting Agneta covers opening it once installed,** within that flow: a second question at that moment is friction the rule wasn't written for. At launch (`pair: 'never'`) only the open question is asked, and only of someone with a kept token, as Project Chat did before.
 - **Waits:** installing has no timeout (the user cancels); after opening, the port is polled every 250 ms for 5 s and then every second, with `slow` at 15 s and again at 60 s (`timeouts.slow`, `timeouts.keepWaiting`) and a 5-minute limit (`timeouts.open`), so an app that passes no signal doesn't wait forever on an Agneta that failed to start. Polling beats a notification: a refused loopback connect costs microseconds, and nothing else says "listening".
-- **Versions:** `minimumVersion` against the bundle before opening and the catalog's `version` once connected; no `agneta/catalog` means 0.4.0 or earlier; a development build's `0.0.0` is never too old.
+- **Versions:** `minimumVersion` against the bundle before opening and the catalog's `version` once connected; no `agneta/catalog` counts as 0.4.0, the last release without it; a development build's `0.0.0` and a bundle-less `dev` are never too old.
+- **A disk image is a read-only volume under `/Volumes`,** as Agneta decides before offering to move: the environments check for `EROFS`, so an Agneta on a writable external drive is installed, and they look in the Applications folders when LaunchServices answers with a disk image's copy.
+- **Cancelling cancels everything:** after the signal, nothing more is opened and a guide's late answer is ignored; the guide is raced against the signal so a cancelled connect never hangs on a question.
 - **`EPERM` is `blocked`:** a sandboxed app without `com.apple.security.network.client` gets it from loopback (measured), which the old probe reported as "something refused the connection".
 - **The install page** is `https://agneta.dahlbom.io/get/`, with only the Mac's architecture in the fragment (the browser never sends it): no query, nothing about the app or user. The architecture is the Mac's, from `sysctl.proc_translated` under Rosetta.
 
@@ -61,5 +63,4 @@ Every app that talks to Agneta used to write the same hundred careful lines: ope
 - **No tool-server helper.** An app's MCP tools still need a Streamable HTTP server of their own (Project Chat's `project-tools.mjs` is about 120 lines). `httpMcpServer()` builds the registration, bearer and all; serving is the app's.
 - **Browsers can't be supported** while Agneta refuses any `Origin`, which is deliberate.
 - **No Swift client yet.** A Mac App Store app writes its own, following the protocol's Getting Agneta (every call it names works sandboxed); `clients/swift/` is planned separately.
-- **A disk image counts as anywhere under `/Volumes`.** An Agneta kept on an external drive is reported `onDiskImage`; Agneta itself checks for a read-only volume before offering to move.
 - **Sessions don't survive a reconnect.** That's Agneta's rule (a session belongs to its connection); the library makes the reload one call but doesn't do it unasked.

@@ -73,7 +73,11 @@ export interface AgnetaClientOptions {
    * guided connect can't open anything.
    */
   environment?: AgnetaEnvironment;
-  /** The Agneta version the app needs: older is `outdated`, before opening it and once connected. */
+  /**
+   * The Agneta version the app needs (`"0.5.0"`: up to three numbers, else a TypeError): older is `outdated`, before
+   * opening it and once connected. Versions compare by their numbers only (`0.5.0-beta` counts as `0.5.0`); a
+   * development build (`0.0.0`) or one with no bundle (`dev`) is never too old.
+   */
   minimumVersion?: string;
   /** Where the token from Always Allow is kept. Default: memory only. */
   tokens?: TokenStore;
@@ -224,6 +228,9 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     this.installURL = options.installURL !== undefined ? options.installURL : known?.installURL ?? null;
     this.homebrew = known?.homebrew ?? null;
     this.bundleIdentifier = options.bundleIdentifier !== undefined ? options.bundleIdentifier : known?.bundleIdentifier ?? null;
+    if (options.minimumVersion !== undefined && !/^\d+(\.\d+){0,2}$/.test(options.minimumVersion)) {
+      throw new TypeError(`minimumVersion must be a version such as "0.5.0", not ${JSON.stringify(options.minimumVersion)}.`);
+    }
     this.agnetaName = known?.name ?? (options.url ? 'Agneta' : `Agneta on port ${port}`);
     this.timeouts = { ...defaults, ...options.timeouts };
     this.tokens = options.tokens ?? memoryTokenStore();
@@ -336,13 +343,15 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     const { guide, signal } = options;
     const atLaunch = options.pair === 'never';
     const presence = await this.#lookUp();
+    stopIfAborted(signal);
     if (presence.state === 'notInstalled' || presence.state === 'onDiskImage') {
       const onDiskImage = presence.state === 'onDiskImage';
       this.#progress({ step: onDiskImage ? 'onDiskImage' : 'notInstalled' });
       if (!guide || atLaunch || !this.installURL) throw new NotInstalledError(this.installURL, this.homebrew, onDiskImage);
-      if (!await this.#ask(guide, this.#question('install', { onDiskImage }))) throw new DeclinedError('install');
+      if (!await this.#ask(guide, this.#question('install', { onDiskImage }), signal)) throw new DeclinedError('install');
       // The yes covers opening Agneta once it's installed, in this flow (docs/APP_PROTOCOL.md, Getting Agneta).
       if (!onDiskImage) await this.openInstallPage();
+      stopIfAborted(signal);
       return this.waitForAgneta({ installing: true, openWhenInstalled: true, ...(signal ? { signal } : {}) });
     }
     if (presence.state !== 'notRunning') throw notRunning;
@@ -350,14 +359,16 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     if (needed && this.#tooOld(presence.version)) {
       this.#progress({ step: 'outdated', version: presence.version, needed });
       if (!guide || atLaunch) throw new OutdatedError(presence.version, needed);
-      if (!await this.#ask(guide, this.#question('update', { version: presence.version, running: false }))) throw new DeclinedError('update');
+      if (!await this.#ask(guide, this.#question('update', { version: presence.version, running: false }), signal)) throw new DeclinedError('update');
       this.#flow!.updateAsked = true;
     } else {
       this.#progress({ step: 'notRunning' });
       // At launch, only someone who has used the app (a token kept) is offered to open Agneta.
       if (!guide || (atLaunch && !await this.tokens.load())) throw notRunning;
-      if (!await this.#ask(guide, this.#question('open'))) throw new DeclinedError('open');
+      stopIfAborted(signal);
+      if (!await this.#ask(guide, this.#question('open'), signal)) throw new DeclinedError('open');
     }
+    stopIfAborted(signal);
     if (!await this.openAgneta()) throw notRunning;
     return this.waitForAgneta({ opened: true, ...(signal ? { signal } : {}) });
   }
@@ -414,6 +425,11 @@ export class AgnetaClient extends Emitter<ClientEvents> {
       for (;;) {
         try {
           const connection = await Connection.open(open);
+          // Opened meanwhile by another call (`open`, `catalog`): use that one, never leave a second socket open.
+          if (this.#connection?.isOpen) {
+            connection.close();
+            return this.#connection;
+          }
           this.#attach(connection);
           report({ step: 'connecting' });
           return connection;
@@ -432,16 +448,17 @@ export class AgnetaClient extends Emitter<ClientEvents> {
         } else if (options.installing && now - looked >= (this.options.environment?.lookupInterval ?? 1000)) {
           looked = now;
           const presence = await this.#lookUp();
+          stopIfAborted(options.signal);
           if (presence.state !== seen) {
             seen = presence.state;
             if (presence.state === 'onDiskImage') report({ step: 'onDiskImage' });
-            if (presence.state === 'notRunning') {
-              report({ step: 'installed' });
-              if (options.openWhenInstalled && await this.openAgneta()) {
-                openedAt = Date.now();
-                report({ step: 'opening' });
-              }
-            }
+            if (presence.state === 'notRunning') report({ step: 'installed' });
+          }
+          // Installed: open it. Should opening fail (macOS refused, say), it's tried again at the next look.
+          if (presence.state === 'notRunning' && options.openWhenInstalled && await this.openAgneta()) {
+            stopIfAborted(options.signal);
+            openedAt = Date.now();
+            report({ step: 'opening' });
           }
         }
         const limit = options.timeout ?? (openedAt !== null || !options.installing ? this.timeouts.open : 0);
@@ -891,7 +908,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     if (connected) return;
     const kinds = kind ? [kind] : null;
     this.#progress({ step: 'needsProvider', kinds });
-    if (options.guide && !await this.#ask(options.guide, this.#question('setup', { kinds }))) throw new DeclinedError('setup');
+    if (options.guide && !await this.#ask(options.guide, this.#question('setup', { kinds }), signal)) throw new DeclinedError('setup');
     let waiting = this.waitForProvider(kind, signal ? { signal } : {});
     waiting.catch(() => {});
     await this.setup(kind ? { kind } : {});
@@ -929,13 +946,14 @@ export class AgnetaClient extends Emitter<ClientEvents> {
         tooOld = this.#tooOld(version);
       } catch (error) {
         if (!(error instanceof MethodNotFoundError)) throw error;
-        tooOld = true;
+        // Agneta added agneta/catalog after 0.4.0: one without it is 0.4.0 or earlier.
+        tooOld = this.#tooOld(lastWithoutCatalog);
       }
       if (!tooOld) return;
       this.#progress({ step: 'outdated', version, needed });
       if (!options.guide || options.pair === 'never') throw new OutdatedError(version, needed);
       if (!this.#flow!.updateAsked) {
-        if (!await this.#ask(options.guide, this.#question('update', { version, running: true }))) throw new DeclinedError('update');
+        if (!await this.#ask(options.guide, this.#question('update', { version, running: true }), options.signal)) throw new DeclinedError('update');
         this.#flow!.updateAsked = true;
       }
       const connection = this.#connection;
@@ -959,8 +977,12 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     return environment;
   }
 
-  async #ask(guide: Guide, question: GuideQuestion): Promise<boolean> {
-    return (await guide(question)) === true;
+  /** The guide's answer; a cancelled connect stops waiting for it, and a late yes then counts for nothing. */
+  async #ask(guide: Guide, question: GuideQuestion, signal?: AbortSignal): Promise<boolean> {
+    stopIfAborted(signal);
+    const answer = (await abortable(Promise.resolve(guide(question)), signal)) === true;
+    stopIfAborted(signal);
+    return answer;
   }
 
   /** Reports a step of the connect in progress, in words; nothing for a quiet reconnect. */
@@ -1046,6 +1068,14 @@ type ProgressStep = ConnectProgress extends infer P ? P extends ConnectProgress 
 function kindsText(kinds: ProviderKind[] | null): string {
   if (!kinds?.length) return 'a ChatGPT or Claude plan, or an API key';
   return kinds.map((kind) => kindNames[kind] ?? kind).join(' or ');
+}
+
+/** The last Agneta release without `agneta/catalog`: an Agneta that answers it with -32601 counts as this version. */
+const lastWithoutCatalog = '0.4.0';
+
+/** Throws `AbortedError` once the signal has ended the connect: nothing is opened after a Cancel. */
+function stopIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new AbortedError('connect', { cause: signal.reason });
 }
 
 /** Resolves with `promise`, or rejects with `AbortedError` when the signal ends the wait first. */

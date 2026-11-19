@@ -51,7 +51,10 @@ export interface Catalog {
   engines: CatalogEngine[];
   /** Whether any provider is connected. */
   connected: boolean;
-  /** Agneta's version, as its bundle says (`0.0.0` for a development build). Absent from Agnetas before it was added. */
+  /**
+   * Agneta's version, as its bundle says: `0.0.0` for a development build, `dev` with no bundle (the headless host,
+   * `swift run`). Absent from Agnetas before it was added.
+   */
   version?: string;
 }
 

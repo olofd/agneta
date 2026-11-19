@@ -11,6 +11,8 @@ export interface AgnetaHandler {
   identifier?: string | null;
   /** Its `CFBundleShortVersionString`, when read. */
   version?: string | null;
+  /** Whether it's on a read-only volume (a disk image), when the environment can tell. */
+  readOnly?: boolean;
 }
 
 /** What the client needs from the platform to find and open Agneta. `@agneta/client/node` provides two; write your own for anything else. */
@@ -57,9 +59,12 @@ export function installPageURL(page: string, architecture?: string | null): stri
   return architecture === 'arm64' || architecture === 'x86_64' ? `${installPage}#${architecture}` : installPage;
 }
 
-/** Where a bundle path is: in an Applications folder, on a disk image (or translocated), or elsewhere. */
-export function placement(path: string, home?: string): 'applications' | 'diskImage' | 'elsewhere' {
-  if (path.includes('/AppTranslocation/') || path.startsWith('/Volumes/')) return 'diskImage';
+/**
+ * Where a bundle path is: in an Applications folder; on a disk image (a read-only volume under `/Volumes`, as Agneta
+ * itself decides, or anywhere under `/Volumes` when `readOnly` isn't known) or translocated; or elsewhere.
+ */
+export function placement(path: string, home?: string, readOnly?: boolean): 'applications' | 'diskImage' | 'elsewhere' {
+  if (path.includes('/AppTranslocation/') || (path.startsWith('/Volumes/') && readOnly !== false)) return 'diskImage';
   const parent = path.replace(/\/+$/, '').replace(/\/[^/]*$/, '');
   const user = home?.replace(/\/+$/, '');
   if (parent === '/Applications' || (user && parent === `${user}/Applications`)) return 'applications';
@@ -67,8 +72,9 @@ export function placement(path: string, home?: string): 'applications' | 'diskIm
 }
 
 /**
- * Compares two versions (`0.5.0`, `1.2`) by their numbers: negative when `a` is older. Null when either can't be read,
- * or is a development build's `0.0.0`, which is built from source and never too old.
+ * Compares two versions (`0.5.0`, `1.2`) by their numbers, ignoring anything after them (`0.5.0-beta` is `0.5.0`):
+ * negative when `a` is older. Null when either can't be read (`dev`, Agneta without a bundle), or is a development
+ * build's `0.0.0`: those are built from source and never too old.
  */
 export function compareVersions(a: string | null | undefined, b: string | null | undefined): number | null {
   const parse = (version: string | null | undefined) => {
@@ -104,7 +110,7 @@ export async function lookUpAgneta(environment: AgnetaEnvironment | undefined,
   // can't read bundles at all can't tell, and is believed.
   if (bundle === null || bundle.identifier === null) return { state: 'notInstalled' };
   if (agneta.bundleIdentifier && bundle.identifier !== undefined && bundle.identifier !== agneta.bundleIdentifier) return { state: 'notInstalled' };
-  const where = placement(handler.path, environment.home);
+  const where = placement(handler.path, environment.home, handler.readOnly);
   if (where === 'diskImage') return { state: 'onDiskImage' };
   return { state: 'notRunning', location: where, version: bundle.version ?? null };
 }
