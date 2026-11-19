@@ -18,7 +18,7 @@ import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import {
-  AgnetaClient, httpMcpServer, memoryTokenStore, NeedsPairingError, NotRunningError, UnenforceableError, chooseProvider
+  AgnetaClient, DeclinedError, httpMcpServer, memoryTokenStore, NeedsPairingError, NotRunningError, UnenforceableError, chooseProvider
 } from '../dist/index.js';
 import { fileTokenStore } from '../dist/node.js';
 
@@ -139,22 +139,32 @@ test('the client against agnetad: open, catalog, pair, sessions, streaming, tool
     children.push(host);
   };
 
-  // 1. Agneta isn't running: without launch, NotRunningError; when the user declines, the same; when they agree, the
-  // client waits for it ("opening" it starts agnetad here) and connects.
+  // 1. Agneta isn't running. Without a guide, NotRunningError; a declined guide opens nothing; opening it ("opening" it
+  // starts agnetad here, two seconds later, as a real launch takes a moment) and waiting connects.
   const tokens = fileTokenStore(join(root, 'app', 'agneta-token'));
-  const asked = [];
-  let agree = false;
+  const opened = [];
+  const environment = {
+    findHandler: async () => ({ path: '/Applications/Agneta.app', identifier: 'com.objectivecoder.agneta', version: '0.5.0' }),
+    openURL: async (url) => { opened.push(url); setTimeout(startHost, 2000); return true; }
+  };
   const client = new AgnetaClient({
-    name: 'Client Test', port, tokens,
-    scope: { tools: 'workspace', providers: 'all', engines: ['goose'], sandbox: 'contained' },
-    launch: (info) => { asked.push(info.url); if (agree) startHost(); return agree; },
-    launchTimeout: 30_000
+    name: 'Client Test', port, tokens, openURL: 'agneta://open', environment,
+    scope: { tools: 'workspace', providers: 'all', engines: ['goose'], sandbox: 'contained' }
   });
   clients.push(client);
   await assert.rejects(client.connect(), NotRunningError);
-  agree = true;
+  await assert.rejects(client.connect({ guide: () => false }), DeclinedError);
+  assert.deepEqual(opened, []);
+  assert.deepEqual(await client.presence(), { state: 'notRunning', location: 'applications', version: '0.5.0' });
+  const steps = [];
+  const waiting = client.waitForAgneta({ opened: true, timeout: 30_000, onProgress: ({ step }) => steps.push(step) });
+  assert.equal(await client.openAgneta(), true);
+  await waiting;
+  assert.deepEqual(opened, ['agneta://open']);
+  assert.deepEqual(steps, ['opening', 'connecting']);
+  assert.deepEqual(await client.presence(), { state: 'running' });
   const catalog = await client.catalog();
-  assert.equal(asked.length, 2);
+  assert.equal(typeof catalog.version, 'string');
   assert.equal(catalog.connected, true);
   assert.ok(catalog.providers.some((provider) => provider.kind === 'openai-key' && provider.connected));
   assert.ok(catalog.engines.some((engine) => engine.id === 'goose' && engine.state === 'ready'));

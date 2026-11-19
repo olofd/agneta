@@ -1,12 +1,17 @@
-// The high-level client: connect (opening Agneta when the user agrees), pair or initialize with a kept token, keep the
-// access report current, open sessions, and route Agneta's notifications and permission requests to them.
+// The high-level client: connect (getting and opening Agneta when the user agrees: docs/APP_PROTOCOL.md, Getting
+// Agneta), pair or initialize with a kept token, keep the access report current, open sessions, and route Agneta's
+// notifications and permission requests to them.
 import type { Implementation, SessionUpdate } from './acp.js';
-import { Connection, type OpenOptions, type RequestOptions, type WebSocketConstructor } from './connection.js';
+import { Connection, probeAgneta, type OpenOptions, type PortProbe, type RequestOptions, type WebSocketConstructor } from './connection.js';
 import { Emitter } from './emitter.js';
 import {
-  AbortedError, ConnectionClosedError, EngineDownloadingError, MethodNotFoundError, NeedsPairingError, NotRunningError, ProtocolError,
-  UnsupportedEnvironmentError, type DownloadProgress
+  AbortedError, ConnectionClosedError, DeclinedError, EngineDownloadingError, MethodNotFoundError, NeedsPairingError,
+  NotInstalledError, NotRunningError, OutdatedError, ProtocolError, UnsupportedEnvironmentError, type DownloadProgress
 } from './errors.js';
+import {
+  compareVersions, installPageURL, lookUpAgneta, type AgnetaEnvironment, type AgnetaPresence, type Architecture,
+  type ConnectProgress, type Guide, type GuideQuestion
+} from './install.js';
 import {
   builds, protocolVersion, type Access, type AgnetaNotifications, type AgnetaRequests, type Build, type Catalog,
   type InitializeResult, type PairingCodeParams, type PairingScope, type PairResult, type ProviderKind, type QueuedParams,
@@ -30,6 +35,12 @@ export interface Timeouts {
   session: number;
   /** `session/prompt`. Default none (0): a policy's `maxSeconds` limits a turn. */
   prompt: number;
+  /** Waiting for Agneta after opening it (a first launch waits for macOS's confirmation). Default 5 minutes; 0 for none. */
+  open: number;
+  /** After opening Agneta, the `slow` progress step: macOS may be asking whether to open it. Default 15 s. */
+  slow: number;
+  /** After opening Agneta, the `slow` step again with `keepWaiting`: offer Keep Waiting or Cancel. Default 60 s. */
+  keepWaiting: number;
 }
 
 export interface ReconnectOptions {
@@ -52,17 +63,22 @@ export interface AgnetaClientOptions {
   url?: string;
   /** The URL that opens this Agneta. Default: the build's (`agneta://open` or `agneta-dev://open`); null for none. */
   openURL?: string | null;
+  /** Where the user gets this Agneta. Default: the build's (the install page for a release); null for none. */
+  installURL?: string | null;
+  /** The bundle identifier an installed Agneta must have (another app may claim its URL scheme). Default: the build's. */
+  bundleIdentifier?: string | null;
+  /**
+   * How to find and open Agneta on this Mac: `nodeEnvironment()` or `electronEnvironment({ app, shell })` from
+   * `@agneta/client/node`, or your own. Without one, the client can't tell "not installed" from "not running", and the
+   * guided connect can't open anything.
+   */
+  environment?: AgnetaEnvironment;
+  /** The Agneta version the app needs: older is `outdated`, before opening it and once connected. */
+  minimumVersion?: string;
   /** Where the token from Always Allow is kept. Default: memory only. */
   tokens?: TokenStore;
   /** Sent in `initialize`. Default: the app's name. */
   clientInfo?: Implementation;
-  /**
-   * When Agneta isn't running: ask the user whether to open it and, when they say yes, open it (`openURL`), resolving to
-   * whether it was opened. The client then waits for it and connects. Never open Agneta without asking.
-   */
-  launch?: (agneta: { name: string; url: string; openURL: string | null }) => boolean | Promise<boolean>;
-  /** How long to wait for Agneta after `launch` opened it. Default 20 s. */
-  launchTimeout?: number;
   /** Answers permission requests (`approval: "ask-app"`) for sessions without their own handler. Default: declined. */
   permissions?: PermissionHandler;
   /** Reconnect by itself, quietly, when a connection with a remembered token drops. Default off. */
@@ -70,6 +86,8 @@ export interface AgnetaClientOptions {
   timeouts?: Partial<Timeouts>;
   /** A WebSocket class, where there's no global one. */
   WebSocket?: WebSocketConstructor;
+  /** What answers on Agneta's port, when the connection fails. Default: `probeAgneta`. For tests and unusual transports. */
+  probe?: (url: string) => Promise<PortProbe>;
 }
 
 /**
@@ -94,6 +112,8 @@ export type ClientEvents = {
   accessRemoved: [error: NeedsPairingError];
   /** Every notification from Agneta, on every connection. */
   notification: [method: string, params: unknown];
+  /** Each step of `connect` (and `waitForAgneta`): what to show while the user gets, opens, sets up and approves Agneta. */
+  progress: [progress: ConnectProgress];
   /** The connection closed. Its sessions have ended. */
   disconnected: [error: ConnectionClosedError];
   /** Waiting `delay` ms before reconnect attempt `attempt`. */
@@ -121,16 +141,51 @@ export interface ConnectOptions {
   setup?: boolean | ProviderKind;
   /** The scope to pair with, instead of the client's. */
   scope?: PairingScope;
+  /**
+   * Asks the user each question the protocol leaves to them (get Agneta, open it, update it, connect a provider),
+   * resolving to their answer; a no rejects with `DeclinedError`. Needs the client's `environment`. Without it, connect
+   * rejects with `NotInstalledError`, `NotRunningError` or `OutdatedError` instead. With `pair: 'never'` it's asked
+   * only to open Agneta, and only when a token is kept (someone who has used the app before).
+   */
+  guide?: Guide;
+  /** Each step, as the `progress` event. */
+  onProgress?: (progress: ConnectProgress) => void;
   signal?: AbortSignal;
 }
 
-const defaults: Timeouts = { request: 30_000, connect: 5000, pair: 310_000, session: 180_000, prompt: 0 };
+export interface WaitForAgnetaOptions {
+  /** The user is installing Agneta: also look for it (steps `installed`, `onDiskImage`). No timeout unless given. */
+  installing?: boolean;
+  /** With `installing`: open Agneta once it's installed. Only when the user's yes covered that (their yes to `install`). */
+  openWhenInstalled?: boolean;
+  /** Agneta was just opened: steps `opening` and `slow`, and the `open` timeout. */
+  opened?: boolean;
+  /** Give up after this many ms with `NotRunningError`; 0 for never. Default: `timeouts.open` after an open, else none. */
+  timeout?: number;
+  signal?: AbortSignal;
+  onProgress?: (progress: ConnectProgress) => void;
+}
+
+const defaults: Timeouts = {
+  request: 30_000, connect: 5000, pair: 310_000, session: 180_000, prompt: 0, open: 300_000, slow: 15_000, keepWaiting: 60_000
+};
+
+/** What a provider kind is called where the user reads it. */
+const kindNames: Record<string, string> = {
+  claude: 'a Claude plan', chatgpt: 'a ChatGPT plan', 'anthropic-key': 'an Anthropic API key', 'openai-key': 'an OpenAI API key'
+};
 
 export class AgnetaClient extends Emitter<ClientEvents> {
   readonly options: AgnetaClientOptions;
   /** The WebSocket address. */
   readonly url: string;
   readonly openURL: string | null;
+  /** Where the user gets this Agneta: the install page for a release, the README's Build and run for Agneta Dev. */
+  readonly installURL: string | null;
+  /** Homebrew's command, for a release. */
+  readonly homebrew: string | null;
+  /** The bundle identifier an installed Agneta must have. */
+  readonly bundleIdentifier: string | null;
   /** What the app calls this Agneta: "Agneta", "Agneta Dev", or "Agneta on port …". */
   readonly agnetaName: string;
   readonly timeouts: Timeouts;
@@ -152,8 +207,10 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   #connecting: Promise<Access> | null = null;
   #opening: Promise<Connection> | null = null;
   #closing = false;
-  /** Reconnecting: never ask `launch` (Agneta quit; it comes back when the user opens it). */
+  /** Reconnecting: never guide (Agneta quit; it comes back when the user opens it), and no progress. */
   #quiet = false;
+  /** The connect in progress: its progress listener, and whether the user already agreed to update Agneta. */
+  #flow: { options: ConnectOptions; updateAsked: boolean } | null = null;
 
   constructor(options: AgnetaClientOptions) {
     super();
@@ -164,6 +221,9 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     this.url = options.url ?? `ws://127.0.0.1:${port}/acp`;
     const known = Object.values(builds).find((entry) => entry.port === port && !options.url);
     this.openURL = options.openURL !== undefined ? options.openURL : known?.openURL ?? null;
+    this.installURL = options.installURL !== undefined ? options.installURL : known?.installURL ?? null;
+    this.homebrew = known?.homebrew ?? null;
+    this.bundleIdentifier = options.bundleIdentifier !== undefined ? options.bundleIdentifier : known?.bundleIdentifier ?? null;
     this.agnetaName = known?.name ?? (options.url ? 'Agneta' : `Agneta on port ${port}`);
     this.timeouts = { ...defaults, ...options.timeouts };
     this.tokens = options.tokens ?? memoryTokenStore();
@@ -193,7 +253,8 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   /**
    * Connects and resolves with what the app may use: with the kept token when there is one, else by pairing (Agneta's
    * approval window). A kept token Agneta no longer accepts is forgotten (`accessRemoved`). When Agneta isn't running,
-   * `launch` is asked; without it, this rejects with `NotRunningError`.
+   * `guide` is asked whether to get it or open it; without it, this rejects with `NotInstalledError`, `NotRunningError`
+   * or `OutdatedError`.
    */
   connect(options: ConnectOptions = {}): Promise<Access> {
     if (this.#state === 'connected' && this.#connection?.isOpen && this.#access && options.pair !== 'always') return Promise.resolve(this.#access);
@@ -205,46 +266,198 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   }
 
   async #connect(options: ConnectOptions): Promise<Access> {
+    if (options.guide && !this.options.environment) {
+      throw new TypeError('connect({ guide }) needs the client\'s environment: nodeEnvironment() or electronEnvironment() from @agneta/client/node.');
+    }
     this.#closing = false;
     this.#cancelReconnect();
     // Already connected (pairing again for a wider scope): a failure, the user's Don't Allow included, keeps what works.
     const wasConnected = this.#state === 'connected' && this.#connection?.isOpen === true && this.#access !== null;
-    const connection = await this.open({ signal: options.signal });
+    this.#flow = { options, updateAsked: false };
     try {
-      const pair = options.pair ?? 'if-needed';
-      const kept = pair === 'always' ? null : await this.tokens.load();
-      let initialized = false;
-      if (kept) {
-        try {
-          await this.initialize(kept, { signal: options.signal });
-          this.#remembered = true;
-          initialized = true;
-        } catch (error) {
-          if (!(error instanceof NeedsPairingError)) throw error;
-          await this.tokens.clear();
-          this.emit('accessRemoved', error);
-          if (pair === 'never') throw error;
+      const connection = await this.#reach(options);
+      try {
+        if (this.options.minimumVersion) await this.#checkVersion(options);
+        const pair = options.pair ?? 'if-needed';
+        const kept = pair === 'always' ? null : await this.tokens.load();
+        let initialized = false;
+        if (kept) {
+          try {
+            await this.initialize(kept, { signal: options.signal });
+            this.#remembered = true;
+            initialized = true;
+          } catch (error) {
+            if (!(error instanceof NeedsPairingError)) throw error;
+            await this.tokens.clear();
+            this.emit('accessRemoved', error);
+            if (pair === 'never') throw error;
+          }
         }
+        if (!initialized) {
+          if (pair === 'never') throw new NeedsPairingError({ code: -32001, message: 'Pair with Agneta first', data: { agneta: { needsPairing: true } } }, 'initialize');
+          if (options.setup) await this.#setUpProvider(options.setup === true ? undefined : options.setup, options);
+          await this.pair(options.scope ?? this.options.scope, { signal: options.signal });
+        }
+        this.#setState('connected');
+        this.#progress({ step: 'connected' });
+        return this.#access!;
+      } catch (error) {
+        // The connection may have been replaced meanwhile (reopened during setup, or after an update).
+        const current = this.#connection;
+        if (current) {
+          if (wasConnected && current === connection && current.isOpen) this.#setState('connected');
+          else this.#drop(current);
+        }
+        throw error;
       }
-      if (!initialized) {
-        if (pair === 'never') throw new NeedsPairingError({ code: -32001, message: 'Pair with Agneta first', data: { agneta: { needsPairing: true } } }, 'initialize');
-        if (options.setup) await this.#setUpProvider(options.setup === true ? undefined : options.setup, options.signal);
-        await this.pair(options.scope ?? this.options.scope, { signal: options.signal });
-      }
-      this.#setState('connected');
-      return this.#access!;
+    } finally {
+      this.#flow = null;
+    }
+  }
+
+  /** Opens the connection, or, when Agneta isn't running, finds out why and guides the user. */
+  async #reach(options: ConnectOptions): Promise<Connection> {
+    this.#progress({ step: 'looking' });
+    try {
+      return await this.open(options.signal ? { signal: options.signal } : {});
     } catch (error) {
-      if (this.#connection === connection) {
-        if (wasConnected && connection.isOpen) this.#setState('connected');
-        else this.#drop(connection);
+      if (!(error instanceof NotRunningError) || this.#quiet) throw error;
+      try {
+        return await this.#getAgneta(error, options);
+      } catch (failure) {
+        if (!this.#connection) this.#setState('disconnected');
+        throw failure;
       }
+    }
+  }
+
+  /** Agneta didn't answer: not installed, only on its disk image, too old, or not running. One question for each. */
+  async #getAgneta(notRunning: NotRunningError, options: ConnectOptions): Promise<Connection> {
+    const { guide, signal } = options;
+    const atLaunch = options.pair === 'never';
+    const presence = await this.#lookUp();
+    if (presence.state === 'notInstalled' || presence.state === 'onDiskImage') {
+      const onDiskImage = presence.state === 'onDiskImage';
+      this.#progress({ step: onDiskImage ? 'onDiskImage' : 'notInstalled' });
+      if (!guide || atLaunch || !this.installURL) throw new NotInstalledError(this.installURL, this.homebrew, onDiskImage);
+      if (!await this.#ask(guide, this.#question('install', { onDiskImage }))) throw new DeclinedError('install');
+      // The yes covers opening Agneta once it's installed, in this flow (docs/APP_PROTOCOL.md, Getting Agneta).
+      if (!onDiskImage) await this.openInstallPage();
+      return this.waitForAgneta({ installing: true, openWhenInstalled: true, ...(signal ? { signal } : {}) });
+    }
+    if (presence.state !== 'notRunning') throw notRunning;
+    const needed = this.options.minimumVersion;
+    if (needed && this.#tooOld(presence.version)) {
+      this.#progress({ step: 'outdated', version: presence.version, needed });
+      if (!guide || atLaunch) throw new OutdatedError(presence.version, needed);
+      if (!await this.#ask(guide, this.#question('update', { version: presence.version, running: false }))) throw new DeclinedError('update');
+      this.#flow!.updateAsked = true;
+    } else {
+      this.#progress({ step: 'notRunning' });
+      // At launch, only someone who has used the app (a token kept) is offered to open Agneta.
+      if (!guide || (atLaunch && !await this.tokens.load())) throw notRunning;
+      if (!await this.#ask(guide, this.#question('open'))) throw new DeclinedError('open');
+    }
+    if (!await this.openAgneta()) throw notRunning;
+    return this.waitForAgneta({ opened: true, ...(signal ? { signal } : {}) });
+  }
+
+  /**
+   * Where Agneta is: `running` (something answers on its port), `blocked` (this app may not connect at all), or, from
+   * the environment, installed and not running (with its version), only on its disk image, not installed, or `unknown`
+   * without an environment. It never says the path.
+   */
+  async presence(): Promise<AgnetaPresence> {
+    if (this.#connection?.isOpen) return { state: 'running' };
+    const found = await (this.options.probe ?? probeAgneta)(this.url).catch((): PortProbe => 'notListening');
+    if (found === 'listening') return { state: 'running' };
+    if (found === 'blocked') return { state: 'blocked', reason: 'This app may not connect to Agneta: a sandboxed app needs the com.apple.security.network.client entitlement.' };
+    return this.#lookUp();
+  }
+
+  /**
+   * Opens the page where the user gets Agneta (`installURL`), with the Mac's architecture as its fragment so the right
+   * download comes first. Only after the user asked. Resolves to whether it opened.
+   */
+  async openInstallPage(options: { architecture?: Architecture | null } = {}): Promise<boolean> {
+    const environment = this.#environment('openInstallPage');
+    if (!this.installURL) return false;
+    const architecture = options.architecture !== undefined ? options.architecture : await environment.architecture?.().catch(() => null) ?? null;
+    return environment.openURL(installPageURL(this.installURL, architecture));
+  }
+
+  /** Opens Agneta (`openURL`). Only after the user asked: quitting Agneta is how they stop all of it. Resolves to whether it opened. */
+  async openAgneta(): Promise<boolean> {
+    const environment = this.#environment('openAgneta');
+    if (!this.openURL) return false;
+    return environment.openURL(this.openURL);
+  }
+
+  /**
+   * Waits until Agneta answers, and resolves with the open connection (as `open` does). It polls the port: every 250 ms
+   * for 5 s after an open, then every second. With `installing`, it also looks for Agneta to appear (and, with
+   * `openWhenInstalled`, opens it). Cancel with the signal.
+   */
+  async waitForAgneta(options: WaitForAgnetaOptions = {}): Promise<Connection> {
+    if (this.#connection?.isOpen) return this.#connection;
+    const report = (progress: ProgressStep) => { const full = this.#progress(progress); options.onProgress?.(full); };
+    const open = this.#openOptions(options.signal);
+    const started = Date.now();
+    let openedAt = options.opened ? started : null;
+    let seen: AgnetaPresence['state'] | null = null;
+    let looked = -Infinity;
+    let slow = 0;
+    this.#setState('connecting');
+    if (openedAt !== null) report({ step: 'opening' });
+    else if (options.installing) report({ step: 'installing' });
+    try {
+      for (;;) {
+        try {
+          const connection = await Connection.open(open);
+          this.#attach(connection);
+          report({ step: 'connecting' });
+          return connection;
+        } catch (error) {
+          if (!(error instanceof NotRunningError)) throw error;
+        }
+        const now = Date.now();
+        if (openedAt !== null) {
+          const waited = now - openedAt;
+          // Once at `slow` (macOS may be asking), once more at `keepWaiting` (offer Keep Waiting or Cancel).
+          const due = waited >= this.timeouts.keepWaiting ? 2 : waited >= this.timeouts.slow ? 1 : 0;
+          if (due > slow) {
+            slow = due;
+            report({ step: 'slow', seconds: Math.round(waited / 1000), keepWaiting: due === 2 });
+          }
+        } else if (options.installing && now - looked >= (this.options.environment?.lookupInterval ?? 1000)) {
+          looked = now;
+          const presence = await this.#lookUp();
+          if (presence.state !== seen) {
+            seen = presence.state;
+            if (presence.state === 'onDiskImage') report({ step: 'onDiskImage' });
+            if (presence.state === 'notRunning') {
+              report({ step: 'installed' });
+              if (options.openWhenInstalled && await this.openAgneta()) {
+                openedAt = Date.now();
+                report({ step: 'opening' });
+              }
+            }
+          }
+        }
+        const limit = options.timeout ?? (openedAt !== null || !options.installing ? this.timeouts.open : 0);
+        const since = options.timeout !== undefined ? started : openedAt ?? started;
+        if (limit > 0 && Date.now() - since >= limit) throw new NotRunningError(this.url, this.openURL);
+        await delay(openedAt !== null && Date.now() - openedAt < 5000 ? 250 : 1000, options.signal);
+      }
+    } catch (error) {
+      if (!this.#connection) this.#setState('disconnected');
       throw error;
     }
   }
 
   /**
-   * Opens the WebSocket only (for `agneta/catalog` and `agneta/setup` before pairing). Asks `launch` when Agneta isn't
-   * running. Resolves with the raw connection; reuses an open one.
+   * Opens the WebSocket only (for `agneta/catalog` and `agneta/setup` before pairing). Resolves with the raw connection;
+   * reuses an open one. When Agneta isn't running it rejects (`NotRunningError`): `connect` is what guides the user.
    */
   open(options: { signal?: AbortSignal } = {}): Promise<Connection> {
     if (this.#connection?.isOpen) return Promise.resolve(this.#connection);
@@ -259,27 +472,23 @@ export class AgnetaClient extends Emitter<ClientEvents> {
       throw new UnsupportedEnvironmentError('Agneta refuses connections from web pages (anything sending an Origin header). Connect from Node or Electron\'s main process.');
     }
     this.#setState('connecting');
-    const open: OpenOptions = {
-      url: this.url, openURL: this.openURL, connectTimeout: this.timeouts.connect, requestTimeout: this.timeouts.request,
-      ...(this.options.WebSocket ? { WebSocket: this.options.WebSocket } : {}), ...(options.signal ? { signal: options.signal } : {})
-    };
     let connection: Connection;
     try {
-      connection = await Connection.open(open);
+      connection = await Connection.open(this.#openOptions(options.signal));
     } catch (error) {
-      if (!(error instanceof NotRunningError) || !this.options.launch || this.#quiet) {
-        this.#setState('disconnected');
-        throw error;
-      }
-      const launched = await this.options.launch({ name: this.agnetaName, url: this.url, openURL: this.openURL });
-      if (!launched) {
-        this.#setState('disconnected');
-        throw error;
-      }
-      connection = await this.#waitForAgneta(open, options.signal);
+      this.#setState('disconnected');
+      throw error;
     }
     this.#attach(connection);
     return connection;
+  }
+
+  #openOptions(signal?: AbortSignal): OpenOptions {
+    return {
+      url: this.url, openURL: this.openURL, connectTimeout: this.timeouts.connect, requestTimeout: this.timeouts.request,
+      ...(this.options.WebSocket ? { WebSocket: this.options.WebSocket } : {}), ...(this.options.probe ? { probe: this.options.probe } : {}),
+      ...(signal ? { signal } : {})
+    };
   }
 
   /** `agneta/catalog`: what Agneta offers any app, before pairing too. Opens the connection if needed. */
@@ -327,6 +536,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   async pair(scope: PairingScope | undefined = this.options.scope, options: { signal?: AbortSignal } = {}): Promise<PairResult> {
     const connection = await this.open(options);
     this.#setState('pairing');
+    this.#progress({ step: 'pairing', code: null });
     let result: PairResult;
     try {
       result = await connection.request('agneta/pair', { name: this.options.name, ...(scope ? { scope } : {}) }, { timeout: this.timeouts.pair, ...options });
@@ -574,6 +784,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
         if (typeof params?.code === 'string') {
           this.#pairingCode = params.code;
           this.emit('pairingCode', params.code, params);
+          if (this.#state === 'pairing') this.#progress({ step: 'pairing', code: params.code });
         }
         break;
       case 'agneta/catalogChanged':
@@ -650,7 +861,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     }, wait);
   }
 
-  /** A quiet connect: never asks `launch` nor pairs. */
+  /** A quiet connect: never guides nor pairs. */
   async #reconnectOnce(): Promise<Access> {
     this.#quiet = true;
     try {
@@ -665,7 +876,9 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     this.#reconnectTimer = null;
   }
 
-  async #setUpProvider(kind: ProviderKind | undefined, signal?: AbortSignal): Promise<void> {
+  /** Before pairing, with no provider (of `kind`) connected: asks (with a guide), shows Agneta's window, waits for one. */
+  async #setUpProvider(kind: ProviderKind | undefined, options: ConnectOptions): Promise<void> {
+    const signal = options.signal;
     let catalog: Catalog;
     try {
       catalog = await this.catalog(signal ? { signal } : {});
@@ -676,27 +889,175 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     }
     const connected = kind ? catalog.providers.some((provider) => provider.kind === kind && provider.connected) : catalog.connected;
     if (connected) return;
-    const waiting = this.waitForProvider(kind, signal ? { signal } : {});
+    const kinds = kind ? [kind] : null;
+    this.#progress({ step: 'needsProvider', kinds });
+    if (options.guide && !await this.#ask(options.guide, this.#question('setup', { kinds }))) throw new DeclinedError('setup');
+    let waiting = this.waitForProvider(kind, signal ? { signal } : {});
     waiting.catch(() => {});
     await this.setup(kind ? { kind } : {});
     this.emit('setup', kind);
-    await waiting;
-  }
-
-  async #waitForAgneta(open: OpenOptions, signal?: AbortSignal): Promise<Connection> {
-    const deadline = Date.now() + (this.options.launchTimeout ?? 20_000);
+    this.#progress({ step: 'settingUp', kinds });
     for (;;) {
       try {
-        return await Connection.open(open);
+        await waiting;
+        return;
       } catch (error) {
-        if (!(error instanceof NotRunningError) || Date.now() >= deadline) {
-          this.#setState('disconnected');
+        // Agneta closes a connection that hasn't paired after 10 minutes, time in setup included, while the user may
+        // still be signing in: open another, quietly, and go on waiting. Its window stays up meanwhile.
+        if (!(error instanceof ConnectionClosedError) || signal?.aborted || this.#closing) throw error;
+        try {
+          await this.open(signal ? { signal } : {});
+        } catch {
           throw error;
         }
-        await delay(500, signal);
+        waiting = this.waitForProvider(kind, signal ? { signal } : {});
       }
     }
   }
+
+  /**
+   * With `minimumVersion`: Agneta's version from the catalog (an Agneta without `agneta/catalog` is 0.4.0 or earlier).
+   * Too old: ask once (with a guide) and wait while the user updates in Agneta, which relaunches; then check again.
+   */
+  async #checkVersion(options: ConnectOptions): Promise<void> {
+    const needed = this.options.minimumVersion!;
+    for (;;) {
+      let version: string | null = null;
+      let tooOld: boolean;
+      try {
+        version = (await this.catalog(options.signal ? { signal: options.signal } : {})).version ?? null;
+        tooOld = this.#tooOld(version);
+      } catch (error) {
+        if (!(error instanceof MethodNotFoundError)) throw error;
+        tooOld = true;
+      }
+      if (!tooOld) return;
+      this.#progress({ step: 'outdated', version, needed });
+      if (!options.guide || options.pair === 'never') throw new OutdatedError(version, needed);
+      if (!this.#flow!.updateAsked) {
+        if (!await this.#ask(options.guide, this.#question('update', { version, running: true }))) throw new DeclinedError('update');
+        this.#flow!.updateAsked = true;
+      }
+      const connection = this.#connection;
+      if (connection?.isOpen) await abortable(connection.closed, options.signal);
+      await this.waitForAgneta({ opened: true, ...(options.signal ? { signal: options.signal } : {}) });
+    }
+  }
+
+  #tooOld(version: string | null): boolean {
+    const comparison = compareVersions(version, this.options.minimumVersion);
+    return comparison !== null && comparison < 0;
+  }
+
+  #lookUp(): Promise<AgnetaPresence> {
+    return lookUpAgneta(this.options.environment, { openURL: this.openURL, bundleIdentifier: this.bundleIdentifier });
+  }
+
+  #environment(method: string): AgnetaEnvironment {
+    const environment = this.options.environment;
+    if (!environment) throw new TypeError(`${method} needs the client's environment: nodeEnvironment() or electronEnvironment() from @agneta/client/node.`);
+    return environment;
+  }
+
+  async #ask(guide: Guide, question: GuideQuestion): Promise<boolean> {
+    return (await guide(question)) === true;
+  }
+
+  /** Reports a step of the connect in progress, in words; nothing for a quiet reconnect. */
+  #progress(step: ProgressStep): ConnectProgress {
+    const progress = { ...step, ...this.#describe(step) } as ConnectProgress;
+    if (this.#quiet) return progress;
+    try {
+      this.#flow?.options.onProgress?.(progress);
+    } catch (error) {
+      this.emit('error', error);
+    }
+    this.emit('progress', progress);
+    return progress;
+  }
+
+  #describe(step: ProgressStep): { title: string; detail: string } {
+    const app = this.options.name, agneta = this.agnetaName;
+    switch (step.step) {
+      case 'looking': return { title: `Connecting to ${agneta}…`, detail: '' };
+      case 'notInstalled': return { title: `${app} runs its AI through ${agneta}`, detail: `${agneta} isn't installed on this Mac yet.` };
+      case 'installing': return {
+        title: `Install ${agneta}`,
+        detail: this.homebrew
+          ? `Install ${agneta} from the page that opened: open the disk image and drag ${agneta} into Applications. Or use Homebrew. ${app} goes on by itself.`
+          : `Install ${agneta} as the page that opened says. ${app} goes on by itself.`
+      };
+      case 'onDiskImage': return { title: `Drag ${agneta} into Applications`, detail: `${agneta} is on its disk image, not in Applications yet: drag it into Applications. ${app} goes on by itself.` };
+      case 'installed': return { title: `${agneta} is installed`, detail: '' };
+      case 'notRunning': return { title: `${agneta} isn't running`, detail: `${app} runs its AI tasks through ${agneta}, on the plan or API key you allow.` };
+      case 'opening': return { title: `Opening ${agneta}…`, detail: '' };
+      case 'slow': return {
+        title: `Still opening ${agneta}…`,
+        detail: `If macOS asks whether to open ${agneta}, choose Open.${step.keepWaiting ? ' It\'s taking longer than it should: keep waiting, or cancel.' : ''}`
+      };
+      case 'connecting': return { title: `Connecting to ${agneta}…`, detail: '' };
+      case 'outdated': return { title: `${app} needs a newer ${agneta}`, detail: this.#updateText(step.version, step.needed) };
+      case 'needsProvider': return { title: `Connect your AI in ${agneta}`, detail: `${app} needs ${kindsText(step.kinds)}: connect one in ${agneta}.` };
+      case 'settingUp': return { title: `Connect your AI in ${agneta}`, detail: `Finish in ${agneta}'s window. ${app} goes on once it's connected.` };
+      case 'pairing': return {
+        title: `Approve ${app} in ${agneta}`,
+        detail: step.code ? `Check that ${agneta} shows ${step.code}, then allow ${app}.` : `Allow ${app} in ${agneta}'s window.`
+      };
+      case 'connected': return { title: `Connected to ${agneta}`, detail: '' };
+    }
+  }
+
+  #updateText(version: string | null, needed: string): string {
+    const app = this.options.name, agneta = this.agnetaName;
+    return `${app} needs ${agneta} ${needed} or later${version ? `; this Mac has ${version}` : ''}. Choose Check for Updates… in ${agneta}'s ⋯ menu, in the menu bar. ${app} goes on when it's updated.`;
+  }
+
+  #question(kind: 'install', extra: { onDiskImage: boolean }): GuideQuestion;
+  #question(kind: 'open'): GuideQuestion;
+  #question(kind: 'update', extra: { version: string | null; running: boolean }): GuideQuestion;
+  #question(kind: 'setup', extra: { kinds: ProviderKind[] | null }): GuideQuestion;
+  #question(kind: GuideQuestion['kind'], extra: any = {}): GuideQuestion {
+    const app = this.options.name, agneta = this.agnetaName, agnetaName = agneta;
+    switch (kind) {
+      case 'install': return extra.onDiskImage
+        ? { kind, agnetaName, installURL: this.installURL!, homebrew: this.homebrew, onDiskImage: true, title: `Drag ${agneta} into Applications`,
+            detail: `${agneta} is on its disk image, not in Applications yet. Drag it into Applications, and ${app} opens it once it's there.`, confirm: 'Continue', cancel: 'Cancel' }
+        : { kind, agnetaName, installURL: this.installURL!, homebrew: this.homebrew, onDiskImage: false, title: `Get ${agneta}`,
+            detail: this.homebrew
+              ? `${app} runs its AI through ${agneta}, a free, open-source menu bar app that keeps your AI plan or key on your Mac (signed and notarized, macOS 14 or later). ${app} opens it once it's installed.`
+              : `${app} runs its AI through ${agneta}, which is built from source. ${app} opens it once it's installed.`,
+            confirm: `Get ${agneta}`, cancel: 'Cancel' };
+      case 'open': return { kind, agnetaName, title: `${agneta} isn't running`, detail: `${app} runs its AI tasks through ${agneta}, on the plan or API key you allow. Open ${agneta} now?`, confirm: `Open ${agneta}`, cancel: 'Not Now' };
+      case 'update': return {
+        kind, agnetaName, version: extra.version, needed: this.options.minimumVersion!, running: extra.running, title: `Update ${agneta}`,
+        detail: this.#updateText(extra.version, this.options.minimumVersion!), confirm: extra.running ? 'Continue' : `Open ${agneta}`, cancel: 'Cancel'
+      };
+      case 'setup': return {
+        kind, agnetaName, kinds: extra.kinds, title: `Connect your AI in ${agneta}`,
+        detail: `${app} needs ${kindsText(extra.kinds)}. ${agneta} shows its window for connecting one.`, confirm: `Connect in ${agneta}`, cancel: 'Cancel'
+      };
+    }
+  }
+}
+
+/** A progress step before its words. */
+type ProgressStep = ConnectProgress extends infer P ? P extends ConnectProgress ? Omit<P, 'title' | 'detail'> : never : never;
+
+function kindsText(kinds: ProviderKind[] | null): string {
+  if (!kinds?.length) return 'a ChatGPT or Claude plan, or an API key';
+  return kinds.map((kind) => kindNames[kind] ?? kind).join(' or ');
+}
+
+/** Resolves with `promise`, or rejects with `AbortedError` when the signal ends the wait first. */
+function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(new AbortedError('wait', { cause: signal.reason }));
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(new AbortedError('wait', { cause: signal.reason }));
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then((value) => { signal.removeEventListener('abort', abort); resolve(value); },
+      (error) => { signal.removeEventListener('abort', abort); reject(error); });
+  });
 }
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
@@ -710,8 +1071,8 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 
 /** A client, connected: `await connect({ name: 'My App' })`. */
 export async function connect(options: AgnetaClientOptions & ConnectOptions): Promise<AgnetaClient> {
-  const { pair, setup, signal, ...clientOptions } = options;
-  const client = new AgnetaClient(clientOptions);
-  await client.connect({ ...(pair ? { pair } : {}), ...(setup ? { setup } : {}), ...(signal ? { signal } : {}) });
+  const { pair, setup, scope, guide, onProgress, signal, ...clientOptions } = options;
+  const client = new AgnetaClient({ ...clientOptions, ...(scope ? { scope } : {}) });
+  await client.connect({ ...(pair ? { pair } : {}), ...(setup ? { setup } : {}), ...(guide ? { guide } : {}), ...(onProgress ? { onProgress } : {}), ...(signal ? { signal } : {}) });
   return client;
 }

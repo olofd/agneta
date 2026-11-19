@@ -172,31 +172,14 @@ test('accessChanged keeps the access report current', async (t) => {
   assert.equal((await client.refreshAccess()).providers[0].paused, false, 'agneta/access reads it again');
 });
 
-test('when Agneta isn\'t running: NotRunningError without launch; with launch the client waits and connects', async (t) => {
+test('when Agneta isn\'t running and there\'s no environment: NotRunningError, and nothing is opened', async () => {
   const port = await freePort();
-  const declined = new AgnetaClient({ name: 'Example', port, launch: () => false });
-  await assert.rejects(declined.connect(), (error) => error instanceof NotRunningError && error.openURL === null);
-  assert.equal(declined.state, 'disconnected');
-
   const plain = new AgnetaClient({ name: 'Example', port });
-  await assert.rejects(plain.connect(), NotRunningError);
-
-  const behaviour = agnetaLike();
-  let started = null;
-  const asked = [];
-  const client = new AgnetaClient({
-    name: 'Example', port, openURL: 'agneta-dev://open',
-    launch: async (info) => {
-      asked.push(info);
-      // "Opening Agneta": it comes up a moment later on the port.
-      setTimeout(async () => { started = await standIn(behaviour.answer, { port }); }, 200);
-      return true;
-    }
-  });
-  t.after(async () => { client.close(); await started?.close(); });
-  const access = await client.connect();
-  assert.ok(access.providers.length);
-  assert.deepEqual(asked, [{ name: `Agneta on port ${port}`, url: `ws://127.0.0.1:${port}/acp`, openURL: 'agneta-dev://open' }]);
+  await assert.rejects(plain.connect(), (error) => error instanceof NotRunningError && error.openURL === null);
+  assert.equal(plain.state, 'disconnected');
+  assert.deepEqual(await plain.presence(), { state: 'unknown' });
+  // A guide needs an environment to open anything with.
+  await assert.rejects(plain.connect({ guide: () => true }), TypeError);
 });
 
 test('a dropped connection ends its sessions; with reconnect, it comes back quietly', async (t) => {

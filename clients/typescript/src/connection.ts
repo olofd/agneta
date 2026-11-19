@@ -3,7 +3,7 @@
 // "something answered but refused the upgrade", and a timeout rejects one call, never the connection.
 import { Emitter } from './emitter.js';
 import {
-  AbortedError, ConnectionClosedError, ConnectionRefusedError, fromRpcError, NotRunningError, TimeoutError,
+  AbortedError, ConnectionClosedError, ConnectionRefusedError, fromRpcError, NetworkBlockedError, NotRunningError, TimeoutError,
   type RpcErrorObject
 } from './errors.js';
 import type { AgnetaClientRequests, AgnetaNotifications, AgnetaRequests, AppNotifications } from './protocol.js';
@@ -42,6 +42,9 @@ export interface WebSocketLike {
 
 export type WebSocketConstructor = new (url: string) => WebSocketLike;
 
+/** What answers at an address: something (`listening`), nothing, or nothing this app may reach (`blocked`: `EPERM`). */
+export type PortProbe = 'listening' | 'notListening' | 'blocked';
+
 export interface RequestOptions {
   /** Milliseconds; 0 or Infinity for none. Default: the connection's `requestTimeout`. */
   timeout?: number;
@@ -57,8 +60,11 @@ export interface OpenOptions {
   connectTimeout?: number;
   /** Default timeout for requests. Default 30 s. */
   requestTimeout?: number;
-  /** Whether anything listens at the URL's host and port, to tell "not running" from "refused". */
-  probe?: (url: string) => Promise<boolean>;
+  /**
+   * Whether anything listens at the URL's host and port, to tell "not running" from "refused" (and both from an app
+   * that may not connect at all). Default: `probeAgneta`.
+   */
+  probe?: (url: string) => Promise<PortProbe>;
   signal?: AbortSignal;
 }
 
@@ -106,7 +112,8 @@ export class Connection extends Emitter<ConnectionEvents> {
 
   /**
    * Opens the WebSocket. Rejects with `NotRunningError` when nothing listens, `ConnectionRefusedError` when something
-   * answered but refused the upgrade, `TimeoutError` when the upgrade takes too long.
+   * answered but refused the upgrade, `NetworkBlockedError` when this app may not connect at all (a sandbox without the
+   * network client entitlement), `TimeoutError` when the upgrade takes too long.
    */
   static open(options: OpenOptions): Promise<Connection> {
     const WebSocketClass = options.WebSocket ?? (globalThis as { WebSocket?: WebSocketConstructor }).WebSocket;
@@ -143,10 +150,11 @@ export class Connection extends Emitter<ConnectionEvents> {
       socket.addEventListener('open', () => settle(() => resolve(connection)), { once: true });
       const failed = () => {
         if (settled) return;
-        const probe = options.probe ?? probeWithFetch;
-        probe(options.url).catch(() => false).then((listening) => settle(() => reject(listening
-          ? new ConnectionRefusedError(options.url)
-          : new NotRunningError(options.url, options.openURL ?? null))));
+        const probe = options.probe ?? probeAgneta;
+        probe(options.url).catch((): PortProbe => 'notListening').then((found) => settle(() => reject(
+          found === 'listening' ? new ConnectionRefusedError(options.url)
+            : found === 'blocked' ? new NetworkBlockedError(options.url)
+              : new NotRunningError(options.url, options.openURL ?? null))));
       };
       socket.addEventListener('error', failed, { once: true });
       socket.addEventListener('close', failed, { once: true });
@@ -311,22 +319,26 @@ export class Connection extends Emitter<ConnectionEvents> {
 }
 
 /**
- * Whether anything listens on the URL's host and port: an HTTP request that's refused means nothing does. A request
- * that gets any answer, or none within a second, means something listens and refused the WebSocket upgrade.
+ * What answers at a WebSocket address, by an HTTP request to it: refused (or no such address) means nothing listens;
+ * `EPERM` or `EACCES` means this app may not connect at all (a sandboxed app without
+ * `com.apple.security.network.client` gets that from loopback, measured); any answer, or none within a second, means
+ * something listens. `fetch` may be replaced (tests).
  */
-async function probeWithFetch(url: string): Promise<boolean> {
+export async function probeAgneta(url: string, fetchFunction: typeof fetch = fetch): Promise<PortProbe> {
   const target = new URL(url);
   target.protocol = target.protocol === 'wss:' ? 'https:' : 'http:';
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 1000);
   try {
-    await fetch(target, { signal: controller.signal, redirect: 'manual' });
-    return true;
+    await fetchFunction(target, { signal: controller.signal, redirect: 'manual' });
+    return 'listening';
   } catch (error) {
-    if (controller.signal.aborted) return true;
-    const code = (error as { cause?: { code?: string } })?.cause?.code;
+    if (controller.signal.aborted) return 'listening';
+    const cause = (error as { cause?: { code?: string } })?.cause;
+    const code = cause?.code ?? (error as { code?: string })?.code;
+    if (code === 'EPERM' || code === 'EACCES') return 'blocked';
     // Refused, or no such address: nothing listens. Anything else (the socket closed on us, say) means something does.
-    return !(code === 'ECONNREFUSED' || code === 'EADDRNOTAVAIL' || code === 'ENOTFOUND');
+    return code === 'ECONNREFUSED' || code === 'EADDRNOTAVAIL' || code === 'ENOTFOUND' ? 'notListening' : 'listening';
   } finally {
     clearTimeout(timer);
   }
