@@ -422,7 +422,8 @@ def layout(site, *, title, description, path, body, page_class, head_extra=""):
     template = read("site/src/layout.html")
     canonical = f"{SITE}/{path}/" if path else f"{SITE}/"
     full_title = title if title == "Agneta" else f"{title} · Agneta"
-    nav_current = lambda p: ' aria-current="page"' if (path or "").startswith(p) else ""
+    def nav_current(p):
+        return ' aria-current="page"' if (path or "").startswith(p) else ""
     values = {
         "title": esc(full_title),
         "og_title": esc(title),
@@ -451,7 +452,8 @@ def fill(template, values, name):
 def docs_nav(current):
     groups = []
     for name, pages in GROUPS + [("", [CHANGELOG])]:
-        current_attr = lambda p: ' aria-current="page"' if p == current else ""
+        def current_attr(p):
+            return ' aria-current="page"' if p == current else ""
         items = "".join(f'<li><a href="/{p}/"{current_attr(p)}>{esc(t)}</a></li>' for _, _, p, t in pages)
         heading = f"<h2>{esc(name)}</h2>" if name else ""
         groups.append(f"<div>{heading}<ul>{items}</ul></div>")

@@ -179,7 +179,8 @@ if [[ -n "$identity" ]]; then
   xcrun stapler validate "$out/$name.dmg"
 fi
 
-(cd "$out" && shasum -a 256 "$name.dmg" "$name.zip" $(ls Agneta-codex-runtime-*.zip 2>/dev/null) > "SHA256SUMS-$arch.txt")
+(cd "$out" && runtimes=(); for zip in Agneta-codex-runtime-*.zip; do [[ -e "$zip" ]] && runtimes+=("$zip"); done
+  shasum -a 256 "$name.dmg" "$name.zip" ${runtimes[@]+"${runtimes[@]}"} > "SHA256SUMS-$arch.txt")
 gatekeeper=(); [[ -n "$identity" ]] && gatekeeper=(--gatekeeper)
 scripts/dev/smoke-test "$out/$name.dmg" ${gatekeeper[@]+"${gatekeeper[@]}"} ${previous[@]+"${previous[@]}"}
 for file in "$out/$name.dmg" "$out/$name.zip"; do echo "$file ($(du -h "$file" | cut -f1))"; done

@@ -52,7 +52,9 @@ jobs:
             publish=false
           fi
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::$version isn't major.minor.patch[-pre]"; exit 1; }
-          grep -qE "^## ${version//./\\.}( |$)" CHANGELOG.md && ! grep -qE "^## ${version//./\\.} \(unreleased\)" CHANGELOG.md || { echo "::error::CHANGELOG.md has no notes for $version"; exit 1; }
+          if ! grep -qE "^## ${version//./\\.}( |$)" CHANGELOG.md || grep -qE "^## ${version//./\\.} \(unreleased\)" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no notes for $version"; exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
           echo "Releasing @agneta/client $version (publish: $publish) from $(git rev-parse --short HEAD)"

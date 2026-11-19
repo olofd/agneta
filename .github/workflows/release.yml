@@ -104,6 +104,7 @@ jobs:
           security import "$keys/developer-id.p12" -k "$keychain" -P "$DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
           rm "$keys/developer-id.p12"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          # shellcheck disable=SC2046 # one word per keychain path, as security prints them (no spaces on a runner)
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           printf '%s\n' "$ASC_KEY_P8" > "$keys/AuthKey.p8"
           { echo "AGNETA_KEYCHAIN=$keychain"; echo "AGNETA_NOTARY_KEY=$keys/AuthKey.p8"; } >> "$GITHUB_ENV"

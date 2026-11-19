@@ -18,6 +18,7 @@ done
 [[ ${#archs[@]} -eq 0 ]] && archs=("$(uname -m)")
 # Every temporary folder is removed on exit (a trap set inside the loop would keep only the last).
 temps=()
+# shellcheck disable=SC2154 # t is the trap's own loop variable, set when it runs
 trap 'for t in "${temps[@]:-}"; do [[ -n "$t" ]] && rm -rf "$t"; done' EXIT
 for engine in "${engines[@]}"; do
   lock="Engines/$engine.lock"
