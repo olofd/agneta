@@ -72,9 +72,16 @@ if options.confine != nil && options.builtins {
     let workspace = URL(filePath: options.cwd, directoryHint: .isDirectory).realFileURL
     let toolProfile = SandboxProfile(kind: .tool, writable: [workspace], denied: []).render()
     let token = SecureRandom.token()
-    let socket = FileManager.default.temporaryDirectory.appending(path: "agneta-\(getpid()).sock").path(percentEncoded: false)
+    let socket = FileManager.default.temporaryDirectory.appending(path: "agneta-\(getpid()).sock").path(
+        percentEncoded: false)
     let service = ToolBroker(socketPath: socket) { offered, cwd in
-        offered == token && cwd.isInside(workspace) ? .init(profile: toolProfile, environment: ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": workspace.path(percentEncoded: false), "LANG": "en_US.UTF-8"]) : nil
+        offered == token && cwd.isInside(workspace)
+            ? .init(
+                profile: toolProfile,
+                environment: [
+                    "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": workspace.path(percentEncoded: false),
+                    "LANG": "en_US.UTF-8"
+                ]) : nil
     }
     try service.start()
     broker = service
@@ -93,12 +100,19 @@ var wrapper = options.sandbox.map { ["/usr/bin/sandbox-exec", "-f", $0] } ?? []
 if let ports = options.confine {
     // Engine profile: writes only to its home and the workspace; loopback only to the given ports; 443 out.
     try launch.prepare()
-    var profile = SandboxProfile(kind: .engine,
-                                 writable: [launch.home, URL(filePath: options.cwd, directoryHint: .isDirectory)] + options.writable.map { URL(filePath: $0, directoryHint: .isDirectory) },
-                                 denied: [],
-                                 readable: [shellTool.deletingLastPathComponent(), URL(filePath: options.goose).deletingLastPathComponent()] + options.paths.map { URL(filePath: $0, directoryHint: .isDirectory) }
-                                    + (options.env["CLAUDE_CONFIG_DIR"] != nil ? [FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Keychains", directoryHint: .isDirectory)] : []),
-                                 loopbackPorts: ports, remotePorts: [443])
+    var profile = SandboxProfile(
+        kind: .engine,
+        writable: [launch.home, URL(filePath: options.cwd, directoryHint: .isDirectory)]
+            + options.writable.map { URL(filePath: $0, directoryHint: .isDirectory) },
+        denied: [],
+        readable: [shellTool.deletingLastPathComponent(), URL(filePath: options.goose).deletingLastPathComponent()]
+            + options.paths.map { URL(filePath: $0, directoryHint: .isDirectory) }
+            + (options.env["CLAUDE_CONFIG_DIR"] != nil
+                ? [
+                    FileManager.default.homeDirectoryForCurrentUser.appending(
+                        path: "Library/Keychains", directoryHint: .isDirectory)
+                ] : []),
+        loopbackPorts: ports, remotePorts: [443])
     if let broker { profile.unixSockets = [URL(filePath: broker.socketPath)] }
     let file = launch.home.appending(path: "engine.sb")
     try profile.render().write(to: file, atomically: true, encoding: .utf8)
@@ -118,10 +132,12 @@ await peer.handle(notifications: { method, params in
     if raw { line("← \(method) \(compact(params))"); return }
     let update = params?["update"]
     switch update?["sessionUpdate"]?.stringValue {
-    case "agent_message_chunk": line("  text: \(update?["content"]?["text"]?.stringValue ?? compact(update?["content"]))")
+    case "agent_message_chunk":
+        line("  text: \(update?["content"]?["text"]?.stringValue ?? compact(update?["content"]))")
     case "agent_thought_chunk": line("  thought: \(update?["content"]?["text"]?.stringValue ?? "")")
     case "tool_call": line("  tool_call: \(update?["title"]?.stringValue ?? "") \(compact(update?["rawInput"]))")
-    case "tool_call_update": line("  tool_update: \(update?["status"]?.stringValue ?? "") \(compact(update?["content"]))")
+    case "tool_call_update":
+        line("  tool_update: \(update?["status"]?.stringValue ?? "") \(compact(update?["content"]))")
     case "usage_update": line("  usage: \(compact(update))")
     case let kind?: line("  \(kind)")
     default: line("← \(method) \(compact(params))")
@@ -139,11 +155,13 @@ await peer.handle(requests: { method, params in
 Task { await peer.run(lines) }
 
 do {
-    let initialized = try await peer.request("initialize", [
-        "protocolVersion": 1,
-        "clientCapabilities": ["fs": ["readTextFile": false, "writeTextFile": false], "terminal": false],
-        "clientInfo": ["name": "agneta-probe", "version": "0"],
-    ])
+    let initialized = try await peer.request(
+        "initialize",
+        [
+            "protocolVersion": 1,
+            "clientCapabilities": ["fs": ["readTextFile": false, "writeTextFile": false], "terminal": false],
+            "clientInfo": ["name": "agneta-probe", "version": "0"]
+        ])
     line("initialize (\(ContinuousClock.now - started)): \(compact(initialized))")
 
     var mcpServers: [JSONValue] = []
@@ -151,7 +169,7 @@ do {
     if let url = options.mcp {
         let server: JSONValue = [
             "type": "http", "name": "app", "url": .string(url),
-            "headers": options.mcpToken.map { [["name": "Authorization", "value": .string("Bearer \($0)")]] } ?? [],
+            "headers": options.mcpToken.map { [["name": "Authorization", "value": .string("Bearer \($0)")]] } ?? []
         ]
         mcpServers.append(server)
         if !options.builtins {
@@ -166,16 +184,19 @@ do {
     line("session/new (\(ContinuousClock.now - started)): \(compact(session))")
 
     if let system = options.system {
-        let result = try await peer.request("_goose/unstable/session/system-prompt/set", [
-            "sessionId": sessionID, "mode": "set", "text": .string(system),
-        ])
+        let result = try await peer.request(
+            "_goose/unstable/session/system-prompt/set",
+            [
+                "sessionId": sessionID, "mode": "set", "text": .string(system)
+            ])
         line("system prompt: \(compact(result))")
     }
 
     for prompt in options.prompts {
         let promptStart = ContinuousClock.now
         line("prompt: \(prompt)")
-        let result = try await peer.request("session/prompt", ["sessionId": sessionID, "prompt": [["type": "text", "text": .string(prompt)]]])
+        let result = try await peer.request(
+            "session/prompt", ["sessionId": sessionID, "prompt": [["type": "text", "text": .string(prompt)]]])
         line("result (\(ContinuousClock.now - promptStart)): \(compact(result))")
     }
 } catch {

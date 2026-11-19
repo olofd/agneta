@@ -58,31 +58,43 @@ public struct TraceSummary: Sendable {
     public var ended = false
 
     public init(records all: [JSONValue]) {
-        func events(_ kind: String) -> [JSONValue] { all.filter { $0["type"]?.stringValue == "event" && $0["kind"]?.stringValue == kind } }
+        func events(_ kind: String) -> [JSONValue] {
+            all.filter { $0["type"]?.stringValue == "event" && $0["kind"]?.stringValue == kind }
+        }
         func number(_ value: JSONValue?) -> Double? {
-            switch value { case .double(let v)?: v; case .int(let v)?: Double(v); default: nil }
+            switch value {
+            case .double(let v)?: v;
+            case .int(let v)?: Double(v);
+            default: nil
+            }
         }
         let meta = all.first { $0["type"]?.stringValue == "meta" }
         app = meta?["app"]?["name"]?.stringValue
         account = meta?["account"]?["label"]?.stringValue
         billing = meta?["account"]?["billing"]?.stringValue
         kind = meta?["account"]?["kind"]?.stringValue
-        engine = [meta?["engine"]?["info"]?["name"]?.stringValue, meta?["engine"]?["info"]?["version"]?.stringValue].compactMap { $0 }.joined(separator: " ")
+        engine = [meta?["engine"]?["info"]?["name"]?.stringValue, meta?["engine"]?["info"]?["version"]?.stringValue]
+            .compactMap { $0 }.joined(separator: " ")
         dedicated = meta?["engine"]?["dedicated"]?.boolValue == true
         tools = meta?["policy"]?["tools"]?.stringValue
         network = meta?["policy"]?["network"]?.stringValue
         sandbox = meta?["policy"]?["sandbox"]?.stringValue
         turns = events("turn").map { turn in
-            Turn(n: Int(turn["n"]?.intValue ?? 0), stopReason: turn["stopReason"]?.stringValue ?? "?", ms: number(turn["ms"]),
-                 msToFirstToken: number(turn["msToFirstToken"]), modelCalls: Int(turn["modelCalls"]?.intValue ?? 0),
-                 input: Int(turn["ledger"]?["input"]?.intValue ?? 0), output: Int(turn["ledger"]?["output"]?.intValue ?? 0),
-                 cacheRead: Int(turn["ledger"]?["cacheRead"]?.intValue ?? 0), cacheWrite: Int(turn["ledger"]?["cacheWrite"]?.intValue ?? 0),
-                 cost: number(turn["cost"]), error: turn["error"]?.stringValue)
+            Turn(
+                n: Int(turn["n"]?.intValue ?? 0), stopReason: turn["stopReason"]?.stringValue ?? "?",
+                ms: number(turn["ms"]),
+                msToFirstToken: number(turn["msToFirstToken"]), modelCalls: Int(turn["modelCalls"]?.intValue ?? 0),
+                input: Int(turn["ledger"]?["input"]?.intValue ?? 0),
+                output: Int(turn["ledger"]?["output"]?.intValue ?? 0),
+                cacheRead: Int(turn["ledger"]?["cacheRead"]?.intValue ?? 0),
+                cacheWrite: Int(turn["ledger"]?["cacheWrite"]?.intValue ?? 0),
+                cost: number(turn["cost"]), error: turn["error"]?.stringValue)
         }
         var names: [String: String] = [:]
         for call in events("tool-call") {
             guard let id = call["call"]?.stringValue else { continue }
-            let tool = [call["extension"]?.stringValue, call["tool"]?.stringValue].compactMap { $0 }.joined(separator: "/")
+            let tool = [call["extension"]?.stringValue, call["tool"]?.stringValue].compactMap { $0 }.joined(
+                separator: "/")
             names[id] = tool.isEmpty ? (call["name"]?.stringValue ?? "?") : tool
         }
         var grouped: [String: (ms: [Double], errors: Int)] = [:]
@@ -93,8 +105,10 @@ public struct TraceSummary: Sendable {
         }
         toolStats = grouped.map { name, entry in
             let sorted = entry.ms.sorted()
-            let p95 = sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int((Double(sorted.count - 1) * 0.95).rounded()))]
-            return Tool(name: name, calls: entry.ms.count, errors: entry.errors, totalMs: entry.ms.reduce(0, +), p95Ms: p95)
+            let p95 =
+                sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int((Double(sorted.count - 1) * 0.95).rounded()))]
+            return Tool(
+                name: name, calls: entry.ms.count, errors: entry.errors, totalMs: entry.ms.reduce(0, +), p95Ms: p95)
         }.sorted { $0.totalMs > $1.totalMs }
         toolCalls = events("tool-call").count
         unfinishedToolCalls = max(0, toolCalls - events("tool-result").count)
@@ -104,7 +118,8 @@ public struct TraceSummary: Sendable {
         // output counts are partial, and side calls aren't listed); those turns count by their ledger.
         let totalled = events("turn").filter { $0["basis"]?.stringValue == "engine-turn-totals" }
         let totalledTurns = Set(totalled.compactMap { $0["n"]?.intValue })
-        let source = models.filter { !totalledTurns.contains($0["turn"]?.intValue ?? -1) } + totalled.compactMap { $0["ledger"] }
+        let source =
+            models.filter { !totalledTurns.contains($0["turn"]?.intValue ?? -1) } + totalled.compactMap { $0["ledger"] }
         input = source.reduce(0) { $0 + Int($1["input"]?.intValue ?? 0) }
         output = source.reduce(0) { $0 + Int($1["output"]?.intValue ?? 0) }
         cacheRead = source.reduce(0) { $0 + Int($1["cacheRead"]?.intValue ?? 0) }
@@ -114,7 +129,9 @@ public struct TraceSummary: Sendable {
         shellCommands = shells.count
         shellFailures = shells.filter { ($0["exit"]?.intValue ?? 0) != 0 || $0["signal"] != nil }.count
         shellRefused = shells.filter { $0["refused"] != nil }.count
-        for record in all where record["type"]?.stringValue == "permission" { permissions[record["decision"]?.stringValue ?? "?", default: 0] += 1 }
+        for record in all where record["type"]?.stringValue == "permission" {
+            permissions[record["decision"]?.stringValue ?? "?", default: 0] += 1
+        }
         lifecycle = all.filter { $0["type"]?.stringValue == "lifecycle" }
         records = all.count
         ended = all.last?["type"]?.stringValue == "end"
@@ -130,8 +147,11 @@ public struct TraceSummary: Sendable {
 public enum TraceExport {
     /// Content-bearing fields, removed whole with `redactContent` (their size is kept). Tool titles carry
     /// arguments, so a tool event's `name` and every `title` go too.
-    static let contentKeys: Set<String> = ["prompt", "delta", "input", "content", "rawOutput", "msg", "instructions", "request",
-                                           "engineResult", "text", "stderrTail", "command", "title", "message", "entries", "configOptions", "error", "reason"]
+    static let contentKeys: Set<String> = [
+        "prompt", "delta", "input", "content", "rawOutput", "msg", "instructions", "request",
+        "engineResult", "text", "stderrTail", "command", "title", "message", "entries", "configOptions", "error",
+        "reason"
+    ]
 
     /// Writes the records as JSON lines, owner-only.
     public static func write(_ records: [JSONValue], to file: URL, redactContent: Bool) throws {
@@ -141,7 +161,11 @@ public enum TraceExport {
             TraceJSON.encode(redactContent ? redactor.redact(record) : record, into: &text)
             text += "\n"
         }
-        guard FileManager.default.createFile(atPath: file.path(percentEncoded: false), contents: Data(text.utf8), attributes: [.posixPermissions: 0o600]) else {
+        guard
+            FileManager.default.createFile(
+                atPath: file.path(percentEncoded: false), contents: Data(text.utf8),
+                attributes: [.posixPermissions: 0o600])
+        else {
             throw CocoaError(.fileWriteUnknown)
         }
     }
@@ -153,7 +177,10 @@ extension TraceExport {
     public static func write(trace: URL, to file: URL, redactContent: Bool) throws {
         let input = try FileHandle(forReadingFrom: trace)
         defer { try? input.close() }
-        guard FileManager.default.createFile(atPath: file.path(percentEncoded: false), contents: nil, attributes: [.posixPermissions: 0o600]) else {
+        guard
+            FileManager.default.createFile(
+                atPath: file.path(percentEncoded: false), contents: nil, attributes: [.posixPermissions: 0o600])
+        else {
             throw CocoaError(.fileWriteUnknown)
         }
         do {
@@ -196,9 +223,10 @@ extension Traces {
 public struct TraceRedactor: Sendable {
     /// Keys whose strings are structural, wherever they are.
     static let structural: Set<String> = [
-        "t", "task", "type", "kind", "event", "leg", "status", "stopReason", "decision", "by", "costKind", "costSource", "basis",
+        "t", "task", "type", "kind", "event", "leg", "status", "stopReason", "decision", "by", "costKind", "costSource",
+        "basis",
         "billing", "runner", "toolKind", "limit", "format", "role", "outcome", "optionId", "sessionUpdate", "delivery",
-        "call", "engineCall", "model", "models", "stateFormat", "version", "tools", "network", "approval", "ending",
+        "call", "engineCall", "model", "models", "stateFormat", "version", "tools", "network", "approval", "ending"
     ]
     /// Places whose strings are structural: the engine's own name in `meta`.
     static let structuralPaths: Set<String> = ["engine.id", "engine.info.name"]
@@ -233,11 +261,14 @@ public struct TraceRedactor: Sendable {
         case .string(let text):
             guard let key = path.last else { return .string("‹removed, \(text.utf8.count) bytes›") }
             if Self.structural.contains(key) || Self.structuralPaths.contains(path.suffix(3).joined(separator: "."))
-                || Self.structuralPaths.contains(path.suffix(2).joined(separator: ".")) {
+                || Self.structuralPaths.contains(path.suffix(2).joined(separator: "."))
+            {
                 return value
             }
             if Self.tokenized.contains(key) {
-                let digest = SHA256.hash(data: Data(salt) + Data(text.utf8)).prefix(4).map { String(format: "%02x", $0) }.joined()
+                let digest = SHA256.hash(data: Data(salt) + Data(text.utf8)).prefix(4).map {
+                    String(format: "%02x", $0)
+                }.joined()
                 return .string("‹name \(digest)›")
             }
             return .string("‹removed, \(text.utf8.count) bytes›")

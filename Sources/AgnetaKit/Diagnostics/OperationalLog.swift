@@ -27,7 +27,10 @@ public final class OperationalLog: @unchecked Sendable {
         let now = Date()
         queue.async { [self] in
             let masked = mask.mask(.object(fields)).objectValue ?? [:]
-            let line = TraceJSON.line(header: [("t", .string(TraceWriter.timestamp(now))), ("level", .string(level)), ("event", .string(event))], fields: masked)
+            let line = TraceJSON.line(
+                header: [
+                    ("t", .string(TraceWriter.timestamp(now))), ("level", .string(level)), ("event", .string(event))
+                ], fields: masked)
             guard let handle = openIfNeeded() else { return }
             try? handle.write(contentsOf: line)
             bytes += line.count
@@ -50,10 +53,12 @@ public final class OperationalLog: @unchecked Sendable {
 
     private func openIfNeeded() -> FileHandle? {
         if let handle { return handle }
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         pruneOld()
         if !FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) {
-            FileManager.default.createFile(atPath: file.path(percentEncoded: false), contents: nil, attributes: [.posixPermissions: 0o600])
+            FileManager.default.createFile(
+                atPath: file.path(percentEncoded: false), contents: nil, attributes: [.posixPermissions: 0o600])
         }
         handle = try? FileHandle(forWritingTo: file)
         bytes = Int((try? handle?.seekToEnd()) ?? 0)
@@ -73,9 +78,12 @@ public final class OperationalLog: @unchecked Sendable {
 
     private func pruneOld() {
         let cutoff = Date().addingTimeInterval(-Double(keepDays) * 86_400)
-        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        let files =
+            (try? FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         for url in files where url.pathExtension == "jsonl" {
-            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date()
+            let modified =
+                (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date()
             if modified < cutoff { try? FileManager.default.removeItem(at: url) }
         }
     }

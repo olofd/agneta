@@ -23,8 +23,11 @@ final class CodexRolloutLedger: UsageLedger, @unchecked Sendable {
 
     private func locate() -> URL? {
         let sessions = codexHome.appending(path: "sessions", directoryHint: .isDirectory)
-        guard let walker = FileManager.default.enumerator(at: sessions, includingPropertiesForKeys: nil) else { return nil }
-        for case let url as URL in walker where url.lastPathComponent.hasPrefix("rollout-") && url.lastPathComponent.hasSuffix("\(session).jsonl") {
+        guard let walker = FileManager.default.enumerator(at: sessions, includingPropertiesForKeys: nil) else {
+            return nil
+        }
+        for case let url as URL in walker
+        where url.lastPathComponent.hasPrefix("rollout-") && url.lastPathComponent.hasSuffix("\(session).jsonl") {
             return url
         }
         return nil
@@ -52,18 +55,22 @@ final class CodexRolloutLedger: UsageLedger, @unchecked Sendable {
                         if !usage.isEmpty { usage[usage.count - 1]["plan"] = limits }
                     }
                 case "turn_context":
-                    if let turn = payload["turn_id"]?.stringValue, let model = payload["model"]?.stringValue { models[turn] = model }
+                    if let turn = payload["turn_id"]?.stringValue, let model = payload["model"]?.stringValue {
+                        models[turn] = model
+                    }
                 case "token_usage_record":
                     guard let tokens = payload["usage"] else { continue }
                     let input = tokens["input_tokens"]?.intValue, cached = tokens["cached_input_tokens"]?.intValue ?? 0
                     usage.append([
                         "id": payload["response_id"] ?? .null,
                         "model": payload["turn_id"]?.stringValue.flatMap { models[$0] }.map(JSONValue.string) ?? .null,
-                        "input_tokens": input.map { .int($0 - cached) } ?? .null, "output_tokens": tokens["output_tokens"] ?? .null,
-                        "cache_read_tokens": .int(cached), "cache_write_tokens": tokens["cache_write_input_tokens"] ?? .null,
+                        "input_tokens": input.map { .int($0 - cached) } ?? .null,
+                        "output_tokens": tokens["output_tokens"] ?? .null,
+                        "cache_read_tokens": .int(cached),
+                        "cache_write_tokens": tokens["cache_write_input_tokens"] ?? .null,
                         "reasoning_tokens": tokens["reasoning_output_tokens"] ?? .null,
                         "cost": .null, "cost_source": "codex", "created": record["timestamp"] ?? .null,
-                        "plan": plan ?? .null,
+                        "plan": plan ?? .null
                     ])
                 default: break
                 }

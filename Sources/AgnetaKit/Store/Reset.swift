@@ -37,7 +37,8 @@ public struct Reset: Sendable {
     public var isInterrupted: Bool { FileManager.default.fileExists(atPath: marker.path(percentEncoded: false)) }
 
     public func begin() throws {
-        try FileManager.default.createDirectory(at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("reset\n".utf8).write(to: marker)
     }
 
@@ -46,7 +47,9 @@ public struct Reset: Sendable {
         let status = keychain.deleteAll()
         guard status == errSecSuccess || status == errSecItemNotFound else { throw .keychain(status) }
         for folder in folders where FileManager.default.fileExists(atPath: folder.path(percentEncoded: false)) {
-            do { try FileManager.default.removeItem(at: folder) } catch { throw .folder(folder.path(percentEncoded: false)) }
+            do { try FileManager.default.removeItem(at: folder) } catch {
+                throw .folder(folder.path(percentEncoded: false))
+            }
         }
     }
 

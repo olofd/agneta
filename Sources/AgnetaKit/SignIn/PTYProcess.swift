@@ -25,7 +25,9 @@ public final class PTYProcess: @unchecked Sendable {
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK))
+        posix_spawnattr_setflags(
+            &attributes,
+            Int16(POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK))
         var allSignals = sigset_t(), noSignals = sigset_t()
         sigfillset(&allSignals); sigemptyset(&noSignals)
         posix_spawnattr_setsigdefault(&attributes, &allSignals)
@@ -54,7 +56,13 @@ public final class PTYProcess: @unchecked Sendable {
             while waitpid(leader, &raw, 0) < 0 && errno == EINTR {}
             // The terminal is this thread's to close, once nothing more can come: closed elsewhere while it still read,
             // its number could be reused, and this read would land on someone else's file.
-            if let self { self.lock.withLock { self.exitStatus = raw; close(fd) } } else { close(fd) }
+            if let self {
+                self.lock.withLock {
+                    self.exitStatus = raw; close(fd)
+                }
+            } else {
+                close(fd)
+            }
             sink.finish()
         }
         reader.start()
@@ -91,6 +99,8 @@ public final class PTYProcess: @unchecked Sendable {
 extension String {
     /// Terminal output without ANSI escape sequences.
     var withoutANSI: String {
-        replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]|\u{1B}\\][^\u{07}]*\u{07}|\u{1B}[()][0-9A-Za-z]", with: "", options: .regularExpression)
+        replacingOccurrences(
+            of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]|\u{1B}\\][^\u{07}]*\u{07}|\u{1B}[()][0-9A-Za-z]", with: "",
+            options: .regularExpression)
     }
 }

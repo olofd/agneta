@@ -3,27 +3,38 @@
 import Foundation
 import GRDB
 import Testing
+
 @testable import AgnetaKit
 
 struct OpenCodeLedgerTests {
     @Test func aStepIsReadOnceItEnds() throws {
-        let folder = FileManager.default.temporaryDirectory.appending(path: "agneta-opencode-ledger-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        let folder = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-opencode-ledger-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let file = folder.appending(path: "opencode.db")
         let database = try DatabaseQueue(path: file.path(percentEncoded: false))
         try database.write { db in
-            try db.execute(sql: "CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL)")
+            try db.execute(
+                sql:
+                    "CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL)"
+            )
         }
         func insert(_ id: String, _ type: String, _ seq: Int, _ data: String) throws {
             try database.write { db in
-                try db.execute(sql: "INSERT INTO session_message VALUES (?, 's1', ?, ?, 1795123280000, ?)", arguments: [id, type, seq, data])
+                try db.execute(
+                    sql: "INSERT INTO session_message VALUES (?, 's1', ?, ?, 1795123280000, ?)",
+                    arguments: [id, type, seq, data])
             }
         }
         func complete(_ id: String, cost: Double) throws {
             try database.write { db in
-                try db.execute(sql: "UPDATE session_message SET data = ? WHERE id = ?", arguments: [
-                    #"{"tokens":{"input":42,"output":7,"reasoning":0,"cache":{"read":0,"write":0}},"cost":\#(cost),"time":{"created":1,"completed":2}}"#, id])
+                try db.execute(
+                    sql: "UPDATE session_message SET data = ? WHERE id = ?",
+                    arguments: [
+                        #"{"tokens":{"input":42,"output":7,"reasoning":0,"cache":{"read":0,"write":0}},"cost":\#(cost),"time":{"created":1,"completed":2}}"#,
+                        id
+                    ])
             }
         }
         let reader = OpenCodeLedgerReader(database: file, session: "s1")

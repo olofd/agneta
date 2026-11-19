@@ -45,14 +45,18 @@ enum MoveToApplications {
 
     /// The folder to move into: `/Applications` when this user may write there, else `~/Applications`.
     nonisolated static func destinationFolder(applicationsWritable: Bool, home: URL) -> URL {
-        applicationsWritable ? URL(filePath: "/Applications", directoryHint: .isDirectory)
+        applicationsWritable
+            ? URL(filePath: "/Applications", directoryHint: .isDirectory)
             : home.appending(path: "Applications", directoryHint: .isDirectory)
     }
 
     /// `/bin/sh`'s arguments to open `app` once process `pid` has ended. Both go as arguments, never into the script.
     nonisolated static func relaunchArguments(pid: Int32, app: URL) -> [String] {
-        ["-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"", "agneta-relaunch",
-         String(pid), app.path(percentEncoded: false)]
+        [
+            "-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"",
+            "agneta-relaunch",
+            String(pid), app.path(percentEncoded: false)
+        ]
     }
 
     /// A bundle's identifier and versions, read from its `Info.plist` (not `Bundle`, which caches by path).
@@ -63,8 +67,9 @@ enum MoveToApplications {
 
         init?(_ app: URL) {
             guard let data = try? Data(contentsOf: app.appending(path: "Contents/Info.plist")),
-                  let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-                  let identifier = plist["CFBundleIdentifier"] as? String else { return nil }
+                let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+                let identifier = plist["CFBundleIdentifier"] as? String
+            else { return nil }
             self.identifier = identifier
             version = plist["CFBundleShortVersionString"] as? String ?? "0"
             build = plist["CFBundleVersion"] as? String ?? "0"
@@ -73,7 +78,8 @@ enum MoveToApplications {
         /// Whether this is an older version than `other`: by `CFBundleShortVersionString`, then `CFBundleVersion`.
         nonisolated func isOlder(than other: BundleInfo) -> Bool {
             let byVersion = MoveToApplications.compare(version, other.version)
-            return byVersion == .orderedAscending || (byVersion == .orderedSame && MoveToApplications.compare(build, other.build) == .orderedAscending)
+            return byVersion == .orderedAscending
+                || (byVersion == .orderedSame && MoveToApplications.compare(build, other.build) == .orderedAscending)
         }
     }
 
@@ -108,13 +114,18 @@ enum MoveToApplications {
     /// or a newer Agneta is already there, whether to open that one); on a yes, does it and quits so the copy in
     /// Applications opens. Returns true when Agneta is quitting for that.
     static func offerIfNeeded(_ model: AppModel) -> Bool {
-        guard !model.isDevelopment, !model.isIsolated, !UserDefaults.standard.bool(forKey: suppressedKey) else { return false }
+        guard !model.isDevelopment, !model.isIsolated, !UserDefaults.standard.bool(forKey: suppressedKey) else {
+            return false
+        }
         let bundle = Bundle.main.bundleURL
         let readOnly = (try? bundle.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) ?? false
-        let placement = AppPlacement.of(bundle.path(percentEncoded: false), home: NSHomeDirectory(), readOnlyVolume: readOnly)
+        let placement = AppPlacement.of(
+            bundle.path(percentEncoded: false), home: NSHomeDirectory(), readOnlyVolume: readOnly)
         guard placement.offersMove, let running = BundleInfo(bundle) else { return false }
         let files = FileManager.default
-        let folder = destinationFolder(applicationsWritable: files.isWritableFile(atPath: "/Applications"), home: files.homeDirectoryForCurrentUser)
+        let folder = destinationFolder(
+            applicationsWritable: files.isWritableFile(atPath: "/Applications"), home: files.homeDirectoryForCurrentUser
+        )
         let destination = folder.appending(path: bundle.lastPathComponent, directoryHint: .isDirectory)
         // A translocated copy runs from a random read-only mount; the download itself is where macOS found it. When that
         // is the destination already (a quarantined copy in Applications), Agneta is installed: nothing to move.
@@ -122,17 +133,22 @@ enum MoveToApplications {
         if let original, original.standardizedFileURL == destination.standardizedFileURL { return false }
         // Another Agneta already running from there serves apps; this copy couldn't take its port anyway.
         if NSRunningApplication.runningApplications(withBundleIdentifier: model.bundleID)
-            .contains(where: { $0.bundleURL?.standardizedFileURL == destination.standardizedFileURL }) {
+            .contains(where: { $0.bundleURL?.standardizedFileURL == destination.standardizedFileURL })
+        {
             model.log.log("move-to-applications", ["outcome": "another-running"])
             return false
         }
-        var offer = offer(running: running, atDestination: BundleInfo(destination), destinationExists: files.fileExists(atPath: destination.path(percentEncoded: false)))
+        var offer = offer(
+            running: running, atDestination: BundleInfo(destination),
+            destinationExists: files.fileExists(atPath: destination.path(percentEncoded: false)))
         var target = destination
         // A standard user moves into ~/Applications. A same or newer Agneta in /Applications (which they can't change)
         // is the one to open; an older one there stays, and LaunchServices may prefer it, so the alert says so.
         var olderInApplications = false
         let shared = URL(filePath: "/Applications/\(bundle.lastPathComponent)", directoryHint: .isDirectory)
-        if folder.path(percentEncoded: false) != "/Applications/", let other = BundleInfo(shared), other.identifier == running.identifier {
+        if folder.path(percentEncoded: false) != "/Applications/", let other = BundleInfo(shared),
+            other.identifier == running.identifier
+        {
             if other.isOlder(than: running) {
                 olderInApplications = true
             } else if offer != .openExisting {
@@ -147,14 +163,18 @@ enum MoveToApplications {
         let alert = NSAlert()
         if offer == .openExisting {
             alert.messageText = "Open Agneta from Applications?"
-            alert.informativeText = "Agneta \(BundleInfo(target)?.version ?? "") is already in Applications, the same as this copy (\(running.version)) or newer. Apps open that one. Agneta can open it and quit this copy."
+            alert.informativeText =
+                "Agneta \(BundleInfo(target)?.version ?? "") is already in Applications, the same as this copy (\(running.version)) or newer. Apps open that one. Agneta can open it and quit this copy."
             alert.addButton(withTitle: "Open Agneta in Applications")
         } else {
             alert.messageText = "Move Agneta to Applications?"
-            alert.informativeText = (placement == .diskImage
-                ? "Agneta is running from its disk image. Apps open Agneta from your Applications folder, and this copy goes away when the disk image is ejected. Agneta can move itself there and open again."
-                : "Agneta is running from where it was downloaded, which macOS treats as temporary. Apps open Agneta from your Applications folder. Agneta can move itself there and open again.")
-                + (olderInApplications ? "\n\nAn older Agneta is in /Applications, which only an administrator can change, and apps may open that one: ask an administrator to remove it." : "")
+            alert.informativeText =
+                (placement == .diskImage
+                    ? "Agneta is running from its disk image. Apps open Agneta from your Applications folder, and this copy goes away when the disk image is ejected. Agneta can move itself there and open again."
+                    : "Agneta is running from where it was downloaded, which macOS treats as temporary. Apps open Agneta from your Applications folder. Agneta can move itself there and open again.")
+                + (olderInApplications
+                    ? "\n\nAn older Agneta is in /Applications, which only an administrator can change, and apps may open that one: ask an administrator to remove it."
+                    : "")
             alert.addButton(withTitle: "Move to Applications")
         }
         alert.addButton(withTitle: "Not Now")
@@ -174,15 +194,23 @@ enum MoveToApplications {
                 model.log.error("move-to-applications", ["outcome": "failed", "reason": .string("\(error)")])
                 let failed = NSAlert()
                 failed.messageText = "Agneta couldn't move itself"
-                failed.informativeText = "\(error.localizedDescription)\n\nQuit Agneta, drag it into Applications yourself, and open it from there."
+                failed.informativeText =
+                    "\(error.localizedDescription)\n\nQuit Agneta, drag it into Applications yourself, and open it from there."
                 failed.runModal()
                 return false
             }
-            model.log.log("move-to-applications", ["outcome": "moved", "folder": .string(folder.path(percentEncoded: false)),
-                                                   "olderInApplications": .bool(olderInApplications)])
+            model.log.log(
+                "move-to-applications",
+                [
+                    "outcome": "moved", "folder": .string(folder.path(percentEncoded: false)),
+                    "olderInApplications": .bool(olderInApplications)
+                ])
             if let original, original.standardizedFileURL != destination.standardizedFileURL,
-               placement.trashesOriginal(onReadOnlyVolume: (try? original.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) ?? true),
-               BundleInfo(original)?.identifier == model.bundleID {
+                placement.trashesOriginal(
+                    onReadOnlyVolume: (try? original.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly)
+                        ?? true),
+                BundleInfo(original)?.identifier == model.bundleID
+            {
                 do {
                     try files.trashItem(at: original, resultingItemURL: nil)
                     model.log.log("move-to-applications", ["original": "trashed"])
@@ -220,18 +248,27 @@ enum MoveToApplications {
     /// sibling (on the same volume) and takes the quarantine mark off there; only once that's complete does an older
     /// Agneta at the destination go to the Trash and the copy take its name, and should the rename fail, the old one is
     /// put back. Anything there that isn't Agneta is refused, and so is copying a bundle onto itself.
-    nonisolated static func move(_ bundle: URL, to destination: URL, bundleID: String, files operations: Files = Files()) throws {
+    nonisolated static func move(
+        _ bundle: URL, to destination: URL, bundleID: String, files operations: Files = Files()
+    ) throws {
         let files = FileManager.default
-        guard bundle.standardizedFileURL.resolvingSymlinksInPath() != destination.standardizedFileURL.resolvingSymlinksInPath() else {
-            throw MoveError("Agneta is already in \(destination.deletingLastPathComponent().path(percentEncoded: false)).")
+        guard
+            bundle.standardizedFileURL.resolvingSymlinksInPath()
+                != destination.standardizedFileURL.resolvingSymlinksInPath()
+        else {
+            throw MoveError(
+                "Agneta is already in \(destination.deletingLastPathComponent().path(percentEncoded: false)).")
         }
         let exists = files.fileExists(atPath: destination.path(percentEncoded: false))
         if exists, BundleInfo(destination)?.identifier != bundleID {
-            throw MoveError("Something else named \(destination.lastPathComponent) is already in \(destination.deletingLastPathComponent().path(percentEncoded: false)).")
+            throw MoveError(
+                "Something else named \(destination.lastPathComponent) is already in \(destination.deletingLastPathComponent().path(percentEncoded: false))."
+            )
         }
         try files.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         let temporary = destination.deletingLastPathComponent()
-            .appending(path: ".\(destination.lastPathComponent).moving-\(UUID().uuidString)", directoryHint: .isDirectory)
+            .appending(
+                path: ".\(destination.lastPathComponent).moving-\(UUID().uuidString)", directoryHint: .isDirectory)
         do {
             try operations.copy(bundle, temporary)
             // The copy keeps the download's quarantine mark. The user has already opened this signed, notarized bundle,
@@ -246,7 +283,9 @@ enum MoveToApplications {
             if exists { trashed = try operations.discard(destination) }
             try files.moveItem(at: temporary, to: destination)
         } catch {
-            if let trashed, !files.fileExists(atPath: destination.path(percentEncoded: false)) { try? files.moveItem(at: trashed, to: destination) }
+            if let trashed, !files.fileExists(atPath: destination.path(percentEncoded: false)) {
+                try? files.moveItem(at: trashed, to: destination)
+            }
             try? files.removeItem(at: temporary)
             throw error
         }
@@ -255,7 +294,9 @@ enum MoveToApplications {
     /// Where macOS translocated this bundle from (Security's `SecTranslocateCreateOriginalPathForURL`, looked up at run
     /// time as LetsMove does: it isn't in the public headers). Nil when it can't say.
     private static func originalURL(ofTranslocated url: URL) -> URL? {
-        guard let security = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY) else { return nil }
+        guard let security = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY) else {
+            return nil
+        }
         defer { dlclose(security) }
         typealias Original = @convention(c) (CFURL, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> Unmanaged<CFURL>?
         guard let symbol = dlsym(security, "SecTranslocateCreateOriginalPathForURL") else { return nil }
@@ -264,7 +305,9 @@ enum MoveToApplications {
     }
 
     nonisolated private static func removeQuarantine(_ root: URL) {
-        let paths = [root] + ((FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.allObjects as? [URL]) ?? [])
+        let paths =
+            [root]
+            + ((FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.allObjects as? [URL]) ?? [])
         for url in paths { _ = removexattr(url.path(percentEncoded: false), "com.apple.quarantine", XATTR_NOFOLLOW) }
     }
 

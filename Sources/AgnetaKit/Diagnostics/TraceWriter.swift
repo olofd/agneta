@@ -18,7 +18,10 @@ public final class TraceWriter: @unchecked Sendable {
         public var maxTotalBytes: Int
         /// Bytes per record: a larger one (a huge tool output) is written as a stub that keeps what identifies it.
         public var maxRecordBytes: Int
-        public init(maxBytes: Int = 200 << 20, maxPending: Int = 20_000, maxTotalBytes: Int = 1 << 30, maxRecordBytes: Int = 16 << 20) {
+        public init(
+            maxBytes: Int = 200 << 20, maxPending: Int = 20_000, maxTotalBytes: Int = 1 << 30,
+            maxRecordBytes: Int = 16 << 20
+        ) {
             self.maxBytes = maxBytes
             self.maxPending = maxPending
             self.maxTotalBytes = maxTotalBytes
@@ -53,10 +56,14 @@ public final class TraceWriter: @unchecked Sendable {
     public private(set) var earlier: (taskCost: Double, modelCalls: Int) = (0, 0)
 
     /// Sees every record as it's written, masked, in sequence order (live delivery to the app).
-    public func observe(_ listener: @escaping @Sendable (JSONValue) -> Void) { lock.withLock { self.listener = listener } }
+    public func observe(_ listener: @escaping @Sendable (JSONValue) -> Void) {
+        lock.withLock { self.listener = listener }
+    }
 
     /// Hears once when the trace can't be written any more (the disk is full, the file went away).
-    public func onProblem(_ handler: @escaping @Sendable (String) -> Void) { lock.withLock { problemHandler = handler } }
+    public func onProblem(_ handler: @escaping @Sendable (String) -> Void) {
+        lock.withLock { problemHandler = handler }
+    }
 
     /// Why this trace stopped being written, or nil while it's whole.
     public var problem: String? { lock.withLock { failure } }
@@ -67,16 +74,25 @@ public final class TraceWriter: @unchecked Sendable {
         self.mask = mask
         self.limits = limits
         queue = DispatchQueue(label: "agneta.trace.\(task)")
-        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? FileManager.default.createDirectory(
+            at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
         if !FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) {
-            FileManager.default.createFile(atPath: file.path(percentEncoded: false), contents: nil, attributes: [.posixPermissions: 0o600])
+            FileManager.default.createFile(
+                atPath: file.path(percentEncoded: false), contents: nil, attributes: [.posixPermissions: 0o600])
         }
         handle = try? FileHandle(forWritingTo: file)
-        if let handle { bytes = Int((try? handle.seekToEnd()) ?? 0) } else { failure = "the trace file couldn't be opened" }
+        if let handle {
+            bytes = Int((try? handle.seekToEnd()) ?? 0)
+        } else {
+            failure = "the trace file couldn't be opened"
+        }
         // A crash mid-write leaves a partial last line: the next record starts on a line of its own, not glued to it.
         if bytes > 0, let reader = try? FileHandle(forReadingFrom: file) {
             try? reader.seek(toOffset: UInt64(bytes - 1))
-            if reader.readData(ofLength: 1) != Data([0x0A]), (try? handle?.write(contentsOf: Data([0x0A]))) != nil { bytes += 1 }
+            if reader.readData(ofLength: 1) != Data([0x0A]), (try? handle?.write(contentsOf: Data([0x0A]))) != nil {
+                bytes += 1
+            }
             try? reader.close()
         }
         // A resumed task continues its trace: numbering and turns go on from the last line.
@@ -91,7 +107,9 @@ public final class TraceWriter: @unchecked Sendable {
     /// event carries the task's cost, and the last `model-call` its number. Read backwards from the end, decoding
     /// only lines that can hold them.
     static func usageSoFar(of file: URL) -> (taskCost: Double, modelCalls: Int) {
-        guard let handle = try? FileHandle(forReadingFrom: file), let size = try? handle.seekToEnd() else { return (0, 0) }
+        guard let handle = try? FileHandle(forReadingFrom: file), let size = try? handle.seekToEnd() else {
+            return (0, 0)
+        }
         defer { try? handle.close() }
         let costKey = Data(#""taskCost":"#.utf8), callKind = Data(#""kind":"model-call""#.utf8)
         var cost: Double?, calls: Int?
@@ -108,10 +126,16 @@ public final class TraceWriter: @unchecked Sendable {
             for line in lines.reversed() where cost == nil || calls == nil {
                 let isCall = line.range(of: callKind) != nil
                 guard isCall || (cost == nil && line.range(of: costKey) != nil),
-                      let record = try? JSONCoding.decode(Data(line)), record["type"]?.stringValue == "event" else { continue }
+                    let record = try? JSONCoding.decode(Data(line)), record["type"]?.stringValue == "event"
+                else { continue }
                 let kind = record["kind"]?.stringValue
                 if cost == nil, kind == "turn" || kind == "model-call" {
-                    cost = switch record["taskCost"] { case .double(let v)?: v; case .int(let v)?: Double(v); default: kind == "turn" ? 0 : nil }
+                    cost =
+                        switch record["taskCost"] {
+                        case .double(let v)?: v;
+                        case .int(let v)?: Double(v);
+                        default: kind == "turn" ? 0 : nil
+                        }
                 }
                 if calls == nil, kind == "model-call" { calls = record["n"]?.intValue.map(Int.init) }
             }
@@ -130,7 +154,9 @@ public final class TraceWriter: @unchecked Sendable {
             try? handle.seek(toOffset: start)
             let data = handle.readData(ofLength: Int(size - start))
             let lines = data.split(separator: UInt8(ascii: "\n"))
-            if let line = lines.last(where: { (try? JSONCoding.decode(Data($0))) != nil }) { return try? JSONCoding.decode(Data(line)) }
+            if let line = lines.last(where: { (try? JSONCoding.decode(Data($0))) != nil }) {
+                return try? JSONCoding.decode(Data(line))
+            }
             if start == 0 { return nil }
             window *= 4
         }
@@ -156,16 +182,22 @@ public final class TraceWriter: @unchecked Sendable {
             }
             pending += 1
             let turn = currentTurn
-            queue.async { [self] in write(turn: turn, at: now, elapsed: elapsed, type: type, fields: fields, droppable: droppable) }
+            queue.async { [self] in
+                write(turn: turn, at: now, elapsed: elapsed, type: type, fields: fields, droppable: droppable)
+            }
         }
     }
 
-    private func write(turn: Int64, at now: Date, elapsed: Duration, type: String, fields: [String: JSONValue], droppable: Bool) {
+    private func write(
+        turn: Int64, at now: Date, elapsed: Duration, type: String, fields: [String: JSONValue], droppable: Bool
+    ) {
         defer { lock.withLock { pending = max(0, pending - 1) } }
         // What was dropped is counted before the task's end, so the end stays the last record.
         if type == "end" { noteDropped(turn: turn, at: now, elapsed: elapsed) }
         // The caps apply to what's on disk now. Past the hard cap only the task's end still goes in.
-        let pastCap = lock.withLock { droppable ? bytes >= limits.maxBytes : bytes >= limits.maxTotalBytes && type != "end" }
+        let pastCap = lock.withLock {
+            droppable ? bytes >= limits.maxBytes : bytes >= limits.maxTotalBytes && type != "end"
+        }
         if pastCap {
             lock.withLock { if failure == nil { dropped += 1 } }
             return
@@ -180,8 +212,16 @@ public final class TraceWriter: @unchecked Sendable {
             if type == "end" { ended = true }
             return (truncated, full)
         }
-        if truncated { append(turn: turn, at: now, elapsed: elapsed, type: "lifecycle", fields: ["event": "trace-truncated", "maxBytes": .int(Int64(limits.maxBytes))]) }
-        if full { append(turn: turn, at: now, elapsed: elapsed, type: "lifecycle", fields: ["event": "trace-full", "maxTotalBytes": .int(Int64(limits.maxTotalBytes))]) }
+        if truncated {
+            append(
+                turn: turn, at: now, elapsed: elapsed, type: "lifecycle",
+                fields: ["event": "trace-truncated", "maxBytes": .int(Int64(limits.maxBytes))])
+        }
+        if full {
+            append(
+                turn: turn, at: now, elapsed: elapsed, type: "lifecycle",
+                fields: ["event": "trace-full", "maxTotalBytes": .int(Int64(limits.maxTotalBytes))])
+        }
     }
 
     /// Numbers, masks and writes one record now, on the writer's queue; the caller has checked the caps.
@@ -194,13 +234,17 @@ public final class TraceWriter: @unchecked Sendable {
         guard let seq = numbered else { return }
         let mono = elapsed.components.seconds * 1_000_000_000 + elapsed.components.attoseconds / 1_000_000_000
         let masked = mask.mask(.object(fields)).objectValue ?? [:]
-        let header: [(String, JSONValue)] = [("v", 1), ("seq", .int(seq)), ("t", .string(Self.timestamp(now))), ("mono", .int(mono)),
-                                             ("task", .string(task)), ("turn", .int(turn)), ("type", .string(type))]
+        let header: [(String, JSONValue)] = [
+            ("v", 1), ("seq", .int(seq)), ("t", .string(Self.timestamp(now))), ("mono", .int(mono)),
+            ("task", .string(task)), ("turn", .int(turn)), ("type", .string(type))
+        ]
         var line = TraceJSON.line(header: header, fields: masked)
         if line.count > limits.maxRecordBytes {
             // What identifies the record stays; its content is replaced by its size.
             var stub: [String: JSONValue] = ["oversize": .int(Int64(line.count))]
-            for key in ["kind", "call", "tool", "extension", "event", "status", "isError", "n", "stopReason"] { stub[key] = masked[key] }
+            for key in ["kind", "call", "tool", "extension", "event", "status", "isError", "n", "stopReason"] {
+                stub[key] = masked[key]
+            }
             line = TraceJSON.line(header: header, fields: stub.filter { $0.value != .null })
         }
         do {
@@ -229,7 +273,11 @@ public final class TraceWriter: @unchecked Sendable {
             defer { dropped = 0 }
             return dropped
         }
-        if count > 0 { append(turn: turn, at: now, elapsed: elapsed, type: "lifecycle", fields: ["event": "dropped", "records": .int(Int64(count))]) }
+        if count > 0 {
+            append(
+                turn: turn, at: now, elapsed: elapsed, type: "lifecycle",
+                fields: ["event": "dropped", "records": .int(Int64(count))])
+        }
     }
 
     /// The trace can't be written: stop, keep why, and say so once.
@@ -265,7 +313,8 @@ public final class TraceWriter: @unchecked Sendable {
         let micros = Int((interval - Double(seconds)) * 1_000_000)
         var parts = tm()
         gmtime_r(&seconds, &parts)
-        return String(format: "%04d-%02d-%02dT%02d:%02d:%02d.%06dZ", parts.tm_year + 1900, parts.tm_mon + 1, parts.tm_mday,
-                      parts.tm_hour, parts.tm_min, parts.tm_sec, micros)
+        return String(
+            format: "%04d-%02d-%02dT%02d:%02d:%02d.%06dZ", parts.tm_year + 1900, parts.tm_mon + 1, parts.tm_mday,
+            parts.tm_hour, parts.tm_min, parts.tm_sec, micros)
     }
 }

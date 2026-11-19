@@ -53,8 +53,10 @@ public enum BuiltinTools: String, CaseIterable, Sendable {
     /// question, plan mode. `other` alone proves nothing: claude-agent-acp reports every tool without a reporter of
     /// its own that way, Monitor (which runs commands) among them, and codex-acp its requests for more sandbox
     /// permissions and for spawning agents. So `other` passes only for these names.
-    public static let inertTools: Set<String> = ["ToolSearch", "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
-                                                 "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "ReportFindings"]
+    public static let inertTools: Set<String> = [
+        "ToolSearch", "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+        "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "ReportFindings"
+    ]
 
     /// Whether a native runner may use a built-in tool of this ACP kind and name. Its commands run inside the
     /// engine's own sandbox, which reaches port 443, not through Agneta's broker: with no network, they're refused.
@@ -62,12 +64,16 @@ public enum BuiltinTools: String, CaseIterable, Sendable {
     /// runs the engine's own tools natively, as in a terminal: everything passes, inside its widened sandbox.
     /// `brokered`: the engine's shell runs through Agneta's broker (Claude Code's Bash behind its prefix), so its
     /// commands get the session's tool profile like Goose's do, and only Bash itself is such a command.
-    public static func nativeRunnerMayUse(kind: String?, tool: String? = nil, policy: SessionPolicy, brokered: Bool = false) -> Bool {
+    public static func nativeRunnerMayUse(
+        kind: String?, tool: String? = nil, policy: SessionPolicy, brokered: Bool = false
+    ) -> Bool {
         if policy.sandbox == .developer { return true }
         guard let kind else { return false }
         if inertKinds.contains(kind) { return true }
         if kind == "other" { return tool.map(inertTools.contains) ?? false }
-        if kind == "execute", brokered { return tool == "Bash" && permitted(by: policy).contains { $0 == .shell || $0 == .readOnlyShell } }
+        if kind == "execute", brokered {
+            return tool == "Bash" && permitted(by: policy).contains { $0 == .shell || $0 == .readOnlyShell }
+        }
         guard let builtIn = allCases.first(where: { $0.kinds.contains(kind) }) else { return false }
         var allowed = permitted(by: policy)
         if policy.network == .none { allowed.subtract([.shell, .readOnlyShell, .web]) }

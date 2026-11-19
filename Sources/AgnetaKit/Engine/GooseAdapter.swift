@@ -25,18 +25,30 @@ public struct GooseAdapter: EngineAdapter {
         let setup = context.provider
         switch setup.kind {
         case .openAI:
-            provider = ["GOOSE_PROVIDER": "openai", "GOOSE_MODEL": setup.model ?? "gpt-6.1-sol", "OPENAI_API_KEY": setup.apiKey ?? ""]
+            provider = [
+                "GOOSE_PROVIDER": "openai", "GOOSE_MODEL": setup.model ?? "gpt-6.1-sol",
+                "OPENAI_API_KEY": setup.apiKey ?? ""
+            ]
             if let base = setup.baseURL { provider["OPENAI_BASE_URL"] = base }
         case .anthropic:
-            provider = ["GOOSE_PROVIDER": "anthropic", "GOOSE_MODEL": setup.model ?? "claude-sonnet-5-5", "ANTHROPIC_API_KEY": setup.apiKey ?? ""]
+            provider = [
+                "GOOSE_PROVIDER": "anthropic", "GOOSE_MODEL": setup.model ?? "claude-sonnet-5-5",
+                "ANTHROPIC_API_KEY": setup.apiKey ?? ""
+            ]
             if let base = setup.baseURL { provider["ANTHROPIC_HOST"] = base }
         case .claudeCode:
-            guard let subscription = setup.subscription else { throw RPCError(code: RPCError.internalError, message: "The account has no sign-in") }
+            guard let subscription = setup.subscription else {
+                throw RPCError(code: RPCError.internalError, message: "The account has no sign-in")
+            }
             provider = subscription.gooseEnvironment(model: setup.model)
-            if let extra = provider.removeValue(forKey: "AGNETA_EXTRA_PATH") { paths.append(URL(filePath: extra, directoryHint: .isDirectory)) }
+            if let extra = provider.removeValue(forKey: "AGNETA_EXTRA_PATH") {
+                paths.append(URL(filePath: extra, directoryHint: .isDirectory))
+            }
             writable += subscription.credentialFolders
             readable += subscription.runtimeFolders
-            readable.append(FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Keychains", directoryHint: .isDirectory))
+            readable.append(
+                FileManager.default.homeDirectoryForCurrentUser.appending(
+                    path: "Library/Keychains", directoryHint: .isDirectory))
         case .chatGPT:
             throw RPCError(code: RPCError.invalidParams, message: "ChatGPT plans run on Codex")
         }
@@ -44,8 +56,9 @@ public struct GooseAdapter: EngineAdapter {
         let launch = GooseLaunch(executable: executable, home: context.home, provider: provider, paths: paths)
         try launch.prepare()
         if setup.subscription?.route == .claudeCode { try ClaudeCodeSignIn.linkKeychains(into: context.home) }
-        return EngineLaunch(executable: executable, arguments: [], environment: launch.environment(),
-                            writable: writable, readable: readable, stateRoot: launch.gooseRoot)
+        return EngineLaunch(
+            executable: executable, arguments: [], environment: launch.environment(),
+            writable: writable, readable: readable, stateRoot: launch.gooseRoot)
     }
 
     /// The app's MCP servers plus only the built-ins the policy allows. Nothing from the user's own setup.
@@ -53,42 +66,67 @@ public struct GooseAdapter: EngineAdapter {
         var extensions: [JSONValue] = servers.map { ["type": "mcp", "server": $0] }
         switch policy.tools {
         case .appOnly: break
-        case .read: extensions.append(["type": "platform", "name": "developer", "available_tools": ["tree", "read_image", "shell"]])
-        case .workspace: extensions.append(["type": "platform", "name": "developer", "available_tools": ["write", "edit", "shell", "tree", "read_image"]])
+        case .read:
+            extensions.append([
+                "type": "platform", "name": "developer", "available_tools": ["tree", "read_image", "shell"]
+            ])
+        case .workspace:
+            extensions.append([
+                "type": "platform", "name": "developer",
+                "available_tools": ["write", "edit", "shell", "tree", "read_image"]
+            ])
         }
         return extensions
     }
 
-    public func newSession(cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?) -> JSONValue {
+    public func newSession(
+        cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?
+    ) -> JSONValue {
         var meta: [String: JSONValue] = ["enabledExtensions": .array(Self.extensions(servers: servers, policy: policy))]
         if let title { meta["sessionTitle"] = title }
         return ["cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": .array(servers), "_meta": .object(meta)]
     }
 
-    public func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy) -> JSONValue {
-        ["sessionId": .string(engineSession), "cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": .array(servers),
-         "_meta": ["enabledExtensions": .array(Self.extensions(servers: servers, policy: policy))]]
+    public func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy) -> JSONValue
+    {
+        [
+            "sessionId": .string(engineSession), "cwd": .string(cwd.path(percentEncoded: false)),
+            "mcpServers": .array(servers),
+            "_meta": ["enabledExtensions": .array(Self.extensions(servers: servers, policy: policy))]
+        ]
     }
 
     /// Goose's append mode needs a key; a later append with the same key replaces that part.
     public func setInstructions(_ engineSession: String, text: String, appendKey: String?) -> EngineRequest? {
         if let appendKey {
-            return EngineRequest("_goose/unstable/session/system-prompt/set",
-                                 ["sessionId": .string(engineSession), "mode": "append", "key": .string(appendKey), "text": .string(text)])
+            return EngineRequest(
+                "_goose/unstable/session/system-prompt/set",
+                [
+                    "sessionId": .string(engineSession), "mode": "append", "key": .string(appendKey),
+                    "text": .string(text)
+                ])
         }
-        return EngineRequest("_goose/unstable/session/system-prompt/set", ["sessionId": .string(engineSession), "mode": "set", "text": .string(text)])
+        return EngineRequest(
+            "_goose/unstable/session/system-prompt/set",
+            ["sessionId": .string(engineSession), "mode": "set", "text": .string(text)])
     }
 
     /// Goose needs the running turn's id, from `session_info_update`.
     public func steer(_ engineSession: String, run: String?, prompt: JSONValue) -> EngineRequest? {
         guard let run else { return nil }
-        return EngineRequest("_goose/unstable/session/steer", ["sessionId": .string(engineSession), "expectedRunId": .string(run), "prompt": prompt])
+        return EngineRequest(
+            "_goose/unstable/session/steer",
+            ["sessionId": .string(engineSession), "expectedRunId": .string(run), "prompt": prompt])
     }
 
-    public func steerResult(_ result: JSONValue) -> (accepted: Bool, run: String?) { (true, result["runId"]?.stringValue) }
+    public func steerResult(_ result: JSONValue) -> (accepted: Bool, run: String?) {
+        (true, result["runId"]?.stringValue)
+    }
 
     public func activeRun(in update: JSONValue) -> String?? {
-        guard update["sessionUpdate"]?.stringValue == "session_info_update", let goose = update["_meta"]?["goose"], let run = goose["activeRunId"] else { return nil }
+        guard update["sessionUpdate"]?.stringValue == "session_info_update", let goose = update["_meta"]?["goose"],
+            let run = goose["activeRunId"]
+        else { return nil }
         return .some(run.stringValue)
     }
 
@@ -128,7 +166,9 @@ public struct GooseAdapter: EngineAdapter {
         guard FileManager.default.fileExists(atPath: file) else { return nil }
         // Only Goose's own database, never another file a link in its folders, or in their place, points to (VACUUM
         // rewrites it): the state root is Agneta's own path, written as it is.
-        guard URL(filePath: file).realFileURL.path(percentEncoded: false) == file else { return "its database isn't where Goose keeps it" }
+        guard URL(filePath: file).realFileURL.path(percentEncoded: false) == file else {
+            return "its database isn't where Goose keeps it"
+        }
         do {
             var configuration = Configuration()
             configuration.busyMode = .timeout(2)

@@ -99,7 +99,10 @@ public struct AccessReport: Codable, Sendable, Equatable {
         self = try JSONDecoder().decode(Self.self, from: JSONCoding.encode(json))
     }
 
-    init(providers: [Provider], engines: [Engine], allowedEngines: EngineAllowance, scope: Scope, workspace: String?, limits: Limits? = nil) {
+    init(
+        providers: [Provider], engines: [Engine], allowedEngines: EngineAllowance, scope: Scope, workspace: String?,
+        limits: Limits? = nil
+    ) {
         self.providers = providers
         self.engines = engines
         self.allowedEngines = allowedEngines

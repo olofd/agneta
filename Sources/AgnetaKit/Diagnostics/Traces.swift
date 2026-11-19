@@ -13,13 +13,15 @@ public final class Traces: @unchecked Sendable {
     private let lock = NSLock()
     private var sessions: [String: TraceSession] = [:]
     private var byEngineSession: [String: String] = [:] // lease key \0 engine session → task
-    private var byLease: [String: Set<String>] = [:]     // lease key → tasks on that engine
+    private var byLease: [String: Set<String>] = [:] // lease key → tasks on that engine
     /// Where each task's last page ended (its last sequence number, and the byte offset after it).
     private var pageEnds: [String: (seq: Int64, offset: UInt64)] = [:]
     private var problemHandler: (@Sendable (_ task: String, _ reason: String) -> Void)?
 
     /// Hears when a task's trace can't be written any more, so whoever shows Agneta's state can say so.
-    public func onProblem(_ handler: @escaping @Sendable (_ task: String, _ reason: String) -> Void) { lock.withLock { problemHandler = handler } }
+    public func onProblem(_ handler: @escaping @Sendable (_ task: String, _ reason: String) -> Void) {
+        lock.withLock { problemHandler = handler }
+    }
 
     public init(folder: URL, limits: TraceWriter.Limits = .init()) {
         self.folder = folder
@@ -31,7 +33,9 @@ public final class Traces: @unchecked Sendable {
     /// Opens a task's trace. `prepare` runs before the task can be found by its engine session, so what it records
     /// (a new task's `meta`) comes first: once registered, the engine's messages are attributed to it from other
     /// threads at once.
-    public func open(task: String, lease: String, engineSession: String, prepare: (TraceSession) -> Void = { _ in }) -> TraceSession {
+    public func open(task: String, lease: String, engineSession: String, prepare: (TraceSession) -> Void = { _ in })
+        -> TraceSession
+    {
         let session = TraceSession(writer: TraceWriter(task: task, file: file(for: task), mask: mask, limits: limits))
         session.writer.onProblem { [weak self] reason in
             guard let handler = self?.lock.withLock({ self?.problemHandler }) else { return }
@@ -48,7 +52,9 @@ public final class Traces: @unchecked Sendable {
 
     public func session(_ task: String) -> TraceSession? { lock.withLock { sessions[task] } }
 
-    func task(lease: String, engineSession: String) -> String? { lock.withLock { byEngineSession[lease + "\u{0}" + engineSession] } }
+    func task(lease: String, engineSession: String) -> String? {
+        lock.withLock { byEngineSession[lease + "\u{0}" + engineSession] }
+    }
 
     /// Tasks served by an engine (one for a dedicated engine, several for a shared one).
     public func tasks(onLease lease: String) -> [TraceSession] {
@@ -69,8 +75,10 @@ public final class Traces: @unchecked Sendable {
     /// and about `maxBytes` of them (always at least one). The file is read as a stream from where the previous
     /// page ended, never loaded whole; only records after `after` are decoded. `complete` is true once the page
     /// reaches the end of a trace whose last record is its `end` (a resumed task's earlier `end` doesn't count).
-    public func read(task: String, after: Int64 = 0, types: Set<String>, limit: Int,
-                     maxBytes: Int = Traces.maxPageBytes) -> (records: [JSONValue], next: Int64?, complete: Bool)? {
+    public func read(
+        task: String, after: Int64 = 0, types: Set<String>, limit: Int,
+        maxBytes: Int = Traces.maxPageBytes
+    ) -> (records: [JSONValue], next: Int64?, complete: Bool)? {
         let url = file(for: task)
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
@@ -89,7 +97,8 @@ public final class Traces: @unchecked Sendable {
             // A partial line at the very end is a record still being written: it's left for the next page.
             for line in (try? splitter.push(chunk)) ?? [] {
                 position += UInt64(line.count + 1)
-                guard let seq = Self.seq(of: line) ?? (try? JSONCoding.decode(line))?["seq"]?.intValue, seq > after else { continue }
+                guard let seq = Self.seq(of: line) ?? (try? JSONCoding.decode(line))?["seq"]?.intValue, seq > after
+                else { continue }
                 guard let record = try? JSONCoding.decode(line) else { continue }
                 if types.contains(record["type"]?.stringValue ?? "") {
                     if records.count >= limit || (size >= maxBytes && !records.isEmpty) {
@@ -144,7 +153,9 @@ public final class Traces: @unchecked Sendable {
     }
 
     /// Record types an app receives unless it asks otherwise: everything except the raw frames.
-    public static let defaultTypes: Set<String> = ["meta", "config", "event", "engine.message", "engine.usage", "permission", "shell", "stderr", "lifecycle", "end"]
+    public static let defaultTypes: Set<String> = [
+        "meta", "config", "event", "engine.message", "engine.usage", "permission", "shell", "stderr", "lifecycle", "end"
+    ]
 
     /// Deletes the traces of tasks no longer kept (retention, Clear History).
     public func delete(tasks: [String]) {
@@ -172,7 +183,8 @@ public final class Traces: @unchecked Sendable {
     public func engineExited(lease: String, status: Int32) {
         let code = (status & 0x7f) == 0 ? (status >> 8) & 0xff : -(status & 0x7f)
         for session in tasks(onLease: lease) {
-            session.writer.record("lifecycle", ["event": "engine-exit", code < 0 ? "signal" : "code": .int(Int64(abs(code)))])
+            session.writer.record(
+                "lifecycle", ["event": "engine-exit", code < 0 ? "signal" : "code": .int(Int64(abs(code)))])
         }
     }
 
@@ -180,13 +192,17 @@ public final class Traces: @unchecked Sendable {
 
     /// A tap for one JSON-RPC connection: assigns each frame to its task by session id, or by
     /// the request id a response answers.
-    public func attributor(received: String, sent: String, resolve: @escaping @Sendable (String) -> String?) -> FrameAttributor {
+    public func attributor(received: String, sent: String, resolve: @escaping @Sendable (String) -> String?)
+        -> FrameAttributor
+    {
         FrameAttributor(traces: self, received: received, sent: sent, resolve: resolve)
     }
 
     /// For an engine connection: engine session ids map through the lease.
     public func engineAttributor(lease: String) -> FrameAttributor {
-        attributor(received: "engine→agneta", sent: "agneta→engine") { [weak self] in self?.task(lease: lease, engineSession: $0) }
+        attributor(received: "engine→agneta", sent: "agneta→engine") { [weak self] in
+            self?.task(lease: lease, engineSession: $0)
+        }
     }
 
     /// For an app connection: session ids are Agneta's own task ids.
@@ -215,14 +231,18 @@ public final class FrameAttributor: @unchecked Sendable {
 
     public func frame(_ direction: RPCPeer.FrameDirection, _ data: Data) {
         guard let traces, let message = try? JSONCoding.decode(data) else { return }
-        let id = message["id"].map { value -> String in var text = ""; TraceJSON.encode(value, into: &text); return text }
+        let id = message["id"].map { value -> String in
+            var text = ""; TraceJSON.encode(value, into: &text); return text
+        }
         let isRequest = message["method"] != nil && id != nil
         // The trace's own delivery to the app isn't recorded in the trace (it would record itself).
         if message["method"]?.stringValue?.hasPrefix("agneta/trace") == true {
             if isRequest, let id { lock.withLock { _ = skipped.insert((direction == .received ? "r" : "s") + id) } }
             return
         }
-        if !isRequest, let id, lock.withLock({ skipped.remove((direction == .received ? "s" : "r") + id) != nil }) { return }
+        if !isRequest, let id, lock.withLock({ skipped.remove((direction == .received ? "s" : "r") + id) != nil }) {
+            return
+        }
         let session = message["params"]?["sessionId"]?.stringValue ?? message["result"]?["sessionId"]?.stringValue
         var task = session.flatMap(resolve)
         lock.withLock {
@@ -231,7 +251,9 @@ public final class FrameAttributor: @unchecked Sendable {
                     if direction == .received { requestsReceived[id] = task } else { requestsSent[id] = task }
                 } else if !isRequest {
                     // A response travels opposite to its request.
-                    let owner = direction == .received ? requestsSent.removeValue(forKey: id) : requestsReceived.removeValue(forKey: id)
+                    let owner =
+                        direction == .received
+                        ? requestsSent.removeValue(forKey: id) : requestsReceived.removeValue(forKey: id)
                     if task == nil { task = owner }
                 }
             }
@@ -294,15 +316,19 @@ public final class TraceSession: @unchecked Sendable {
         switch kind {
         case "agent_message_chunk", "agent_thought_chunk":
             noteFirstToken(now)
-            var fields: [String: JSONValue] = ["kind": kind == "agent_message_chunk" ? "text-delta" : "thinking-delta",
-                                               "delta": update["content"]?["text"] ?? .null]
+            var fields: [String: JSONValue] = [
+                "kind": kind == "agent_message_chunk" ? "text-delta" : "thinking-delta",
+                "delta": update["content"]?["text"] ?? .null
+            ]
             if let message = update["messageId"] { fields["message"] = message }
             writer.record("event", fields, droppable: true)
         case "tool_call", "tool_call_update":
             noteFirstToken(now)
             toolCall(update, at: now)
         case "usage_update":
-            var fields: [String: JSONValue] = ["kind": "usage", "cumulative": true, "size": update["size"] ?? .null, "used": update["used"] ?? .null]
+            var fields: [String: JSONValue] = [
+                "kind": "usage", "cumulative": true, "size": update["size"] ?? .null, "used": update["used"] ?? .null
+            ]
             if let cost = update["cost"] { fields["cost"] = cost }
             writer.record("event", fields)
         case "plan":
@@ -330,11 +356,19 @@ public final class TraceSession: @unchecked Sendable {
             // Goose names the tool and the model response in _meta; the title also carries arguments.
             // The engine knows the tool's own name and its server; the title also carries arguments.
             let identity = lock.withLock { engine }?.toolIdentity(in: update) ?? (tool: nil, server: nil, message: nil)
-            writer.record("event", ["kind": "tool-call", "call": .string(entry.call), "engineCall": .string(engineID),
-                                    "tool": identity.tool.map(JSONValue.string) ?? .null, "extension": identity.server.map(JSONValue.string) ?? .null,
-                                    "message": identity.message.map(JSONValue.string) ?? .null, "name": update["title"] ?? .null, "toolKind": update["kind"] ?? .null,
-                                    "input": update["rawInput"] ?? .null, "tStart": .string(TraceWriter.timestamp(Date()))])
-        } else if update["rawInput"] != nil || update["title"] != nil, status == nil || status == "pending" || status == "in_progress" {
+            writer.record(
+                "event",
+                [
+                    "kind": "tool-call", "call": .string(entry.call), "engineCall": .string(engineID),
+                    "tool": identity.tool.map(JSONValue.string) ?? .null,
+                    "extension": identity.server.map(JSONValue.string) ?? .null,
+                    "message": identity.message.map(JSONValue.string) ?? .null, "name": update["title"] ?? .null,
+                    "toolKind": update["kind"] ?? .null,
+                    "input": update["rawInput"] ?? .null, "tStart": .string(TraceWriter.timestamp(Date()))
+                ])
+        } else if update["rawInput"] != nil || update["title"] != nil,
+            status == nil || status == "pending" || status == "in_progress"
+        {
             // ACP updates are upserts: the input or title can arrive after the first sighting.
             var fields: [String: JSONValue] = ["kind": "tool-input", "call": .string(entry.call)]
             if let input = update["rawInput"] { fields["input"] = input }
@@ -342,14 +376,27 @@ public final class TraceSession: @unchecked Sendable {
             writer.record("event", fields)
         }
         guard status == "completed" || status == "failed" else { return }
-        let ms = Double((now - entry.started).components.attoseconds) / 1e15 + Double((now - entry.started).components.seconds) * 1000
+        let ms =
+            Double((now - entry.started).components.attoseconds) / 1e15 + Double(
+                (now - entry.started).components.seconds) * 1000
         let content = update["content"] ?? .null
         var text = ""
         TraceJSON.encode(content, into: &text)
-        let bytes = text.utf8.count + (update["rawOutput"].map { value -> Int in var raw = ""; TraceJSON.encode(value, into: &raw); return raw.utf8.count } ?? 0)
-        writer.record("event", ["kind": "tool-result", "call": .string(entry.call), "status": .string(status!), "isError": .bool(status == "failed"),
-                                "content": content, "rawOutput": update["rawOutput"] ?? .null, "tEnd": .string(TraceWriter.timestamp(Date())),
-                                "ms": .double((ms * 10).rounded() / 10), "bytes": .int(Int64(bytes)), "estTokens": .int(Int64(bytes / 4))])
+        let bytes =
+            text.utf8.count
+            + (update["rawOutput"].map { value -> Int in
+                var raw = ""; TraceJSON.encode(value, into: &raw); return raw.utf8.count
+            } ?? 0)
+        writer.record(
+            "event",
+            [
+                "kind": "tool-result", "call": .string(entry.call), "status": .string(status!),
+                "isError": .bool(status == "failed"),
+                "content": content, "rawOutput": update["rawOutput"] ?? .null,
+                "tEnd": .string(TraceWriter.timestamp(Date())),
+                "ms": .double((ms * 10).rounded() / 10), "bytes": .int(Int64(bytes)),
+                "estTokens": .int(Int64(bytes / 4))
+            ])
         lock.withLock { calls[engineID] = nil }
     }
 
@@ -387,36 +434,51 @@ public final class TraceSession: @unchecked Sendable {
         inFlight?.cancel()
         await inFlight?.value
         await pollLedger()
-        let (started, first, calls, n, totals): (ContinuousClock.Instant?, ContinuousClock.Instant?, [JSONValue], Int, [String: [String: Double]]?) = lock.withLock {
-            defer { turnStarted = nil; turnTotals = nil }
-            return (turnStarted, firstToken, turnModelCalls, turns, turnTotals)
-        }
+        let (started, first, calls, n, totals):
+            (ContinuousClock.Instant?, ContinuousClock.Instant?, [JSONValue], Int, [String: [String: Double]]?) =
+                lock.withLock {
+                    defer { turnStarted = nil; turnTotals = nil }
+                    return (turnStarted, firstToken, turnModelCalls, turns, turnTotals)
+                }
         func ms(_ from: ContinuousClock.Instant?, _ to: ContinuousClock.Instant?) -> JSONValue {
             guard let from, let to else { return .null }
             let duration = to - from
-            return .double(((Double(duration.components.seconds) * 1000 + Double(duration.components.attoseconds) / 1e15) * 10).rounded() / 10)
+            return .double(
+                ((Double(duration.components.seconds) * 1000 + Double(duration.components.attoseconds) / 1e15) * 10)
+                    .rounded() / 10)
         }
-        var fields: [String: JSONValue] = ["kind": "turn", "n": .int(Int64(n)), "stopReason": .string(stopReason),
-                                           "ms": ms(started, ContinuousClock.now), "msToFirstToken": ms(started, first),
-                                           "modelCalls": .int(Int64(calls.count)), "usage": usage ?? .null]
-        let sums = ["input", "output", "cacheRead", "cacheWrite"].map { key in (key, calls.reduce(Int64(0)) { $0 + ($1[key]?.intValue ?? 0) }) }
+        var fields: [String: JSONValue] = [
+            "kind": "turn", "n": .int(Int64(n)), "stopReason": .string(stopReason),
+            "ms": ms(started, ContinuousClock.now), "msToFirstToken": ms(started, first),
+            "modelCalls": .int(Int64(calls.count)), "usage": usage ?? .null
+        ]
+        let sums = ["input", "output", "cacheRead", "cacheWrite"].map { key in
+            (key, calls.reduce(Int64(0)) { $0 + ($1[key]?.intValue ?? 0) })
+        }
         fields["ledger"] = .object(Dictionary(uniqueKeysWithValues: sums.map { ($0.0, JSONValue.int($0.1)) }))
-        let costs = calls.compactMap { call -> Double? in if case .double(let v)? = call["cost"] { return v }; return call["cost"]?.intValue.map(Double.init) }
+        let costs = calls.compactMap { call -> Double? in
+            if case .double(let v)? = call["cost"] { return v }; return call["cost"]?.intValue.map(Double.init)
+        }
         fields["cost"] = costs.isEmpty ? .null : .double(costs.reduce(0, +))
         let taskCost = lock.withLock { self.taskCost }
         fields["taskCost"] = taskCost > 0 ? .double(taskCost) : .null
-        fields["models"] = .array(Array(Set(calls.compactMap { $0["model"]?.stringValue })).sorted().map(JSONValue.string))
+        fields["models"] = .array(
+            Array(Set(calls.compactMap { $0["model"]?.stringValue })).sorted().map(JSONValue.string))
         fields["basis"] = "engine-ledger"
         if let totals {
             // The engine's own totals for the turn win over the per-call sums: they're complete (Claude Code's
             // per-call output is the stream's opening count) and include side calls. The call sums stay alongside.
             fields["callLedger"] = fields["ledger"]
-            fields["ledger"] = .object(Dictionary(uniqueKeysWithValues: ["input", "output", "cacheRead", "cacheWrite"].map { key in
-                (key, JSONValue.int(Int64(totals.values.reduce(0) { $0 + ($1[key] ?? 0) }.rounded())))
-            }))
+            fields["ledger"] = .object(
+                Dictionary(
+                    uniqueKeysWithValues: ["input", "output", "cacheRead", "cacheWrite"].map { key in
+                        (key, JSONValue.int(Int64(totals.values.reduce(0) { $0 + ($1[key] ?? 0) }.rounded())))
+                    }))
             let cost = totals.values.reduce(0) { $0 + ($1["cost"] ?? 0) }
             if cost > 0 { fields["cost"] = .double(cost) }
-            fields["models"] = .array(Array(Set(calls.compactMap { $0["model"]?.stringValue }).union(totals.keys)).sorted().map(JSONValue.string))
+            fields["models"] = .array(
+                Array(Set(calls.compactMap { $0["model"]?.stringValue }).union(totals.keys)).sorted().map(
+                    JSONValue.string))
             fields["basis"] = "engine-turn-totals"
         }
         fields["costKind"] = .string(lock.withLock { billing } == "subscription" ? "plan-equivalent" : "estimated")
@@ -456,7 +518,9 @@ public final class TraceSession: @unchecked Sendable {
     private var planListener: (@Sendable (JSONValue) -> Void)?
 
     /// Hears the plan's usage when the engine's records carry it (Codex: used percent per limit window).
-    public func onPlanUsage(_ listener: @escaping @Sendable (JSONValue) -> Void) { lock.withLock { planListener = listener } }
+    public func onPlanUsage(_ listener: @escaping @Sendable (JSONValue) -> Void) {
+        lock.withLock { planListener = listener }
+    }
 
     /// The engine's running totals per model at its last report, and this turn's share of them.
     private var sessionTotals: [String: [String: Double]] = [:]
@@ -473,7 +537,12 @@ public final class TraceSession: @unchecked Sendable {
         }
         if let id = usage["id"]?.stringValue, !lock.withLock({ seenCalls.insert(id).inserted }) { return }
         writer.record("engine.usage", usage)
-        let cost: Double? = switch usage["cost"] { case .double(let v)?: v; case .int(let v)?: Double(v); default: nil }
+        let cost: Double? =
+            switch usage["cost"] {
+            case .double(let v)?: v;
+            case .int(let v)?: Double(v);
+            default: nil
+            }
         let (n, billing, total) = lock.withLock { () -> (Int, String, Double) in
             modelCalls += 1
             taskCost += cost ?? 0
@@ -485,8 +554,9 @@ public final class TraceSession: @unchecked Sendable {
             "cacheRead": usage["cache_read_tokens"] ?? .null, "cacheWrite": usage["cache_write_tokens"] ?? .null,
             "cost": usage["cost"] ?? .null, "costSource": usage["cost_source"] ?? .null,
             "costKind": .string(billing == "subscription" ? "plan-equivalent" : "estimated"),
-            "compaction": .bool((usage["is_compaction"]?.intValue ?? 0) != 0), "at": usage["created"] ?? .null, "basis": "engine-ledger",
-            "outputPartial": usage["output_partial"] ?? .null, "taskCost": .double(total),
+            "compaction": .bool((usage["is_compaction"]?.intValue ?? 0) != 0), "at": usage["created"] ?? .null,
+            "basis": "engine-ledger",
+            "outputPartial": usage["output_partial"] ?? .null, "taskCost": .double(total)
         ]
         lock.withLock { turnModelCalls.append(call) }
         writer.record("event", call.objectValue ?? [:])
@@ -500,9 +570,14 @@ public final class TraceSession: @unchecked Sendable {
             var turn = turnTotals ?? [:]
             var addedCost = 0.0
             for (model, value) in totals {
-                let now = Dictionary(uniqueKeysWithValues: keys.map { key -> (String, Double) in
-                    switch value[key] { case .double(let v)?: (key, v); case .int(let v)?: (key, Double(v)); default: (key, 0) }
-                })
+                let now = Dictionary(
+                    uniqueKeysWithValues: keys.map { key -> (String, Double) in
+                        switch value[key] {
+                        case .double(let v)?: (key, v);
+                        case .int(let v)?: (key, Double(v));
+                        default: (key, 0)
+                        }
+                    })
                 let before = sessionTotals[model] ?? [:]
                 let restarted = keys.contains { (now[$0] ?? 0) < (before[$0] ?? 0) }
                 for key in keys {
@@ -542,39 +617,63 @@ final class GooseLedgerReader: UsageLedger, @unchecked Sendable {
     func read() -> (messages: [[String: JSONValue]], usage: [[String: JSONValue]], problem: String?) {
         lock.withLock {
             guard !disabled else { return ([], [], nil) }
-            guard FileManager.default.fileExists(atPath: database.path(percentEncoded: false)) else { return ([], [], nil) }
+            guard FileManager.default.fileExists(atPath: database.path(percentEncoded: false)) else {
+                return ([], [], nil)
+            }
             do {
                 if queue == nil {
                     var configuration = Configuration()
                     configuration.readonly = true
                     configuration.busyMode = .timeout(0.5)
-                    let opened = try DatabaseQueue(path: database.path(percentEncoded: false), configuration: configuration)
+                    let opened = try DatabaseQueue(
+                        path: database.path(percentEncoded: false), configuration: configuration)
                     try opened.read { db in
                         let messageColumns = Set(try db.columns(in: "messages").map(\.name))
                         let usageColumns = Set(try db.columns(in: "usage_ledger").map(\.name))
-                        guard messageColumns.isSuperset(of: ["id", "session_id", "role", "content_json", "created_timestamp"]),
-                              usageColumns.isSuperset(of: ["id", "session_id", "model", "input_tokens", "output_tokens", "cost"]) else {
+                        guard
+                            messageColumns.isSuperset(of: [
+                                "id", "session_id", "role", "content_json", "created_timestamp"
+                            ]),
+                            usageColumns.isSuperset(of: [
+                                "id", "session_id", "model", "input_tokens", "output_tokens", "cost"
+                            ])
+                        else {
                             throw SchemaMismatch()
                         }
                     }
                     queue = opened
                 }
                 return try queue!.read { db in
-                    let messages = try Row.fetchAll(db, sql: "SELECT * FROM messages WHERE session_id = ? AND id > ? ORDER BY id",
-                                                    arguments: [session, lastMessage]).map { row -> [String: JSONValue] in
+                    let messages = try Row.fetchAll(
+                        db, sql: "SELECT * FROM messages WHERE session_id = ? AND id > ? ORDER BY id",
+                        arguments: [session, lastMessage]
+                    ).map { row -> [String: JSONValue] in
                         lastMessage = row["id"]
                         let content = (row["content_json"] as String?).flatMap { try? JSONCoding.decode(Data($0.utf8)) }
                         let meta = (row["metadata_json"] as String?).flatMap { try? JSONCoding.decode(Data($0.utf8)) }
-                        return ["row": .int(row["id"]), "role": .string(row["role"]), "content": content ?? .null, "meta": meta ?? .null,
-                                "messageId": (row["message_id"] as String?).map(JSONValue.string) ?? .null,
-                                "created": .int(row["created_timestamp"]), "tokens": (row["tokens"] as Int64?).map(JSONValue.int) ?? .null]
+                        return [
+                            "row": .int(row["id"]), "role": .string(row["role"]), "content": content ?? .null,
+                            "meta": meta ?? .null,
+                            "messageId": (row["message_id"] as String?).map(JSONValue.string) ?? .null,
+                            "created": .int(row["created_timestamp"]),
+                            "tokens": (row["tokens"] as Int64?).map(JSONValue.int) ?? .null
+                        ]
                     }
-                    let usage = try Row.fetchAll(db, sql: "SELECT * FROM usage_ledger WHERE session_id = ? AND id > ? ORDER BY id",
-                                                 arguments: [session, lastUsage]).map { row -> [String: JSONValue] in
+                    let usage = try Row.fetchAll(
+                        db, sql: "SELECT * FROM usage_ledger WHERE session_id = ? AND id > ? ORDER BY id",
+                        arguments: [session, lastUsage]
+                    ).map { row -> [String: JSONValue] in
                         lastUsage = row["id"]
-                        var fields: [String: JSONValue] = ["row": .int(row["id"]), "created": .int(row["created_timestamp"])]
-                        for column in ["model", "cost_source"] { fields[column] = (row[column] as String?).map(JSONValue.string) ?? .null }
-                        for column in ["input_tokens", "output_tokens", "total_tokens", "cache_read_tokens", "cache_write_tokens", "is_compaction"] {
+                        var fields: [String: JSONValue] = [
+                            "row": .int(row["id"]), "created": .int(row["created_timestamp"])
+                        ]
+                        for column in ["model", "cost_source"] {
+                            fields[column] = (row[column] as String?).map(JSONValue.string) ?? .null
+                        }
+                        for column in [
+                            "input_tokens", "output_tokens", "total_tokens", "cache_read_tokens", "cache_write_tokens",
+                            "is_compaction"
+                        ] {
                             fields[column] = (row[column] as Int64?).map(JSONValue.int) ?? .null
                         }
                         fields["cost"] = (row["cost"] as Double?).map(JSONValue.double) ?? .null
@@ -610,8 +709,10 @@ public final class TraceForwarder: @unchecked Sendable {
     private var overflowed = false
     private var loop: Task<Void, Never>?
 
-    public init(include: Set<String>, limit: Int = 10_000, send: @escaping @Sendable ([JSONValue]) async -> Void,
-                overflow: @escaping @Sendable (_ after: Int64) async -> Void = { _ in }) {
+    public init(
+        include: Set<String>, limit: Int = 10_000, send: @escaping @Sendable ([JSONValue]) async -> Void,
+        overflow: @escaping @Sendable (_ after: Int64) async -> Void = { _ in }
+    ) {
         self.include = include
         self.limit = limit
         self.send = send
@@ -621,7 +722,9 @@ public final class TraceForwarder: @unchecked Sendable {
                 try? await Task.sleep(for: .milliseconds(100))
                 guard let self else { return }
                 let (batch, done, overflowed) = self.take()
-                for start in stride(from: 0, to: batch.count, by: 64) { await self.send(Array(batch[start..<min(start + 64, batch.count)])) }
+                for start in stride(from: 0, to: batch.count, by: 64) {
+                    await self.send(Array(batch[start..<min(start + 64, batch.count)]))
+                }
                 if overflowed {
                     await self.overflow(batch.last?["seq"]?.intValue ?? 0)
                     return

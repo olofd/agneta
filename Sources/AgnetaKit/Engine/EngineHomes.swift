@@ -28,13 +28,15 @@ public enum EngineHomes {
 
     /// Removes the engine homes of these tasks, and their conversations kept in an account's folder, read from their
     /// traces' `meta` (call before deleting the traces).
-    public static func remove(tasks: [String], traces: Traces, root: URL, keepingConversationsOf kept: Set<String> = []) {
+    public static func remove(tasks: [String], traces: Traces, root: URL, keepingConversationsOf kept: Set<String> = [])
+    {
         for task in tasks {
             guard let engine = traces.meta(task: task)?["engine"] else { continue }
             if !kept.contains(engine["id"]?.stringValue ?? "") {
                 for file in conversation(engine: engine, root: root) { try? FileManager.default.removeItem(at: file) }
             }
-            guard engine["dedicated"]?.boolValue == true, let key = engine["key"]?.stringValue, !key.contains("..") else { continue }
+            guard engine["dedicated"]?.boolValue == true, let key = engine["key"]?.stringValue, !key.contains("..")
+            else { continue }
             try? FileManager.default.removeItem(at: home(root: root, key: key))
         }
     }
@@ -43,10 +45,13 @@ public enum EngineHomes {
     /// Claude Code's transcript, Codex's rollout. Other engines keep theirs in the engine home.
     static func conversation(engine: JSONValue, root: URL) -> [URL] {
         guard let session = engine["session"]?.stringValue, !session.isEmpty,
-              session.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }),
-              let path = engine["stateRoot"]?.stringValue else { return [] }
+            session.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }),
+            let path = engine["stateRoot"]?.stringValue
+        else { return [] }
         let state = URL(filePath: path, directoryHint: .isDirectory).standardizedFileURL
-        guard state.isInside(root.standardizedFileURL), state.path(percentEncoded: false) != root.standardizedFileURL.path(percentEncoded: false) else { return [] }
+        guard state.isInside(root.standardizedFileURL),
+            state.path(percentEncoded: false) != root.standardizedFileURL.path(percentEncoded: false)
+        else { return [] }
         switch engine["id"]?.stringValue {
         case "claude-code": return ClaudeCodeAdapter.transcripts(config: state, session: session)
         case "codex": return CodexAdapter.rollouts(codexHome: state, session: session)
@@ -56,9 +61,11 @@ public enum EngineHomes {
 
     /// Removes every engine home of an account (sign-out).
     public static func remove(account: String, root: URL) {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder(root: root).path(percentEncoded: false))) ?? []
+        let names =
+            (try? FileManager.default.contentsOfDirectory(atPath: folder(root: root).path(percentEncoded: false))) ?? []
         for name in names where name.hasPrefix(account + "-") {
-            try? FileManager.default.removeItem(at: folder(root: root).appending(path: name, directoryHint: .isDirectory))
+            try? FileManager.default.removeItem(
+                at: folder(root: root).appending(path: name, directoryHint: .isDirectory))
         }
     }
 
@@ -68,8 +75,11 @@ public enum EngineHomes {
     public static func sweep(root: URL, traces: Traces, before: Date, keep: Set<String>) -> [String] {
         let base = folder(root: root)
         let names = (try? FileManager.default.contentsOfDirectory(atPath: base.path(percentEncoded: false))) ?? []
-        var referenced: Set<String> = keep.map { $0.replacingOccurrences(of: "/", with: "-") }.reduce(into: []) { $0.insert($1) }
-        let traceNames = (try? FileManager.default.contentsOfDirectory(atPath: traces.folder.path(percentEncoded: false))) ?? []
+        var referenced: Set<String> = keep.map { $0.replacingOccurrences(of: "/", with: "-") }.reduce(into: []) {
+            $0.insert($1)
+        }
+        let traceNames =
+            (try? FileManager.default.contentsOfDirectory(atPath: traces.folder.path(percentEncoded: false))) ?? []
         for name in traceNames where name.hasSuffix(".jsonl") {
             if let key = traces.meta(task: String(name.dropLast(6)))?["engine"]?["key"]?.stringValue {
                 referenced.insert(key.replacingOccurrences(of: "/", with: "-"))
@@ -78,7 +88,9 @@ public enum EngineHomes {
         var removed: [String] = []
         for name in names where !referenced.contains(name) {
             let url = base.appending(path: name, directoryHint: .isDirectory)
-            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            let modified =
+                (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                ?? .distantPast
             guard modified < before else { continue }
             if (try? FileManager.default.removeItem(at: url)) != nil { removed.append(name) }
         }

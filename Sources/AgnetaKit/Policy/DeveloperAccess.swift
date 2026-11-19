@@ -14,21 +14,26 @@ public enum DeveloperAccess {
     /// browsers, mail and messages, and other apps' private storage. Missing paths cost nothing.
     public static func secrets(home: URL) -> [URL] {
         let files = [
-            ".ssh", ".gnupg", ".aws", ".azure", ".config/gcloud", ".kube", ".docker/config.json", ".netrc", ".git-credentials",
+            ".ssh", ".gnupg", ".aws", ".azure", ".config/gcloud", ".kube", ".docker/config.json", ".netrc",
+            ".git-credentials",
             ".config/gh", ".config/hub", ".npmrc", ".yarnrc", ".pypirc", ".gem/credentials", ".cargo/credentials.toml",
-            ".cargo/credentials", ".terraform.d/credentials.tfrc.json", ".vault-token", ".claude.json", ".claude", ".codex",
+            ".cargo/credentials", ".terraform.d/credentials.tfrc.json", ".vault-token", ".claude.json", ".claude",
+            ".codex",
             ".zsh_history", ".bash_history", ".zsh_sessions", ".python_history", ".node_repl_history", ".lesshst",
             "Library/Keychains", "Library/Cookies", "Library/Mail", "Library/Messages", "Library/Safari",
             "Library/Containers", "Library/Group Containers", "Library/Accounts", "Library/Calendars",
             "Library/Application Support/Google/Chrome", "Library/Application Support/BraveSoftware",
-            "Library/Application Support/Firefox", "Library/Application Support/Microsoft Edge", "Library/Application Support/Arc",
+            "Library/Application Support/Firefox", "Library/Application Support/Microsoft Edge",
+            "Library/Application Support/Arc",
             "Library/Application Support/AddressBook", "Library/Application Support/com.apple.TCC",
-            "Library/Application Support/1Password", "Library/Application Support/Claude", "Library/Application Support/Code/User/globalStorage",
+            "Library/Application Support/1Password", "Library/Application Support/Claude",
+            "Library/Application Support/Code/User/globalStorage",
             "Library/LaunchAgents",
             // Other agents' and tools' sign-ins and histories.
             ".config/goose", ".local/share/goose", ".config/opencode", ".local/share/opencode", ".gemini", ".cursor",
-            ".config/github-copilot", ".config/configstore", ".config/op", ".password-store", ".config/rclone", ".s3cfg",
-            ".pgpass", ".my.cnf", ".m2/settings.xml", ".fly", ".config/heroku",
+            ".config/github-copilot", ".config/configstore", ".config/op", ".password-store", ".config/rclone",
+            ".s3cfg",
+            ".pgpass", ".my.cnf", ".m2/settings.xml", ".fly", ".config/heroku"
         ]
         return files.map { home.appending(path: $0) }
     }
@@ -37,15 +42,19 @@ public enum DeveloperAccess {
     /// app's workspace beside it), as sandbox regular expressions: never reachable under developer access, apart from
     /// the session's own folders inside it.
     public static func agnetaData(home: URL) -> [String] {
-        let library = NSRegularExpression.escapedPattern(for: home.realFileURL.appending(path: "Library").path(percentEncoded: false))
-        return ["^\(library)/(Application Support|Caches|Preferences|HTTPStorages|WebKit)/com\\.objectivecoder\\.agneta",
-                "^\(library)/Logs/Agneta"]
+        let library = NSRegularExpression.escapedPattern(
+            for: home.realFileURL.appending(path: "Library").path(percentEncoded: false))
+        return [
+            "^\(library)/(Application Support|Caches|Preferences|HTTPStorages|WebKit)/com\\.objectivecoder\\.agneta",
+            "^\(library)/Logs/Agneta"
+        ]
     }
 
     static func isAgnetaData(_ url: URL, home: URL) -> Bool {
         let path = url.realFileURL.path(percentEncoded: false)
         return agnetaData(home: home).contains { pattern in
-            (try? NSRegularExpression(pattern: pattern))?.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)) != nil
+            (try? NSRegularExpression(pattern: pattern))?.firstMatch(
+                in: path, range: NSRange(path.startIndex..., in: path)) != nil
         }
     }
 
@@ -55,26 +64,35 @@ public enum DeveloperAccess {
     /// `~/.cargo/bin`) stay read-only and are found on PATH; the user's `~/.cargo/config.toml` isn't read. Python's
     /// bytecode isn't moved here: it would mirror source paths that a later session of the app may have denied.
     public static func cacheEnvironment(caches: URL) -> [String: String] {
-        let folders = ["CARGO_HOME": "cargo", "PIP_CACHE_DIR": "pip", "UV_CACHE_DIR": "uv", "npm_config_cache": "npm",
-                       "YARN_CACHE_FOLDER": "yarn", "BUN_INSTALL_CACHE_DIR": "bun", "GOCACHE": "go/build", "GOMODCACHE": "go/mod",
-                       "GRADLE_USER_HOME": "gradle", "DENO_DIR": "deno", "CLANG_MODULE_CACHE_PATH": "clang",
-                       "XDG_CACHE_HOME": "xdg", "HOMEBREW_CACHE": "homebrew"]
+        let folders = [
+            "CARGO_HOME": "cargo", "PIP_CACHE_DIR": "pip", "UV_CACHE_DIR": "uv", "npm_config_cache": "npm",
+            "YARN_CACHE_FOLDER": "yarn", "BUN_INSTALL_CACHE_DIR": "bun", "GOCACHE": "go/build", "GOMODCACHE": "go/mod",
+            "GRADLE_USER_HOME": "gradle", "DENO_DIR": "deno", "CLANG_MODULE_CACHE_PATH": "clang",
+            "XDG_CACHE_HOME": "xdg", "HOMEBREW_CACHE": "homebrew"
+        ]
         return folders.mapValues { caches.appending(path: $0, directoryHint: .isDirectory).path(percentEncoded: false) }
     }
 
-
     /// Where the user's own toolchains keep their programs, before the system's, as a terminal's PATH would have them.
     public static func path(home: URL) -> String {
-        let user = [".cargo/bin", ".local/bin", ".volta/bin", ".bun/bin", ".deno/bin", ".pyenv/shims", ".rbenv/shims", ".nvm/current/bin",
-                    ".nix-profile/bin", "go/bin"].map { home.appending(path: $0).path(percentEncoded: false) }
-        let system = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"] + SandboxProfile.xcodeTools + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        let user = [
+            ".cargo/bin", ".local/bin", ".volta/bin", ".bun/bin", ".deno/bin", ".pyenv/shims", ".rbenv/shims",
+            ".nvm/current/bin",
+            ".nix-profile/bin", "go/bin"
+        ].map { home.appending(path: $0).path(percentEncoded: false) }
+        let system =
+            ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"] + SandboxProfile.xcodeTools + [
+                "/usr/bin", "/bin", "/usr/sbin", "/sbin"
+            ]
         return (user + system).filter { FileManager.default.fileExists(atPath: $0) }.joined(separator: ":")
     }
 
     /// What build tools read from their cache folders as settings, or run: kept across an app's sessions, one session
     /// could plant them for the next (a cargo build wrapper, a Gradle init script). Removed before each engine starts.
-    static let trustedCacheFiles = ["cargo/config.toml", "cargo/config", "cargo/credentials.toml", "cargo/credentials",
-                                    "gradle/gradle.properties", "gradle/init.gradle", "gradle/init.gradle.kts", "gradle/init.d"]
+    static let trustedCacheFiles = [
+        "cargo/config.toml", "cargo/config", "cargo/credentials.toml", "cargo/credentials",
+        "gradle/gradle.properties", "gradle/init.gradle", "gradle/init.gradle.kts", "gradle/init.d"
+    ]
 
     /// Clears `trustedCacheFiles` from an app's caches, never through a link a session planted in place of a folder.
     public static func clearTrustedCacheFiles(_ caches: URL) {
@@ -91,7 +109,9 @@ public enum DeveloperAccess {
         environment["PATH"] = path(home: home)
         if let sdk = SandboxProfile.sdkRoot { environment["SDKROOT"] = sdk }
         let rustup = home.appending(path: ".rustup")
-        if FileManager.default.fileExists(atPath: rustup.path(percentEncoded: false)) { environment["RUSTUP_HOME"] = rustup.path(percentEncoded: false) }
+        if FileManager.default.fileExists(atPath: rustup.path(percentEncoded: false)) {
+            environment["RUSTUP_HOME"] = rustup.path(percentEncoded: false)
+        }
         return environment
     }
 
@@ -106,10 +126,16 @@ public enum DeveloperAccess {
         let blocked = secrets + agnetaRoots.map(\.realFileURL)
         // What the process needs inside a blocked folder comes back: its own home and the session's folders
         // read-write, its programs and sign-in read-only.
-        func isBlocked(_ url: URL) -> Bool { blocked.contains { url.realFileURL.isInside($0) } || isAgnetaData(url, home: home) }
+        func isBlocked(_ url: URL) -> Bool {
+            blocked.contains { url.realFileURL.isInside($0) } || isAgnetaData(url, home: home)
+        }
         let needed = profile.writable.filter(isBlocked)
-        let neededReads = (profile.readable + profile.readOnly).filter { url in url != home && isBlocked(url) && !needed.contains(url) }
-        profile.outerDenied += blocked.filter { secret in !needed.contains { $0.realFileURL == secret } && !neededReads.contains { $0.realFileURL == secret } }
+        let neededReads = (profile.readable + profile.readOnly).filter { url in
+            url != home && isBlocked(url) && !needed.contains(url)
+        }
+        profile.outerDenied += blocked.filter { secret in
+            !needed.contains { $0.realFileURL == secret } && !neededReads.contains { $0.realFileURL == secret }
+        }
         profile.deniedPatterns += agnetaData(home: home)
         profile.outerExceptions += needed
         profile.readExceptions += neededReads

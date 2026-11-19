@@ -28,8 +28,10 @@ public actor AgnetaRuntime {
         public var engineLoopbackPorts: [Int]
         public var concurrency: Router.Concurrency
 
-        public init(store: AgnetaStore, shellTool: URL, appWorkspaces: URL? = nil,
-                    engineLoopbackPorts: [Int] = [], concurrency: Router.Concurrency = .init()) {
+        public init(
+            store: AgnetaStore, shellTool: URL, appWorkspaces: URL? = nil,
+            engineLoopbackPorts: [Int] = [], concurrency: Router.Concurrency = .init()
+        ) {
             self.store = store
             self.shellTool = shellTool
             self.appWorkspaces = appWorkspaces
@@ -60,7 +62,9 @@ public actor AgnetaRuntime {
 
     /// Opens Agneta's data (throwing `StoreError` when it can't), stops engines and marks tasks a crash left behind,
     /// applies retention, and starts the router with the saved grants. `approve` decides pairing requests.
-    public init(_ configuration: Configuration, log: OperationalLog? = nil, approve: @escaping Router.Approve) async throws {
+    public init(_ configuration: Configuration, log: OperationalLog? = nil, approve: @escaping Router.Approve)
+        async throws
+    {
         let store = configuration.store
         let database = try store.open()
         if let workspaces = configuration.appWorkspaces { try AgnetaStore.ownerOnly(workspaces) }
@@ -70,27 +74,39 @@ public actor AgnetaRuntime {
         let stopped = await EngineReaper.reap(recorded)
         for engine in recorded { Self.attempt(log, "forget-engine") { try database.forgetEngine(pid: engine.pid) } }
         let interrupted = Self.attempt(log, "interrupt-tasks") { try database.interruptUnfinishedTasks() } ?? 0
-        if stopped.count + interrupted > 0 { log?.log("recovered", ["engines": .int(Int64(stopped.count)), "tasks": .int(Int64(interrupted))]) }
+        if stopped.count + interrupted > 0 {
+            log?.log("recovered", ["engines": .int(Int64(stopped.count)), "tasks": .int(Int64(interrupted))])
+        }
 
         let traces = Traces(folder: store.tracesFolder)
         // Developer access keeps out all of Agneta's data and every app's workspace and caches but the session's own,
         // wherever the data lives (an isolated instance's too, not only the default folders' names).
-        let supervisor = EngineSupervisor(.init(shellTool: configuration.shellTool, root: store.root,
-                                                engineLoopbackPorts: configuration.engineLoopbackPorts, ledger: database, traces: traces,
-                                                agnetaRoots: [store.root] + (configuration.appWorkspaces.map { [$0] } ?? [])))
-        let router = Router(context: PolicyContext(userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [store.root],
-                                                   appWorkspaces: configuration.appWorkspaces),
-                            engines: supervisor, traces: traces, concurrency: configuration.concurrency,
-                            commit: { hash, grant, replacing in try database.save(grant, tokenHash: hash, replacing: replacing) }, approve: approve)
+        let supervisor = EngineSupervisor(
+            .init(
+                shellTool: configuration.shellTool, root: store.root,
+                engineLoopbackPorts: configuration.engineLoopbackPorts, ledger: database, traces: traces,
+                agnetaRoots: [store.root] + (configuration.appWorkspaces.map { [$0] } ?? [])))
+        let router = Router(
+            context: PolicyContext(
+                userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [store.root],
+                appWorkspaces: configuration.appWorkspaces),
+            engines: supervisor, traces: traces, concurrency: configuration.concurrency,
+            commit: { hash, grant, replacing in try database.save(grant, tokenHash: hash, replacing: replacing) },
+            approve: approve)
         // A grant whose limits can't be read isn't restored rather than left unlimited: its app pairs again. Said in the log.
         let unreadable = Self.attempt(log, "read-limits") { try database.unreadableLimits() } ?? []
         for id in unreadable {
             log?.error("app-limits-unreadable", ["grant": .string(id)])
         }
         // Each app's usage goes on from where it was, for the limits the user set for it.
-        Self.attempt(log, "prune-app-usage") { try database.pruneUsage(before: Date().addingTimeInterval(-Self.usageDays * 86_400)) }
-        await router.restore(Self.attempt(log, "read-grants") { try database.grants() } ?? [:],
-                             usage: Self.attempt(log, "read-app-usage") { try database.usage(since: Date().addingTimeInterval(-Self.usageDays * 86_400)) } ?? [:])
+        Self.attempt(log, "prune-app-usage") {
+            try database.pruneUsage(before: Date().addingTimeInterval(-Self.usageDays * 86_400))
+        }
+        await router.restore(
+            Self.attempt(log, "read-grants") { try database.grants() } ?? [:],
+            usage: Self.attempt(log, "read-app-usage") {
+                try database.usage(since: Date().addingTimeInterval(-Self.usageDays * 86_400))
+            } ?? [:])
         // Events are recorded one at a time, in the order the router sent them.
         let (events, sink) = AsyncStream<Router.Event>.makeStream()
         await router.observe { sink.yield($0) }
@@ -103,7 +119,10 @@ public actor AgnetaRuntime {
         self.router = router
         self.recovered = (stopped.count, interrupted)
         self.finish = { sink.finish() }
-        historyDays = Self.attempt(log, "read-retention") { try database.setting("historyDays") }.flatMap { $0.flatMap { Int($0) } } ?? 30
+        historyDays =
+            Self.attempt(log, "read-retention") { try database.setting("historyDays") }.flatMap {
+                $0.flatMap { Int($0) }
+            } ?? 30
 
         consumer = Task { [weak self] in
             for await event in events { await self?.record(event) }
@@ -142,8 +161,11 @@ public actor AgnetaRuntime {
     }
 
     /// Serves an account: its provider, how its tools run, and whether it's paused. Replaces what was there.
-    public func serve(account id: String, label: String, provider: ProviderSetup, runner: Router.ToolRunner, kind: AccountKind, billing: String,
-                      paused: Bool) async {
+    public func serve(
+        account id: String, label: String, provider: ProviderSetup, runner: Router.ToolRunner, kind: AccountKind,
+        billing: String,
+        paused: Bool
+    ) async {
         await supervisor.add(account: id, provider: provider)
         await router.add(account: id, label: label, runner: runner, kind: kind, billing: billing)
         await router.setPaused(id, paused)
@@ -204,7 +226,9 @@ public actor AgnetaRuntime {
         switch event {
         case .sessionStarted(let info):
             running[info.id] = .some(nil)
-            let record = TaskRecord(id: info.id, app: info.app, appIdentifier: info.appIdentifier, account: info.account, title: info.title, started: info.started)
+            let record = TaskRecord(
+                id: info.id, app: info.app, appIdentifier: info.appIdentifier, account: info.account, title: info.title,
+                started: info.started)
             write("task-started") {
                 try database.taskStarted(record)
                 if info.resumed { try database.taskResumed(info.id) }
@@ -221,11 +245,12 @@ public actor AgnetaRuntime {
             write("app-usage") { try database.addUsage(grant: grant, hour: hour, usage) }
         case .sessionEnded(let id, let ending):
             let lastTurn = running.removeValue(forKey: id) ?? nil
-            let outcome: TaskOutcome = switch ending {
-            case .stopped: .stopped
-            case .engineStopped: .failed
-            case .closed: lastTurn == "error" ? .failed : .finished
-            }
+            let outcome: TaskOutcome =
+                switch ending {
+                case .stopped: .stopped
+                case .engineStopped: .failed
+                case .closed: lastTurn == "error" ? .failed : .finished
+                }
             write("task-ended") { try database.taskEnded(id, outcome: outcome) }
             if historyDays == 0 { prune(olderThan: 0) }
             historyChanged = true
@@ -285,11 +310,14 @@ public actor AgnetaRuntime {
         // the rollout is still there to find it by (the files go as before if it can't).
         let codexThreads: [(home: URL, session: String, files: [URL])] = gone.compactMap { task in
             guard let engine = traces.meta(task: task)?["engine"], engine["id"]?.stringValue == "codex",
-                  let session = engine["session"]?.stringValue, let root = engine["stateRoot"]?.stringValue else { return nil }
+                let session = engine["session"]?.stringValue, let root = engine["stateRoot"]?.stringValue
+            else { return nil }
             let files = EngineHomes.conversation(engine: engine, root: store.root)
             return files.isEmpty ? nil : (URL(filePath: root, directoryHint: .isDirectory), session, files)
         }
-        EngineHomes.remove(tasks: gone, traces: traces, root: store.root, keepingConversationsOf: codexThreads.isEmpty ? [] : ["codex"])
+        EngineHomes.remove(
+            tasks: gone, traces: traces, root: store.root, keepingConversationsOf: codexThreads.isEmpty ? [] : ["codex"]
+        )
         traces.delete(tasks: gone)
         if !codexThreads.isEmpty {
             _Concurrency.Task { [router, log] in
@@ -297,18 +325,27 @@ public actor AgnetaRuntime {
                 var failed = 0
                 for thread in codexThreads {
                     var deleted = false
-                    if let program { deleted = await CodexSignIn(cli: program, codexHome: thread.home).delete(session: thread.session) }
+                    if let program {
+                        deleted = await CodexSignIn(cli: program, codexHome: thread.home).delete(
+                            session: thread.session)
+                    }
                     if !deleted {
                         failed += 1
                         for file in thread.files { try? FileManager.default.removeItem(at: file) }
                     }
                 }
-                log?.log("codex-threads-deleted", level: failed == 0 ? "info" : "error",
-                         ["asked": .int(Int64(codexThreads.count)), "failed": .int(Int64(failed)), "program": .bool(program != nil)])
+                log?.log(
+                    "codex-threads-deleted", level: failed == 0 ? "info" : "error",
+                    [
+                        "asked": .int(Int64(codexThreads.count)), "failed": .int(Int64(failed)),
+                        "program": .bool(program != nil)
+                    ])
             }
         }
         if !queued {
-            observer(.conversationsLeft(count: shared.count, problem: "Agneta couldn't record which conversations to delete"))
+            observer(
+                .conversationsLeft(count: shared.count, problem: "Agneta couldn't record which conversations to delete")
+            )
         } else if !shared.isEmpty {
             deletePendingConversations()
         }
@@ -321,7 +358,8 @@ public actor AgnetaRuntime {
     /// Conversations in shared engines still to delete, kept in Agneta's records until an engine deletes them.
     public var pendingConversations: [Router.SharedConversation] {
         guard let text = Self.attempt(log, "read-pending-deletions", { try database.setting(Self.pendingKey) }) ?? nil,
-              let list = try? JSONDecoder().decode([Router.SharedConversation].self, from: Data(text.utf8)) else { return [] }
+            let list = try? JSONDecoder().decode([Router.SharedConversation].self, from: Data(text.utf8))
+        else { return [] }
         return list
     }
 
@@ -355,11 +393,16 @@ public actor AgnetaRuntime {
             let outcome = await router.deleteConversations(asked)
             // Others may have been queued meanwhile: only what this pass finished leaves the queue.
             if !outcome.done.isEmpty { savePending(pendingConversations.filter { !outcome.done.contains($0) }) }
-            log?.log("conversations-deleted", level: outcome.problems.isEmpty ? "info" : "error",
-                     ["asked": .int(Int64(asked.count)), "deleted": .int(Int64(outcome.deleted)),
-                      "problems": .array(outcome.problems.map(JSONValue.string))])
-            observer(.conversationsLeft(count: pendingConversations.count,
-                                        problem: outcome.problems.isEmpty ? nil : outcome.problems.joined(separator: "; ")))
+            log?.log(
+                "conversations-deleted", level: outcome.problems.isEmpty ? "info" : "error",
+                [
+                    "asked": .int(Int64(asked.count)), "deleted": .int(Int64(outcome.deleted)),
+                    "problems": .array(outcome.problems.map(JSONValue.string))
+                ])
+            observer(
+                .conversationsLeft(
+                    count: pendingConversations.count,
+                    problem: outcome.problems.isEmpty ? nil : outcome.problems.joined(separator: "; ")))
         } while deleteAgain
         deleting = nil
     }
@@ -367,7 +410,9 @@ public actor AgnetaRuntime {
     /// Engine homes nothing refers to any more (after a crash), after the retention period.
     private func sweepEngineHomes() async {
         let keep = await supervisor.runningKeys
-        EngineHomes.sweep(root: store.root, traces: traces, before: Date().addingTimeInterval(-Double(max(historyDays, 1)) * 86_400), keep: keep)
+        EngineHomes.sweep(
+            root: store.root, traces: traces, before: Date().addingTimeInterval(-Double(max(historyDays, 1)) * 86_400),
+            keep: keep)
     }
 
     private func trim() async {

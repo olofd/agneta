@@ -12,7 +12,9 @@ enum Snapshots {
     static private(set) var drawsAsKey = false
 
     static func runIfRequested(_ model: AppModel) -> Bool {
-        guard let raw = ProcessInfo.processInfo.environment["AGNETA_SHOWCASE"], let seconds = Double(raw) else { return false }
+        guard let raw = ProcessInfo.processInfo.environment["AGNETA_SHOWCASE"], let seconds = Double(raw) else {
+            return false
+        }
         if let mode = ProcessInfo.processInfo.environment["AGNETA_APPEARANCE"] {
             NSApp.appearance = NSAppearance(named: mode == "dark" ? .darkAqua : .aqua)
         }
@@ -35,7 +37,8 @@ enum Snapshots {
         let paneName = ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_PANE"]
         // "Defaults" opens a provider's model and effort sheet over Providers.
         let pane = paneName.flatMap { SettingsView.Pane(rawValue: $0) } ?? .providers
-        presenter.showSettings(model, section: pane, defaults: paneName == "Defaults" ? model.accounts.first { $0.id == "b" } : nil)
+        presenter.showSettings(
+            model, section: pane, defaults: paneName == "Defaults" ? model.accounts.first { $0.id == "b" } : nil)
         // "Details" shows a task's details window from a sample trace, only in an isolated home.
         if paneName == "Details", ProcessInfo.processInfo.environment["AGNETA_HOME"] != nil {
             try? FileManager.default.createDirectory(at: model.store.tracesFolder, withIntermediateDirectories: true)
@@ -51,7 +54,9 @@ enum Snapshots {
             x += window.frame.width + 20
         }
         presenter.window("settings")?.setFrameTopLeftPoint(NSPoint(x: screen.minX + 20, y: screen.maxY - 600))
-        let out = ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_OUT"].map { URL(filePath: $0, directoryHint: .isDirectory) }
+        let out = ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_OUT"].map {
+            URL(filePath: $0, directoryHint: .isDirectory)
+        }
         let suffix = ProcessInfo.processInfo.environment["AGNETA_APPEARANCE"] ?? "system"
         // One window at a time becomes key, as it would in use, so buttons show their active tint.
         // Each line says where a capture went or why it failed; the app quits after the last one.
@@ -70,14 +75,19 @@ enum Snapshots {
                     var line = "\(key) \(window.windowNumber)"
                     if let out {
                         line += "  " + capture(window, to: out.appending(path: "\(key)-\(suffix).png"))
-                        line += "  " + captureOverBackdrop(window, to: out.appending(path: "\(key)-\(suffix)-glass.png"))
+                        line +=
+                            "  " + captureOverBackdrop(window, to: out.appending(path: "\(key)-\(suffix)-glass.png"))
                         if let sheet = window.attachedSheet {
                             line += "  sheet " + capture(sheet, to: out.appending(path: "\(key)-sheet-\(suffix).png"))
                         }
                     }
                     // Where the close button sits, from the window's top-left corner, for checking it clears the corner.
-                    if let close = window.standardWindowButton(.closeButton), let frame = close.superview?.convert(close.frame, to: nil) {
-                        line += String(format: "  close %.0f,%.0f %.0fx%.0f", frame.minX, window.frame.height - frame.maxY, frame.width, frame.height)
+                    if let close = window.standardWindowButton(.closeButton),
+                        let frame = close.superview?.convert(close.frame, to: nil)
+                    {
+                        line += String(
+                            format: "  close %.0f,%.0f %.0fx%.0f", frame.minX, window.frame.height - frame.maxY,
+                            frame.width, frame.height)
                     }
                     print(line)
                     fflush(stdout)
@@ -134,7 +144,9 @@ enum Snapshots {
 private func write(_ image: CGImage, to file: URL) -> String {
     do {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return "PNG encoding failed" }
+        guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+            return "PNG encoding failed"
+        }
         try png.write(to: file)
         return file.path(percentEncoded: false)
     } catch {
@@ -157,18 +169,31 @@ private struct Backdrop: View {
         ZStack {
             // A muted dusk after the app icon's evening, so every screenshot shares one calm backdrop: glass takes on
             // what's behind it, and a vivid one would tint every panel instead of showing Agneta's own colours.
-            LinearGradient(colors: [Color(red: 0.86, green: 0.80, blue: 0.80), Color(red: 0.62, green: 0.56, blue: 0.68), Color(red: 0.38, green: 0.34, blue: 0.48)],
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
-            Circle().fill(Color(red: 1.0, green: 0.62, blue: 0.48)).frame(width: 520).offset(x: -380, y: -230).blur(radius: 70).opacity(0.45)
-            Circle().fill(Color(red: 0.55, green: 0.24, blue: 1.0)).frame(width: 560).offset(x: 420, y: 260).blur(radius: 80).opacity(0.3)
+            LinearGradient(
+                colors: [
+                    Color(red: 0.86, green: 0.80, blue: 0.80), Color(red: 0.62, green: 0.56, blue: 0.68),
+                    Color(red: 0.38, green: 0.34, blue: 0.48)
+                ],
+                startPoint: .topLeading, endPoint: .bottomTrailing)
+            Circle().fill(Color(red: 1.0, green: 0.62, blue: 0.48)).frame(width: 520).offset(x: -380, y: -230).blur(
+                radius: 70
+            ).opacity(0.45)
+            Circle().fill(Color(red: 0.55, green: 0.24, blue: 1.0)).frame(width: 560).offset(x: 420, y: 260).blur(
+                radius: 80
+            ).opacity(0.3)
             Text("Agneta").font(.system(size: 160, weight: .heavy)).foregroundStyle(.white.opacity(0.35)).offset(y: 120)
             // AGNETA_BACKDROP=text: a busy page of text behind the windows, the hardest case for reading glass.
             if ProcessInfo.processInfo.environment["AGNETA_BACKDROP"] == "text" {
                 Color(white: 0.12)
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(0..<40, id: \.self) { n in
-                        Text(n % 5 == 0 ? "What's happening with Field Notes? Version 1.2 is due Thursday." : "Offline search and PDF export are ready to announce; shared folders stay out.")
-                            .font(.system(size: n % 5 == 0 ? 34 : 17, weight: n % 5 == 0 ? .bold : .regular)).foregroundStyle(.white.opacity(0.9))
+                        Text(
+                            n % 5 == 0
+                                ? "What's happening with Field Notes? Version 1.2 is due Thursday."
+                                : "Offline search and PDF export are ready to announce; shared folders stay out."
+                        )
+                        .font(.system(size: n % 5 == 0 ? 34 : 17, weight: n % 5 == 0 ? .bold : .regular))
+                        .foregroundStyle(.white.opacity(0.9))
                     }
                 }
                 .padding(40).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -183,7 +208,9 @@ extension WindowPresenter {
     func showPanelPreview(_ model: AppModel) {
         let host = NSHostingView(rootView: PanelView(model: model).showcaseKey())
         let size = host.fittingSize
-        let window = GlassPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let window = GlassPanel(
+            contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: false)
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = true
@@ -196,17 +223,31 @@ extension WindowPresenter {
 /// A task's trace in miniature, for the details window's design review.
 private let sampleTrace: [JSONValue] = {
     var records: [JSONValue] = [
-        ["type": "meta", "app": ["name": "Example App"], "account": ["label": "Claude", "kind": "claude", "billing": "subscription"],
-         "engine": ["info": ["name": "goose", "version": "1.59.2"], "dedicated": true], "policy": ["tools": "workspace", "network": "none", "sandbox": "developer"]],
+        [
+            "type": "meta", "app": ["name": "Example App"],
+            "account": ["label": "Claude", "kind": "claude", "billing": "subscription"],
+            "engine": ["info": ["name": "goose", "version": "1.59.2"], "dedicated": true],
+            "policy": ["tools": "workspace", "network": "none", "sandbox": "developer"]
+        ]
     ]
     for (n, calls) in [(1, 3), (2, 5), (3, 2)] {
         for c in 0..<calls {
-            records.append(["type": "event", "kind": "tool-call", "call": .string("c\(n)\(c)"), "tool": c % 2 == 0 ? "search" : "read_note", "extension": "app"])
-            records.append(["type": "event", "kind": "tool-result", "call": .string("c\(n)\(c)"), "ms": .double(Double(400 + 300 * c)), "isError": .bool(n == 2 && c == 3)])
+            records.append([
+                "type": "event", "kind": "tool-call", "call": .string("c\(n)\(c)"),
+                "tool": c % 2 == 0 ? "search" : "read_note", "extension": "app"
+            ])
+            records.append([
+                "type": "event", "kind": "tool-result", "call": .string("c\(n)\(c)"),
+                "ms": .double(Double(400 + 300 * c)), "isError": .bool(n == 2 && c == 3)
+            ])
         }
         records.append(["type": "event", "kind": "model-call", "input": 23_000, "output": 900, "cacheRead": 21_000])
-        records.append(["type": "event", "kind": "turn", "n": .int(Int64(n)), "stopReason": n == 3 ? "cancelled" : "end_turn", "ms": .double(Double(41_000 * n)),
-                        "msToFirstToken": 4_200, "modelCalls": .int(Int64(calls + 1)), "ledger": ["input": 23_000, "output": 900], "cost": .double(0.12 * Double(n))])
+        records.append([
+            "type": "event", "kind": "turn", "n": .int(Int64(n)), "stopReason": n == 3 ? "cancelled" : "end_turn",
+            "ms": .double(Double(41_000 * n)),
+            "msToFirstToken": 4_200, "modelCalls": .int(Int64(calls + 1)), "ledger": ["input": 23_000, "output": 900],
+            "cost": .double(0.12 * Double(n))
+        ])
     }
     records.append(["type": "shell", "command": "python3 fit.py", "exit": 0])
     records.append(["type": "permission", "decision": "allowed-by-policy"])

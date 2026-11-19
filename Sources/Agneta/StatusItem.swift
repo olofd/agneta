@@ -33,8 +33,10 @@ final class StatusItemController: NSObject {
             item.button?.image = Mark.image(size: 18, badge: model.needsAttention, hammer: model.isDevelopment)
             let title = model.attentionMessage?.title
             if let title, title != announced {
-                NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
-                                     userInfo: [.announcement: "Agneta: \(title)", .priority: NSAccessibilityPriorityLevel.high.rawValue])
+                NSAccessibility.post(
+                    element: NSApp as Any, notification: .announcementRequested,
+                    userInfo: [.announcement: "Agneta: \(title)", .priority: NSAccessibilityPriorityLevel.high.rawValue]
+                )
             }
             announced = title
         } onChange: { [weak self] in
@@ -57,7 +59,8 @@ final class StatusItemController: NSObject {
             panel.animator().alphaValue = 1
         }
         item.button?.highlight(true)
-        outsideClicks = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+        outsideClicks = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) {
+            [weak self] _ in
             Task { @MainActor in self?.close() }
         }
         escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -73,18 +76,23 @@ final class StatusItemController: NSObject {
         outsideClicks = nil
         escape = nil
         item.button?.highlight(false)
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.12
-            panel.animator().alphaValue = 0
-        }, completionHandler: { MainActor.assumeIsolated { panel.orderOut(nil) } })
+        NSAnimationContext.runAnimationGroup(
+            { context in
+                context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.12
+                panel.animator().alphaValue = 0
+            }, completionHandler: { MainActor.assumeIsolated { panel.orderOut(nil) } })
     }
 
     private func makePanel() -> NSPanel {
-        let host = NSHostingView(rootView: PanelView(model: model, dismiss: { [weak self] in self?.close() },
-                                                     resized: { [weak self] in self?.contentResized() }))
+        let host = NSHostingView(
+            rootView: PanelView(
+                model: model, dismiss: { [weak self] in self?.close() },
+                resized: { [weak self] in self?.contentResized() }))
         host.sizingOptions = [.intrinsicContentSize] // so fittingSize measures the SwiftUI content
         self.host = host
-        let panel = GlassPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 420), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let panel = GlassPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 420), styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: false)
         panel.isFloatingPanel = true
         panel.level = .popUpMenu
         panel.isOpaque = false
@@ -111,7 +119,8 @@ final class StatusItemController: NSObject {
         let screen = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
         var x = anchor.midX - size.width / 2
         x = min(max(x, screen.minX + 8), screen.maxX - size.width - 8)
-        panel.setFrame(NSRect(x: x, y: anchor.minY - size.height - 6, width: size.width, height: size.height), display: true)
+        panel.setFrame(
+            NSRect(x: x, y: anchor.minY - size.height - 6, width: size.width, height: size.height), display: true)
         // A borderless window's shadow follows the shape it had when the shadow was made: after a resize it's made
         // again, or an outline of the old size shows around the rounded glass.
         panel.invalidateShadow()
@@ -171,8 +180,12 @@ enum GlassBackground {
         effect.layer?.masksToBounds = true
         content.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(content)
-        NSLayoutConstraint.activate([content.leadingAnchor.constraint(equalTo: effect.leadingAnchor), content.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-                                     content.topAnchor.constraint(equalTo: effect.topAnchor), content.bottomAnchor.constraint(equalTo: effect.bottomAnchor)])
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
+            content.topAnchor.constraint(equalTo: effect.topAnchor),
+            content.bottomAnchor.constraint(equalTo: effect.bottomAnchor)
+        ])
         return effect
     }
 }

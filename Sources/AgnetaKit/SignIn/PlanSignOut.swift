@@ -70,13 +70,15 @@ public enum PlanSignOut {
             let mine = leftovers.filter { $0.program == program }
             guard let first = mine.first else { continue }
             let count = mine.count == 1 ? "1 sign-in" : "\(mine.count) sign-ins"
-            let why = mine.allSatisfy { $0.reason == .noProgram }
+            let why =
+                mine.allSatisfy { $0.reason == .noProgram }
                 ? "no supported \(program) was found to sign out with"
                 : "\(program)'s logout didn't succeed"
-            lines.append("\(count) on \(program) may still be in your login Keychain (\(why)). To remove "
-                         + "\(mine.count == 1 ? "it" : "them"), open Keychain Access, search for “\(first.keychainItem)” and delete the "
-                         + "items Agneta made (if you use \(program) yourself, its own item has the same name: signing in again "
-                         + "recreates it).")
+            lines.append(
+                "\(count) on \(program) may still be in your login Keychain (\(why)). To remove "
+                    + "\(mine.count == 1 ? "it" : "them"), open Keychain Access, search for “\(first.keychainItem)” and delete the "
+                    + "items Agneta made (if you use \(program) yourself, its own item has the same name: signing in again "
+                    + "recreates it).")
         }
         return lines.joined(separator: "\n\n")
     }

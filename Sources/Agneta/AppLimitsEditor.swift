@@ -38,7 +38,11 @@ struct AppLimitsEditor: View {
             Text(Self.usage(status)).font(.system(size: 11.5)).foregroundStyle(.secondary)
 
             if usesKeys || limits.spend != nil {
-                Toggle(isOn: Binding(get: { limits.spend != nil }, set: { on in set { $0.spend = on ? .init(max: 5, period: .day) : nil } })) {
+                Toggle(
+                    isOn: Binding(
+                        get: { limits.spend != nil },
+                        set: { on in set { $0.spend = on ? .init(max: 5, period: .day) : nil } })
+                ) {
                     Text("Limit spending on API keys").font(.system(size: 12.5))
                 }
                 .toggleStyle(.checkbox).tint(Palette.fill)
@@ -46,11 +50,16 @@ struct AppLimitsEditor: View {
             if let spend = limits.spend {
                 HStack(spacing: 6) {
                     Text("Up to $").font(.system(size: 12))
-                    TextField("Amount", value: Binding(get: { spend.max }, set: { value in set { $0.spend?.max = value } }),
-                              format: .number.precision(.fractionLength(0...2)))
-                        .labelsHidden().frame(width: 64).textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Most it may spend, in dollars")
-                    Picker("Per", selection: Binding(get: { spend.period }, set: { period in set { $0.spend?.period = period } })) {
+                    TextField(
+                        "Amount", value: Binding(get: { spend.max }, set: { value in set { $0.spend?.max = value } }),
+                        format: .number.precision(.fractionLength(0...2))
+                    )
+                    .labelsHidden().frame(width: 64).textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Most it may spend, in dollars")
+                    Picker(
+                        "Per",
+                        selection: Binding(get: { spend.period }, set: { period in set { $0.spend?.period = period } })
+                    ) {
                         Text("a day").tag(AppLimits.Period.day)
                         Text("a week").tag(AppLimits.Period.week)
                         Text("a month").tag(AppLimits.Period.month)
@@ -63,8 +72,13 @@ struct AppLimitsEditor: View {
                     Text(line).font(.system(size: 11.5)).foregroundStyle(.secondary).padding(.leading, 20)
                 }
             }
-            ForEach(Self.spendNotes(limits: limits, providers: providers.map(\.kind), engines: engines) + Self.unpricedNote(status), id: \.self) { note in
-                Text(note).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.leading, 20)
+            ForEach(
+                Self.spendNotes(limits: limits, providers: providers.map(\.kind), engines: engines)
+                    + Self.unpricedNote(status), id: \.self
+            ) { note in
+                Text(note).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(
+                    horizontal: false, vertical: true
+                ).padding(.leading, 20)
             }
 
             Toggle(isOn: Binding(get: { limits.atOnce != nil }, set: { on in set { $0.atOnce = on ? 2 : nil } })) {
@@ -72,23 +86,38 @@ struct AppLimitsEditor: View {
             }
             .toggleStyle(.checkbox).tint(Palette.fill)
             if let atOnce = limits.atOnce {
-                Stepper(value: Binding(get: { atOnce }, set: { value in set { $0.atOnce = value } }), in: 1...model.maxAtOnce) {
+                Stepper(
+                    value: Binding(get: { atOnce }, set: { value in set { $0.atOnce = value } }),
+                    in: 1...model.maxAtOnce
+                ) {
                     Text("\(atOnce) at once. More wait their turn.").font(.system(size: 12))
                 }
                 .padding(.leading, 20)
             }
 
-            Toggle(isOn: Binding(get: { limits.newTasks != nil }, set: { on in set { $0.newTasks = on ? .init(max: 10, period: .hour) : nil } })) {
+            Toggle(
+                isOn: Binding(
+                    get: { limits.newTasks != nil },
+                    set: { on in set { $0.newTasks = on ? .init(max: 10, period: .hour) : nil } })
+            ) {
                 Text("Limit new tasks").font(.system(size: 12.5))
             }
             .toggleStyle(.checkbox).tint(Palette.fill)
             if let starts = limits.newTasks {
                 HStack(spacing: 6) {
                     Text("Up to").font(.system(size: 12))
-                    TextField("Tasks", value: Binding(get: { starts.max }, set: { value in set { $0.newTasks?.max = value } }), format: .number)
-                        .labelsHidden().frame(width: 56).textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Most new tasks")
-                    Picker("Per", selection: Binding(get: { starts.period }, set: { period in set { $0.newTasks?.period = period } })) {
+                    TextField(
+                        "Tasks",
+                        value: Binding(get: { starts.max }, set: { value in set { $0.newTasks?.max = value } }),
+                        format: .number
+                    )
+                    .labelsHidden().frame(width: 56).textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Most new tasks")
+                    Picker(
+                        "Per",
+                        selection: Binding(
+                            get: { starts.period }, set: { period in set { $0.newTasks?.period = period } })
+                    ) {
                         Text("an hour").tag(AppLimits.Period.hour)
                         Text("a day").tag(AppLimits.Period.day)
                     }
@@ -112,7 +141,9 @@ struct AppLimitsEditor: View {
 
     /// "Today: 4 tasks · $1.20 on API keys"; nothing yet: "Nothing today yet".
     static func usage(_ status: AppLimitStatus?) -> String {
-        guard let today = status?.today, today.tasks + today.turns > 0 || today.cost > 0 else { return "Nothing today yet" }
+        guard let today = status?.today, today.tasks + today.turns > 0 || today.cost > 0 else {
+            return "Nothing today yet"
+        }
         var parts = [today.tasks == 1 ? "1 task" : "\(today.tasks) tasks"]
         if today.cost > 0 { parts.append("\(AppLimits.cents(today.cost)) on API keys") }
         return "Today: " + parts.joined(separator: " · ")
@@ -121,13 +152,16 @@ struct AppLimitsEditor: View {
     /// "$1.20 of $5 · resets at midnight".
     static func spent(_ status: AppLimitStatus?, _ spend: AppLimits.Spend) -> String? {
         guard let spent = status?.spent else { return nil }
-        return "\(AppLimits.cents(spent)) of \(AppLimits.dollars(spend.max))" + (status?.spendResets.map { " · resets \($0)" } ?? "")
+        return "\(AppLimits.cents(spent)) of \(AppLimits.dollars(spend.max))"
+            + (status?.spendResets.map { " · resets \($0)" } ?? "")
     }
 
     /// Turns today whose engine gave no price for the model they called: a spending limit couldn't count them.
     static func unpricedNote(_ status: AppLimitStatus?) -> [String] {
         guard let unpriced = status?.today.unpriced, unpriced > 0 else { return [] }
-        return ["\(unpriced == 1 ? "1 turn" : "\(unpriced) turns") today called a model its engine has no price for, so \(unpriced == 1 ? "its" : "their") cost isn't known or counted."]
+        return [
+            "\(unpriced == 1 ? "1 turn" : "\(unpriced) turns") today called a model its engine has no price for, so \(unpriced == 1 ? "its" : "their") cost isn't known or counted."
+        ]
     }
 
     /// What the user should know about a spending limit for this app: plans aren't counted, Claude Code counts at a
@@ -136,16 +170,20 @@ struct AppLimitsEditor: View {
         let keys = providers.filter { $0.subscription == nil }, plans = providers.filter { $0.subscription != nil }
         var notes: [String] = []
         if !plans.isEmpty {
-            notes.append(keys.isEmpty
-                ? "This app uses only plans, which aren't charged per call: a spending limit wouldn't count its tasks."
-                : "Counts tasks on API keys only. A plan isn't charged per call, so its tasks aren't counted or stopped.")
+            notes.append(
+                keys.isEmpty
+                    ? "This app uses only plans, which aren't charged per call: a spending limit wouldn't count its tasks."
+                    : "Counts tasks on API keys only. A plan isn't charged per call, so its tasks aren't counted or stopped."
+            )
         }
         guard limits.spend != nil else { return notes }
         if keys.contains(.anthropicKey), engines.contains("claude-code") {
             notes.append("Claude Code's cost is known when a turn ends, so a turn on it can go over the limit.")
         }
         if keys.contains(.openAIKey), engines.contains("codex") {
-            notes.append("Codex reports no cost, so this app's tasks on an OpenAI API key can't use Codex while spending is limited.")
+            notes.append(
+                "Codex reports no cost, so this app's tasks on an OpenAI API key can't use Codex while spending is limited."
+            )
         }
         return notes
     }

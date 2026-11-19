@@ -55,8 +55,11 @@ public struct AccountRecord: Sendable, Identifiable, Equatable {
     /// (ProviderEngines).
     public var paused: Bool
 
-    public init(id: String = String(UUID().uuidString.prefix(8)).lowercased(), kind: AccountKind, label: String, email: String? = nil, model: String? = nil,
-                created: Date = Date(), paused: Bool = false) {
+    public init(
+        id: String = String(UUID().uuidString.prefix(8)).lowercased(), kind: AccountKind, label: String,
+        email: String? = nil, model: String? = nil,
+        created: Date = Date(), paused: Bool = false
+    ) {
         self.id = id
         self.kind = kind
         self.label = label
@@ -77,7 +80,9 @@ public struct AgnetaStore: Sendable {
     public var runtimesFolder: URL { root.appending(path: "Runtimes", directoryHint: .isDirectory) }
     /// One `agneta/trace` JSONL file per task (docs/DIAGNOSTICS.md).
     public var tracesFolder: URL { root.appending(path: "Traces", directoryHint: .isDirectory) }
-    public func home(of account: AccountRecord) -> URL { accountsFolder.appending(path: account.id, directoryHint: .isDirectory) }
+    public func home(of account: AccountRecord) -> URL {
+        accountsFolder.appending(path: account.id, directoryHint: .isDirectory)
+    }
 
     /// Opens the database, after making the data folder owner-only.
     public func open() throws -> AgnetaDatabase {
@@ -89,7 +94,9 @@ public struct AgnetaStore: Sendable {
     /// folders made along the way to another one get the default 0755. Everything inside an
     /// owner-only folder is out of other users' reach, whatever its own permissions.
     public static func ownerOnly(_ folder: URL) throws {
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path(percentEncoded: false))
+        try FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: folder.path(percentEncoded: false))
     }
 }

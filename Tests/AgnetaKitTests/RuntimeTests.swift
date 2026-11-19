@@ -2,6 +2,7 @@
 // what a task leaves behind going with its history. Run on the real Goose against the fake model, as the app runs.
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 extension RouterIntegrationTests {
@@ -20,7 +21,9 @@ extension RouterIntegrationTests {
 
             // Each outcome as it happened: closed by the app after a good turn, and stopped by the user.
             let history = await stack.runtime.history()
-            #expect(history.first { $0.id == finished }?.outcome == .finished && history.first { $0.id == finished }?.turns == 1)
+            #expect(
+                history.first { $0.id == finished }?.outcome == .finished
+                    && history.first { $0.id == finished }?.turns == 1)
             #expect(history.first { $0.id == stopped }?.outcome == .stopped)
 
             // Removing access is saved: the grant is gone from Agneta's records, not only from the running router.
@@ -29,10 +32,12 @@ extension RouterIntegrationTests {
             #expect(try stack.runtime.database.grants().values.allSatisfy { $0.id != grant.id })
 
             // Keeping no history removes ended tasks, and their traces with them.
-            #expect(FileManager.default.fileExists(atPath: stack.traces.file(for: finished).path(percentEncoded: false)))
+            #expect(
+                FileManager.default.fileExists(atPath: stack.traces.file(for: finished).path(percentEncoded: false)))
             await stack.runtime.setHistoryDays(0)
             #expect(await stack.runtime.history().isEmpty)
-            #expect(!FileManager.default.fileExists(atPath: stack.traces.file(for: finished).path(percentEncoded: false)))
+            #expect(
+                !FileManager.default.fileExists(atPath: stack.traces.file(for: finished).path(percentEncoded: false)))
         } catch {
             await stack.stop()
             throw error

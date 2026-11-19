@@ -159,9 +159,8 @@ jobs:
           AGNETA_REQUIRE_TOOLS: "1"
         run: scripts/check whitespace shell python js actions data
 
-  # swift-format comes with Xcode, so it runs on a Mac, with the version scripts/check pins. Until the one-shot
-  # reformat (CONTRIBUTING.md, Static checks) only the lines a change touches must be formatted; the log reports the
-  # whole tree's findings.
+  # swift-format comes with Xcode, so it runs on a Mac, with the version scripts/check pins: every line of every Swift
+  # file must be formatted.
   swift-format:
     name: Swift format
     runs-on: macos-26
@@ -169,7 +168,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # the base the changed lines are measured against
           persist-credentials: false
 
       # The newest Xcode whose swift-format is the pinned one (swift_format_version in scripts/check), so a
@@ -190,13 +188,7 @@ jobs:
           echo "::error::No Xcode 26 here has swift-format $want (${found[*]}); update swift_format_version in scripts/check"
           exit 1
 
-      # A pull request is measured against its base branch, a push against what main was before it. A base that
-      # isn't in the history (a new branch, a force push, a run by hand) falls back to the last commit.
-      - name: Check the changed lines
+      - name: Check the formatting
         env:
           AGNETA_REQUIRE_TOOLS: "1"
-          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
-        run: |
-          base=$BASE
-          git rev-parse --verify --quiet "${base:-none}^{commit}" > /dev/null || base=HEAD^
-          AGNETA_CHECK_BASE=$base scripts/check swift
+        run: scripts/check swift

@@ -43,7 +43,10 @@ public struct EngineCapabilities: Sendable, Equatable {
     /// checks each call from its permission requests instead (Router.runner).
     public var runsOwnTools: Bool
 
-    public init(steer: Bool, fork: Bool, instructionsBetweenTurns: Bool, processPerSession: Bool, cost: CostReporting = .live, runsOwnTools: Bool = false) {
+    public init(
+        steer: Bool, fork: Bool, instructionsBetweenTurns: Bool, processPerSession: Bool, cost: CostReporting = .live,
+        runsOwnTools: Bool = false
+    ) {
         self.steer = steer
         self.fork = fork
         self.instructionsBetweenTurns = instructionsBetweenTurns
@@ -68,7 +71,10 @@ public struct ProviderSetup: Sendable, Equatable {
     /// For ChatGPT and Claude plans: where the account's sign-in lives.
     public var subscription: SubscriptionAccount?
 
-    public init(kind: Kind, model: String? = nil, apiKey: String? = nil, baseURL: String? = nil, subscription: SubscriptionAccount? = nil) {
+    public init(
+        kind: Kind, model: String? = nil, apiKey: String? = nil, baseURL: String? = nil,
+        subscription: SubscriptionAccount? = nil
+    ) {
         self.kind = kind
         self.model = model
         self.apiKey = apiKey
@@ -152,14 +158,17 @@ public protocol UsageLedger: Sendable {
 
 extension EngineAdapter {
     public func prepareSession(_ engineSession: String) -> [EngineRequest] { [] }
-    public func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy, instructions: String?) -> JSONValue {
+    public func loadSession(
+        _ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy, instructions: String?
+    ) -> JSONValue {
         loadSession(engineSession, cwd: cwd, servers: servers, policy: policy)
     }
     public func modelCall(fromNotification method: String, params: JSONValue?) -> [String: JSONValue]? { nil }
     public func permitsMode(_ mode: String) -> Bool { true }
     public var stateFormat: String { "\(id)/1" }
     public func permissionServer(_ params: JSONValue?, calls: [String: String]) -> String? {
-        toolIdentity(in: params?["toolCall"] ?? .null).server ?? params?["toolCall"]?["toolCallId"]?.stringValue.flatMap { calls[$0] }
+        toolIdentity(in: params?["toolCall"] ?? .null).server
+            ?? params?["toolCall"]?["toolCallId"]?.stringValue.flatMap { calls[$0] }
     }
     public var reservedToolServers: Set<String> { [] }
     public func brokersShell(_ policy: SessionPolicy) -> Bool { false }
@@ -180,11 +189,14 @@ public protocol EngineAdapter: Sendable {
     func launch(_ context: EngineLaunchContext) throws -> EngineLaunch
 
     /// `session/new` parameters. Engines that take instructions only here (Claude Code) use `instructions`.
-    func newSession(cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?) -> JSONValue
+    func newSession(cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?)
+        -> JSONValue
     /// `session/load` parameters, resuming `engineSession`.
     func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy) -> JSONValue
     /// The same, with the session's instructions, for engines that take their options again on every load.
-    func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy, instructions: String?) -> JSONValue
+    func loadSession(
+        _ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy, instructions: String?
+    ) -> JSONValue
 
     /// Sets a session's instructions (`appendKey` nil: replace them). Nil when the engine can't.
     func setInstructions(_ engineSession: String, text: String, appendKey: String?) -> EngineRequest?

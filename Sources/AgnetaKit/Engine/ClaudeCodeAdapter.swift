@@ -22,34 +22,41 @@ public struct ClaudeCodeAdapter: EngineAdapter {
     public var displayName: String { "Claude Code" }
     public var capabilities: EngineCapabilities {
         // Instructions go in at session start (`_meta.systemPrompt`); fork is native to the adapter but not yet wired.
-        EngineCapabilities(steer: true, fork: false, instructionsBetweenTurns: false, processPerSession: true, cost: .turnEnd, runsOwnTools: true)
+        EngineCapabilities(
+            steer: true, fork: false, instructionsBetweenTurns: false, processPerSession: true, cost: .turnEnd,
+            runsOwnTools: true)
     }
 
     public func launch(_ context: EngineLaunchContext) throws -> EngineLaunch {
         let home = context.home
         let temporary = home.appending(path: "tmp", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createDirectory(
+            at: temporary, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         var environment: [String: String] = [
             "HOME": home.path(percentEncoded: false), "TMPDIR": temporary.path(percentEncoded: false),
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8",
             // The real user name: Claude Code keys its Keychain entries by it.
             "USER": NSUserName(), "LOGNAME": NSUserName(),
             "CLAUDE_CODE_EXECUTABLE": cli.path.path(percentEncoded: false),
-            "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
         ]
         var writable: [URL] = []
         var readable: [URL] = [executable.deletingLastPathComponent(), Self.bundle(of: cli.path)]
         let config: URL
         switch context.provider.kind {
         case .claudeCode:
-            guard let subscription = context.provider.subscription else { throw RPCError(code: RPCError.internalError, message: "The account has no sign-in") }
+            guard let subscription = context.provider.subscription else {
+                throw RPCError(code: RPCError.internalError, message: "The account has no sign-in")
+            }
             config = subscription.claudeConfig
             try subscription.prepareFolders()
             environment["CLAUDE_CODE_TMPDIR"] = subscription.claudeTemp.path(percentEncoded: false)
             writable += [subscription.claudeConfig, subscription.claudeTemp]
             // A plan's sign-in is in the login Keychain, reached through $HOME/Library/Keychains.
             try ClaudeCodeSignIn.linkKeychains(into: home)
-            readable.append(FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Keychains", directoryHint: .isDirectory))
+            readable.append(
+                FileManager.default.homeDirectoryForCurrentUser.appending(
+                    path: "Library/Keychains", directoryHint: .isDirectory))
         case .anthropic:
             config = home.appending(path: "claude", directoryHint: .isDirectory)
             environment["ANTHROPIC_API_KEY"] = context.provider.apiKey ?? ""
@@ -57,7 +64,8 @@ public struct ClaudeCodeAdapter: EngineAdapter {
         case .openAI, .chatGPT:
             throw RPCError(code: RPCError.invalidParams, message: "Claude Code serves Claude accounts")
         }
-        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createDirectory(
+            at: config, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         environment["CLAUDE_CONFIG_DIR"] = ClaudeCodeSignIn.configPath(config)
         var brokered: (temp: URL, dotfiles: [URL])?
         if let shell = context.shell, let policy = context.session?.policy, Self.shellBrokered(policy) {
@@ -65,11 +73,17 @@ public struct ClaudeCodeAdapter: EngineAdapter {
         }
         // Developer access: Claude Code's other tools find the user's toolchains too (its commands get them from the broker).
         if context.session?.policy.sandbox == .developer {
-            environment.merge(DeveloperAccess.environment(home: FileManager.default.homeDirectoryForCurrentUser,
-                                                         caches: context.session!.policy.caches(scratch: context.home.appending(path: "scratch", directoryHint: .isDirectory)))) { _, user in user }
+            environment.merge(
+                DeveloperAccess.environment(
+                    home: FileManager.default.homeDirectoryForCurrentUser,
+                    caches: context.session!.policy.caches(
+                        scratch: context.home.appending(path: "scratch", directoryHint: .isDirectory)))
+            ) { _, user in user }
         }
         if let brokered { writable.append(brokered.temp) }
-        var launch = EngineLaunch(executable: executable, arguments: [], environment: environment, writable: writable, readable: readable, stateRoot: config)
+        var launch = EngineLaunch(
+            executable: executable, arguments: [], environment: environment, writable: writable, readable: readable,
+            stateRoot: config)
         if let brokered {
             launch.toolWritable = [brokered.temp]
             launch.temporary = [brokered.temp]
@@ -95,9 +109,12 @@ public struct ClaudeCodeAdapter: EngineAdapter {
     /// A session's transcript and its subagents' folder, in each project folder of the account's config.
     static func transcripts(config: URL, session: String) -> [URL] {
         let projects = config.appending(path: "projects", directoryHint: .isDirectory)
-        let folders = (try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? []
-        return folders.flatMap { [$0.appending(path: "\(session).jsonl"), $0.appending(path: session, directoryHint: .isDirectory)] }
-            .filter { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
+        let folders =
+            (try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? []
+        return folders.flatMap {
+            [$0.appending(path: "\(session).jsonl"), $0.appending(path: session, directoryHint: .isDirectory)]
+        }
+        .filter { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
     }
 
     /// The `.app` folder around the Claude app's bundled copy, or the CLI's own folder.
@@ -123,15 +140,24 @@ public struct ClaudeCodeAdapter: EngineAdapter {
     /// startup files (read by a login shell, which Claude Code falls back to without a snapshot) are kept unwritable.
     /// Its temporary folder is the engine's own, short (it holds Unix sockets: sockaddr_un allows 104 bytes), and
     /// writable by the commands too: they write the current-folder file and background output there.
-    static func brokerShell(_ shell: URL, home: URL, environment: inout [String: String]) throws -> (temp: URL, dotfiles: [URL]) {
-        let digest = home.path(percentEncoded: false).utf8.reduce(UInt64(1469598103934665603)) { ($0 ^ UInt64($1)) &* 1099511628211 }
-        let temp = try OwnFolder.ensure(FileManager.default.temporaryDirectory.appending(path: "agneta-e\(String(digest, radix: 36).prefix(8))", directoryHint: .isDirectory),
-                                        under: FileManager.default.temporaryDirectory)
+    static func brokerShell(_ shell: URL, home: URL, environment: inout [String: String]) throws -> (
+        temp: URL, dotfiles: [URL]
+    ) {
+        let digest = home.path(percentEncoded: false).utf8.reduce(UInt64(1469598103934665603)) {
+            ($0 ^ UInt64($1)) &* 1099511628211
+        }
+        let temp = try OwnFolder.ensure(
+            FileManager.default.temporaryDirectory.appending(
+                path: "agneta-e\(String(digest, radix: 36).prefix(8))", directoryHint: .isDirectory),
+            under: FileManager.default.temporaryDirectory)
         environment["CLAUDE_CODE_SHELL_PREFIX"] = shell.path(percentEncoded: false) + " -c"
         environment["CLAUDE_CODE_SHELL"] = "/bin/bash"
         environment["CLAUDE_CODE_TMPDIR"] = temp.path(percentEncoded: false)
-        let dotfiles = [".bash_profile", ".bash_login", ".profile", ".bashrc", ".bash_logout", ".zshenv", ".zprofile", ".zshrc", ".zlogin", ".inputrc"]
-            .map { home.appending(path: $0) }
+        let dotfiles = [
+            ".bash_profile", ".bash_login", ".profile", ".bashrc", ".bash_logout", ".zshenv", ".zprofile", ".zshrc",
+            ".zlogin", ".inputrc"
+        ]
+        .map { home.appending(path: $0) }
         return (temp, dotfiles)
     }
 
@@ -154,10 +180,12 @@ public struct ClaudeCodeAdapter: EngineAdapter {
     /// A second net under the allowlist: the built-ins that run commands or code, fetch, or act beyond the session
     /// (2.1.325's names, with the old ones kept for older versions). Under developer access only what reaches the
     /// user's claude.ai account or devices stays off.
-    static let neverByDefault = ["Bash", "PowerShell", "Monitor", "BashOutput", "KillShell", "TaskStop", "WebFetch", "WebSearch", "Agent",
-                                 "Task", "Skill", "SlashCommand", "Workflow", "LSP", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete",
-                                 "CronList", "RemoteTrigger", "ScheduleWakeup", "SendMessage", "ListAgents", "Artifact", "SendUserFile",
-                                 "PushNotification", "Projects", "ClaudeDesign", "ReadNotifications", "SendUserMessage"]
+    static let neverByDefault = [
+        "Bash", "PowerShell", "Monitor", "BashOutput", "KillShell", "TaskStop", "WebFetch", "WebSearch", "Agent",
+        "Task", "Skill", "SlashCommand", "Workflow", "LSP", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete",
+        "CronList", "RemoteTrigger", "ScheduleWakeup", "SendMessage", "ListAgents", "Artifact", "SendUserFile",
+        "PushNotification", "Projects", "ClaudeDesign", "ReadNotifications", "SendUserMessage"
+    ]
     static func disallowed(_ policy: SessionPolicy) -> [String] {
         // Developer access: everything a terminal's Claude Code has, apart from what reaches the user's claude.ai account
         // or devices rather than this machine (artifacts, projects, designs, notifications, remote agents): a session
@@ -165,9 +193,14 @@ public struct ClaudeCodeAdapter: EngineAdapter {
         // Monitor and PowerShell run commands natively inside the engine's profile, which on a plan reaches the sign-in's
         // Keychain: off until they're shown to go through Agneta's broker as Bash does.
         if policy.sandbox == .developer {
-            return ["RemoteTrigger", "Artifact", "Projects", "ClaudeDesign", "SendUserMessage", "SendUserFile", "PushNotification", "Monitor", "PowerShell"]
+            return [
+                "RemoteTrigger", "Artifact", "Projects", "ClaudeDesign", "SendUserMessage", "SendUserFile",
+                "PushNotification", "Monitor", "PowerShell"
+            ]
         }
-        return shellBrokered(policy) ? neverByDefault.filter { !["Bash", "TaskStop", "KillShell", "BashOutput", "Agent", "Task"].contains($0) } : neverByDefault
+        return shellBrokered(policy)
+            ? neverByDefault.filter { !["Bash", "TaskStop", "KillShell", "BashOutput", "Agent", "Task"].contains($0) }
+            : neverByDefault
     }
 
     /// The session options, the same on new, load and fork: a resumed session given none falls back to the
@@ -177,32 +210,44 @@ public struct ClaudeCodeAdapter: EngineAdapter {
         var options: [String: JSONValue] = [
             // Nothing from the user's own settings or MCP configuration; no extra model work for suggestions; MCP
             // servers handed over at start rather than as command-line arguments (where other users could read bearers).
-            "settingSources": [], "strictMcpConfig": true, "promptSuggestions": false, "mcpServersDelivery": "initialize",
-            "disallowedTools": .array(Self.disallowed(policy).map(JSONValue.string)),
+            "settingSources": [], "strictMcpConfig": true, "promptSuggestions": false,
+            "mcpServersDelivery": "initialize",
+            "disallowedTools": .array(Self.disallowed(policy).map(JSONValue.string))
         ]
         if let tools = Self.tools(policy) { options["tools"] = .array(tools.map(JSONValue.string)) }
         var meta: [String: JSONValue] = [
             "claudeCode": [
                 "options": .object(options),
                 // Each model call's usage, from the SDK's own messages.
-                "emitRawSDKMessages": [["type": "assistant"], ["type": "result"]],
-            ],
+                "emitRawSDKMessages": [["type": "assistant"], ["type": "result"]]
+            ]
         ]
         if let instructions { meta["systemPrompt"] = .string(instructions) }
         return .object(meta)
     }
 
-    public func newSession(cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?) -> JSONValue {
-        ["cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": .array(servers), "_meta": meta(policy, instructions: instructions)]
+    public func newSession(
+        cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?
+    ) -> JSONValue {
+        [
+            "cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": .array(servers),
+            "_meta": meta(policy, instructions: instructions)
+        ]
     }
 
-    public func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy) -> JSONValue {
+    public func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy) -> JSONValue
+    {
         loadSession(engineSession, cwd: cwd, servers: servers, policy: policy, instructions: nil)
     }
 
-    public func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy, instructions: String?) -> JSONValue {
-        ["sessionId": .string(engineSession), "cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": .array(servers),
-         "_meta": meta(policy, instructions: instructions)]
+    public func loadSession(
+        _ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy, instructions: String?
+    ) -> JSONValue {
+        [
+            "sessionId": .string(engineSession), "cwd": .string(cwd.path(percentEncoded: false)),
+            "mcpServers": .array(servers),
+            "_meta": meta(policy, instructions: instructions)
+        ]
     }
 
     /// The adapter starts sessions in `auto`, where Claude Code decides its own permissions and asks nothing
@@ -259,16 +304,20 @@ public struct ClaudeCodeAdapter: EngineAdapter {
             return [
                 "id": message["id"] ?? .null, "model": message["model"] ?? .null,
                 "input_tokens": usage["input_tokens"] ?? .null, "output_tokens": usage["output_tokens"] ?? .null,
-                "cache_read_tokens": usage["cache_read_input_tokens"] ?? .null, "cache_write_tokens": usage["cache_creation_input_tokens"] ?? .null,
-                "output_partial": true, "cost": .null, "cost_source": "claude-code",
+                "cache_read_tokens": usage["cache_read_input_tokens"] ?? .null,
+                "cache_write_tokens": usage["cache_creation_input_tokens"] ?? .null,
+                "output_partial": true, "cost": .null, "cost_source": "claude-code"
             ]
         case "result":
             guard let models = sdk?["modelUsage"]?.objectValue, !models.isEmpty else { return nil }
             var totals: [String: JSONValue] = [:]
             for (model, usage) in models {
-                totals[model] = ["input": usage["inputTokens"] ?? .null, "output": usage["outputTokens"] ?? .null,
-                                 "cacheRead": usage["cacheReadInputTokens"] ?? .null, "cacheWrite": usage["cacheCreationInputTokens"] ?? .null,
-                                 "cost": usage["costUSD"] ?? .null]
+                totals[model] = [
+                    "input": usage["inputTokens"] ?? .null, "output": usage["outputTokens"] ?? .null,
+                    "cacheRead": usage["cacheReadInputTokens"] ?? .null,
+                    "cacheWrite": usage["cacheCreationInputTokens"] ?? .null,
+                    "cost": usage["costUSD"] ?? .null
+                ]
             }
             return ["session_totals": .object(totals), "cost_source": "claude-code"]
         default:

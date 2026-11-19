@@ -47,21 +47,26 @@ public struct SandboxProfile: Sendable {
     public var developer = false
 
     /// System locations every process needs: binaries, libraries, the toolchain, settings.
-    public static let systemReadable = ["/bin", "/sbin", "/usr", "/System", "/Library/Apple", "/Library/Developer",
-                                        "/Library/Frameworks", "/Library/Preferences", "/Applications/Xcode.app",
-                                        "/private/etc", "/private/var/db", "/private/var/run", "/dev"].map { URL(filePath: $0, directoryHint: .isDirectory) }
+    public static let systemReadable =
+        [
+            "/bin", "/sbin", "/usr", "/System", "/Library/Apple", "/Library/Developer",
+            "/Library/Frameworks", "/Library/Preferences", "/Applications/Xcode.app",
+            "/private/etc", "/private/var/db", "/private/var/run", "/dev"
+        ].map { URL(filePath: $0, directoryHint: .isDirectory) }
         + selectedXcode
 
     /// The selected Xcode's own tools (`git`, `python3`, `make`; `clang`, `cc`, `ld`, `swift`), ahead of `/usr/bin`'s
     /// shims, which go through xcrun and its cache outside the sandbox's folders, and the SDK they build against:
     /// commands get these on PATH and as SDKROOT, so `cc` and `git` run without xcrun (as apps that run Codex do).
     public static let xcodeTools: [String] = {
-        guard let developer = try? FileManager.default.destinationOfSymbolicLink(atPath: "/var/db/xcode_select_link") else { return [] }
+        guard let developer = try? FileManager.default.destinationOfSymbolicLink(atPath: "/var/db/xcode_select_link")
+        else { return [] }
         return [developer + "/usr/bin", developer + "/Toolchains/XcodeDefault.xctoolchain/usr/bin"]
             .filter { FileManager.default.fileExists(atPath: $0) }
     }()
     public static let sdkRoot: String? = {
-        guard let developer = try? FileManager.default.destinationOfSymbolicLink(atPath: "/var/db/xcode_select_link") else { return nil }
+        guard let developer = try? FileManager.default.destinationOfSymbolicLink(atPath: "/var/db/xcode_select_link")
+        else { return nil }
         let sdk = developer + "/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
         return FileManager.default.fileExists(atPath: sdk) ? sdk : nil
     }()
@@ -69,13 +74,19 @@ public struct SandboxProfile: Sendable {
     /// The Xcode `xcode-select` points to, wherever it's installed (`/Applications/Xcode-26.6.0.app`): the system's
     /// `python3`, `cc` and `git` are shims that load it (measured: python3 failed when only Xcode.app was readable).
     static let selectedXcode: [URL] = {
-        guard let developer = try? FileManager.default.destinationOfSymbolicLink(atPath: "/var/db/xcode_select_link") else { return [] }
+        guard let developer = try? FileManager.default.destinationOfSymbolicLink(atPath: "/var/db/xcode_select_link")
+        else { return [] }
         var url = URL(filePath: developer, directoryHint: .isDirectory)
-        while url.path(percentEncoded: false) != "/", url.pathExtension != "app" { url = url.deletingLastPathComponent() }
+        while url.path(percentEncoded: false) != "/", url.pathExtension != "app" {
+            url = url.deletingLastPathComponent()
+        }
         return url.pathExtension == "app" ? [url] : []
     }()
 
-    public init(kind: Kind, writable: [URL], denied: [URL], readable: [URL] = [], loopbackPorts: [Int] = [], remotePorts: [Int] = []) {
+    public init(
+        kind: Kind, writable: [URL], denied: [URL], readable: [URL] = [], loopbackPorts: [Int] = [],
+        remotePorts: [Int] = []
+    ) {
         self.kind = kind
         self.writable = writable
         self.denied = denied
@@ -103,7 +114,8 @@ public struct SandboxProfile: Sendable {
         if literal == nil {
             for root in literalRoots {
                 let real = root.realFileURL.path(percentEncoded: false).trimmingSuffix("/")
-                for base in [root.path(percentEncoded: false).trimmingSuffix("/"), real] where given.hasPrefix(base + "/") {
+                for base in [root.path(percentEncoded: false).trimmingSuffix("/"), real]
+                where given.hasPrefix(base + "/") {
                     literal = real + given.dropFirst(base.count)
                     break
                 }
@@ -119,7 +131,8 @@ public struct SandboxProfile: Sendable {
 
     /// A denial's paths: as written, and resolved too when that differs, so it holds whichever way the path is reached.
     func denialPaths(_ url: URL) -> [String] {
-        let written = quote(url), resolved = Self.quoted(url.realFileURL.path(percentEncoded: false).trimmingSuffix("/"))
+        let written = quote(url),
+            resolved = Self.quoted(url.realFileURL.path(percentEncoded: false).trimmingSuffix("/"))
         return written == resolved ? [written] : [written, resolved]
     }
 
@@ -153,7 +166,9 @@ public struct SandboxProfile: Sendable {
             .joined(separator: " ")
         // Programs run only from where reading is allowed: one in a folder it can't read (another project's tools,
         // the user's own scripts) stays out of reach too (measured: exec didn't need read access).
-        let allowedExec = (writable + readable + readOnly + Self.systemReadable).map { "(require-not (subpath \(quote($0))))" }.joined(separator: " ")
+        let allowedExec = (writable + readable + readOnly + Self.systemReadable).map {
+            "(require-not (subpath \(quote($0))))"
+        }.joined(separator: " ")
         var rules = [
             "(version 1)",
             "(allow default)",
@@ -161,8 +176,8 @@ public struct SandboxProfile: Sendable {
             "(deny file-write* (require-not (require-any \((writableRules + ["(literal \"/dev/null\")", "(literal \"/dev/tty\")", "(literal \"/dev/dtracehelper\")", "(regex #\"^/dev/fd/\")"]).joined(separator: " ")))))",
             // Reads are allow-listed: the session's folders and system locations only.
             "(deny file-read-data (require-all (require-not (literal \"/\")) \(allowedReads)))",
-            "(deny process-exec* (require-all \(allowedExec)))",
-            ]
+            "(deny process-exec* (require-all \(allowedExec)))"
+        ]
         // Developer access's outer layer first, then the policy's and the engine's own denials and exceptions.
         for folder in outerDenied {
             rules.append("(deny file-read* file-write* (subpath \(quote(folder))))")
@@ -195,13 +210,17 @@ public struct SandboxProfile: Sendable {
         if kind == .tool && !developer {
             rules.append("(deny network-outbound)")
         } else {
-            rules.append("(deny network-outbound (require-not (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\"))))")
+            rules.append(
+                "(deny network-outbound (require-not (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\"))))"
+            )
         }
         if allLoopback { rules.append("(allow network-outbound (remote tcp \"localhost:*\"))") }
         for port in loopbackPorts { rules.append("(allow network-outbound (remote tcp \"localhost:\(port)\"))") }
         for port in remotePorts { rules.append("(allow network-outbound (remote tcp \"*:\(port)\"))") }
         if anyRemote { rules.append("(allow network-outbound (remote tcp \"*:*\"))") }
-        for socket in unixSockets { rules.append("(allow network-outbound (remote unix-socket (path-literal \(quote(socket)))))") }
+        for socket in unixSockets {
+            rules.append("(allow network-outbound (remote unix-socket (path-literal \(quote(socket)))))")
+        }
         if ownLoopbackServer {
             rules.append("(allow network-bind (local tcp \"localhost:*\"))")
             rules.append("(allow network-inbound (local tcp \"localhost:*\"))")
@@ -222,10 +241,11 @@ public struct SandboxProfile: Sendable {
             "(deny signal (require-not (target same-sandbox)))",
             "(deny appleevent-send)",
             "(deny lsopen)",
-            "(deny mach-lookup (global-name \"com.apple.coreservices.appleevents\") (global-name \"com.apple.coreservices.launchservicesd\"))",
+            "(deny mach-lookup (global-name \"com.apple.coreservices.appleevents\") (global-name \"com.apple.coreservices.launchservicesd\"))"
         ]
         if kind == .tool, !developer {
-            rules.append("(deny mach-lookup (global-name \"com.apple.securityd\") (global-name \"com.apple.SecurityServer\"))")
+            rules.append(
+                "(deny mach-lookup (global-name \"com.apple.securityd\") (global-name \"com.apple.SecurityServer\"))")
         }
         return rules.joined(separator: "\n") + "\n"
     }

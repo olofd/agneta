@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 @Suite struct PeerIdentityTests {
@@ -8,21 +9,28 @@ import Testing
         // A child process listens; this process connects, then asks who owns the client end.
         let server = socket(AF_INET, SOCK_STREAM, 0)
         defer { close(server) }
-        var address = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: 0,
-                                  sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+        var address = sockaddr_in(
+            sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: 0,
+            sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
         var size = socklen_t(MemoryLayout<sockaddr_in>.size)
         try withUnsafeMutablePointer(to: &address) { pointer in
             try pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                guard bind(server, $0, size) == 0, listen(server, 1) == 0, getsockname(server, $0, &size) == 0 else { throw POSIXError(.EADDRINUSE) }
+                guard bind(server, $0, size) == 0, listen(server, 1) == 0, getsockname(server, $0, &size) == 0 else {
+                    throw POSIXError(.EADDRINUSE)
+                }
             }
         }
         let client = socket(AF_INET, SOCK_STREAM, 0)
         defer { close(client) }
-        let connected = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(client, $0, size) } }
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(client, $0, size) }
+        }
         #expect(connected == 0)
         var local = sockaddr_in()
         var localSize = socklen_t(MemoryLayout<sockaddr_in>.size)
-        _ = withUnsafeMutablePointer(to: &local) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(client, $0, &localSize) } }
+        _ = withUnsafeMutablePointer(to: &local) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(client, $0, &localSize) }
+        }
         let clientPort = Int(UInt16(bigEndian: local.sin_port))
 
         let serverPort = Int(UInt16(bigEndian: address.sin_port))

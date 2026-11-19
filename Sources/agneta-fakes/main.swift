@@ -19,7 +19,9 @@ case ("model", 3):
     server = try await FakeServer.model(port: port, log: URL(filePath: arguments[arguments.startIndex + 2]))
 case ("mcp", 4):
     guard let port = Int(arguments[arguments.startIndex + 1]) else { fail(usage) }
-    server = try await FakeServer.mcp(port: port, bearer: arguments[arguments.startIndex + 2], log: URL(filePath: arguments[arguments.startIndex + 3]))
+    server = try await FakeServer.mcp(
+        port: port, bearer: arguments[arguments.startIndex + 2], log: URL(filePath: arguments[arguments.startIndex + 3])
+    )
 default:
     fail(usage)
 }
@@ -27,6 +29,8 @@ print("listening on 127.0.0.1:\(arguments[arguments.startIndex + 1])")
 fflush(stdout)
 signal(SIGTERM, SIG_IGN)
 let stop = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-stop.setEventHandler { server.stop(); exit(0) }
+stop.setEventHandler {
+    server.stop(); exit(0)
+}
 stop.resume()
 while true { try await Task.sleep(for: .seconds(3600)) }

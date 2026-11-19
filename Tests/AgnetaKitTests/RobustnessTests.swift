@@ -2,6 +2,7 @@
 // usage reporting and Codex's modes.
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 @Suite struct RobustnessTests {
@@ -10,7 +11,9 @@ import Testing
     @Test func stalledEnginesDontFreezeAgneta() async throws {
         let count = ProcessInfo.processInfo.activeProcessorCount + 2
         var children: [ChildProcess] = []
-        for _ in 0..<count { children.append(try ChildProcess(executable: "/bin/sleep", arguments: ["30"], environment: [:])) }
+        for _ in 0..<count {
+            children.append(try ChildProcess(executable: "/bin/sleep", arguments: ["30"], environment: [:]))
+        }
         defer { for child in children { kill(child.pid, SIGKILL) } }
         let payload = Data(repeating: 0x41, count: 512 << 10) // well past a pipe's 64 KB
         let failures = Counter()
@@ -39,24 +42,44 @@ final class Counter: @unchecked Sendable {
 @Suite struct ClaudeCodeUsageTests {
     static func sdk(_ message: JSONValue) -> JSONValue { ["sessionId": "s", "message": message] }
     static func assistant(_ id: String, output: Int) -> JSONValue {
-        sdk(["type": "assistant", "message": ["id": .string(id), "model": "claude-haiku-5-5",
-                                              "usage": ["input_tokens": 2, "output_tokens": .int(Int64(output)), "cache_read_input_tokens": 100, "cache_creation_input_tokens": 10]]])
+        sdk([
+            "type": "assistant",
+            "message": [
+                "id": .string(id), "model": "claude-haiku-5-5",
+                "usage": [
+                    "input_tokens": 2, "output_tokens": .int(Int64(output)), "cache_read_input_tokens": 100,
+                    "cache_creation_input_tokens": 10
+                ]
+            ]
+        ])
     }
     static func result(input: Int, output: Int, cacheRead: Int, cacheWrite: Int, cost: Double) -> JSONValue {
-        sdk(["type": "result", "modelUsage": ["claude-haiku-5-5": ["inputTokens": .int(Int64(input)), "outputTokens": .int(Int64(output)),
-                                                                   "cacheReadInputTokens": .int(Int64(cacheRead)), "cacheCreationInputTokens": .int(Int64(cacheWrite)), "costUSD": .double(cost)]]])
+        sdk([
+            "type": "result",
+            "modelUsage": [
+                "claude-haiku-5-5": [
+                    "inputTokens": .int(Int64(input)), "outputTokens": .int(Int64(output)),
+                    "cacheReadInputTokens": .int(Int64(cacheRead)), "cacheCreationInputTokens": .int(Int64(cacheWrite)),
+                    "costUSD": .double(cost)
+                ]
+            ]
+        ])
     }
 
     /// Measured on Haiku: per-message usage holds the stream's opening output count (40 recorded, 210 real).
     /// The turn's ledger comes from the result's running totals, each turn getting its own share, side calls included.
     @Test func turnLedgerUsesTheResultsTotals() async throws {
-        let adapter = ClaudeCodeAdapter(executable: URL(filePath: "/x"), cli: InstalledCLI(path: URL(filePath: "/y"), version: nil, source: "path"))
-        let folder = FileManager.default.temporaryDirectory.appending(path: "agneta-cc-usage-\(UUID().uuidString.prefix(6))", directoryHint: .isDirectory)
+        let adapter = ClaudeCodeAdapter(
+            executable: URL(filePath: "/x"), cli: InstalledCLI(path: URL(filePath: "/y"), version: nil, source: "path"))
+        let folder = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-cc-usage-\(UUID().uuidString.prefix(6))", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: folder) }
         let traces = Traces(folder: folder)
         let session = traces.open(task: "t1", lease: "l", engineSession: "s")
         func feed(_ params: JSONValue) {
-            if let row = adapter.modelCall(fromNotification: "_claude/sdkMessage", params: params) { session.ingest(modelCall: row) }
+            if let row = adapter.modelCall(fromNotification: "_claude/sdkMessage", params: params) {
+                session.ingest(modelCall: row)
+            }
         }
         session.turnStarted(prompt: nil)
         feed(Self.assistant("m1", output: 6))
@@ -93,8 +116,12 @@ final class Counter: @unchecked Sendable {
 @Suite struct CodexModeTests {
     /// `agent` gives Codex's approval questions to its own model reviewer, not to Agneta.
     @Test func autoReviewIsRefused() {
-        let codex = CodexAdapter(node: URL(filePath: "/n"), script: URL(filePath: "/s"), cli: InstalledCLI(path: URL(filePath: "/c"), version: nil, source: "path"))
+        let codex = CodexAdapter(
+            node: URL(filePath: "/n"), script: URL(filePath: "/s"),
+            cli: InstalledCLI(path: URL(filePath: "/c"), version: nil, source: "path"))
         #expect(codex.permitsMode("read-only") && codex.permitsMode("workspace-write"))
-        #expect(!codex.permitsMode("agent") && !codex.permitsMode("agent-full-access") && !codex.permitsMode("permission-profile:x"))
+        #expect(
+            !codex.permitsMode("agent") && !codex.permitsMode("agent-full-access")
+                && !codex.permitsMode("permission-profile:x"))
     }
 }

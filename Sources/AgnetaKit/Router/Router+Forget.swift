@@ -25,9 +25,10 @@ extension Router {
     /// The shared engine's conversation of a task, from its trace's `meta`; nil for a task on its own engine.
     public static func sharedConversation(_ meta: JSONValue) -> SharedConversation? {
         guard let engine = meta["engine"], engine["dedicated"]?.boolValue == false,
-              let id = engine["id"]?.stringValue, let session = engine["session"]?.stringValue, !session.isEmpty,
-              let account = meta["account"]?["id"]?.stringValue,
-              engine["key"]?.stringValue == EngineKeys.shared(account: account, engine: id) else { return nil }
+            let id = engine["id"]?.stringValue, let session = engine["session"]?.stringValue, !session.isEmpty,
+            let account = meta["account"]?["id"]?.stringValue,
+            engine["key"]?.stringValue == EngineKeys.shared(account: account, engine: id)
+        else { return nil }
         return SharedConversation(account: account, engine: id, session: session)
     }
 
@@ -88,11 +89,15 @@ extension Router {
     /// process deleted. Measured on goose-acp 1.59.2: a new session takes the highest id left plus one, so deleting the
     /// newest frees its id for the next, and an id once closed fails as "Session not found" for the rest of the
     /// process. The unused session holds nothing of a task (no prompt, no instructions) and goes with the engine's state.
-    func freshSession(_ lease: EngineLease, _ request: EngineRequest, id: (JSONValue) -> String?) async throws -> (id: String, result: JSONValue) {
+    func freshSession(_ lease: EngineLease, _ request: EngineRequest, id: (JSONValue) -> String?) async throws -> (
+        id: String, result: JSONValue
+    ) {
         let deleted = deletedSessions[Self.process(lease)] ?? []
         for _ in 0...deleted.count {
             let result = try await lease.peer.request(request.method, request.params)
-            guard let created = id(result) else { throw RPCError(code: RPCError.internalError, message: "The engine didn't create a session") }
+            guard let created = id(result) else {
+                throw RPCError(code: RPCError.internalError, message: "The engine didn't create a session")
+            }
             guard deleted.contains(created) else { return (created, result) }
         }
         throw RPCError(code: RPCError.internalError, message: "The engine only offered sessions it had deleted")
@@ -103,7 +108,8 @@ extension Router {
     func ownPolicy(_ name: String) throws -> SessionPolicy {
         let root = context.appWorkspaces ?? FileManager.default.temporaryDirectory
         let folder = root.appending(path: ".agneta-\(name)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         var policy = SessionPolicy.fallback(workspace: folder.realFileURL)
         policy.tools = .appOnly
         return policy

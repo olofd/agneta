@@ -34,7 +34,8 @@ public final class FakeServer: @unchecked Sendable {
 
     private init(port: Int, handler: @escaping Handler) throws {
         let parameters = NWParameters.tcp
-        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: UInt16(port))!)
+        parameters.requiredLocalEndpoint = .hostPort(
+            host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: UInt16(port))!)
         parameters.allowLocalEndpointReuse = true
         listener = try NWListener(using: parameters)
         self.handler = handler
@@ -64,7 +65,11 @@ public final class FakeServer: @unchecked Sendable {
     private final class Once: @unchecked Sendable {
         private let lock = NSLock()
         private var done = false
-        func take() -> Bool { lock.withLock { defer { done = true }; return !done } }
+        func take() -> Bool {
+            lock.withLock {
+                defer { done = true }; return !done
+            }
+        }
     }
 
     private func serve(_ connection: NWConnection) {
@@ -76,7 +81,8 @@ public final class FakeServer: @unchecked Sendable {
     }
 
     private func read(_ connection: NWConnection, buffer: Data) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 256 << 10) { [weak self] data, _, complete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 256 << 10) {
+            [weak self] data, _, complete, error in
             guard let self else { connection.cancel(); return }
             var buffer = buffer
             if let data { buffer.append(data) }
@@ -85,7 +91,8 @@ public final class FakeServer: @unchecked Sendable {
                 let handler = self.handler
                 Task {
                     let response = await handler(request)
-                    connection.send(content: Self.encode(response), completion: .contentProcessed { _ in connection.cancel() })
+                    connection.send(
+                        content: Self.encode(response), completion: .contentProcessed { _ in connection.cancel() })
                 }
             } else if complete {
                 connection.cancel()
@@ -104,24 +111,33 @@ public final class FakeServer: @unchecked Sendable {
         var headers: [String: String] = [:]
         for line in head.dropFirst() {
             guard let colon = line.firstIndex(of: ":") else { continue }
-            headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(
+                in: .whitespaces)
         }
         let length = Int(headers["content-length"] ?? "0") ?? 0
         let body = data[end.upperBound...]
         guard body.count >= length else { return nil }
-        return Request(method: String(start[0]), path: String(start[1]), headers: headers, body: Data(body.prefix(length)))
+        return Request(
+            method: String(start[0]), path: String(start[1]), headers: headers, body: Data(body.prefix(length)))
     }
 
     private static func encode(_ response: Response) -> Data {
-        let reasons = [200: "OK", 202: "Accepted", 401: "Unauthorized", 404: "Not Found", 405: "Method Not Allowed", 429: "Too Many Requests"]
-        var head = "HTTP/1.1 \(response.status) \(reasons[response.status] ?? "Status")\r\nContent-Length: \(response.body.count)\r\nConnection: close\r\n"
+        let reasons = [
+            200: "OK", 202: "Accepted", 401: "Unauthorized", 404: "Not Found", 405: "Method Not Allowed",
+            429: "Too Many Requests"
+        ]
+        var head =
+            "HTTP/1.1 \(response.status) \(reasons[response.status] ?? "Status")\r\nContent-Length: \(response.body.count)\r\nConnection: close\r\n"
         for (name, value) in response.headers { head += "\(name): \(value)\r\n" }
         return Data((head + "\r\n").utf8) + response.body
     }
 
     /// Appends one JSON line to a log file.
     fileprivate static func log(_ value: [String: Any], to file: URL) {
-        guard var line = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes]) else { return }
+        guard
+            var line = try? JSONSerialization.data(
+                withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
+        else { return }
         line.append(0x0A)
         if let handle = try? FileHandle(forWritingTo: file) {
             handle.seekToEndOfFile(); handle.write(line); try? handle.close()
@@ -142,7 +158,9 @@ extension FakeServer {
     /// tests, which need a real HTTP server on loopback and can't use Python's (see the top of this file).
     public static func files(port: Int, _ files: [String: Data]) async throws -> FakeServer {
         try await start(port: port) { request in
-            guard request.method == "GET", let data = files[request.path] else { return Response(status: 404, body: Data("not found".utf8)) }
+            guard request.method == "GET", let data = files[request.path] else {
+                return Response(status: 404, body: Data("not found".utf8))
+            }
             return Response(status: 200, headers: ["Content-Type": "application/octet-stream"], body: data)
         }
     }
@@ -150,19 +168,30 @@ extension FakeServer {
     public static func model(port: Int, log: URL) async throws -> FakeServer {
         let lock = NSLock()
         return try await start(port: port) { request in
-            let body = (try? JSONSerialization.jsonObject(with: request.body.isEmpty ? Data("{}".utf8) : request.body)) as? [String: Any] ?? [:]
+            let body =
+                (try? JSONSerialization.jsonObject(with: request.body.isEmpty ? Data("{}".utf8) : request.body))
+                as? [String: Any] ?? [:]
             if request.method == "GET" {
-                guard request.path.hasSuffix("/models") || request.path.hasSuffix("/models/") else { return Response(status: 404) }
-                return .json(["object": "list", "data": [["id": "fake-model", "object": "model", "owned_by": "agneta"]]])
+                guard request.path.hasSuffix("/models") || request.path.hasSuffix("/models/") else {
+                    return Response(status: 404)
+                }
+                return .json(["object": "list", "data": [["id": "fake-model", "object": "model", "owned_by": "agneta"]]]
+                )
             }
             lock.withLock { FakeServer.log(["path": request.path, "body": body], to: log) }
             guard request.path.hasSuffix("/chat/completions") else { return Response(status: 404) }
             let messages = body["messages"] as? [[String: Any]] ?? []
             let last = messages.last ?? [:]
-            let lastText = String(decoding: (try? JSONSerialization.data(withJSONObject: [last])) ?? Data(), as: UTF8.self)
+            let lastText = String(
+                decoding: (try? JSONSerialization.data(withJSONObject: [last])) ?? Data(), as: UTF8.self)
             if lastText.contains("RATELIMIT") {
-                var response = Response.json(["error": ["message": "Rate limit reached for requests. Please try again in 20s.",
-                                                        "type": "requests", "code": "rate_limit_exceeded"]], status: 429)
+                var response = Response.json(
+                    [
+                        "error": [
+                            "message": "Rate limit reached for requests. Please try again in 20s.",
+                            "type": "requests", "code": "rate_limit_exceeded"
+                        ]
+                    ], status: 429)
                 response.headers["Retry-After"] = "20"
                 response.headers["x-ratelimit-reset-requests"] = "20s"
                 return response
@@ -174,9 +203,18 @@ extension FakeServer {
             let delta: [String: Any]
             let finish: String
             if let tool = reply.tool {
-                let arguments = String(decoding: (try? JSONSerialization.data(withJSONObject: reply.arguments)) ?? Data("{}".utf8), as: UTF8.self)
-                delta = ["role": "assistant", "tool_calls": [["index": 0, "id": "call_1", "type": "function",
-                                                              "function": ["name": tool, "arguments": arguments]]]]
+                let arguments = String(
+                    decoding: (try? JSONSerialization.data(withJSONObject: reply.arguments)) ?? Data("{}".utf8),
+                    as: UTF8.self)
+                delta = [
+                    "role": "assistant",
+                    "tool_calls": [
+                        [
+                            "index": 0, "id": "call_1", "type": "function",
+                            "function": ["name": tool, "arguments": arguments]
+                        ]
+                    ]
+                ]
                 finish = "tool_calls"
             } else {
                 delta = ["role": "assistant", "content": reply.content]
@@ -185,19 +223,27 @@ extension FakeServer {
             let created = Int(Date().timeIntervalSince1970)
             func chunk(_ value: [String: Any]) -> Data {
                 var value = value
-                value["id"] = "chatcmpl-fake"; value["object"] = "chat.completion.chunk"; value["created"] = created; value["model"] = "fake-model"
-                return Data("data: ".utf8) + ((try? JSONSerialization.data(withJSONObject: value)) ?? Data()) + Data("\n\n".utf8)
+                value["id"] = "chatcmpl-fake"; value["object"] = "chat.completion.chunk"; value["created"] = created;
+                value["model"] = "fake-model"
+                return Data("data: ".utf8) + ((try? JSONSerialization.data(withJSONObject: value)) ?? Data())
+                    + Data("\n\n".utf8)
             }
             guard body["stream"] as? Bool == true else {
-                return .json(["id": "chatcmpl-fake", "object": "chat.completion", "created": created, "model": "fake-model",
-                              "choices": [["index": 0, "message": delta, "finish_reason": finish]], "usage": usage])
+                return .json([
+                    "id": "chatcmpl-fake", "object": "chat.completion", "created": created, "model": "fake-model",
+                    "choices": [["index": 0, "message": delta, "finish_reason": finish]], "usage": usage
+                ])
             }
             var stream = Data()
             if let kilobytes = firstNumber(after: "LONGREPLY ", in: lastText) {
                 // A long reply in many chunks (megabytes, for flow-control tests).
                 let piece = String(repeating: "x", count: 1024)
                 for n in 0..<kilobytes {
-                    stream += chunk(["choices": [["index": 0, "delta": n == 0 ? ["role": "assistant", "content": piece] : ["content": piece]]]])
+                    stream += chunk([
+                        "choices": [
+                            ["index": 0, "delta": n == 0 ? ["role": "assistant", "content": piece] : ["content": piece]]
+                        ]
+                    ])
                 }
                 stream += chunk(["choices": [["index": 0, "delta": [String: Any](), "finish_reason": "stop"]]])
             } else {
@@ -223,7 +269,8 @@ extension FakeServer {
             return ("The tool said: " + String(content.prefix(200)), nil, [String: Any]())
         }
         let raw = last["content"] as? String ?? ""
-        let text = String(decoding: (try? JSONSerialization.data(withJSONObject: [last["content"] ?? ""])) ?? Data(), as: UTF8.self)
+        let text = String(
+            decoding: (try? JSONSerialization.data(withJSONObject: [last["content"] ?? ""])) ?? Data(), as: UTF8.self)
         if let call = raw.range(of: "CALL ") {
             // CALL <tool> <json arguments>
             let rest = raw[call.upperBound...]
@@ -236,7 +283,10 @@ extension FakeServer {
         let tools = (body["tools"] as? [[String: Any]] ?? []).compactMap { tool -> String? in
             tool["type"] as? String == "function" ? (tool["function"] as? [String: Any])?["name"] as? String : nil
         }
-        for name in tools where text.contains("use tool \(name)") || text.contains("use tool \(name.components(separatedBy: "__").last ?? name)") {
+        for name in tools
+        where text.contains("use tool \(name)")
+            || text.contains("use tool \(name.components(separatedBy: "__").last ?? name)")
+        {
             return ("", name, ["text": "hello from the fake model"])
         }
         return ("Hello from the fake model.", nil, [String: Any]())
@@ -257,7 +307,10 @@ extension FakeServer {
             default: break
             }
             let authorized = request.headers["authorization"] == "Bearer \(bearer)"
-            let message = (try? JSONSerialization.jsonObject(with: request.body.isEmpty ? Data("null".utf8) : request.body, options: .fragmentsAllowed)) ?? NSNull()
+            let message =
+                (try? JSONSerialization.jsonObject(
+                    with: request.body.isEmpty ? Data("null".utf8) : request.body, options: .fragmentsAllowed))
+                ?? NSNull()
             lock.withLock { FakeServer.log(["authorized": authorized, "body": message], to: log) }
             guard authorized else { return Response(status: 401) }
             let batch = message as? [[String: Any]]
@@ -275,29 +328,54 @@ extension FakeServer {
         let result: [String: Any]
         switch message["method"] as? String {
         case "initialize":
-            result = ["protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18", "capabilities": ["tools": [String: Any]()],
-                      "serverInfo": ["name": "app-fake", "version": "0"]]
+            result = [
+                "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
+                "capabilities": ["tools": [String: Any]()],
+                "serverInfo": ["name": "app-fake", "version": "0"]
+            ]
         case "tools/list":
-            result = ["tools": [
-                ["name": "echo", "description": "Echo text back.",
-                 "inputSchema": ["type": "object", "properties": ["text": ["type": "string"]], "required": ["text"]]],
-                ["name": "swatch", "description": "Return a colour swatch image.",
-                 "inputSchema": ["type": "object", "properties": ["text": ["type": "string"]]]],
-            ]]
+            result = [
+                "tools": [
+                    [
+                        "name": "echo", "description": "Echo text back.",
+                        "inputSchema": [
+                            "type": "object", "properties": ["text": ["type": "string"]], "required": ["text"]
+                        ]
+                    ],
+                    [
+                        "name": "swatch", "description": "Return a colour swatch image.",
+                        "inputSchema": ["type": "object", "properties": ["text": ["type": "string"]]]
+                    ]
+                ]
+            ]
         case "tools/call":
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             switch params["name"] as? String {
             case "echo":
-                result = ["content": [["type": "text", "text": "echo: " + (arguments["text"].map { $0 as? String ?? String(describing: $0) } ?? "None")]]]
+                result = [
+                    "content": [
+                        [
+                            "type": "text",
+                            "text": "echo: "
+                                + (arguments["text"].map { $0 as? String ?? String(describing: $0) } ?? "None")
+                        ]
+                    ]
+                ]
             case "swatch":
-                result = ["content": [["type": "text", "text": "A fjord-blue swatch."],
-                                      ["type": "image", "mimeType": "image/png", "data": swatchPNG.base64EncodedString()]]]
+                result = [
+                    "content": [
+                        ["type": "text", "text": "A fjord-blue swatch."],
+                        ["type": "image", "mimeType": "image/png", "data": swatchPNG.base64EncodedString()]
+                    ]
+                ]
             default:
                 return ["jsonrpc": "2.0", "id": id ?? NSNull(), "error": ["code": -32602, "message": "unknown tool"]]
             }
         default:
             guard let id else { return nil } // a notification
-            return ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": message["method"] as? String ?? ""]]
+            return [
+                "jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": message["method"] as? String ?? ""]
+            ]
         }
         return ["jsonrpc": "2.0", "id": id ?? NSNull(), "result": result]
     }
@@ -319,7 +397,8 @@ extension FakeServer {
         header.append(contentsOf: [8, 2, 0, 0, 0])
         var raw = Data()
         for _ in 0..<8 { raw.append(0); for _ in 0..<8 { raw.append(contentsOf: [47, 95, 122]) } }
-        return Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + chunk("IHDR", header) + chunk("IDAT", zlibStored(raw)) + chunk("IEND", Data())
+        return Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + chunk("IHDR", header)
+            + chunk("IDAT", zlibStored(raw)) + chunk("IEND", Data())
     }()
 
     /// zlib data in stored (uncompressed) blocks: a valid PNG IDAT without a compressor.

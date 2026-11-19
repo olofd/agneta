@@ -17,7 +17,8 @@ public final class LocalHTTPServer: @unchecked Sendable {
         public var status: Int
         public var headers: [String: String]
         public var body: Data
-        public init(status: Int, headers: [String: String] = ["Content-Type": "application/json"], body: Data = Data()) {
+        public init(status: Int, headers: [String: String] = ["Content-Type": "application/json"], body: Data = Data())
+        {
             self.status = status
             self.headers = headers
             self.body = body
@@ -66,7 +67,11 @@ public final class LocalHTTPServer: @unchecked Sendable {
     /// At most 16 connections, each closed after 10 s whatever it's doing (no slow-request pile-up). Each is
     /// counted out once: a connection that fails is cancelled, and then reports `.cancelled` as well.
     private func serve(_ connection: NWConnection) {
-        guard lock.withLock({ () -> Bool in guard open < Self.maxConnections else { return false }; open += 1; return true }) else {
+        guard
+            lock.withLock({ () -> Bool in
+                guard open < Self.maxConnections else { return false }; open += 1; return true
+            })
+        else {
             connection.cancel()
             return
         }
@@ -86,7 +91,8 @@ public final class LocalHTTPServer: @unchecked Sendable {
     }
 
     private func read(_ connection: NWConnection, buffer: Data) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 << 10) { [weak self] data, _, complete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 << 10) {
+            [weak self] data, _, complete, error in
             guard let self else { return }
             var buffer = buffer
             if let data { buffer.append(data) }
@@ -98,11 +104,13 @@ public final class LocalHTTPServer: @unchecked Sendable {
                     if request.method == "INVALID" {
                         response = Response(status: 400, body: Data(#"{"error":"bad request"}"#.utf8))
                     } else if request.headers["origin"] != nil {
-                        response = Response(status: 403, body: Data(#"{"error":"browsers can't use Agneta's diagnostics"}"#.utf8))
+                        response = Response(
+                            status: 403, body: Data(#"{"error":"browsers can't use Agneta's diagnostics"}"#.utf8))
                     } else {
                         response = await handler(request)
                     }
-                    connection.send(content: Self.encode(response), completion: .contentProcessed { _ in connection.cancel() })
+                    connection.send(
+                        content: Self.encode(response), completion: .contentProcessed { _ in connection.cancel() })
                 }
             } else if complete {
                 connection.cancel()
@@ -121,7 +129,8 @@ public final class LocalHTTPServer: @unchecked Sendable {
         var headers: [String: String] = [:]
         for line in head.dropFirst() {
             guard let colon = line.firstIndex(of: ":") else { continue }
-            headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(
+                in: .whitespaces)
         }
         // A missing length is 0; anything else must be a whole number within the cap (-1 trapped).
         guard let length = Int(headers["content-length"] ?? "0"), (0...maxBody).contains(length) else {
@@ -129,12 +138,18 @@ public final class LocalHTTPServer: @unchecked Sendable {
         }
         let body = data[end.upperBound...]
         guard body.count >= length else { return nil }
-        return Request(method: String(start[0]), path: String(start[1]), headers: headers, body: Data(body.prefix(length)))
+        return Request(
+            method: String(start[0]), path: String(start[1]), headers: headers, body: Data(body.prefix(length)))
     }
 
     static func encode(_ response: Response) -> Data {
-        let reason = [200: "OK", 202: "Accepted", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed"][response.status] ?? "Status"
-        var head = "HTTP/1.1 \(response.status) \(reason)\r\nContent-Length: \(response.body.count)\r\nConnection: close\r\n"
+        let reason =
+            [
+                200: "OK", 202: "Accepted", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
+                405: "Method Not Allowed"
+            ][response.status] ?? "Status"
+        var head =
+            "HTTP/1.1 \(response.status) \(reason)\r\nContent-Length: \(response.body.count)\r\nConnection: close\r\n"
         for (name, value) in response.headers { head += "\(name): \(value)\r\n" }
         return Data((head + "\r\n").utf8) + response.body
     }

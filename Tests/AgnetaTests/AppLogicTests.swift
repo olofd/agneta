@@ -2,6 +2,7 @@ import AgnetaKit
 import CryptoKit
 import Foundation
 import Testing
+
 @testable import Agneta
 
 /// Apps asking for access: one shown at a time, each answered once, in the app's provider order.
@@ -49,7 +50,8 @@ import Testing
     /// A provider connected while an app waits with none ticked gets ticked; one with a choice made is left alone.
     @Test func aProviderConnectedMeanwhileIsTicked() async throws {
         let window = Window(), approvals = desk(window)
-        async let answer = approvals.ask(Router.PairingRequest(app: "Early"), allowed: [], engines: ["goose", "opencode"])
+        async let answer = approvals.ask(
+            Router.PairingRequest(app: "Early"), allowed: [], engines: ["goose", "opencode"])
         try await Task.sleep(for: .milliseconds(50))
         approvals.providerAdded("b", kind: .claude)
         approvals.providerAdded("c", kind: .chatGPT)
@@ -101,7 +103,8 @@ import Testing
 /// Signing in, one attempt at a time: a failure is shown on its own window, and an old attempt never touches a new one.
 @MainActor @Suite struct SignInFlowTests {
     func flow() -> SignInFlow {
-        let folder = FileManager.default.temporaryDirectory.appending(path: "agneta-signin-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        let folder = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-signin-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
         let log = OperationalLog(folder: folder)
         return SignInFlow(library: EngineLibrary(runtimes: folder, log: log), log: log)
     }
@@ -109,7 +112,9 @@ import Testing
     @Test func aFailureShowsAndAnOldAttemptIsIgnored() async throws {
         let signIn = flow()
         // An API key isn't signed in to: the flow fails at once, and says so.
-        let first = signIn.start(.openAIKey, home: FileManager.default.temporaryDirectory, account: "x") { Issue.record("signed in") }
+        let first = signIn.start(.openAIKey, home: FileManager.default.temporaryDirectory, account: "x") {
+            Issue.record("signed in")
+        }
         try await Task.sleep(for: .milliseconds(100))
         #expect(signIn.state?.failed != nil && signIn.state?.finished == false)
 
@@ -127,14 +132,23 @@ import Testing
     @Test func anAttemptThatEndsWithoutSigningInDiscardsItsFolder() async throws {
         let signIn = flow()
         var discarded: [String] = []
-        _ = signIn.start(.openAIKey, home: FileManager.default.temporaryDirectory, account: "failed", discard: { discarded.append("failed") }) {}
+        _ = signIn.start(
+            .openAIKey, home: FileManager.default.temporaryDirectory, account: "failed",
+            discard: { discarded.append("failed") }
+        ) {}
         try await Task.sleep(for: .milliseconds(100))
         #expect(discarded == ["failed"] && signIn.state?.failed != nil)
         signIn.cancel() // closing the failed window discards nothing more
         #expect(discarded == ["failed"])
 
-        let replaced = signIn.start(.claude, home: FileManager.default.temporaryDirectory, account: "replaced", discard: { discarded.append("replaced") }) {}
-        _ = signIn.start(.anthropicKey, home: FileManager.default.temporaryDirectory, account: "next", discard: { discarded.append("next") }) {}
+        let replaced = signIn.start(
+            .claude, home: FileManager.default.temporaryDirectory, account: "replaced",
+            discard: { discarded.append("replaced") }
+        ) {}
+        _ = signIn.start(
+            .anthropicKey, home: FileManager.default.temporaryDirectory, account: "next",
+            discard: { discarded.append("next") }
+        ) {}
         #expect(discarded.prefix(2) == ["failed", "replaced"])
         signIn.windowClosed(replaced) // the replaced attempt's window: already discarded
         #expect(discarded.filter { $0 == "replaced" }.count == 1)
@@ -147,7 +161,8 @@ import Testing
 /// The engine library's answers the windows rely on, with every engine present (the showcase's engines).
 @MainActor @Suite struct EngineLibraryTests {
     func library() -> EngineLibrary {
-        let folder = FileManager.default.temporaryDirectory.appending(path: "agneta-library-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        let folder = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-library-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
         let library = EngineLibrary(runtimes: folder, log: OperationalLog(folder: folder))
         library.useSample()
         return library
@@ -172,14 +187,17 @@ import Testing
     /// A build's folders with `opencode.lock` pinning a local zip of a tiny `opencode`; `pinned: false` pins the wrong
     /// hash, so the download fails its check. With a server, the zip is downloaded from it.
     func library(pinned: Bool = true, server: SlowServer? = nil) throws -> (EngineLibrary, URL) {
-        let root = FileManager.default.temporaryDirectory.appending(path: "agneta-downloads-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-downloads-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory
+        ).realFileURL
         let payload = root.appending(path: "payload/opencode", directoryHint: .isDirectory)
         let resources = root.appending(path: "Resources", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: payload, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
         let program = payload.appending(path: "opencode")
         try "#!/bin/sh\necho ok\n".write(to: program, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: program.path(percentEncoded: false))
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: program.path(percentEncoded: false))
         let zip = root.appending(path: "opencode.zip")
         let ditto = Process()
         ditto.executableURL = URL(filePath: "/usr/bin/ditto")
@@ -190,10 +208,15 @@ import Testing
         let sha = pinned ? digest : String(repeating: "0", count: 64)
         server?.body = try Data(contentsOf: zip)
         let asset: JSONValue = ["url": .string(server?.url ?? zip.absoluteString), "sha256": .string(sha), "size": 100]
-        try JSONCoding.encode(["engine": "opencode", "version": "1", "assets": .object([RuntimeInstaller.architecture: asset])] as JSONValue)
-            .write(to: resources.appending(path: "opencode.lock"))
-        let library = EngineLibrary(runtimes: root.appending(path: "Runtimes", directoryHint: .isDirectory), log: OperationalLog(folder: root),
-                                    bundled: Bundled(programs: root.appending(path: "MacOS", directoryHint: .isDirectory), resources: resources))
+        try JSONCoding.encode(
+            ["engine": "opencode", "version": "1", "assets": .object([RuntimeInstaller.architecture: asset])]
+                as JSONValue
+        )
+        .write(to: resources.appending(path: "opencode.lock"))
+        let library = EngineLibrary(
+            runtimes: root.appending(path: "Runtimes", directoryHint: .isDirectory), log: OperationalLog(folder: root),
+            bundled: Bundled(programs: root.appending(path: "MacOS", directoryHint: .isDirectory), resources: resources)
+        )
         library.kindsInUse = { [.openAIKey] }
         library.refresh()
         return (library, root)
@@ -271,7 +294,9 @@ import Testing
         await #expect(throws: (any Error).self) { _ = try await signIn.value }
         try await Task.sleep(for: .milliseconds(1500)) // past when the server answers
         #expect(library.downloads.isEmpty && library.verified("opencode") == nil)
-        #expect(!FileManager.default.fileExists(atPath: root.appending(path: "Runtimes/opencode").path(percentEncoded: false)))
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: root.appending(path: "Runtimes/opencode").path(percentEncoded: false)))
     }
 }
 
@@ -293,10 +318,15 @@ final class SlowServer: @unchecked Sendable {
     init(delay: TimeInterval) throws {
         let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         self.fd = fd
-        var address = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: 0,
-                                  sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+        var address = sockaddr_in(
+            sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: 0,
+            sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-        let bound = withUnsafeMutablePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, length) == 0 && getsockname(fd, $0, &length) == 0 } }
+        let bound = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, length) == 0 && getsockname(fd, $0, &length) == 0
+            }
+        }
         port = Int(UInt16(bigEndian: address.sin_port))
         guard bound, listen(fd, 8) == 0 else {
             close(fd)
@@ -314,7 +344,8 @@ final class SlowServer: @unchecked Sendable {
                 self?.lock.withLock { self?._asked = true }
                 Thread.sleep(forTimeInterval: delay)
                 let body = self?.body ?? Data()
-                let response = Data("HTTP/1.1 200 OK\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8) + body
+                let response =
+                    Data("HTTP/1.1 200 OK\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8) + body
                 _ = response.withUnsafeBytes { write(client, $0.baseAddress, $0.count) }
                 close(client)
             }

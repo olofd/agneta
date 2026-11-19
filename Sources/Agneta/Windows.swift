@@ -17,8 +17,10 @@ final class WindowPresenter {
 
     /// A borderless-looking glass dialog, or a standard window for Settings.
     /// `onClose` runs when the window closes for any reason (its close button, Command-W, or code).
-    private func show<Content: View>(_ key: String, title: String, size: NSSize, glass: Bool = true, resizable: Bool = false,
-                                     onClose: (@MainActor () -> Void)? = nil, @ViewBuilder content: () -> Content) {
+    private func show<Content: View>(
+        _ key: String, title: String, size: NSSize, glass: Bool = true, resizable: Bool = false,
+        onClose: (@MainActor () -> Void)? = nil, @ViewBuilder content: () -> Content
+    ) {
         if Self.replacesWelcome(key) { closeWelcome() }
         if let window = windows[key] {
             window.makeKeyAndOrderFront(nil)
@@ -27,7 +29,8 @@ final class WindowPresenter {
         }
         var style: NSWindow.StyleMask = [.titled, .closable, .fullSizeContentView]
         if resizable { style.formUnion([.resizable, .miniaturizable]) }
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: style, backing: .buffered, defer: false)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size), styleMask: style, backing: .buffered, defer: false)
         window.title = title
         // Only dialogs hide their title bar. A standard window (Settings, task details) keeps it, so on macOS 26 the
         // content scrolling under the title fades beneath it instead of running into the title's text.
@@ -36,8 +39,9 @@ final class WindowPresenter {
         window.isMovableByWindowBackground = glass
         // Dialogs have a fixed size; Settings sizes itself.
         // A dialog lays itself out under its (transparent) title bar, so it ignores the title bar's safe area.
-        let host = NSHostingView(rootView: content().frame(width: glass ? size.width : nil, height: glass ? size.height : nil)
-            .ignoresSafeArea(edges: glass ? .all : []).environment(\.onDialogGlass, glass).showcaseKey())
+        let host = NSHostingView(
+            rootView: content().frame(width: glass ? size.width : nil, height: glass ? size.height : nil)
+                .ignoresSafeArea(edges: glass ? .all : []).environment(\.onDialogGlass, glass).showcaseKey())
         if glass { host.sizingOptions = [] }
         if glass {
             window.titleVisibility = .hidden
@@ -58,7 +62,8 @@ final class WindowPresenter {
         }
         window.center()
         windows[key] = window
-        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) {
+            [weak self] _ in
             MainActor.assumeIsolated {
                 _ = self?.windows.removeValue(forKey: key)
                 onClose?()
@@ -77,17 +82,24 @@ final class WindowPresenter {
     /// would be a second window saying nearly the same, so it closes (an app waiting on a fresh install opens them).
     nonisolated static func replacesWelcome(_ key: String) -> Bool { ["setup", "approval", "signin"].contains(key) }
 
-    func showWelcome(_ model: AppModel) { show("welcome", title: "Welcome to Agneta", size: NSSize(width: 460, height: 520)) { WelcomeView(model: model) } }
+    func showWelcome(_ model: AppModel) {
+        show("welcome", title: "Welcome to Agneta", size: NSSize(width: 460, height: 520)) { WelcomeView(model: model) }
+    }
     func closeWelcome() { close("welcome") }
     /// An app asked Agneta to help connect a provider: the add-provider window, naming it. A repeat brings it forward.
     func showSetup(_ model: AppModel, app: String, kind: AccountKind?) {
-        show("setup", title: "Connect Your AI", size: NSSize(width: 460, height: kind == nil ? 500 : 440)) { SetupView(model: model, app: app, kind: kind) }
+        show("setup", title: "Connect Your AI", size: NSSize(width: 460, height: kind == nil ? 500 : 440)) {
+            SetupView(model: model, app: app, kind: kind)
+        }
     }
     func closeSetup() { close("setup") }
     /// Closing the window cancels the sign-in it shows (one left running would hold its sign-in callback port).
     func showSignIn(_ model: AppModel, attempt: UUID) {
         closeSetup()
-        show("signin", title: "Sign In", size: NSSize(width: 420, height: 340), onClose: { model.signIn.windowClosed(attempt) }) { SignInView(model: model) }
+        show(
+            "signin", title: "Sign In", size: NSSize(width: 420, height: 340),
+            onClose: { model.signIn.windowClosed(attempt) }
+        ) { SignInView(model: model) }
     }
     func closeSignIn() { close("signin") }
     /// Closing the window is Don't Allow for the request it shows; the next waiting request then appears.
@@ -96,7 +108,8 @@ final class WindowPresenter {
         // three folders, an unverified app's code, the mode choice) at 750 points.
         let height: CGFloat = {
             guard let request = model.approvals.current else { return 750 }
-            let rows = model.accounts.filter { request.kinds?.contains($0.kind) ?? true }.count
+            let rows =
+                model.accounts.filter { request.kinds?.contains($0.kind) ?? true }.count
                 + (request.kinds ?? []).filter { kind in !model.accounts.contains { $0.kind == kind } }.count
             let providers = CGFloat(rows == 0 ? 3 : rows) // no provider yet: about as tall as three
             let folders = CGFloat(min(request.folders.count, 3) + (request.folders.count > 3 ? 1 : 0))
@@ -107,7 +120,10 @@ final class WindowPresenter {
             if request.replaces { height += 26 }
             return min(max(height, 520), (NSScreen.main?.visibleFrame.height ?? 900) - 60)
         }()
-        show("approval", title: "Allow an App", size: NSSize(width: 480, height: height), onClose: { model.approvals.settle(request, with: nil) }) { ApprovalView(model: model) }
+        show(
+            "approval", title: "Allow an App", size: NSSize(width: 480, height: height),
+            onClose: { model.approvals.settle(request, with: nil) }
+        ) { ApprovalView(model: model) }
         windows["approval"]?.level = .floating
     }
     func closeApproval() { close("approval") }
@@ -117,7 +133,8 @@ final class WindowPresenter {
     func showSettings(_ model: AppModel, section: SettingsView.Pane = .providers, defaults: AccountRecord? = nil) {
         model.library.refreshInstalls()
         close("settings")
-        show("settings", title: "Agneta Settings", size: NSSize(width: 780, height: 540), glass: false, resizable: true) {
+        show("settings", title: "Agneta Settings", size: NSSize(width: 780, height: 540), glass: false, resizable: true)
+        {
             SettingsView(model: model, section: section, opening: defaults)
         }
     }
@@ -139,13 +156,16 @@ final class WindowPresenter {
     func explainNoUpdates(_ model: AppModel) {
         let alert = NSAlert()
         alert.messageText = "This build doesn't update itself"
-        alert.informativeText = model.isDevelopment
+        alert.informativeText =
+            model.isDevelopment
             ? "Agneta Dev is built from source. To get the latest, pull and run scripts/dev/build-app again. Releases from GitHub or Homebrew update themselves."
             : model.updates.unavailableReason
         alert.addButton(withTitle: "OK")
         if model.isDevelopment { alert.addButton(withTitle: "Open Releases") }
         NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertSecondButtonReturn, let url = URL(string: "https://github.com/olofd/agneta/releases/latest") {
+        if alert.runModal() == .alertSecondButtonReturn,
+            let url = URL(string: "https://github.com/olofd/agneta/releases/latest")
+        {
             NSWorkspace.shared.open(url)
         }
     }
@@ -183,7 +203,8 @@ struct DialogLayout<Hero: View, Content: View, Actions: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             hero.padding(.top, 34)
-            Text(title).font(.system(size: 21, weight: .semibold)).multilineTextAlignment(.center).padding(.top, 16).padding(.horizontal, 28)
+            Text(title).font(.system(size: 21, weight: .semibold)).multilineTextAlignment(.center).padding(.top, 16)
+                .padding(.horizontal, 28)
             if let message {
                 Text(message).font(.system(size: 13)).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 36).padding(.top, 7)
@@ -203,14 +224,21 @@ struct WelcomeView: View {
     var model: AppModel
 
     var body: some View {
-        DialogLayout(title: "Bring your AI to your apps",
-                     message: "Sign in with the plan you already pay for. Agneta keeps it safe, and lets the apps you allow use it, with you in control.") {
+        DialogLayout(
+            title: "Bring your AI to your apps",
+            message:
+                "Sign in with the plan you already pay for. Agneta keeps it safe, and lets the apps you allow use it, with you in control."
+        ) {
             MarkTile(size: 72)
         } content: {
             GlassGroup(spacing: 10) {
                 VStack(spacing: 10) {
-                    ProviderButton(kind: .chatGPT, title: "Continue with ChatGPT", detail: "Your ChatGPT plan, through Codex") { model.startSignIn(.chatGPT) }
-                    ProviderButton(kind: .claude, title: "Continue with Claude", detail: "Your Claude plan, through Claude Code") { model.startSignIn(.claude) }
+                    ProviderButton(
+                        kind: .chatGPT, title: "Continue with ChatGPT", detail: "Your ChatGPT plan, through Codex"
+                    ) { model.startSignIn(.chatGPT) }
+                    ProviderButton(
+                        kind: .claude, title: "Continue with Claude", detail: "Your Claude plan, through Claude Code"
+                    ) { model.startSignIn(.claude) }
                 }
             }
             .padding(.horizontal, 30)
@@ -250,7 +278,9 @@ struct ProviderButton: View {
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white.opacity(hovered ? 0.08 : 0)))
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white.opacity(hovered ? 0.08 : 0))
+        )
         .frostedCard(cornerRadius: 18)
         .scaleEffect(hovered ? 1.01 : 1)
         .onHover { hovered = $0 }
@@ -266,19 +296,24 @@ struct SignInView: View {
 
     var body: some View {
         if let signIn = model.signIn.state {
-            DialogLayout(title: signIn.finished ? "You're signed in" : "Sign in to \(signIn.kind.provider)",
-                         message: signIn.failed == nil ? signIn.text : nil) {
+            DialogLayout(
+                title: signIn.finished ? "You're signed in" : "Sign in to \(signIn.kind.provider)",
+                message: signIn.failed == nil ? signIn.text : nil
+            ) {
                 ZStack(alignment: .bottomTrailing) {
                     ProviderIcon(kind: signIn.kind, size: 64)
                     if signIn.finished {
-                        Image(systemName: "checkmark.circle.fill").font(.system(size: 22)).foregroundStyle(.white, Palette.running)
-                            .offset(x: 6, y: 6).transition(.scale.combined(with: .opacity))
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 22)).foregroundStyle(
+                            .white, Palette.running
+                        )
+                        .offset(x: 6, y: 6).transition(.scale.combined(with: .opacity))
                     }
                 }
             } content: {
                 VStack(spacing: 12) {
                     if let failed = signIn.failed {
-                        Label(failed, systemImage: "exclamationmark.triangle.fill").font(.system(size: 12.5)).foregroundStyle(Palette.attention)
+                        Label(failed, systemImage: "exclamationmark.triangle.fill").font(.system(size: 12.5))
+                            .foregroundStyle(Palette.attention)
                             .multilineTextAlignment(.center).padding(.horizontal, 30)
                     } else if signIn.needsCode {
                         HStack(spacing: 8) {
@@ -287,16 +322,24 @@ struct SignInView: View {
                                 .padding(.horizontal, 14).frame(height: 38)
                                 .frostedCard(cornerRadius: 19)
                                 .onSubmit(submit)
-                            Button("Continue", action: submit).glassButton(prominent: true).tint(Palette.fill).controlSize(.large).disabled(code.isEmpty)
+                            Button("Continue", action: submit).glassButton(prominent: true).tint(Palette.fill)
+                                .controlSize(.large).disabled(code.isEmpty)
                                 .keyboardShortcut(.defaultAction)
                         }
                         .padding(.horizontal, 30)
                     } else if !signIn.finished {
                         // Claude Code's adapter downloading first: how far along, as the panel shows it.
-                        if signIn.kind == .claude, let download = model.library.downloads["claude-code"], download.problem == nil {
+                        if signIn.kind == .claude, let download = model.library.downloads["claude-code"],
+                            download.problem == nil
+                        {
                             VStack(spacing: 6) {
-                                if let fraction = download.fraction { ProgressView(value: fraction) } else { ProgressView().progressViewStyle(.linear) }
-                                Text(download.amount).font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
+                                if let fraction = download.fraction {
+                                    ProgressView(value: fraction)
+                                } else {
+                                    ProgressView().progressViewStyle(.linear)
+                                }
+                                Text(download.amount).font(.system(size: 12)).foregroundStyle(.secondary)
+                                    .monospacedDigit()
                             }
                             .tint(Palette.fill)
                             .frame(width: 240)
@@ -309,13 +352,25 @@ struct SignInView: View {
                 // Like every dialog's: the buttons share the width, so they line up with the dialog's edges.
                 HStack(spacing: 8) {
                     if let page = signIn.page, !signIn.finished, signIn.failed == nil {
-                        Button { NSWorkspace.shared.open(page) } label: { Text("Open the Page Again").frame(maxWidth: .infinity) }.glassButton()
+                        Button {
+                            NSWorkspace.shared.open(page)
+                        } label: {
+                            Text("Open the Page Again").frame(maxWidth: .infinity)
+                        }.glassButton()
                     }
                     if signIn.finished || signIn.failed != nil {
-                        Button { model.signIn.cancel() } label: { Text("Done").frame(maxWidth: .infinity) }
-                            .glassButton(prominent: true).tint(Palette.fill).keyboardShortcut(.defaultAction)
+                        Button {
+                            model.signIn.cancel()
+                        } label: {
+                            Text("Done").frame(maxWidth: .infinity)
+                        }
+                        .glassButton(prominent: true).tint(Palette.fill).keyboardShortcut(.defaultAction)
                     } else {
-                        Button { model.signIn.cancel() } label: { Text("Cancel").frame(maxWidth: .infinity) }.glassButton().keyboardShortcut(.cancelAction)
+                        Button {
+                            model.signIn.cancel()
+                        } label: {
+                            Text("Cancel").frame(maxWidth: .infinity)
+                        }.glassButton().keyboardShortcut(.cancelAction)
                     }
                 }
                 .controlSize(.large)
@@ -341,8 +396,12 @@ struct ApprovalScope: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Label(toolsLine, systemImage: tools == .appOnly ? "puzzlepiece.extension" : tools == .read ? "doc.text.magnifyingglass" : "hammer")
-                .foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
+            Label(
+                toolsLine,
+                systemImage: tools == .appOnly
+                    ? "puzzlepiece.extension" : tools == .read ? "doc.text.magnifyingglass" : "hammer"
+            )
+            .foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
             // A few folders by name; the rest counted, all of them in the tooltip.
             ForEach(folders.prefix(3), id: \.self) { folder in
                 Label(Self.display(folder), systemImage: "folder").lineLimit(1).truncationMode(.middle)
@@ -358,7 +417,10 @@ struct ApprovalScope: View {
     }
 
     private var toolsLine: String {
-        let reach = folders.isEmpty ? "its own workspace in Agneta" : (folders.count == 1 ? "this folder" : "these folders") + " and its own workspace"
+        let reach =
+            folders.isEmpty
+            ? "its own workspace in Agneta"
+            : (folders.count == 1 ? "this folder" : "these folders") + " and its own workspace"
         return switch tools {
         case .appOnly: "Only \(app)'s own tools, in \(reach)"
         case .read: "Read files in \(reach)"
@@ -367,7 +429,9 @@ struct ApprovalScope: View {
     }
 
     static func display(_ folder: URL) -> String {
-        func trimmed(_ path: String) -> String { path.hasSuffix("/") && path.count > 1 ? String(path.dropLast()) : path }
+        func trimmed(_ path: String) -> String {
+            path.hasSuffix("/") && path.count > 1 ? String(path.dropLast()) : path
+        }
         let home = trimmed(FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false))
         let path = trimmed(folder.path(percentEncoded: false))
         return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
@@ -380,11 +444,15 @@ struct ApprovalView: View {
 
     var body: some View {
         if let approval = model.approvals.current {
-            DialogLayout(title: "Let \(approval.app) use your AI?",
-                         message: "Its tasks count against your plan or API credit. You can watch and stop them, and remove access, at any time.") {
+            DialogLayout(
+                title: "Let \(approval.app) use your AI?",
+                message:
+                    "Its tasks count against your plan or API credit. You can watch and stop them, and remove access, at any time."
+            ) {
                 HStack(spacing: 14) {
                     AppIcon(name: approval.app, identifier: approval.verified ? approval.identifier : nil, size: 56)
-                    Image(systemName: "arrow.left.arrow.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(.tertiary)
+                    Image(systemName: "arrow.left.arrow.right").font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.tertiary)
                     MarkTile(size: 56)
                 }
             } content: {
@@ -396,9 +464,14 @@ struct ApprovalView: View {
                     }
                     access(approval)
                     if approval.replaces {
-                        Label("Always Allow replaces the access \(approval.app) was given before", systemImage: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 11.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 34)
+                        Label(
+                            "Always Allow replaces the access \(approval.app) was given before",
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                        .font(.system(size: 11.5)).foregroundStyle(.secondary).frame(
+                            maxWidth: .infinity, alignment: .leading
+                        )
+                        .padding(.horizontal, 34)
                     }
                     identity(approval)
                 }
@@ -406,27 +479,38 @@ struct ApprovalView: View {
             } actions: {
                 HStack(spacing: 8) {
                     // The labels fill the width so the glass bezels do too.
-                    Button { model.approvals.answer(remember: nil, for: approval.id) } label: { Text("Don't Allow").frame(maxWidth: .infinity) }
-                        .glassButton().keyboardShortcut(.cancelAction)
+                    Button {
+                        model.approvals.answer(remember: nil, for: approval.id)
+                    } label: {
+                        Text("Don't Allow").frame(maxWidth: .infinity)
+                    }
+                    .glassButton().keyboardShortcut(.cancelAction)
                     // Once: for this connection only, nothing kept. Return chooses it, and only for a verified app.
                     // The highlighted button is the one Return chooses, as macOS has it: Allow Once for a verified app,
                     // none for one Agneta can't verify, so nothing draws the eye to letting it in.
                     // A provider that can't run yet (Codex not installed) may still be allowed: it runs once it can.
                     let nothing = approval.allowed.isEmpty
-                    Button { model.approvals.answer(remember: false, for: approval.id) } label: { Text("Allow Once").frame(maxWidth: .infinity) }
-                        .glassButton(prominent: approval.verified)
-                        .defaultAction(when: approval.verified)
-                        .disabled(nothing)
-                    Button { model.approvals.answer(remember: true, for: approval.id) } label: { Text("Always Allow").frame(maxWidth: .infinity) }
-                        .glassButton()
-                        .disabled(nothing)
+                    Button {
+                        model.approvals.answer(remember: false, for: approval.id)
+                    } label: {
+                        Text("Allow Once").frame(maxWidth: .infinity)
+                    }
+                    .glassButton(prominent: approval.verified)
+                    .defaultAction(when: approval.verified)
+                    .disabled(nothing)
+                    Button {
+                        model.approvals.answer(remember: true, for: approval.id)
+                    } label: {
+                        Text("Always Allow").frame(maxWidth: .infinity)
+                    }
+                    .glassButton()
+                    .disabled(nothing)
                 }
                 .controlSize(.large)
             }
         }
     }
 }
-
 
 extension ApprovalView {
     /// The providers to allow, one row each.
@@ -442,7 +526,8 @@ extension ApprovalView {
 
     /// Why a provider can't be given as asked (contained, but none of its engines here can keep it so), or nil.
     func cantMeet(_ account: AccountRecord, _ approval: Approvals.Request) -> String? {
-        approval.sandboxFixed ? model.library.sandboxUnavailable(.contained, providers: [account], engines: approval.engines) : nil
+        approval.sandboxFixed
+            ? model.library.sandboxUnavailable(.contained, providers: [account], engines: approval.engines) : nil
     }
 
     func providers(_ approval: Approvals.Request) -> some View {
@@ -451,7 +536,11 @@ extension ApprovalView {
                 let on = approval.allowed.contains(account.id)
                 let reason = cantMeet(account, approval)
                 Button {
-                    if on { model.approvals.current?.allowed.remove(account.id) } else { model.approvals.current?.allowed.insert(account.id) }
+                    if on {
+                        model.approvals.current?.allowed.remove(account.id)
+                    } else {
+                        model.approvals.current?.allowed.insert(account.id)
+                    }
                 } label: {
                     HStack(spacing: 11) {
                         ProviderIcon(kind: account.kind, size: 28)
@@ -488,7 +577,11 @@ extension ApprovalView {
                     Spacer()
                     Button("Connect") {
                         WindowPresenter.shared.lowerApproval()
-                        if kind.subscription != nil { model.startSignIn(kind) } else { WindowPresenter.shared.showSettings(model, section: .providers) }
+                        if kind.subscription != nil {
+                            model.startSignIn(kind)
+                        } else {
+                            WindowPresenter.shared.showSettings(model, section: .providers)
+                        }
                     }
                     .glassButton().controlSize(.small)
                 }
@@ -504,40 +597,60 @@ extension ApprovalView {
     func access(_ approval: Approvals.Request) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Access").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).textCase(.uppercase)
+                Text("Access").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).textCase(
+                    .uppercase)
                 Spacer()
                 // Which engines the app may pick from: all of them, unless someone who knows wants otherwise. A
                 // popover, so the dialog keeps its size.
                 if !model.accounts.isEmpty {
-                    Button(approval.namedEngines || model.library.allowance(approval.engines) == .all
-                           ? "Engines…" : (approval.engines.count == 1 ? "1 engine…" : "\(approval.engines.count) engines…")) { showsAdvanced = true }
-                        .buttonStyle(.link).foregroundStyle(Palette.accent).font(.system(size: 11.5))
-                        .popover(isPresented: $showsAdvanced, arrowEdge: .bottom) {
-                            EngineAccessList(model: model, allowed: approval.allowed,
-                                             engines: Binding(get: { model.approvals.current?.engines ?? [] }, set: { model.approvals.current?.engines = $0 }),
-                                             sandbox: approval.sandbox)
-                                .padding(16).frame(width: 320)
-                        }
+                    Button(
+                        approval.namedEngines || model.library.allowance(approval.engines) == .all
+                            ? "Engines…"
+                            : (approval.engines.count == 1 ? "1 engine…" : "\(approval.engines.count) engines…")
+                    ) { showsAdvanced = true }
+                    .buttonStyle(.link).foregroundStyle(Palette.accent).font(.system(size: 11.5))
+                    .popover(isPresented: $showsAdvanced, arrowEdge: .bottom) {
+                        EngineAccessList(
+                            model: model, allowed: approval.allowed,
+                            engines: Binding(
+                                get: { model.approvals.current?.engines ?? [] },
+                                set: { model.approvals.current?.engines = $0 }),
+                            sandbox: approval.sandbox
+                        )
+                        .padding(16).frame(width: 320)
+                    }
                 }
             }
             ApprovalScope(app: approval.app, tools: approval.tools, folders: approval.folders)
             // The engines, by name, when the app named them.
             if approval.namedEngines {
-                Label(approval.engines.isEmpty ? "No engine" : model.library.all.filter { approval.engines.contains($0.id) }.map(\.name).joined(separator: ", "),
-                      systemImage: "cpu").font(.system(size: 12)).foregroundStyle(.secondary)
+                Label(
+                    approval.engines.isEmpty
+                        ? "No engine"
+                        : model.library.all.filter { approval.engines.contains($0.id) }.map(\.name).joined(
+                            separator: ", "),
+                    systemImage: "cpu"
+                ).font(.system(size: 12)).foregroundStyle(.secondary)
             }
             if approval.tools == .workspace {
                 Divider().opacity(0.5)
                 if approval.sandboxFixed {
                     // The app asked for contained, and no more, so no more is offered.
                     VStack(alignment: .leading, spacing: 3) {
-                        Label("Tasks run contained", systemImage: "lock.shield").font(.system(size: 12.5, weight: .medium))
-                        Text("Only the folders above, and commands have no internet. \(approval.app) asked for no more.")
-                            .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Label("Tasks run contained", systemImage: "lock.shield").font(
+                            .system(size: 12.5, weight: .medium))
+                        Text(
+                            "Only the folders above, and commands have no internet. \(approval.app) asked for no more."
+                        )
+                        .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(
+                            horizontal: false, vertical: true)
                     }
                 } else {
-                    SandboxPicker(model: model, accounts: approval.allowed, engines: approval.engines,
-                                  sandbox: Binding(get: { model.approvals.current?.sandbox ?? .default }, set: { model.approvals.current?.sandbox = $0 }))
+                    SandboxPicker(
+                        model: model, accounts: approval.allowed, engines: approval.engines,
+                        sandbox: Binding(
+                            get: { model.approvals.current?.sandbox ?? .default },
+                            set: { model.approvals.current?.sandbox = $0 }))
                 }
             }
         }
@@ -553,11 +666,14 @@ extension ApprovalView {
                 .font(.system(size: 12, weight: .medium))
         } else {
             HStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.attention).font(.system(size: 16))
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.attention).font(
+                    .system(size: 16))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Agneta can't verify this app").font(.system(size: 12, weight: .semibold))
-                    Text("Allow it only if \(approval.app) shows this code.").font(.system(size: 11.5)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Allow it only if \(approval.app) shows this code.").font(.system(size: 11.5)).foregroundStyle(
+                        .secondary
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
                 Text(approval.code.isEmpty ? "–" : "\(approval.code.prefix(3)) \(approval.code.suffix(3))")
@@ -586,21 +702,29 @@ struct NoProviderYet: View {
         VStack(spacing: 10) {
             if showsIntro {
                 Text(intro)
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 12.5)).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(
+                        horizontal: false, vertical: true)
             }
             GlassGroup(spacing: 8) {
                 VStack(spacing: 8) {
                     if wants(.chatGPT) {
-                        ProviderButton(kind: .chatGPT, title: "Continue with ChatGPT", detail: "Your ChatGPT plan, through Codex") { connect(.chatGPT) }
+                        ProviderButton(
+                            kind: .chatGPT, title: "Continue with ChatGPT", detail: "Your ChatGPT plan, through Codex"
+                        ) { connect(.chatGPT) }
                     }
                     if wants(.claude) {
-                        ProviderButton(kind: .claude, title: "Continue with Claude", detail: "Your Claude plan, through Claude Code") { connect(.claude) }
+                        ProviderButton(
+                            kind: .claude, title: "Continue with Claude",
+                            detail: "Your Claude plan, through Claude Code"
+                        ) { connect(.claude) }
                     }
                 }
             }
             if wants(.anthropicKey) || wants(.openAIKey) {
-                Button(kinds?.allSatisfy { $0.subscription == nil } == true ? "Add an API key" : "Use an API key instead") { connect(.openAIKey) }
-                    .buttonStyle(.link).foregroundStyle(Palette.accent).font(.system(size: 12))
+                Button(
+                    kinds?.allSatisfy { $0.subscription == nil } == true ? "Add an API key" : "Use an API key instead"
+                ) { connect(.openAIKey) }
+                .buttonStyle(.link).foregroundStyle(Palette.accent).font(.system(size: 12))
             }
         }
         .padding(.horizontal, 30)
@@ -609,14 +733,20 @@ struct NoProviderYet: View {
     private func wants(_ kind: AccountKind) -> Bool { kinds?.contains(kind) ?? true }
 
     private var intro: String {
-        if let kinds, kinds.count == 1 { return "\(app) asks for your \(kinds[0].offerName). Connect it, and \(app) can use it." }
+        if let kinds, kinds.count == 1 {
+            return "\(app) asks for your \(kinds[0].offerName). Connect it, and \(app) can use it."
+        }
         return "Connect the AI you already pay for, and \(app) can use it."
     }
 
     /// A plan signs in; an API key is entered in Settings → Providers.
     private func connect(_ kind: AccountKind) {
         if inApproval { WindowPresenter.shared.lowerApproval() }
-        if kind.subscription != nil { model.startSignIn(kind) } else { WindowPresenter.shared.showSettings(model, section: .providers) }
+        if kind.subscription != nil {
+            model.startSignIn(kind)
+        } else {
+            WindowPresenter.shared.showSettings(model, section: .providers)
+        }
     }
 }
 
@@ -628,12 +758,17 @@ struct SetupView: View {
     var kind: AccountKind?
 
     var body: some View {
-        DialogLayout(title: "Connect your AI for \(app)",
-                     message: kind.map { "\(app) asks for your \($0.offerName). Connect it, and \(app) can ask to use it through Agneta." }
-                        ?? "\(app) uses Agneta to work with the AI you already pay for. Connect a provider, and \(app) can ask to use it.") {
+        DialogLayout(
+            title: "Connect your AI for \(app)",
+            message: kind.map {
+                "\(app) asks for your \($0.offerName). Connect it, and \(app) can ask to use it through Agneta."
+            }
+                ?? "\(app) uses Agneta to work with the AI you already pay for. Connect a provider, and \(app) can ask to use it."
+        ) {
             HStack(spacing: 14) {
                 AppIcon(name: app, identifier: nil, size: 56)
-                Image(systemName: "arrow.left.arrow.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(.tertiary)
+                Image(systemName: "arrow.left.arrow.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(
+                    .tertiary)
                 MarkTile(size: 56)
             }
         } content: {
@@ -643,8 +778,12 @@ struct SetupView: View {
                     .buttonStyle(.link).foregroundStyle(Palette.accent).font(.system(size: 12)).padding(.top, 8)
             }
         } actions: {
-            Button { WindowPresenter.shared.closeSetup() } label: { Text("Not Now").frame(maxWidth: .infinity) }
-                .glassButton().keyboardShortcut(.cancelAction).controlSize(.large)
+            Button {
+                WindowPresenter.shared.closeSetup()
+            } label: {
+                Text("Not Now").frame(maxWidth: .infinity)
+            }
+            .glassButton().keyboardShortcut(.cancelAction).controlSize(.large)
         }
     }
 }
@@ -661,15 +800,25 @@ struct EngineAccessList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("The app chooses an engine for each task from the ones ticked here.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+            Text("The app chooses an engine for each task from the ones ticked here.").font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
             ForEach(model.library.all, id: \.id) { engine in
-                Toggle(isOn: Binding(get: { engines.contains(engine.id) }, set: { on in
-                    if on { engines.insert(engine.id) } else { engines.remove(engine.id) }
-                })) {
+                Toggle(
+                    isOn: Binding(
+                        get: { engines.contains(engine.id) },
+                        set: { on in
+                            if on { engines.insert(engine.id) } else { engines.remove(engine.id) }
+                        })
+                ) {
                     HStack(spacing: 6) {
                         Text(engine.name).font(.system(size: 12.5))
-                        if let note = Self.note(engine, model) { Text(note).font(.system(size: 11)).foregroundStyle(.tertiary) }
-                        if let note = model.library.sandboxNote(engine.id, level: .contained, providers: model.accounts.filter { allowed.contains($0.id) }), sandbox == .contained {
+                        if let note = Self.note(engine, model) {
+                            Text(note).font(.system(size: 11)).foregroundStyle(.tertiary)
+                        }
+                        if let note = model.library.sandboxNote(
+                            engine.id, level: .contained, providers: model.accounts.filter { allowed.contains($0.id) }),
+                            sandbox == .contained
+                        {
                             Text(note).font(.system(size: 11)).foregroundStyle(.tertiary)
                         }
                     }
@@ -678,7 +827,8 @@ struct EngineAccessList: View {
             }
             ForEach(model.accounts.filter { allowed.contains($0.id) }) { account in
                 if let reason = model.library.cantRun(account, engines: engines) {
-                    Label(reason, systemImage: "exclamationmark.triangle.fill").font(.system(size: 11.5)).foregroundStyle(Palette.attention)
+                    Label(reason, systemImage: "exclamationmark.triangle.fill").font(.system(size: 11.5))
+                        .foregroundStyle(Palette.attention)
                 }
             }
         }
@@ -709,15 +859,21 @@ struct SandboxPicker: View {
             Picker("Tasks run with", selection: $sandbox) {
                 ForEach([Sandbox.developer, .contained], id: \.self) { level in
                     Text(level.title).tag(level)
-                        .selectionDisabled(model.library.sandboxUnavailable(level, providers: model.accounts.filter { accounts.contains($0.id) }, engines: engines) != nil)
+                        .selectionDisabled(
+                            model.library.sandboxUnavailable(
+                                level, providers: model.accounts.filter { accounts.contains($0.id) }, engines: engines)
+                                != nil)
                 }
             }
             .pickerStyle(.segmented)
-            Text(model.library.sandboxUnavailable(.contained, providers: model.accounts.filter { accounts.contains($0.id) }, engines: engines)
-                 ?? (sandbox == .developer
-                     ? "Like Terminal: the internet, your home folder and your developer tools. Known password and key stores stay out."
-                     : "Only the folders above, and commands have no internet."))
-                .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(
+                model.library.sandboxUnavailable(
+                    .contained, providers: model.accounts.filter { accounts.contains($0.id) }, engines: engines)
+                    ?? (sandbox == .developer
+                        ? "Like Terminal: the internet, your home folder and your developer tools. Known password and key stores stay out."
+                        : "Only the folders above, and commands have no internet.")
+            )
+            .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -746,11 +902,15 @@ struct AppAccess: View {
             // What it may do, as the approval window showed it.
             ApprovalScope(app: grant.app, tools: grant.tools, folders: folders).padding(.bottom, 4)
             ForEach(model.accounts) { account in
-                Toggle(isOn: Binding(get: { accounts.contains(account.id) }, set: { on in
-                    var changed = accounts
-                    if on { changed.insert(account.id) } else { changed.remove(account.id) }
-                    model.setAccess(grant, accounts: changed, engines: engines, sandbox: grant.sandbox)
-                })) {
+                Toggle(
+                    isOn: Binding(
+                        get: { accounts.contains(account.id) },
+                        set: { on in
+                            var changed = accounts
+                            if on { changed.insert(account.id) } else { changed.remove(account.id) }
+                            model.setAccess(grant, accounts: changed, engines: engines, sandbox: grant.sandbox)
+                        })
+                ) {
                     Text(account.label).font(.system(size: 12.5))
                 }
                 .toggleStyle(.checkbox).tint(Palette.fill)
@@ -759,9 +919,13 @@ struct AppAccess: View {
             }
             // The choice is only an app's with workspace tools; one with fewer is always contained, and says so.
             if grant.tools == .workspace {
-                SandboxPicker(model: model, accounts: accounts, engines: engines,
-                              sandbox: Binding(get: { grant.sandbox }, set: { model.setAccess(grant, accounts: accounts, engines: engines, sandbox: $0) }))
-                    .padding(.top, 4)
+                SandboxPicker(
+                    model: model, accounts: accounts, engines: engines,
+                    sandbox: Binding(
+                        get: { grant.sandbox },
+                        set: { model.setAccess(grant, accounts: accounts, engines: engines, sandbox: $0) })
+                )
+                .padding(.top, 4)
             } else {
                 Text("Contained: this app doesn't edit files or run commands, so it can't have developer access.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).padding(.top, 4)
@@ -769,10 +933,14 @@ struct AppAccess: View {
             Text("Limits").font(.system(size: 12, weight: .semibold)).padding(.top, 6)
             AppLimitsEditor(model: model, grant: grant)
             DisclosureGroup("Engines") {
-                EngineAccessList(model: model, allowed: accounts,
-                                 engines: Binding(get: { engines }, set: { model.setAccess(grant, accounts: accounts, engines: $0, sandbox: grant.sandbox) }),
-                                 sandbox: grant.ceiling)
-                    .padding(.top, 4)
+                EngineAccessList(
+                    model: model, allowed: accounts,
+                    engines: Binding(
+                        get: { engines },
+                        set: { model.setAccess(grant, accounts: accounts, engines: $0, sandbox: grant.sandbox) }),
+                    sandbox: grant.ceiling
+                )
+                .padding(.top, 4)
             }
             .font(.system(size: 12))
         }
@@ -784,12 +952,14 @@ struct AppAccess: View {
 struct SettingsView: View {
     /// What the app bundles or downloads, as THIRD_PARTY.md lists it; the texts are in Resources/Licenses.
     static let licenses: [(String, String)] = [
-        ("Goose", "Apache 2.0"), ("OpenCode", "MIT"), ("codex-acp", "Apache 2.0"), ("Node.js", "MIT"), ("GRDB.swift", "MIT"), ("Sparkle", "MIT"),
-        ("claude-agent-acp", "Apache 2.0"), ("codex-acp's npm packages", "MIT, ISC, BSD-3-Clause, Apache 2.0"),
+        ("Goose", "Apache 2.0"), ("OpenCode", "MIT"), ("codex-acp", "Apache 2.0"), ("Node.js", "MIT"),
+        ("GRDB.swift", "MIT"), ("Sparkle", "MIT"),
+        ("claude-agent-acp", "Apache 2.0"), ("codex-acp's npm packages", "MIT, ISC, BSD-3-Clause, Apache 2.0")
     ]
 
     enum Pane: String, CaseIterable, Identifiable {
-        case general = "General", providers = "Providers", engines = "Engines", apps = "Apps", activity = "Activity", privacy = "Privacy", advanced = "Advanced", about = "About"
+        case general = "General", providers = "Providers", engines = "Engines", apps = "Apps", activity = "Activity",
+            privacy = "Privacy", advanced = "Advanced", about = "About"
         var id: String { rawValue }
         var symbol: String {
             switch self {
@@ -818,7 +988,8 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(Pane.allCases, selection: Binding(get: { section }, set: { if let value = $0 { section = value } })) { item in
+            List(Pane.allCases, selection: Binding(get: { section }, set: { if let value = $0 { section = value } })) {
+                item in
                 Label(item.rawValue, systemImage: item.symbol).tag(item)
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 190)
@@ -847,13 +1018,24 @@ struct SettingsView: View {
         Section {
             Toggle("Open Agneta at login", isOn: $openAtLogin).tint(Palette.fill)
                 .onChange(of: openAtLogin) { _, on in
-                    do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } } catch { openAtLogin = !on }
+                    do {
+                        if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                    } catch { openAtLogin = !on }
                 }
         }
         Section {
             if model.updates.enabled {
-                Toggle("Check for updates automatically", isOn: Binding(get: { model.updates.checksAutomatically }, set: { model.updates.checksAutomatically = $0 })).tint(Palette.fill)
-                Toggle("Download and install automatically", isOn: Binding(get: { model.updates.downloadsAutomatically }, set: { model.updates.downloadsAutomatically = $0 })).tint(Palette.fill)
+                Toggle(
+                    "Check for updates automatically",
+                    isOn: Binding(
+                        get: { model.updates.checksAutomatically }, set: { model.updates.checksAutomatically = $0 })
+                ).tint(Palette.fill)
+                Toggle(
+                    "Download and install automatically",
+                    isOn: Binding(
+                        get: { model.updates.downloadsAutomatically },
+                        set: { model.updates.downloadsAutomatically = $0 })
+                ).tint(Palette.fill)
                     .disabled(!model.updates.checksAutomatically)
                 Button("Check Now") { model.updates.check() }.disabled(!model.updates.canCheck)
             } else {
@@ -862,10 +1044,14 @@ struct SettingsView: View {
         } header: {
             Text("Updates")
         } footer: {
-            if model.updates.enabled { Text("Updates come from Agneta's GitHub releases and install only when no task is running.") }
+            if model.updates.enabled {
+                Text("Updates come from Agneta's GitHub releases and install only when no task is running.")
+            }
         }
         Section {
-            LabeledContent("Apps connect at") { Text(verbatim: "ws://127.0.0.1:\(model.port)/acp").textSelection(.enabled).foregroundStyle(.secondary) }
+            LabeledContent("Apps connect at") {
+                Text(verbatim: "ws://127.0.0.1:\(model.port)/acp").textSelection(.enabled).foregroundStyle(.secondary)
+            }
         } footer: {
             Text("Only apps on this Mac can connect, and each one asks you first.")
         }
@@ -881,8 +1067,12 @@ struct SettingsView: View {
                         Text(account.label).font(.system(size: 13, weight: .semibold))
                         Text([account.kind.plan, account.email].compactMap { $0 }.joined(separator: " · "))
                             .font(.system(size: 12)).foregroundStyle(.secondary)
-                        if let engine = model.library.engine(for: account.kind), let download = model.library.downloads[engine] {
-                            DownloadStatus(download: download) { model.library.download(download.engine, reason: "retry") }.padding(.top, 3)
+                        if let engine = model.library.engine(for: account.kind),
+                            let download = model.library.downloads[engine]
+                        {
+                            DownloadStatus(download: download) {
+                                model.library.download(download.engine, reason: "retry")
+                            }.padding(.top, 3)
                         }
                     }
                     Spacer()
@@ -929,7 +1119,11 @@ struct SettingsView: View {
                 Button("Add") {
                     let kind = keyKind, value = key
                     key = ""
-                    Task { do { try await model.addAPIKey(kind, key: value); keyError = nil } catch { keyError = "Couldn't store the key in the Keychain." } }
+                    Task {
+                        do { try await model.addAPIKey(kind, key: value); keyError = nil } catch {
+                            keyError = "Couldn't store the key in the Keychain."
+                        }
+                    }
                 }
                 .disabled(key.count < 20)
             }
@@ -937,7 +1131,9 @@ struct SettingsView: View {
         } header: {
             Text("Add an API key")
         } footer: {
-            Text("Pay as you go on your provider account. Keys stay in your Keychain and reach Agneta's engine only while a task runs.")
+            Text(
+                "Pay as you go on your provider account. Keys stay in your Keychain and reach Agneta's engine only while a task runs."
+            )
         }
     }
 
@@ -957,7 +1153,8 @@ struct SettingsView: View {
     private func confirmSignOut(_ account: AccountRecord) {
         let alert = NSAlert()
         alert.messageText = "Sign out of \(account.label)?"
-        alert.informativeText = "Running tasks on it stop, and Agneta forgets its sign-in on this Mac. Your \(account.kind.provider) account itself isn't changed."
+        alert.informativeText =
+            "Running tasks on it stop, and Agneta forgets its sign-in on this Mac. Your \(account.kind.provider) account itself isn't changed."
         // Cancel is the Return default; the destructive choice takes a click.
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Sign Out")
@@ -972,19 +1169,31 @@ struct SettingsView: View {
             ForEach(AccountKind.allCases, id: \.self) { kind in
                 let options = model.library.engines(for: kind)
                 if options.count > 1 {
-                    Picker(Self.providerName(kind), selection: Binding(get: { model.library.chosenEngine(for: kind) ?? "" }, set: { model.library.select($0, for: kind) })) {
-                        ForEach(options, id: \.id) { engine in Text(model.library.choice(engine, for: kind)).tag(engine.id) }
+                    Picker(
+                        Self.providerName(kind),
+                        selection: Binding(
+                            get: { model.library.chosenEngine(for: kind) ?? "" },
+                            set: { model.library.select($0, for: kind) })
+                    ) {
+                        ForEach(options, id: \.id) { engine in
+                            Text(model.library.choice(engine, for: kind)).tag(engine.id)
+                        }
                     }
                 } else {
                     LabeledContent(Self.providerName(kind)) {
-                        Text(model.library.engine(for: kind).map { model.library.name($0) } ?? (kind == .chatGPT ? "Needs Codex" : "Needs Claude Code")).foregroundStyle(.secondary)
+                        Text(
+                            model.library.engine(for: kind).map { model.library.name($0) }
+                                ?? (kind == .chatGPT ? "Needs Codex" : "Needs Claude Code")
+                        ).foregroundStyle(.secondary)
                     }
                 }
             }
         } header: {
             Text("Default engine for each provider")
         } footer: {
-            Text("Apps choose the engine for each task; these are used when they don't. A ChatGPT plan works only with Codex; a Claude plan with Claude Code, or Goose running that Claude Code. Through Goose, Claude Code uses all its own tools and your claude.ai connectors, as in Terminal: what an app's tasks may do isn't limited there, apart from the folders they can reach.")
+            Text(
+                "Apps choose the engine for each task; these are used when they don't. A ChatGPT plan works only with Codex; a Claude plan with Claude Code, or Goose running that Claude Code. Through Goose, Claude Code uses all its own tools and your claude.ai connectors, as in Terminal: what an app's tasks may do isn't limited there, apart from the folders they can reach."
+            )
         }
         Section {
             // Each engine as its source describes it (EngineSource.all), with the install it runs through, if any.
@@ -995,7 +1204,9 @@ struct SettingsView: View {
         } header: {
             Text("Engines")
         } footer: {
-            Text("Goose is built in. OpenCode and Codex's runtime download the first time they're needed, pinned and checked. Claude Code and Codex are your own installs; when you have more than one, choose which.")
+            Text(
+                "Goose is built in. OpenCode and Codex's runtime download the first time they're needed, pinned and checked. Claude Code and Codex are your own installs; when you have more than one, choose which."
+            )
         }
     }
 
@@ -1006,8 +1217,13 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(source.name).font(.system(size: 13, weight: .semibold))
             Text(source.origin(model.library)).font(.system(size: 12)).foregroundStyle(.secondary)
-            Text("Serves " + AccountKind.allCases.filter { ProviderEngines.supported(by: $0).contains(id) }.map { Self.providerName($0) }.joined(separator: ", "))
-                .font(.system(size: 11)).foregroundStyle(.tertiary)
+            Text(
+                "Serves "
+                    + AccountKind.allCases.filter { ProviderEngines.supported(by: $0).contains(id) }.map {
+                        Self.providerName($0)
+                    }.joined(separator: ", ")
+            )
+            .font(.system(size: 11)).foregroundStyle(.tertiary)
             if let download = model.library.downloads[id] {
                 DownloadStatus(download: download) { model.library.download(id, reason: "retry") }.padding(.top, 3)
             } else if case .unavailable(let reason)? = model.library.catalog.entries[id]?.state {
@@ -1029,16 +1245,22 @@ struct SettingsView: View {
     @ViewBuilder private var appsPane: some View {
         Section {
             if model.grants.isEmpty {
-                Text("No apps yet. When an app asks to use Agneta, you decide here what it may use.").foregroundStyle(.secondary)
+                Text("No apps yet. When an app asks to use Agneta, you decide here what it may use.").foregroundStyle(
+                    .secondary)
             }
             ForEach(model.grants.values.sorted { $0.created < $1.created }, id: \.id) { grant in
                 HStack(spacing: 12) {
                     AppIcon(name: grant.app, identifier: grant.verified ? grant.identifier : nil, size: 32)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(grant.app).font(.system(size: 13, weight: .semibold))
-                        Text(([grant.verified ? "Verified" : "Not verified", grant.accounts.map { model.label(ofAccount: $0) }.joined(separator: ", ")]
-                              + grant.limits.parts).joined(separator: " · "))
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                        Text(
+                            ([
+                                grant.verified ? "Verified" : "Not verified",
+                                grant.accounts.map { model.label(ofAccount: $0) }.joined(separator: ", ")
+                            ]
+                                + grant.limits.parts).joined(separator: " · ")
+                        )
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("Remove Access") { model.removeAccess(grant.id) }
@@ -1049,7 +1271,9 @@ struct SettingsView: View {
         } header: {
             Text("Apps that can use Agneta")
         } footer: {
-            Text("An app may use the providers ticked for it, and chooses an engine for each task from those under Engines. Its limits are yours to set: it's told when one is reached.")
+            Text(
+                "An app may use the providers ticked for it, and chooses an engine for each task from those under Engines. Its limits are yours to set: it's told when one is reached."
+            )
         }
     }
 
@@ -1061,8 +1285,11 @@ struct SettingsView: View {
                     AppIcon(name: task.app, identifier: task.appIdentifier, size: 32)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(task.title).font(.system(size: 13, weight: .semibold))
-                        Text("\(task.app) · \(model.label(ofAccount: task.account)) · \(task.sandbox.title) · \(task.started.elapsed)" + (task.cost.map { String(format: " · about $%.2f at API prices", $0) } ?? ""))
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                        Text(
+                            "\(task.app) · \(model.label(ofAccount: task.account)) · \(task.sandbox.title) · \(task.started.elapsed)"
+                                + (task.cost.map { String(format: " · about $%.2f at API prices", $0) } ?? "")
+                        )
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                     Spacer()
                     if task.running { LiveDot() }
@@ -1076,8 +1303,12 @@ struct SettingsView: View {
         }
         Section {
             if model.history.isEmpty {
-                Text(model.historyDays == 0 ? "Agneta doesn't keep task history." : "Finished tasks appear here for \(Self.retentionText(model.historyDays)).")
-                    .foregroundStyle(.secondary)
+                Text(
+                    model.historyDays == 0
+                        ? "Agneta doesn't keep task history."
+                        : "Finished tasks appear here for \(Self.retentionText(model.historyDays))."
+                )
+                .foregroundStyle(.secondary)
             }
             ForEach(model.history) { record in
                 HistoryRow(record: record, account: model.label(ofAccount: record.account)) {
@@ -1088,8 +1319,11 @@ struct SettingsView: View {
             Text("Earlier")
         } footer: {
             if model.recovered.engines + model.recovered.tasks > 0 {
-                Text(model.recovered.tasks == 1 ? "1 task was running when Agneta last quit unexpectedly; it was stopped." :
-                        "\(model.recovered.tasks) tasks were running when Agneta last quit unexpectedly; they were stopped.")
+                Text(
+                    model.recovered.tasks == 1
+                        ? "1 task was running when Agneta last quit unexpectedly; it was stopped."
+                        : "\(model.recovered.tasks) tasks were running when Agneta last quit unexpectedly; they were stopped."
+                )
             }
         }
     }
@@ -1111,10 +1345,14 @@ struct SettingsView: View {
         } header: {
             Text("What Agneta keeps")
         } footer: {
-            Text("Agneta sends nothing to its makers. What apps ask goes only to the provider each task runs on, under that provider's terms.")
+            Text(
+                "Agneta sends nothing to its makers. What apps ask goes only to the provider each task runs on, under that provider's terms."
+            )
         }
         Section {
-            Picker("Keep task history", selection: Binding(get: { model.historyDays }, set: { model.setHistoryDays($0) })) {
+            Picker(
+                "Keep task history", selection: Binding(get: { model.historyDays }, set: { model.setHistoryDays($0) })
+            ) {
                 Text("A week").tag(7)
                 Text("30 days").tag(30)
                 Text("90 days").tag(90)
@@ -1132,8 +1370,10 @@ struct SettingsView: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Reset Agneta").font(.system(size: 13, weight: .semibold))
-                    Text("Signs out of every provider, removes app access, history, logs and downloads, and starts over.")
-                        .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text(
+                        "Signs out of every provider, removes app access, history, logs and downloads, and starts over."
+                    )
+                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Button("Reset Agneta…", role: .destructive) { confirmReset() }.disabled(model.resetting)
@@ -1150,16 +1390,28 @@ struct SettingsView: View {
 
     @ViewBuilder private var advancedPane: some View {
         Section {
-            Toggle("Allow diagnostic tools", isOn: Binding(get: { model.diagnosticsToken != nil }, set: { on in
-                if on { Task { await model.allowDiagnostics() } } else { model.stopDiagnostics() }
-            })).tint(Palette.fill)
+            Toggle(
+                "Allow diagnostic tools",
+                isOn: Binding(
+                    get: { model.diagnosticsToken != nil },
+                    set: { on in
+                        if on { Task { await model.allowDiagnostics() } } else { model.stopDiagnostics() }
+                    })
+            ).tint(Palette.fill)
             if let token = model.diagnosticsToken {
-                LabeledContent("Address") { Text(verbatim: model.diagnosticsURL).textSelection(.enabled).foregroundStyle(.secondary) }
-                LabeledContent("Token") { Text(verbatim: token).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle) }
+                LabeledContent("Address") {
+                    Text(verbatim: model.diagnosticsURL).textSelection(.enabled).foregroundStyle(.secondary)
+                }
+                LabeledContent("Token") {
+                    Text(verbatim: token).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                        .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }
                 HStack {
                     Button("Copy Setup for Claude Code") {
                         NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString("claude mcp add --transport http agneta-diagnostics \(model.diagnosticsURL) --header \"Authorization: Bearer \(token)\"", forType: .string)
+                        NSPasteboard.general.setString(
+                            "claude mcp add --transport http agneta-diagnostics \(model.diagnosticsURL) --header \"Authorization: Bearer \(token)\"",
+                            forType: .string)
                     }
                     Spacer()
                     Button("New Token") { Task { await model.allowDiagnostics() } }
@@ -1169,7 +1421,9 @@ struct SettingsView: View {
         } header: {
             Text("Diagnostics")
         } footer: {
-            Text("Tools you give this token, such as Claude Code, can read every task's trace on this Mac: prompts, tool calls and results included. Turn it off or make a new token to stop them.")
+            Text(
+                "Tools you give this token, such as Claude Code, can read every task's trace on this Mac: prompts, tool calls and results included. Turn it off or make a new token to stop them."
+            )
         }
         Section {
             LabeledContent("Running at once", value: "8 tasks, 3 per provider")
@@ -1189,9 +1443,18 @@ struct SettingsView: View {
         } else if installs.count == 1 {
             LabeledContent(program.title, value: installs[0].label)
         } else {
-            Picker(program.title, selection: Binding(get: { model.library.program(program.key)?.id ?? "" },
-                                                     set: { id in if let install = installs.first(where: { $0.id == id }) { model.library.choose(program.key, install: install) } })) {
-                ForEach(installs) { install in Text(install.label).tag(install.id).selectionDisabled(!install.supported) }
+            Picker(
+                program.title,
+                selection: Binding(
+                    get: { model.library.program(program.key)?.id ?? "" },
+                    set: { id in
+                        if let install = installs.first(where: { $0.id == id }) {
+                            model.library.choose(program.key, install: install)
+                        }
+                    })
+            ) {
+                ForEach(installs) { install in Text(install.label).tag(install.id).selectionDisabled(!install.supported)
+                }
             }
         }
     }
@@ -1199,7 +1462,8 @@ struct SettingsView: View {
     private func confirmClearHistory() {
         let alert = NSAlert()
         alert.messageText = "Clear task history?"
-        alert.informativeText = "Agneta forgets the tasks listed in Activity. Running tasks and your providers aren't affected."
+        alert.informativeText =
+            "Agneta forgets the tasks listed in Activity. Running tasks and your providers aren't affected."
         // Cancel is the Return default; the destructive choice takes a click.
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Clear History")
@@ -1215,17 +1479,34 @@ struct SettingsView: View {
                 MarkTile(size: 56)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Agneta").font(.system(size: 18, weight: .semibold))
-                    Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") (build \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"), \(Bundle.main.object(forInfoDictionaryKey: "AgnetaCommit") as? String ?? "–"))" + (model.isDevelopment ? " · Development" : ""))
-                        .foregroundStyle(.secondary)
-                    Text("Open source under the Apache License 2.0. Your sign-ins and keys stay on this Mac.").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(
+                        "Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") (build \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"), \(Bundle.main.object(forInfoDictionaryKey: "AgnetaCommit") as? String ?? "–"))"
+                            + (model.isDevelopment ? " · Development" : "")
+                    )
+                    .foregroundStyle(.secondary)
+                    Text("Open source under the Apache License 2.0. Your sign-ins and keys stay on this Mac.").font(
+                        .system(size: 12)
+                    ).foregroundStyle(.secondary)
                 }
             }
             .padding(.vertical, 6)
         }
         Section {
-            LabeledContent("Agent engines", value: "Goose \(model.library.lockedVersion("goose")); OpenCode \(model.library.lockedVersion("opencode")), downloaded when first needed")
-            LabeledContent("Codex adapter", value: "codex-acp \(model.library.lockedVersion("codex", entry: "adapter")) on Node.js \(model.library.lockedVersion("codex", entry: "node"))")
-            LabeledContent("Claude Code adapter", value: "claude-agent-acp \(model.library.lockedVersion("runtimes", entry: "claude-agent-acp")), downloaded on first use")
+            LabeledContent(
+                "Agent engines",
+                value:
+                    "Goose \(model.library.lockedVersion("goose")); OpenCode \(model.library.lockedVersion("opencode")), downloaded when first needed"
+            )
+            LabeledContent(
+                "Codex adapter",
+                value:
+                    "codex-acp \(model.library.lockedVersion("codex", entry: "adapter")) on Node.js \(model.library.lockedVersion("codex", entry: "node"))"
+            )
+            LabeledContent(
+                "Claude Code adapter",
+                value:
+                    "claude-agent-acp \(model.library.lockedVersion("runtimes", entry: "claude-agent-acp")), downloaded on first use"
+            )
             LabeledContent("Apps connect at", value: "127.0.0.1:\(model.port)")
         } header: {
             Text("Components")
@@ -1238,7 +1519,9 @@ struct SettingsView: View {
         } header: {
             Text("Open-source licenses")
         } footer: {
-            Text("Claude Code and Codex are your own installs, under their makers' terms; Agneta runs them unchanged and never bundles them. The claude-agent-acp adapter is downloaded from its GitHub release on first use. Provider names and logos belong to their owners.")
+            Text(
+                "Claude Code and Codex are your own installs, under their makers' terms; Agneta runs them unchanged and never bundles them. The claude-agent-acp adapter is downloaded from its GitHub release on first use. Provider names and logos belong to their owners."
+            )
         }
     }
 }
@@ -1255,10 +1538,12 @@ struct HistoryRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(record.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                 // Two lines rather than cut short: the outcome and cost come last.
-                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2).fixedSize(
+                    horizontal: false, vertical: true)
             }
             Spacer()
-            Text(record.started.formatted(.relative(presentation: .named))).font(.system(size: 12)).foregroundStyle(.tertiary)
+            Text(record.started.formatted(.relative(presentation: .named))).font(.system(size: 12)).foregroundStyle(
+                .tertiary)
             Button("Details", action: details)
         }
         .padding(.vertical, 3)
@@ -1267,7 +1552,11 @@ struct HistoryRow: View {
 
     private var detail: String {
         var parts = [record.app, account]
-        if let ended = record.ended { parts.append(Duration.seconds(max(ended.timeIntervalSince(record.started), 1)).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated, maximumUnitCount: 1))) }
+        if let ended = record.ended {
+            parts.append(
+                Duration.seconds(max(ended.timeIntervalSince(record.started), 1)).formatted(
+                    .units(allowed: [.hours, .minutes, .seconds], width: .abbreviated, maximumUnitCount: 1)))
+        }
         if let outcome { parts.append(outcome) }
         if let cost = record.cost { parts.append(String(format: "about $%.2f", cost)) }
         return parts.joined(separator: " · ")
@@ -1305,9 +1594,12 @@ struct DefaultsSheet: View {
     /// An option's values and names, grouped or not; the chosen value stays listed even if the engine no longer offers it.
     private func choices(_ category: String, keeping chosen: String?) -> [(value: String, name: String)] {
         let option = options.first { $0["category"]?.stringValue == category }
-        var list: [(value: String, name: String)] = (option?["options"]?.arrayValue ?? []).flatMap { item -> [(value: String, name: String)] in
+        var list: [(value: String, name: String)] = (option?["options"]?.arrayValue ?? []).flatMap {
+            item -> [(value: String, name: String)] in
             if let value = item["value"]?.stringValue { return [(value, item["name"]?.stringValue ?? value)] }
-            return (item["options"]?.arrayValue ?? []).compactMap { inner in inner["value"]?.stringValue.map { ($0, inner["name"]?.stringValue ?? $0) } }
+            return (item["options"]?.arrayValue ?? []).compactMap { inner in
+                inner["value"]?.stringValue.map { ($0, inner["name"]?.stringValue ?? $0) }
+            }
         }
         if let chosen, !list.contains(where: { $0.value == chosen }) { list.append((chosen, chosen)) }
         return list
@@ -1330,8 +1622,10 @@ struct DefaultsSheet: View {
             }
             if models.isEmpty && efforts.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Agneta hasn't seen what \(engineName) offers on this provider yet. It can ask now; nothing is sent to the model.")
-                        .font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
+                    Text(
+                        "Agneta hasn't seen what \(engineName) offers on this provider yet. It can ask now; nothing is sent to the model."
+                    )
+                    .font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
                         Button(loading ? "Asking \(engineName)…" : "Show the Choices", action: load).disabled(loading)
                         if loading { ProgressView().controlSize(.small) }
@@ -1359,13 +1653,18 @@ struct DefaultsSheet: View {
                     }
                 }
                 .font(.system(size: 13))
-                if efforts.isEmpty { Text("\(engineName) doesn't offer a choice of effort here.").font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                if efforts.isEmpty {
+                    Text("\(engineName) doesn't offer a choice of effort here.").font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                }
             }
             HStack(spacing: 8) {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { model.setDefaults(account, chosen); dismiss() }
-                    .glassButton(prominent: true).keyboardShortcut(.defaultAction)
+                Button("Save") {
+                    model.setDefaults(account, chosen); dismiss()
+                }
+                .glassButton(prominent: true).keyboardShortcut(.defaultAction)
             }
         }
         .padding(22)

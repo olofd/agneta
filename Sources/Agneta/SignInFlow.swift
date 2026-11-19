@@ -38,8 +38,10 @@ final class SignInFlow {
     /// Signs in with `kind`'s own login into the account folder `home`, then runs `signedIn` (which keeps the account).
     /// `discard` runs if the attempt ends any other way: cancelled, failed, closed or replaced. Returns the attempt, for
     /// the window to name.
-    func start(_ kind: AccountKind, home: URL, account: String, discard: (@MainActor () -> Void)? = nil,
-               signedIn: @escaping @MainActor () async -> Void) -> UUID {
+    func start(
+        _ kind: AccountKind, home: URL, account: String, discard: (@MainActor () -> Void)? = nil,
+        signedIn: @escaping @MainActor () async -> Void
+    ) -> UUID {
         abandon()
         let attempt = UUID()
         self.attempt = attempt
@@ -47,7 +49,9 @@ final class SignInFlow {
         state = State(kind: kind, text: "Starting…")
         task = _Concurrency.Task { [weak self] in
             guard let self else { return }
-            let progress: SignInProgress = { step in _Concurrency.Task { @MainActor in self.show(step, attempt: attempt) } }
+            let progress: SignInProgress = { step in
+                _Concurrency.Task { @MainActor in self.show(step, attempt: attempt) }
+            }
             do {
                 try await signIn(kind, home: home, progress: progress)
                 guard self.attempt == attempt, !_Concurrency.Task.isCancelled else { return }
@@ -58,7 +62,9 @@ final class SignInFlow {
                 state?.text = "\(kind.provider) is connected."
             } catch {
                 if failed(error, attempt: attempt) {
-                    log.error("sign-in-failed", ["kind": .string(kind.rawValue), "reason": .string(String(describing: type(of: error)))])
+                    log.error(
+                        "sign-in-failed",
+                        ["kind": .string(kind.rawValue), "reason": .string(String(describing: type(of: error)))])
                 }
             }
         }
@@ -71,18 +77,25 @@ final class SignInFlow {
         case .chatGPT:
             // A ChatGPT plan runs on the user's own Codex, signed in with Codex's own login.
             guard let cli = library.program("codex") else {
-                throw SignInError.provider((library.installs["codex"] ?? []).isEmpty ? "Codex isn't installed. Install Codex, then try again"
-                                           : "Your Codex is older than \(CLILocator.codexMinimum), which Agneta needs. Update Codex, then try again")
+                throw SignInError.provider(
+                    (library.installs["codex"] ?? []).isEmpty
+                        ? "Codex isn't installed. Install Codex, then try again"
+                        : "Your Codex is older than \(CLILocator.codexMinimum), which Agneta needs. Update Codex, then try again"
+                )
             }
-            try await CodexSignIn(cli: cli.path, codexHome: CodexAdapter.codexHome(account: home)).run(progress: progress)
+            try await CodexSignIn(cli: cli.path, codexHome: CodexAdapter.codexHome(account: home)).run(
+                progress: progress)
         case .claude:
             // The user's own Claude Code signs in; the adapter its engines run it through is fetched now too.
             guard let cli = library.program("claude") else {
-                throw SignInError.provider("Claude Code isn't installed. Install the Claude app or Claude Code, then try again")
+                throw SignInError.provider(
+                    "Claude Code isn't installed. Install the Claude app or Claude Code, then try again")
             }
             _ = try await library.install("claude-code", progress: progress)
-            try await ClaudeCodeSignIn(cli: cli.path, configDirectory: home.appending(path: "claude", directoryHint: .isDirectory))
-                .run(progress: progress, code: { await self.waitForCode() })
+            try await ClaudeCodeSignIn(
+                cli: cli.path, configDirectory: home.appending(path: "claude", directoryHint: .isDirectory)
+            )
+            .run(progress: progress, code: { await self.waitForCode() })
         case .openAIKey, .anthropicKey:
             throw SignInError.provider("An API key is added, not signed in to")
         }

@@ -43,9 +43,13 @@ public actor Router {
         /// Whose usage this grant's tasks count toward (AppMeter).
         public var meter: String { countsAs ?? id }
 
-        public init(id: String = UUID().uuidString, app: String, identifier: String? = nil, team: String? = nil, verified: Bool = false,
-                    accounts: [String], engines: EngineAllowance = .all, created: Date = Date(), tools: SessionPolicy.Tools = .appOnly,
-                    folders: [String] = [], remembered: Bool = true, sandbox: Sandbox = .default, limits: AppLimits = .none) {
+        public init(
+            id: String = UUID().uuidString, app: String, identifier: String? = nil, team: String? = nil,
+            verified: Bool = false,
+            accounts: [String], engines: EngineAllowance = .all, created: Date = Date(),
+            tools: SessionPolicy.Tools = .appOnly,
+            folders: [String] = [], remembered: Bool = true, sandbox: Sandbox = .default, limits: AppLimits = .none
+        ) {
             self.sandbox = sandbox
             self.limits = limits
             self.id = id
@@ -147,7 +151,10 @@ public actor Router {
         public var engines: [String]?
         public var sandboxAsked: Sandbox?
 
-        public init(id: UUID = UUID(), app: String, peer: PeerIdentity? = nil, code: String? = nil, tools: SessionPolicy.Tools = .appOnly, folders: [URL] = []) {
+        public init(
+            id: UUID = UUID(), app: String, peer: PeerIdentity? = nil, code: String? = nil,
+            tools: SessionPolicy.Tools = .appOnly, folders: [URL] = []
+        ) {
             self.id = id
             self.app = app
             self.peer = peer
@@ -252,8 +259,10 @@ public actor Router {
         public var unpaired: Int
         public var unpairedFrame: Int
         public var unpairedFor: Duration
-        public init(global: Int = 8, perAccount: Int = 3, queue: Int = 32, limitGrace: Duration = .seconds(10),
-                    unpaired: Int = 16, unpairedFrame: Int = 256 << 10, unpairedFor: Duration = .seconds(600)) {
+        public init(
+            global: Int = 8, perAccount: Int = 3, queue: Int = 32, limitGrace: Duration = .seconds(10),
+            unpaired: Int = 16, unpairedFrame: Int = 256 << 10, unpairedFor: Duration = .seconds(600)
+        ) {
             self.unpaired = unpaired
             self.unpairedFrame = unpairedFrame
             self.unpairedFor = unpairedFor
@@ -316,8 +325,12 @@ public actor Router {
     var onceTokens: [UUID: String] = [:]
     let commit: Commit?
 
-    public init(context: PolicyContext, engines: EngineSource, traces: Traces? = nil, concurrency: Concurrency = .init(), commit: Commit? = nil,
-                now: @escaping @Sendable () -> Date = { Date() }, calendar: Calendar = .autoupdatingCurrent, approve: @escaping Approve) {
+    public init(
+        context: PolicyContext, engines: EngineSource, traces: Traces? = nil, concurrency: Concurrency = .init(),
+        commit: Commit? = nil,
+        now: @escaping @Sendable () -> Date = { Date() }, calendar: Calendar = .autoupdatingCurrent,
+        approve: @escaping Approve
+    ) {
         self.now = now
         self.calendar = calendar
         self.commit = commit
@@ -333,7 +346,10 @@ public actor Router {
     ///   - billing: `subscription` or `api-key`, so traces can say what a cost means.
     ///   - runner: `.native` when the account's provider runs its own tools whatever the engine (a Claude plan runs
     ///     Claude Code); engines that always do (Claude Code, Codex) are native on any account (`runner(account:engine:)`).
-    public func add(account id: String, label: String, runner: ToolRunner = .brokered, kind: AccountKind, billing: String = "unknown") {
+    public func add(
+        account id: String, label: String, runner: ToolRunner = .brokered, kind: AccountKind,
+        billing: String = "unknown"
+    ) {
         accounts[id] = (label, runner, kind, billing)
         needsSignIn.remove(id)
         accessChanged()
@@ -349,7 +365,8 @@ public actor Router {
 
     /// Whether a grant is for this app: the same verified signing identity (identifier and team), or, for an app Agneta
     /// can't verify, the same name. Pairing again replaces such an app's access instead of adding to it.
-    public static func sameApp(_ grant: Grant, app: String, identifier: String?, team: String?, verified: Bool) -> Bool {
+    public static func sameApp(_ grant: Grant, app: String, identifier: String?, team: String?, verified: Bool) -> Bool
+    {
         guard grant.verified == verified else { return false }
         return verified ? grant.identifier == identifier && grant.team == team : grant.app == app
     }
@@ -359,7 +376,9 @@ public actor Router {
 
     /// Changes which providers and engines an app may use, for every connection holding the grant, and saves it.
     /// Sessions that no longer fit (on a provider or engine taken away) stop; the app hears `agneta/accessChanged`.
-    public func setAccess(grant id: String, accounts allowed: [String], engines: EngineAllowance, sandbox: Sandbox) async throws {
+    public func setAccess(grant id: String, accounts allowed: [String], engines: EngineAllowance, sandbox: Sandbox)
+        async throws
+    {
         for (hash, grant) in tokens where grant.id == id {
             var changed = grant
             changed.accounts = allowed
@@ -381,14 +400,24 @@ public actor Router {
     func apply(_ grant: Grant) async {
         for (appID, app) in apps where app.grant?.id == grant.id { apps[appID]?.grant = grant }
         for (session, entry) in sessions where apps[entry.app]?.grant?.id == grant.id {
-            if !Self.fits(account: entry.account, engine: entry.lease.engine.id, policy: entry.policy, sandbox: entry.sandbox, grant: grant) {
+            if !Self.fits(
+                account: entry.account, engine: entry.lease.engine.id, policy: entry.policy, sandbox: entry.sandbox,
+                grant: grant)
+            {
                 await stop(session)
-            } else if uncounted(grant, account: entry.account).contains(entry.lease.engine.id), let spend = grant.limits.spend {
+            } else if uncounted(grant, account: entry.account).contains(entry.lease.engine.id),
+                let spend = grant.limits.spend
+            {
                 // A spending limit set while it ran, on an engine that can't be counted: stopped by that limit.
                 let name = catalog.entries[entry.lease.engine.id]?.name ?? entry.lease.engine.id
-                let hit = LimitHit(limit: "appSpend", value: .double(spend.max), setBy: "user",
-                                   extra: ["period": .string(spend.period.rawValue),
-                                           "reason": .string("\(name) reports no cost, so it can't run under the spending limit you set for this app in Agneta")])
+                let hit = LimitHit(
+                    limit: "appSpend", value: .double(spend.max), setBy: "user",
+                    extra: [
+                        "period": .string(spend.period.rawValue),
+                        "reason": .string(
+                            "\(name) reports no cost, so it can't run under the spending limit you set for this app in Agneta"
+                        )
+                    ])
                 await stop(session, byLimit: hit)
             }
         }
@@ -398,7 +427,8 @@ public actor Router {
     /// Whether a session on this account and engine, with this policy, is within what `grant` allows.
     /// `sandbox`: what the task can really do; a grant narrowed below it (Settings → Apps) stops it.
     static func fits(account: String, engine: String, policy: SessionPolicy, sandbox: Sandbox, grant: Grant) -> Bool {
-        grant.accounts.contains(account) && grant.engines.allows(engine) && GrantScope.check(policy, against: grant) == nil && sandbox <= grant.ceiling
+        grant.accounts.contains(account) && grant.engines.allows(engine)
+            && GrantScope.check(policy, against: grant) == nil && sandbox <= grant.ceiling
     }
 
     /// What an app may use, as it sees it (AccessReport): each provider it may use, with the engines its tasks there
@@ -409,17 +439,26 @@ public actor Router {
             // Engines a spending limit can't count leave the list while it's set, and are named apart.
             let engines = Access.engines(for: account.kind, allowed: allowance(grant, account: id), catalog: catalog)
             let uncounted = uncounted(grant, account: id).filter(catalog.usable).sorted()
-            return AccessReport.Provider(id: id, label: account.label, kind: account.kind.rawValue, paused: paused.contains(id),
-                                         needsSignIn: needsSignIn.contains(id), engines: engines, defaultEngine: engines.first, uncontained: engines.filter(ProviderEngines.uncontained(by: account.kind).contains),
-                                         sandboxLevels: Dictionary(uniqueKeysWithValues: engines.map { ($0, ProviderEngines.sandboxLevels($0, for: account.kind).map(\.rawValue)) }),
-                                         uncounted: uncounted.isEmpty ? nil : uncounted)
+            return AccessReport.Provider(
+                id: id, label: account.label, kind: account.kind.rawValue, paused: paused.contains(id),
+                needsSignIn: needsSignIn.contains(id), engines: engines, defaultEngine: engines.first,
+                uncontained: engines.filter(ProviderEngines.uncontained(by: account.kind).contains),
+                sandboxLevels: Dictionary(
+                    uniqueKeysWithValues: engines.map {
+                        ($0, ProviderEngines.sandboxLevels($0, for: account.kind).map(\.rawValue))
+                    }),
+                uncounted: uncounted.isEmpty ? nil : uncounted)
         }
         let kinds = Set(grant.accounts.compactMap { accounts[$0]?.kind })
-        let engines = catalog.entries.keys.filter { id in grant.engines.allows(id) && kinds.contains { ProviderEngines.supported(by: $0).contains(id) } }
-            .sorted().map(catalog.report)
-        return AccessReport(providers: providers, engines: engines, allowedEngines: grant.engines,
-                            scope: .init(tools: grant.tools.rawValue, folders: grant.folders, sandbox: grant.ceiling.rawValue),
-                            workspace: Self.workspace(of: grant, in: context)?.path(percentEncoded: false), limits: limitsReport(grant)).json
+        let engines = catalog.entries.keys.filter { id in
+            grant.engines.allows(id) && kinds.contains { ProviderEngines.supported(by: $0).contains(id) }
+        }
+        .sorted().map(catalog.report)
+        return AccessReport(
+            providers: providers, engines: engines, allowedEngines: grant.engines,
+            scope: .init(tools: grant.tools.rawValue, folders: grant.folders, sandbox: grant.ceiling.rawValue),
+            workspace: Self.workspace(of: grant, in: context)?.path(percentEncoded: false), limits: limitsReport(grant)
+        ).json
     }
 
     /// What Agneta offers any app, paired or not (`agneta/catalog`): each provider kind, whether one is connected, the
@@ -430,19 +469,32 @@ public actor Router {
         let connected = Set(accounts.values.map(\.kind))
         let providers: [JSONValue] = AccountKind.allCases.map { kind in
             let engines: [JSONValue] = ProviderEngines.supported(by: kind).map { id in
-                var engine: JSONValue = ["id": .string(id), "sandboxLevels": .array(ProviderEngines.sandboxLevels(id, for: kind).map { .string($0.rawValue) })]
-                if ProviderEngines.uncontained(by: kind).contains(id) { engine = engine.setting("uncontained", to: true) }
+                var engine: JSONValue = [
+                    "id": .string(id),
+                    "sandboxLevels": .array(ProviderEngines.sandboxLevels(id, for: kind).map { .string($0.rawValue) })
+                ]
+                if ProviderEngines.uncontained(by: kind).contains(id) {
+                    engine = engine.setting("uncontained", to: true)
+                }
                 return engine
             }
-            return ["kind": .string(kind.rawValue), "name": .string(kind.offerName), "connected": .bool(connected.contains(kind)), "engines": .array(engines)]
+            return [
+                "kind": .string(kind.rawValue), "name": .string(kind.offerName),
+                "connected": .bool(connected.contains(kind)), "engines": .array(engines)
+            ]
         }
         let engines = catalog.entries.keys.sorted().map { id -> JSONValue in
             let report = catalog.report(id)
-            var engine: JSONValue = ["id": .string(report.id), "name": .string(report.name), "state": .string(report.state)]
+            var engine: JSONValue = [
+                "id": .string(report.id), "name": .string(report.name), "state": .string(report.state)
+            ]
             if let reason = report.reason { engine = engine.setting("reason", to: .string(reason)) }
             return engine
         }
-        return ["providers": .array(providers), "engines": .array(engines), "connected": .bool(!accounts.isEmpty), "version": .string(Self.version)]
+        return [
+            "providers": .array(providers), "engines": .array(engines), "connected": .bool(!accounts.isEmpty),
+            "version": .string(Self.version)
+        ]
     }
 
     /// The Codex program this Agneta runs, for what only Codex itself can do outside a task (deleting a saved session).
@@ -470,21 +522,36 @@ public actor Router {
     /// still allow. The engine must be ready: one still downloading is answered with how far along it is (`-32015`),
     /// and one that isn't here but can download starts downloading (`engineWanted`) and is answered the same way.
     /// `sandbox`: the level the task will want, so a default engine is one that can provide it where the app may use one.
-    func taskEngine(account id: String, requested: String?, resuming: Bool, grant: Grant, sandbox: Sandbox) -> Result<any EngineAdapter, RPCError> {
-        guard let account = accounts[id] else { return .failure(RPCError(code: RPCError.invalidParams, message: "This app isn't allowed to use that account")) }
+    func taskEngine(account id: String, requested: String?, resuming: Bool, grant: Grant, sandbox: Sandbox) -> Result<
+        any EngineAdapter, RPCError
+    > {
+        guard let account = accounts[id] else {
+            return .failure(
+                RPCError(code: RPCError.invalidParams, message: "This app isn't allowed to use that account"))
+        }
         let engine: String
         // Under a spending limit that counts this account, an engine that reports no cost can't run: asked for, it's
         // refused with why; a default is never one.
         let uncounted = uncounted(grant, account: id)
-        if let requested, uncounted.contains(requested) { return .failure(accessRefusal(.uncounted(requested), account: id, grant: grant)) }
+        if let requested, uncounted.contains(requested) {
+            return .failure(accessRefusal(.uncounted(requested), account: id, grant: grant))
+        }
         if resuming {
-            guard let saved = requested else { return .failure(RPCError(code: RPCError.invalidParams, message: "This session can't be resumed")) }
-            guard grant.engines.allows(saved) else { return .failure(accessRefusal(.notAllowed(saved), account: id, grant: grant)) }
+            guard let saved = requested else {
+                return .failure(RPCError(code: RPCError.invalidParams, message: "This session can't be resumed"))
+            }
+            guard grant.engines.allows(saved) else {
+                return .failure(accessRefusal(.notAllowed(saved), account: id, grant: grant))
+            }
             engine = saved
         } else {
-            switch Access.engine(for: account.kind, requested: requested, allowed: allowance(grant, account: id), catalog: catalog, sandbox: sandbox) {
+            switch Access.engine(
+                for: account.kind, requested: requested, allowed: allowance(grant, account: id), catalog: catalog,
+                sandbox: sandbox)
+            {
             case .success(let chosen): engine = chosen
-            case .failure(.noEngine) where !uncounted.isEmpty: return .failure(accessRefusal(.uncounted(uncounted.sorted()[0]), account: id, grant: grant))
+            case .failure(.noEngine) where !uncounted.isEmpty:
+                return .failure(accessRefusal(.uncounted(uncounted.sorted()[0]), account: id, grant: grant))
             case .failure(let refusal): return .failure(accessRefusal(refusal, account: id, grant: grant))
             }
         }
@@ -504,24 +571,37 @@ public actor Router {
     }
 
     static func downloadingError(_ engine: String, name: String, received: Int64, total: Int64?) -> RPCError {
-        RPCError(code: engineDownloading, message: "Agneta is downloading what \(name) needs; try again shortly",
-                 data: ["agneta": ["engineDownloading": ["engine": .string(engine), "received": .int(received), "total": total.map(JSONValue.int) ?? .null]]])
+        RPCError(
+            code: engineDownloading, message: "Agneta is downloading what \(name) needs; try again shortly",
+            data: [
+                "agneta": [
+                    "engineDownloading": [
+                        "engine": .string(engine), "received": .int(received),
+                        "total": total.map(JSONValue.int) ?? .null
+                    ]
+                ]
+            ])
     }
 
     /// A refused engine, said plainly, with what the app may use on that provider now (`data.agneta.access`).
     func accessRefusal(_ refusal: Access.Refusal, account id: String, grant: Grant) -> RPCError {
         let label = accounts[id]?.label ?? "This account"
         func name(_ engine: String) -> String { catalog.entries[engine]?.name ?? engine }
-        let message = switch refusal {
-        case .unsupported(let engine): "\(label) can't run on \(name(engine))"
-        case .notAllowed(let engine): "This app isn't allowed to use \(name(engine))"
-        case .unavailable(let engine): {
-            if case .unavailable(let reason)? = catalog.entries[engine]?.state { return "\(name(engine)) isn't available: \(reason)" }
-            return "\(name(engine)) isn't on this Mac"
-        }()
-        case .noEngine: "\(label) has no engine this app may use on this Mac"
-        case .uncounted(let engine): "\(name(engine)) reports no cost, so it can't run under the spending limit you set for this app in Agneta"
-        }
+        let message =
+            switch refusal {
+            case .unsupported(let engine): "\(label) can't run on \(name(engine))"
+            case .notAllowed(let engine): "This app isn't allowed to use \(name(engine))"
+            case .unavailable(let engine):
+                {
+                    if case .unavailable(let reason)? = catalog.entries[engine]?.state {
+                        return "\(name(engine)) isn't available: \(reason)"
+                    }
+                    return "\(name(engine)) isn't on this Mac"
+                }()
+            case .noEngine: "\(label) has no engine this app may use on this Mac"
+            case .uncounted(let engine):
+                "\(name(engine)) reports no cost, so it can't run under the spending limit you set for this app in Agneta"
+            }
         return RPCError(code: RPCError.invalidParams, message: message, data: ["agneta": ["access": access(grant)]])
     }
 
@@ -604,9 +684,14 @@ public actor Router {
     /// `counted`: a new task the app's meter already counts (`reserveTask`).
     func refusal(_ appID: UUID, _ grant: Grant, _ plan: Plan, counted: Bool = false) -> RPCError? {
         guard !shutDown, let current = apps[appID]?.grant, current.id == grant.id else { return Self.appGone }
-        guard Self.fits(account: plan.account, engine: plan.engine.id, policy: plan.policy, sandbox: plan.sandbox, grant: current) else {
-            return RPCError(code: RPCError.invalidParams, message: "This app's access changed while the task started",
-                            data: ["agneta": ["accessChanged": true]])
+        guard
+            Self.fits(
+                account: plan.account, engine: plan.engine.id, policy: plan.policy, sandbox: plan.sandbox,
+                grant: current)
+        else {
+            return RPCError(
+                code: RPCError.invalidParams, message: "This app's access changed while the task started",
+                data: ["agneta": ["accessChanged": true]])
         }
         // The user may have set or lowered the app's limits meanwhile.
         if let refusal = uncountedRefusal(plan.engine.id, account: plan.account, grant: current) { return refusal }

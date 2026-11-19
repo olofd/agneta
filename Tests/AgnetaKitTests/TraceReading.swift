@@ -1,6 +1,7 @@
 // Reading a task's trace from a test. The trace writer writes off the caller's thread, so a test that reads the
 // file right after a request can find it a record short (CI hit this twice on 2026-11-18): flush first.
 import Foundation
+
 @testable import AgnetaKit
 
 extension Traces {

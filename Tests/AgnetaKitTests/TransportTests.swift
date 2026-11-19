@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 @Suite struct LineSplitterTests {
@@ -60,7 +61,8 @@ import Testing
 
     @Test func stopEndsTheWholeGroup() async throws {
         // The shell starts a grandchild that would outlive a plain kill of the leader.
-        let child = try ChildProcess(executable: "/bin/sh", arguments: ["-c", "sleep 60 & echo $!; wait"], environment: [:])
+        let child = try ChildProcess(
+            executable: "/bin/sh", arguments: ["-c", "sleep 60 & echo $!; wait"], environment: [:])
         var grandchild: pid_t = 0
         for try await line in LineStream.lines(from: child.stdout) {
             grandchild = pid_t(String(decoding: line, as: UTF8.self))!
@@ -92,12 +94,15 @@ import Testing
         let (client, agent) = Self.pair()
         let (notes, notesInput) = AsyncStream<String>.makeStream()
         await agent.handle(requests: { method, params in
-            method == "echo" ? .success(params ?? .null) : .failure(RPCError(code: RPCError.methodNotFound, message: method))
+            method == "echo"
+                ? .success(params ?? .null) : .failure(RPCError(code: RPCError.methodNotFound, message: method))
         })
         await client.handle(notifications: { method, _ in notesInput.yield(method) })
 
         #expect(try await client.request("echo", ["x": 1]) == ["x": 1])
-        await #expect(throws: RPCError(code: RPCError.methodNotFound, message: "nope")) { try await client.request("nope") }
+        await #expect(throws: RPCError(code: RPCError.methodNotFound, message: "nope")) {
+            try await client.request("nope")
+        }
         try await agent.notify("session/update", ["sessionId": "s"])
         var iterator = notes.makeAsyncIterator()
         #expect(await iterator.next() == "session/update")
@@ -129,9 +134,14 @@ import Testing
     /// Opens a TCP connection to the server and returns its descriptor.
     private func connect(_ port: UInt16) throws -> Int32 {
         let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-        var address = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: port.bigEndian,
-                                  sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
-        let result = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        var address = sockaddr_in(
+            sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: port.bigEndian,
+            sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+        let result = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
         guard result == 0 else { throw POSIXError(.ECONNREFUSED) }
         return socket
     }

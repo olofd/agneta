@@ -5,8 +5,9 @@
 // and exact; the real-engine paths are in RouterIntegrationTests and
 // AppScenarioTests.
 import Foundation
-import os
 import Testing
+import os
+
 @testable import AgnetaKit
 
 /// Codes the approval closure saw (nil for a verified app).
@@ -54,10 +55,16 @@ struct PlainAdapter: EngineAdapter {
     var stateFormat = "plain/1"
     var id = "goose"
     var displayName: String { "Plain" }
-    var capabilities: EngineCapabilities { EngineCapabilities(steer: false, fork: false, instructionsBetweenTurns: false, processPerSession: true) }
+    var capabilities: EngineCapabilities {
+        EngineCapabilities(steer: false, fork: false, instructionsBetweenTurns: false, processPerSession: true)
+    }
     func launch(_ context: EngineLaunchContext) throws -> EngineLaunch { try base.launch(context) }
-    func newSession(cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?) -> JSONValue { ["cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": .array(servers)] }
-    func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy) -> JSONValue { ["sessionId": .string(engineSession)] }
+    func newSession(cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?)
+        -> JSONValue
+    { ["cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": .array(servers)] }
+    func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy) -> JSONValue {
+        ["sessionId": .string(engineSession)]
+    }
     func setInstructions(_ engineSession: String, text: String, appendKey: String?) -> EngineRequest? { nil }
     func steer(_ engineSession: String, run: String?, prompt: JSONValue) -> EngineRequest? { nil }
     func steerResult(_ result: JSONValue) -> (accepted: Bool, run: String?) { (false, nil) }
@@ -105,13 +112,25 @@ actor FakeEngines: EngineSource {
     /// The model and effort it offers, and what's current, as a real engine lists them (Router+Settings).
     private var current = ["model": "m1", "effort": "low"]
     func configOptions() -> JSONValue {
-        [["id": "model", "category": "model", "type": "select", "currentValue": .string(current["model"]!),
-          "options": [["value": "m1", "name": "Model One"], ["value": "m2", "name": "Model Two"]]],
-         ["id": "effort", "category": "thought_level", "type": "select", "currentValue": .string(current["effort"]!),
-          "options": [["group": "levels", "options": [["value": "low", "name": "Low"], ["value": "high", "name": "High"]]]]]]
+        [
+            [
+                "id": "model", "category": "model", "type": "select", "currentValue": .string(current["model"]!),
+                "options": [["value": "m1", "name": "Model One"], ["value": "m2", "name": "Model Two"]]
+            ],
+            [
+                "id": "effort", "category": "thought_level", "type": "select",
+                "currentValue": .string(current["effort"]!),
+                "options": [
+                    ["group": "levels", "options": [["value": "low", "name": "Low"], ["value": "high", "name": "High"]]]
+                ]
+            ]
+        ]
     }
 
-    func open(account: String, engine adapter: any EngineAdapter, policy: SessionPolicy, mcpPorts: [Int], key: String?, session: EngineSessionSpec?) async throws -> EngineLease {
+    func open(
+        account: String, engine adapter: any EngineAdapter, policy: SessionPolicy, mcpPorts: [Int], key: String?,
+        session: EngineSessionSpec?
+    ) async throws -> EngineLease {
         opened += 1
         askedEngines.append(adapter.id)
         if openDelay > .zero { try? await Task.sleep(for: openDelay) }
@@ -130,21 +149,37 @@ actor FakeEngines: EngineSource {
         })
         // Speaks Goose's dialect, so Goose's adapter describes it.
         // App-only sessions get the shared key, as the real supervisor gives them.
-        return EngineLease(key: key ?? (policy.tools == .appOnly ? EngineKeys.shared(account: account, engine: adapter.id) : "\(account)/fake-\(n)"), peer: agneta, pid: getpid(), dedicated: true, engine: adapter, startMs: 12.5,
-                           engineInfo: ["name": "fake", "version": "1"])
+        return EngineLease(
+            key: key
+                ?? (policy.tools == .appOnly
+                    ? EngineKeys.shared(account: account, engine: adapter.id) : "\(account)/fake-\(n)"),
+            peer: agneta, pid: getpid(), dedicated: true, engine: adapter, startMs: 12.5,
+            engineInfo: ["name": "fake", "version": "1"])
     }
 
     func release(_ lease: EngineLease) async { released += 1 }
 
-    private func answer(_ engine: RPCPeer, n: Int, method: String, params: JSONValue?) async -> Result<JSONValue, RPCError> {
+    private func answer(_ engine: RPCPeer, n: Int, method: String, params: JSONValue?) async -> Result<
+        JSONValue, RPCError
+    > {
         let session = params?["sessionId"] ?? .string("e\(n)")
-        func update(_ update: JSONValue) async { try? await engine.notify("session/update", ["sessionId": session, "update": update]) }
+        func update(_ update: JSONValue) async {
+            try? await engine.notify("session/update", ["sessionId": session, "update": update])
+        }
         switch method {
         case "session/new":
             // As real engines may: an update for the new session before the answer that names it.
-            try? await engine.notify("session/update", ["sessionId": .string("e\(n)"), "update": ["sessionUpdate": "available_commands_update", "availableCommands": [["name": "review"]]]])
+            try? await engine.notify(
+                "session/update",
+                [
+                    "sessionId": .string("e\(n)"),
+                    "update": ["sessionUpdate": "available_commands_update", "availableCommands": [["name": "review"]]]
+                ])
             current = ["model": "m1", "effort": "low"]
-            return .success(["sessionId": .string("e\(n)"), "models": ["currentModelId": "fake-model"], "configOptions": configOptions()])
+            return .success([
+                "sessionId": .string("e\(n)"), "models": ["currentModelId": "fake-model"],
+                "configOptions": configOptions()
+            ])
         case "_goose/unstable/session/system-prompt/set":
             instructions.append(params ?? .null)
             return .success([:])
@@ -157,13 +192,27 @@ actor FakeEngines: EngineSource {
             cancelled = false // a cancel belongs to the turn it arrived in
             if text.hasPrefix("permission ") {
                 let kind = String(text.dropFirst("permission ".count))
-                await update(["sessionUpdate": "tool_call", "toolCallId": .string("call-\(kind)"), "title": .string("\(kind) tool"), "kind": .string(kind), "status": "pending"])
-                let answer = try? await engine.request("session/request_permission", [
-                    "sessionId": session, "toolCall": ["toolCallId": .string("call-\(kind)"), "kind": .string(kind), "title": .string("\(kind) tool")],
-                    "options": [["kind": "allow_once", "optionId": "allow", "name": "Allow"], ["kind": "reject_once", "optionId": "reject", "name": "Reject"]],
+                await update([
+                    "sessionUpdate": "tool_call", "toolCallId": .string("call-\(kind)"),
+                    "title": .string("\(kind) tool"), "kind": .string(kind), "status": "pending"
                 ])
+                let answer = try? await engine.request(
+                    "session/request_permission",
+                    [
+                        "sessionId": session,
+                        "toolCall": [
+                            "toolCallId": .string("call-\(kind)"), "kind": .string(kind),
+                            "title": .string("\(kind) tool")
+                        ],
+                        "options": [
+                            ["kind": "allow_once", "optionId": "allow", "name": "Allow"],
+                            ["kind": "reject_once", "optionId": "reject", "name": "Reject"]
+                        ]
+                    ])
                 permissionAnswers[kind] = answer ?? .null
-                await update(["sessionUpdate": "tool_call_update", "toolCallId": .string("call-\(kind)"), "status": "completed"])
+                await update([
+                    "sessionUpdate": "tool_call_update", "toolCallId": .string("call-\(kind)"), "status": "completed"
+                ])
             } else if text.hasPrefix("ask ") {
                 // "ask <label> <json>": a permission request with this tool call (and request _meta, under "_meta"),
                 // after a tool_call update for the same call when the JSON has "announce".
@@ -171,8 +220,13 @@ actor FakeEngines: EngineSource {
                 let label = String(rest.prefix { $0 != " " })
                 let spec = (try? JSONCoding.decode(Data(rest.drop { $0 != " " }.utf8))) ?? [:]
                 if let announced = spec["announce"] { await update(announced) }
-                var request: JSONValue = ["sessionId": session, "toolCall": spec["toolCall"] ?? [:],
-                                          "options": [["kind": "allow_once", "optionId": "allow", "name": "Allow"], ["kind": "reject_once", "optionId": "reject", "name": "Reject"]]]
+                var request: JSONValue = [
+                    "sessionId": session, "toolCall": spec["toolCall"] ?? [:],
+                    "options": [
+                        ["kind": "allow_once", "optionId": "allow", "name": "Allow"],
+                        ["kind": "reject_once", "optionId": "reject", "name": "Reject"]
+                    ]
+                ]
                 if let meta = spec["_meta"] { request = request.setting("_meta", to: meta) }
                 permissionAnswers[label] = (try? await engine.request("session/request_permission", request)) ?? .null
             } else if text == "deaf" {
@@ -184,14 +238,18 @@ actor FakeEngines: EngineSource {
             } else if text == "auth" {
                 return .failure(RPCError(code: -32000, message: "Authentication required"))
             } else if text == "ratelimit" {
-                return .failure(RPCError(code: RPCError.internalError, message: RateLimitTests.goose, data: ["reason": "turn_failed"]))
+                return .failure(
+                    RPCError(
+                        code: RPCError.internalError, message: RateLimitTests.goose, data: ["reason": "turn_failed"]))
             } else if text == "slow" {
                 await update(["sessionUpdate": "session_info_update", "_meta": ["goose": ["activeRunId": "run-7"]]])
                 await waitForSteer(upTo: .seconds(3))
             } else {
                 await update(["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "hi"]])
             }
-            return .success(["stopReason": cancelled ? "cancelled" : "end_turn", "usage": ["inputTokens": 5, "outputTokens": 1]])
+            return .success([
+                "stopReason": cancelled ? "cancelled" : "end_turn", "usage": ["inputTokens": 5, "outputTokens": 1]
+            ])
         case "session/set_config_option":
             if let id = params?["configId"]?.stringValue, let value = params?["value"]?.stringValue {
                 configSets.append("\(id)=\(value)")
@@ -258,22 +316,32 @@ actor FakeEngines: EngineSource {
 
         /// `approve` replaces the default (allow both accounts at once).
         /// `appWorkspaces`: give each paired app a workspace of its own, as the app does. `commit` saves grants.
-        static func start(port: UInt16, concurrency: Router.Concurrency = .init(), appWorkspaces: Bool = false, commit: Router.Commit? = nil,
-                          clock: TestClock? = nil, calendar: Calendar = .autoupdatingCurrent,
-                          approve: Router.Approve? = nil) async throws -> Stack {
-            let root = FileManager.default.temporaryDirectory.appending(path: "agneta-contract-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
+        static func start(
+            port: UInt16, concurrency: Router.Concurrency = .init(), appWorkspaces: Bool = false,
+            commit: Router.Commit? = nil,
+            clock: TestClock? = nil, calendar: Calendar = .autoupdatingCurrent,
+            approve: Router.Approve? = nil
+        ) async throws -> Stack {
+            let root = FileManager.default.temporaryDirectory.appending(
+                path: "agneta-contract-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory
+            ).realFileURL
             try FileManager.default.createDirectory(at: root.appending(path: "work"), withIntermediateDirectories: true)
             let traces = Traces(folder: root.appending(path: "Traces", directoryHint: .isDirectory))
             let engines = FakeEngines()
-            let router = Router(context: PolicyContext(userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [root.appending(path: "agneta")],
-                                                       appWorkspaces: appWorkspaces ? root.appending(path: "apps", directoryHint: .isDirectory) : nil),
-                                engines: engines, traces: traces, concurrency: concurrency, commit: commit,
-                                now: { clock?.now ?? Date() }, calendar: calendar) { request in
+            let router = Router(
+                context: PolicyContext(
+                    userHome: FileManager.default.homeDirectoryForCurrentUser,
+                    agnetaRoots: [root.appending(path: "agneta")],
+                    appWorkspaces: appWorkspaces ? root.appending(path: "apps", directoryHint: .isDirectory) : nil),
+                engines: engines, traces: traces, concurrency: concurrency, commit: commit,
+                now: { clock?.now ?? Date() }, calendar: calendar
+            ) { request in
                 PairingCodes.shared.add(request.code)
                 return await approve?(request) ?? Router.PairingAnswer(accounts: ["brokered", "native"], remember: true)
             }
             await router.add(account: "brokered", label: "API", kind: .openAIKey, billing: "api-key")
-            await router.add(account: "native", label: "Claude", runner: .native, kind: .claude, billing: "subscription")
+            await router.add(
+                account: "native", label: "Claude", runner: .native, kind: .claude, billing: "subscription")
             // Goose only, as a fresh Agneta has; the fake engine speaks its dialect.
             await router.setCatalog(EngineCatalog(ready: [GooseAdapter(executable: URL(filePath: "/usr/bin/false"))]))
             let server = try WebSocketServer(port: port)
@@ -284,13 +352,23 @@ actor FakeEngines: EngineSource {
         }
 
         /// `sandbox`: the app's ask, or nil for the grant's (full power by default).
-        func session(_ app: AppClient, account: String, approval: String = "never-ask", tools: String = "app-only", network: String = "none",
-                     sandbox: String? = nil, meta: [String: JSONValue] = [:]) async throws -> String {
-            var policy: JSONValue = ["tools": .string(tools), "network": .string(network), "approval": .string(approval)]
+        func session(
+            _ app: AppClient, account: String, approval: String = "never-ask", tools: String = "app-only",
+            network: String = "none",
+            sandbox: String? = nil, meta: [String: JSONValue] = [:]
+        ) async throws -> String {
+            var policy: JSONValue = [
+                "tools": .string(tools), "network": .string(network), "approval": .string(approval)
+            ]
             if let sandbox { policy = policy.setting("sandbox", to: .string(sandbox)) }
             var fullMeta: [String: JSONValue] = [SessionPolicy.key: policy, "agneta": ["account": .string(account)]]
             fullMeta.merge(meta) { _, new in new }
-            let result = try await app.request("session/new", ["cwd": .string(root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [], "_meta": .object(fullMeta)])
+            let result = try await app.request(
+                "session/new",
+                [
+                    "cwd": .string(root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
+                    "_meta": .object(fullMeta)
+                ])
             return try #require(result["sessionId"]?.stringValue)
         }
 
@@ -316,9 +394,13 @@ actor FakeEngines: EngineSource {
     @Test func permissionDecisionsFollowThePolicyAndAreTraced() async throws {
         // A native runner on a provider whose engine can be contained (an Anthropic key here; Goose on a Claude plan
         // can't be), so a contained session's built-in tools are judged by the policy.
-        let stack = try await Stack.start(port: 47441, approve: { _ in Router.PairingAnswer(accounts: ["brokered", "native", "nativeKey"], remember: true) })
+        let stack = try await Stack.start(
+            port: 47441,
+            approve: { _ in Router.PairingAnswer(accounts: ["brokered", "native", "nativeKey"], remember: true) })
         defer { stack.stop() }
-        await stack.router.add(account: "nativeKey", label: "Key", runner: Router.ToolRunner.native, kind: AccountKind.anthropicKey, billing: "api-key")
+        await stack.router.add(
+            account: "nativeKey", label: "Key", runner: Router.ToolRunner.native, kind: AccountKind.anthropicKey,
+            billing: "api-key")
         let app = AppClient(port: stack.port)
         defer { app.close() }
         app.answerPermissions(with: "allow")
@@ -338,7 +420,9 @@ actor FakeEngines: EngineSource {
         #expect(await stack.engines.permissionAnswers["read"]?["outcome"]?["optionId"]?.stringValue == "allow")
         #expect(app.permissionRequests == 1)
 
-        let decisions = try stack.records(native).filter { $0["type"]?.stringValue == "permission" }.map { $0["decision"]?.stringValue }
+        let decisions = try stack.records(native).filter { $0["type"]?.stringValue == "permission" }.map {
+            $0["decision"]?.stringValue
+        }
         #expect(decisions == ["refused-by-policy", "allowed-by-policy"])
         let asked = try #require(try stack.records(asking).first { $0["type"]?.stringValue == "permission" })
         #expect(asked["decision"]?.stringValue == "asked-app" && asked["toolKind"]?.stringValue == "read")
@@ -353,30 +437,46 @@ actor FakeEngines: EngineSource {
     @Test func aTaskRunsOnAnEngineItsProviderSupports() async throws {
         let stack = try await Stack.start(port: 47645)
         defer { stack.stop() }
-        await stack.router.setCatalog(EngineCatalog([.init(ready: Self.goose), .init(ready: Self.opencode),
-                                                     .init(id: "codex", name: "Codex", state: .unavailable("Install Codex"))]))
+        await stack.router.setCatalog(
+            EngineCatalog([
+                .init(ready: Self.goose), .init(ready: Self.opencode),
+                .init(id: "codex", name: "Codex", state: .unavailable("Install Codex"))
+            ]))
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Contract")
         // Read as the typed report, so what the router sends is what Swift clients decode.
         let access = try AccessReport(json: try await app.request("agneta/access", [:]))
         let brokered = try #require(access.providers.first { $0.id == "brokered" })
-        #expect(brokered.engines == ["goose", "opencode"] && brokered.defaultEngine == "goose" && brokered.kind == "openai-key") // Codex isn't here
-        #expect(Dictionary(uniqueKeysWithValues: access.engines.map { ($0.id, $0.state) }) == ["goose": "ready", "opencode": "ready", "codex": "unavailable"])
-        #expect(access.engines.first { $0.id == "codex" }?.reason == "Install Codex" && access.engines.first { $0.id == "goose" }?.capabilities?.fork == true)
+        #expect(
+            brokered.engines == ["goose", "opencode"] && brokered.defaultEngine == "goose"
+                && brokered.kind == "openai-key") // Codex isn't here
+        #expect(
+            Dictionary(uniqueKeysWithValues: access.engines.map { ($0.id, $0.state) }) == [
+                "goose": "ready", "opencode": "ready", "codex": "unavailable"
+            ])
+        #expect(
+            access.engines.first { $0.id == "codex" }?.reason == "Install Codex"
+                && access.engines.first { $0.id == "goose" }?.capabilities?.fork == true)
         #expect(access.allowedEngines == .all)
 
-        func meta(_ account: String, _ engine: String) -> [String: JSONValue] { ["agneta": ["account": .string(account), "engine": .string(engine)]] }
+        func meta(_ account: String, _ engine: String) -> [String: JSONValue] {
+            ["agneta": ["account": .string(account), "engine": .string(engine)]]
+        }
         _ = try await stack.session(app, account: "brokered", meta: meta("brokered", "opencode"))
         #expect(await stack.engines.askedEngines.last == "opencode")
         _ = try await stack.session(app, account: "brokered")
         #expect(await stack.engines.askedEngines.last == "goose") // the provider's default
-        for (account, engine) in [("native", "opencode"), ("brokered", "codex"), ("brokered", "claude-code"), ("brokered", "nonsense")] {
+        for (account, engine) in [
+            ("native", "opencode"), ("brokered", "codex"), ("brokered", "claude-code"), ("brokered", "nonsense")
+        ] {
             do {
                 _ = try await stack.session(app, account: account, meta: meta(account, engine))
                 Issue.record("\(account) ran on \(engine)")
             } catch let error as RPCError {
-                #expect(error.code == RPCError.invalidParams && error.data?["agneta"]?["access"]?["providers"] != nil, "\(error.message)")
+                #expect(
+                    error.code == RPCError.invalidParams && error.data?["agneta"]?["access"]?["providers"] != nil,
+                    "\(error.message)")
             }
         }
 
@@ -385,8 +485,14 @@ actor FakeEngines: EngineSource {
         let shared = try await stack.session(app, account: "brokered")
         _ = try await app.request("session/close", ["sessionId": .string(shared)])
         do {
-            _ = try await app.request("session/load", ["sessionId": .string(shared), "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)),
-                                                       "mcpServers": [], "_meta": [SessionPolicy.key: ["tools": "workspace", "network": "none", "approval": "never-ask"]]])
+            _ = try await app.request(
+                "session/load",
+                [
+                    "sessionId": .string(shared),
+                    "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)),
+                    "mcpServers": [],
+                    "_meta": [SessionPolicy.key: ["tools": "workspace", "network": "none", "approval": "never-ask"]]
+                ])
             Issue.record("a shared task resumed with built-in tools")
         } catch let error as RPCError {
             #expect(error.message.contains("without built-in tools"), "\(error.message)")
@@ -398,7 +504,9 @@ actor FakeEngines: EngineSource {
     /// grant stops what no longer fits and tells the app; Remove Access while the change is saved wins.
     @Test func theGrantLimitsTheEnginesAnAppMayPick() async throws {
         let saved = SavedGrants()
-        let stack = try await Stack.start(port: 47652, commit: { hash, grant, replacing in await saved.commit(hash, grant, replacing: replacing) }) { _ in
+        let stack = try await Stack.start(
+            port: 47652, commit: { hash, grant, replacing in await saved.commit(hash, grant, replacing: replacing) }
+        ) { _ in
             Router.PairingAnswer(accounts: ["brokered"], engines: .only(["opencode"]), remember: true)
         }
         defer { stack.stop() }
@@ -409,7 +517,8 @@ actor FakeEngines: EngineSource {
         let grant = try #require(await saved.last)
         #expect(grant.engines == .only(["opencode"]) && grant.accounts == ["brokered"])
 
-        let initialize = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
+        let initialize = try await app.request(
+            "initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
         let access = initialize["_meta"]?["agneta"]?["access"]
         #expect(access?["providers"]?.arrayValue?.first?["engines"]?.arrayValue == ["opencode"])
         #expect(access?["engines"]?.arrayValue?.compactMap { $0["id"]?.stringValue } == ["opencode"])
@@ -417,21 +526,28 @@ actor FakeEngines: EngineSource {
         let task = try await stack.session(app, account: "brokered")
         #expect(await stack.engines.askedEngines.last == "opencode") // the provider's default (Goose) isn't allowed
         do {
-            _ = try await stack.session(app, account: "brokered", meta: ["agneta": ["account": "brokered", "engine": "goose"]])
+            _ = try await stack.session(
+                app, account: "brokered", meta: ["agneta": ["account": "brokered", "engine": "goose"]])
             Issue.record("ran on an engine the grant doesn't allow")
         } catch let error as RPCError {
             #expect(error.code == RPCError.invalidParams && error.message.contains("isn't allowed"), "\(error.message)")
         }
 
         // Narrowed to Goose: the OpenCode task stops, the app hears its access changed, and the grant is saved.
-        try await stack.router.setAccess(grant: grant.id, accounts: ["brokered"], engines: .only(["goose"]), sandbox: .default)
+        try await stack.router.setAccess(
+            grant: grant.id, accounts: ["brokered"], engines: .only(["goose"]), sandbox: .default)
         #expect(await saved.last?.engines == .only(["goose"]))
         try await Task.sleep(for: .milliseconds(100))
         #expect(app.notifications("agneta/sessionStopped").contains { $0["sessionId"]?.stringValue == task })
         let changed = app.notifications("agneta/accessChanged").last
         #expect(changed?["access"]?["providers"]?.arrayValue?.first?["engines"]?.arrayValue == ["goose"])
         do {
-            _ = try await app.request("session/load", ["sessionId": .string(task), "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": []])
+            _ = try await app.request(
+                "session/load",
+                [
+                    "sessionId": .string(task),
+                    "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": []
+                ])
             Issue.record("resumed on an engine the grant no longer allows")
         } catch let error as RPCError {
             #expect(error.message.contains("isn't allowed"), "\(error.message)")
@@ -450,10 +566,14 @@ actor FakeEngines: EngineSource {
     /// it alone, and the app learns from pairing whether to keep its token.
     @Test func pairingAgainReplacesAnAppsAccess() async throws {
         let saved = SavedGrants()
-        let answers = Answers([Router.PairingAnswer(accounts: ["brokered"], remember: true),
-                               Router.PairingAnswer(accounts: ["brokered", "native"], remember: true),
-                               Router.PairingAnswer(accounts: ["native"], remember: false)])
-        let stack = try await Stack.start(port: 47655, commit: { hash, grant, replacing in await saved.commit(hash, grant, replacing: replacing) }) { _ in await answers.next() }
+        let answers = Answers([
+            Router.PairingAnswer(accounts: ["brokered"], remember: true),
+            Router.PairingAnswer(accounts: ["brokered", "native"], remember: true),
+            Router.PairingAnswer(accounts: ["native"], remember: false)
+        ])
+        let stack = try await Stack.start(
+            port: 47655, commit: { hash, grant, replacing in await saved.commit(hash, grant, replacing: replacing) }
+        ) { _ in await answers.next() }
         defer { stack.stop() }
         func pair() async throws -> (token: String, result: JSONValue) {
             let app = AppClient(port: stack.port)
@@ -466,7 +586,8 @@ actor FakeEngines: EngineSource {
         #expect(first.result["remembered"]?.boolValue == true)
         let still = AppClient(port: stack.port)
         defer { still.close() }
-        _ = try await still.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(first.token)]]])
+        _ = try await still.request(
+            "initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(first.token)]]])
 
         let second = try await pair()
         let renewed = try #require(await saved.last)
@@ -474,18 +595,21 @@ actor FakeEngines: EngineSource {
         #expect(await saved.replaced == grant.id)
         #expect(!(await stack.router.hasGrant(grant.id)))
         do {
-            _ = try await still.request("session/new", ["cwd": "/tmp", "mcpServers": [], "_meta": ["agneta": ["account": "brokered"]]])
+            _ = try await still.request(
+                "session/new", ["cwd": "/tmp", "mcpServers": [], "_meta": ["agneta": ["account": "brokered"]]])
             Issue.record("a connection on the replaced grant kept working")
         } catch {}
         let app = AppClient(port: stack.port)
         defer { app.close() }
         do {
-            _ = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(first.token)]]])
+            _ = try await app.request(
+                "initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(first.token)]]])
             Issue.record("the replaced token still works")
         } catch let error as RPCError {
             #expect(error.code == -32001)
         }
-        _ = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(second.token)]]])
+        _ = try await app.request(
+            "initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(second.token)]]])
 
         // Allow Once is a grant of its own, for that connection, and says so.
         let once = try await pair()
@@ -496,10 +620,13 @@ actor FakeEngines: EngineSource {
     /// A connection without a grant is anything on this Mac, so it gets little: a few at a time, small messages, and
     /// not for ever. A refused one is closed, which the app sees as its requests failing.
     @Test func connectionsWithoutAGrantAreBounded() async throws {
-        let stack = try await Stack.start(port: 47671, concurrency: .init(unpaired: 2, unpairedFrame: 1024, unpairedFor: .milliseconds(500)))
+        let stack = try await Stack.start(
+            port: 47671, concurrency: .init(unpaired: 2, unpairedFrame: 1024, unpairedFor: .milliseconds(500)))
         defer { stack.stop() }
         func refused(_ app: AppClient, _ params: JSONValue = ["protocolVersion": 1]) async -> Bool {
-            do { _ = try await app.request("initialize", params); return false } catch let error as RPCError { return error.code != -32001 } catch { return true }
+            do { _ = try await app.request("initialize", params); return false } catch let error as RPCError {
+                return error.code != -32001
+            } catch { return true }
         }
         let big = AppClient(port: stack.port)
         defer { big.close() }
@@ -530,14 +657,22 @@ actor FakeEngines: EngineSource {
         let stack = try await Stack.start(port: 47694)
         defer { stack.stop() }
         let seen = SeenOptions()
-        await stack.router.observe { if case .settingsSeen(let account, _, let options) = $0 { Task { await seen.add(account, options) } } }
+        await stack.router.observe {
+            if case .settingsSeen(let account, _, let options) = $0 { Task { await seen.add(account, options) } }
+        }
         await stack.router.setDefaults(account: "brokered", model: "m2", effort: "high")
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Defaults")
-        let result = try await app.request("session/new", ["cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
-                                                           "_meta": [SessionPolicy.key: ["tools": "app-only", "network": "none", "approval": "never-ask"],
-                                                                     "agneta": ["account": "brokered"]]])
+        let result = try await app.request(
+            "session/new",
+            [
+                "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
+                "_meta": [
+                    SessionPolicy.key: ["tools": "app-only", "network": "none", "approval": "never-ask"],
+                    "agneta": ["account": "brokered"]
+                ]
+            ])
         #expect(await stack.engines.configSets == ["model=m2", "effort=high"])
         let current = result["configOptions"]?.arrayValue?.map { $0["currentValue"]?.stringValue ?? "" }
         #expect(current == ["m2", "high"])
@@ -564,7 +699,10 @@ actor FakeEngines: EngineSource {
         let stack = try await Stack.start(port: 47648)
         defer { stack.stop() }
         await stack.router.observe { if case .engineWanted(let engine) = $0 { Task { await wanted.add(engine) } } }
-        await stack.router.setCatalog(EngineCatalog([.init(ready: Self.goose), .init(id: "opencode", name: "OpenCode", state: .downloadable(size: 40))]))
+        await stack.router.setCatalog(
+            EngineCatalog([
+                .init(ready: Self.goose), .init(id: "opencode", name: "OpenCode", state: .downloadable(size: 40))
+            ]))
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Patient")
@@ -573,12 +711,18 @@ actor FakeEngines: EngineSource {
             _ = try await stack.session(app, account: "brokered", meta: asking)
             Issue.record("a session opened before its engine was downloaded")
         } catch let error as RPCError {
-            #expect(error.code == -32015 && error.data?["agneta"]?["engineDownloading"]?["engine"]?.stringValue == "opencode")
+            #expect(
+                error.code == -32015
+                    && error.data?["agneta"]?["engineDownloading"]?["engine"]?.stringValue == "opencode")
         }
         try await Task.sleep(for: .milliseconds(50))
         #expect(await wanted.engines == ["opencode"])
 
-        await stack.router.setCatalog(EngineCatalog([.init(ready: Self.goose), .init(id: "opencode", name: "OpenCode", state: .downloading(received: 10, total: 40))]))
+        await stack.router.setCatalog(
+            EngineCatalog([
+                .init(ready: Self.goose),
+                .init(id: "opencode", name: "OpenCode", state: .downloading(received: 10, total: 40))
+            ]))
         do {
             _ = try await stack.session(app, account: "brokered", meta: asking)
             Issue.record("a session opened while its engine was downloading")
@@ -600,7 +744,8 @@ actor FakeEngines: EngineSource {
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Contract")
-        let initialize = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
+        let initialize = try await app.request(
+            "initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
         let extensions = Set(initialize["_meta"]?["agneta"]?["extensions"]?.arrayValue?.compactMap(\.stringValue) ?? [])
         #expect(extensions.isSuperset(of: ["agneta/usage", "agneta/trace", "agneta/steer", "agneta/instructions"]))
 
@@ -638,7 +783,8 @@ actor FakeEngines: EngineSource {
         var after: Int64 = 0
         var pages = 0
         while true {
-            let page = try await app.request("agneta/trace/read", ["sessionId": .string(session), "after": .int(after), "limit": 5])
+            let page = try await app.request(
+                "agneta/trace/read", ["sessionId": .string(session), "after": .int(after), "limit": 5])
             read += page["records"]?.arrayValue ?? []
             pages += 1
             if page["complete"]?.boolValue == true { break }
@@ -647,13 +793,21 @@ actor FakeEngines: EngineSource {
         #expect(pages > 1)
         #expect(read == live)
         // The trace's own delivery isn't recorded in it.
-        #expect(try !stack.records(session).contains { $0["msg"]?["method"]?.stringValue?.hasPrefix("agneta/trace") == true })
+        #expect(
+            try !stack.records(session).contains {
+                $0["msg"]?["method"]?.stringValue?.hasPrefix("agneta/trace") == true
+            })
         // Raw frames on request.
-        let raw = try await app.request("agneta/trace/read", ["sessionId": .string(session), "types": ["acp"], "limit": 1000])
+        let raw = try await app.request(
+            "agneta/trace/read", ["sessionId": .string(session), "types": ["acp"], "limit": 1000])
         #expect((raw["records"]?.arrayValue ?? []).count > 0)
         // Another app can't read it, nor can anyone escape the folder.
-        await #expect(throws: RPCError.self) { _ = try await other.request("agneta/trace/read", ["sessionId": .string(session)]) }
-        await #expect(throws: RPCError.self) { _ = try await app.request("agneta/trace/read", ["sessionId": "../agneta"]) }
+        await #expect(throws: RPCError.self) {
+            _ = try await other.request("agneta/trace/read", ["sessionId": .string(session)])
+        }
+        await #expect(throws: RPCError.self) {
+            _ = try await app.request("agneta/trace/read", ["sessionId": "../agneta"])
+        }
     }
 
     @Test func steeringAndInstructionsUseAgnetasOwnMethods() async throws {
@@ -665,16 +819,21 @@ actor FakeEngines: EngineSource {
         let session = try await stack.session(app, account: "brokered")
 
         // Nothing to steer between turns.
-        await #expect(throws: RPCError.self) { _ = try await app.request("agneta/steer", ["sessionId": .string(session), "prompt": [["type": "text", "text": "x"]]]) }
+        await #expect(throws: RPCError.self) {
+            _ = try await app.request(
+                "agneta/steer", ["sessionId": .string(session), "prompt": [["type": "text", "text": "x"]]])
+        }
         let turn = Task { try await app.prompt(session, "slow") }
         try await Task.sleep(for: .milliseconds(200))
-        let steered = try await app.request("agneta/steer", ["sessionId": .string(session), "prompt": [["type": "text", "text": "also fjords"]]])
+        let steered = try await app.request(
+            "agneta/steer", ["sessionId": .string(session), "prompt": [["type": "text", "text": "also fjords"]]])
         #expect(steered["delivery"]?.stringValue == "accepted" && steered["runId"]?.stringValue == "run-7")
         _ = try await turn.value
         let steer = try #require(await stack.engines.steers.first)
         #expect(steer["expectedRunId"]?.stringValue == "run-7")
 
-        _ = try await app.request("agneta/instructions/set", ["sessionId": .string(session), "text": "Be brief.", "mode": "append"])
+        _ = try await app.request(
+            "agneta/instructions/set", ["sessionId": .string(session), "text": "Be brief.", "mode": "append"])
         #expect(await stack.engines.instructions.last?["text"]?.stringValue == "Be brief.")
         #expect(await stack.engines.instructions.last?["mode"]?.stringValue == "append")
         #expect(await stack.engines.instructions.last?["key"]?.stringValue == "app")
@@ -684,7 +843,10 @@ actor FakeEngines: EngineSource {
         let records = try stack.records(session)
         let steers = records.filter { $0["event"]?.stringValue == "steer" }.map { $0["delivery"]?.stringValue }
         #expect(steers == ["rejected", "accepted"])
-        #expect(records.contains { $0["type"]?.stringValue == "config" && $0["method"]?.stringValue == "agneta/instructions/set" })
+        #expect(
+            records.contains {
+                $0["type"]?.stringValue == "config" && $0["method"]?.stringValue == "agneta/instructions/set"
+            })
     }
 
     @Test func limitsStopATurnAndSayWhich() async throws {
@@ -699,17 +861,25 @@ actor FakeEngines: EngineSource {
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Limited")
-        let created = try await app.request("session/new", [
-            "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
-            "_meta": [SessionPolicy.key: ["tools": "app-only", "approval": "never-ask", "limits": ["maxSeconds": 1]], "agneta": ["account": "brokered"]],
-        ])
+        let created = try await app.request(
+            "session/new",
+            [
+                "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
+                "_meta": [
+                    SessionPolicy.key: ["tools": "app-only", "approval": "never-ask", "limits": ["maxSeconds": 1]],
+                    "agneta": ["account": "brokered"]
+                ]
+            ])
         let session = try #require(created["sessionId"]?.stringValue)
         let started = ContinuousClock.now
         let result = try await app.prompt(session, "slow")
         #expect(ContinuousClock.now - started < .milliseconds(2_500))
         #expect(result["stopReason"]?.stringValue == "cancelled")
         #expect(result["_meta"]?["agneta/limit"]?["limit"]?.stringValue == "maxSeconds")
-        #expect(try stack.records(session).contains { $0["event"]?.stringValue == "limit" && $0["limit"]?.stringValue == "maxSeconds" })
+        #expect(
+            try stack.records(session).contains {
+                $0["event"]?.stringValue == "limit" && $0["limit"]?.stringValue == "maxSeconds"
+            })
         // The next turn starts clean.
         let next = try await app.prompt(session, "hello")
         #expect(next["_meta"]?["agneta/limit"] == nil)
@@ -723,10 +893,15 @@ actor FakeEngines: EngineSource {
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Deaf")
-        let created = try await app.request("session/new", [
-            "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
-            "_meta": [SessionPolicy.key: ["tools": "app-only", "approval": "never-ask", "limits": ["maxSeconds": 1]], "agneta": ["account": "brokered"]],
-        ])
+        let created = try await app.request(
+            "session/new",
+            [
+                "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
+                "_meta": [
+                    SessionPolicy.key: ["tools": "app-only", "approval": "never-ask", "limits": ["maxSeconds": 1]],
+                    "agneta": ["account": "brokered"]
+                ]
+            ])
         let session = try #require(created["sessionId"]?.stringValue)
         let started = ContinuousClock.now
         let result = try await app.prompt(session, "deaf")
@@ -750,9 +925,9 @@ actor FakeEngines: EngineSource {
         let a3 = try await stack.session(app, account: "brokered")
         let b1 = try await stack.session(app, account: "native")
 
-        let first = Task { try await app.prompt(a1, "slow") }        // runs: brokered 1/1
+        let first = Task { try await app.prompt(a1, "slow") } // runs: brokered 1/1
         try await Task.sleep(for: .milliseconds(150))
-        let second = Task { try await app.prompt(a2, "hello") }      // waits: brokered is full
+        let second = Task { try await app.prompt(a2, "hello") } // waits: brokered is full
         try await Task.sleep(for: .milliseconds(150))
         #expect(app.notifications("agneta/queued").map { $0["sessionId"]?.stringValue } == [a2])
         // Another account still has room.
@@ -766,11 +941,14 @@ actor FakeEngines: EngineSource {
         // When the running turn ends, the next waiting one runs.
         let third = Task { try await app.prompt(a3, "hello") }
         try await Task.sleep(for: .milliseconds(150))
-        _ = try await app.request("agneta/steer", ["sessionId": .string(a1), "prompt": [["type": "text", "text": "finish"]]])
+        _ = try await app.request(
+            "agneta/steer", ["sessionId": .string(a1), "prompt": [["type": "text", "text": "finish"]]])
         #expect(try await first.value["stopReason"]?.stringValue == "end_turn")
         #expect(try await third.value["stopReason"]?.stringValue == "end_turn")
 
-        let queued = try stack.records(a2).compactMap { $0["event"]?.stringValue }.filter { $0.hasPrefix("queue") || $0 == "dequeued" }
+        let queued = try stack.records(a2).compactMap { $0["event"]?.stringValue }.filter {
+            $0.hasPrefix("queue") || $0 == "dequeued"
+        }
         #expect(queued == ["queued", "queue-cancelled"])
         #expect(try stack.records(a3).contains { $0["event"]?.stringValue == "dequeued" })
     }
@@ -793,7 +971,9 @@ actor FakeEngines: EngineSource {
         }
         try await Task.sleep(for: .milliseconds(100))
         #expect(app.notifications("agneta/rateLimited").first?["sessionId"]?.stringValue == session)
-        #expect(try stack.records(session).contains { $0["kind"]?.stringValue == "rate-limited" && $0["resetsAt"] != .null })
+        #expect(
+            try stack.records(session).contains { $0["kind"]?.stringValue == "rate-limited" && $0["resetsAt"] != .null }
+        )
     }
 
     /// Pausing starts nothing new on the account: no session opens by any path, no turn begins, and a turn waiting
@@ -814,15 +994,20 @@ actor FakeEngines: EngineSource {
         try await Task.sleep(for: .milliseconds(200))
         await stack.router.setPaused("brokered", true)
 
-        let initialize = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
-        let listed = initialize["_meta"]?["agneta"]?["access"]?["providers"]?.arrayValue?.first { $0["id"]?.stringValue == "brokered" }
+        let initialize = try await app.request(
+            "initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
+        let listed = initialize["_meta"]?["agneta"]?["access"]?["providers"]?.arrayValue?.first {
+            $0["id"]?.stringValue == "brokered"
+        }
         #expect(listed?["paused"]?.boolValue == true)
         func expectPaused(_ what: String, _ work: () async throws -> Void) async {
             do {
                 try await work()
                 Issue.record("\(what) went ahead on a paused account")
             } catch let error as RPCError {
-                #expect(error.code == -32013 && error.data?["agneta"]?["paused"]?.stringValue == "brokered", "\(what): \(error.message)")
+                #expect(
+                    error.code == -32013 && error.data?["agneta"]?["paused"]?.stringValue == "brokered",
+                    "\(what): \(error.message)")
             } catch {
                 Issue.record("\(what): \(error)")
             }
@@ -831,8 +1016,12 @@ actor FakeEngines: EngineSource {
         await expectPaused("the queued turn") { _ = try await queued.value }
         await expectPaused("a new turn") { _ = try await app.prompt(idle, "hello") }
         await expectPaused("a new session") { _ = try await stack.session(app, account: "brokered") }
-        await expectPaused("a load") { _ = try await app.request("session/load", ["sessionId": .string(closed), "cwd": cwd, "mcpServers": []]) }
-        await expectPaused("a fork") { _ = try await app.request("agneta/fork", ["sessionId": .string(closed), "mcpServers": []]) }
+        await expectPaused("a load") {
+            _ = try await app.request("session/load", ["sessionId": .string(closed), "cwd": cwd, "mcpServers": []])
+        }
+        await expectPaused("a fork") {
+            _ = try await app.request("agneta/fork", ["sessionId": .string(closed), "mcpServers": []])
+        }
         #expect(try await turn.value["stopReason"]?.stringValue == "end_turn")
         #expect(try stack.records(idle).contains { $0["event"]?.stringValue == "queue-paused" })
 
@@ -853,9 +1042,14 @@ actor FakeEngines: EngineSource {
         try await app.pairAndInitialize("Mover")
         let session = try await stack.session(app, account: "brokered")
         _ = try await app.request("session/close", ["sessionId": .string(session)])
-        let params: JSONValue = ["sessionId": .string(session), "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": []]
+        let params: JSONValue = [
+            "sessionId": .string(session),
+            "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": []
+        ]
         // The provider's default is now OpenCode: the task still resumes, on the engine that saved it.
-        await stack.router.setCatalog(EngineCatalog(ready: [PlainAdapter(), Self.opencode], defaults: ProviderEngines(selected: [.openAIKey: "opencode"])))
+        await stack.router.setCatalog(
+            EngineCatalog(
+                ready: [PlainAdapter(), Self.opencode], defaults: ProviderEngines(selected: [.openAIKey: "opencode"])))
         #expect(try await app.request("session/load", params)["_meta"]?["agneta"]?["resumed"]?.boolValue == true)
         #expect(await stack.engines.askedEngines.last == "goose")
         _ = try await app.request("session/close", ["sessionId": .string(session)])
@@ -866,7 +1060,10 @@ actor FakeEngines: EngineSource {
                 _ = try await app.request(method, params)
                 Issue.record("\(method) went ahead on plain/2")
             } catch let error as RPCError {
-                #expect(error.code == RPCError.invalidParams && error.data?["agneta"]?["stateChanged"]?["saved"]?.stringValue == "plain/1", "\(method): \(error.message)")
+                #expect(
+                    error.code == RPCError.invalidParams
+                        && error.data?["agneta"]?["stateChanged"]?["saved"]?.stringValue == "plain/1",
+                    "\(method): \(error.message)")
             }
         }
         await stack.router.setCatalog(EngineCatalog(ready: [PlainAdapter(), Self.opencode]))
@@ -899,19 +1096,33 @@ actor FakeEngines: EngineSource {
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Features")
-        let initialize = try await app.request("initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
+        let initialize = try await app.request(
+            "initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
         let access = initialize["_meta"]?["agneta"]?["access"]
         let listed = access?["engines"]?.arrayValue?.first { $0["id"]?.stringValue == "claude-code" }
-        #expect(listed?["capabilities"]?["engine"]?.stringValue == "claude-code" && listed?["capabilities"]?["steer"]?.boolValue == false)
+        #expect(
+            listed?["capabilities"]?["engine"]?.stringValue == "claude-code"
+                && listed?["capabilities"]?["steer"]?.boolValue == false)
 
-        let rich = try await app.request("session/new", ["cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
-                                                         "_meta": ["agneta": ["account": "brokered"]]])
+        let rich = try await app.request(
+            "session/new",
+            [
+                "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
+                "_meta": ["agneta": ["account": "brokered"]]
+            ])
         #expect(rich["_meta"]?["agneta"]?["capabilities"]?["steer"]?.boolValue == true)
-        let plain = try await app.request("session/new", ["cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
-                                                          "_meta": ["agneta": ["account": "native"], "agneta/instructions": ["text": "set at launch"]]])
+        let plain = try await app.request(
+            "session/new",
+            [
+                "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
+                "_meta": ["agneta": ["account": "native"], "agneta/instructions": ["text": "set at launch"]]
+            ])
         let session = try #require(plain["sessionId"]?.stringValue)
         #expect(plain["_meta"]?["agneta"]?["capabilities"]?["fork"]?.boolValue == false)
-        for (method, params) in [("agneta/steer", ["prompt": [["type": "text", "text": "x"]]]), ("agneta/instructions/set", ["text": "new"]), ("agneta/fork", ["mcpServers": []])] as [(String, JSONValue)] {
+        for (method, params) in [
+            ("agneta/steer", ["prompt": [["type": "text", "text": "x"]]]), ("agneta/instructions/set", ["text": "new"]),
+            ("agneta/fork", ["mcpServers": []])
+        ] as [(String, JSONValue)] {
             do {
                 _ = try await app.request(method, params.setting("sessionId", to: .string(session)))
                 Issue.record("\(method) should be refused")
@@ -956,7 +1167,9 @@ actor FakeEngines: EngineSource {
         defer { app.close() }
         try await app.pairAndInitialize("Reacher")
         let session = try await stack.session(app, account: "brokered")
-        for method in ["_goose/unstable/session/steer", "_goose/unstable/session/extensions/add", "session/list", "session/fork"] {
+        for method in [
+            "_goose/unstable/session/steer", "_goose/unstable/session/extensions/add", "session/list", "session/fork"
+        ] {
             do {
                 _ = try await app.request(method, ["sessionId": .string(session), "prompt": [], "mcpServers": []])
                 Issue.record("\(method) reached the engine")
@@ -973,7 +1186,8 @@ actor FakeEngines: EngineSource {
         // Agneta's own steering still reaches the engine through its adapter.
         let turn = Task { try await app.prompt(session, "slow") }
         try await Task.sleep(for: .milliseconds(200))
-        _ = try await app.request("agneta/steer", ["sessionId": .string(session), "prompt": [["type": "text", "text": "go on"]]])
+        _ = try await app.request(
+            "agneta/steer", ["sessionId": .string(session), "prompt": [["type": "text", "text": "go on"]]])
         _ = try await turn.value
         #expect(await stack.engines.steers.count == 1)
     }
@@ -995,7 +1209,12 @@ actor FakeEngines: EngineSource {
         let again = AppClient(port: stack.port)
         defer { again.close() }
         do {
-            _ = try await again.request("initialize", ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": .string(try #require(app.token))]]])
+            _ = try await again.request(
+                "initialize",
+                [
+                    "protocolVersion": 1, "clientCapabilities": [:],
+                    "_meta": ["agneta": ["token": .string(try #require(app.token))]]
+                ])
             Issue.record("a removed token initialized")
         } catch let error as RPCError {
             #expect(error.code == -32001)
@@ -1012,7 +1231,9 @@ actor FakeEngines: EngineSource {
         _ = try await stack.session(paired, account: "brokered")
         let unpaired = AppClient(port: stack.port)
         defer { unpaired.close() }
-        await #expect(throws: (any Error).self) { _ = try await unpaired.request("session/new", ["cwd": "/tmp", "mcpServers": []]) } // not paired: refused, still connected
+        await #expect(throws: (any Error).self) {
+            _ = try await unpaired.request("session/new", ["cwd": "/tmp", "mcpServers": []])
+        } // not paired: refused, still connected
         await stack.router.shutdown()
         await #expect(throws: (any Error).self) { _ = try await stack.session(paired, account: "brokered") }
         await #expect(throws: (any Error).self) { _ = try await unpaired.request("agneta/pair", ["name": "Late"]) }
@@ -1025,8 +1246,12 @@ actor FakeEngines: EngineSource {
     static func within(_ seconds: Double, _ work: @escaping @Sendable () async -> Void) async -> Bool {
         let once = OnceFlag()
         return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            Task { await work(); if once.take() { continuation.resume(returning: true) } }
-            Task { try? await Task.sleep(for: .seconds(seconds)); if once.take() { continuation.resume(returning: false) } }
+            Task {
+                await work(); if once.take() { continuation.resume(returning: true) }
+            }
+            Task {
+                try? await Task.sleep(for: .seconds(seconds)); if once.take() { continuation.resume(returning: false) }
+            }
         }
     }
 
@@ -1089,7 +1314,9 @@ actor FakeEngines: EngineSource {
         _ = try await app.request("session/close", ["sessionId": .string(session)])
         await stack.engines.loading(takes: .seconds(1))
         let cwd = JSONValue.string(stack.root.appending(path: "work").path(percentEncoded: false))
-        let load = Task { try? await app.request("session/load", ["sessionId": .string(session), "cwd": cwd, "mcpServers": []]) }
+        let load = Task {
+            try? await app.request("session/load", ["sessionId": .string(session), "cwd": cwd, "mcpServers": []])
+        }
         try await Task.sleep(for: .milliseconds(300))
         app.close()
         _ = await load.value
@@ -1120,7 +1347,8 @@ actor FakeEngines: EngineSource {
         } catch let error as RPCError {
             #expect(error.code == -32011)
         }
-        _ = try await app.request("agneta/steer", ["sessionId": .string(session), "prompt": [["type": "text", "text": "done"]]])
+        _ = try await app.request(
+            "agneta/steer", ["sessionId": .string(session), "prompt": [["type": "text", "text": "done"]]])
         _ = try await running.value
     }
 
@@ -1134,9 +1362,13 @@ actor FakeEngines: EngineSource {
         try await app.pairAndInitialize("Crashed")
         let session = try await stack.session(app, account: "brokered")
         await stack.engines.crash()
-        for _ in 0..<40 where app.notifications("agneta/sessionStopped").isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+        for _ in 0..<40 where app.notifications("agneta/sessionStopped").isEmpty {
+            try await Task.sleep(for: .milliseconds(50))
+        }
         let stopped = app.notifications("agneta/sessionStopped")
-        #expect(stopped.count == 1 && stopped.first?["stoppedBy"]?.stringValue == "engine" && stopped.first?["sessionId"]?.stringValue == session)
+        #expect(
+            stopped.count == 1 && stopped.first?["stoppedBy"]?.stringValue == "engine"
+                && stopped.first?["sessionId"]?.stringValue == session)
         do {
             _ = try await app.prompt(session, "hello")
             Issue.record("the session outlived its engine")
@@ -1149,14 +1381,17 @@ actor FakeEngines: EngineSource {
     /// stops asking about it.
     @Test func aDisconnectWithdrawsAWaitingPairingRequest() async throws {
         let asked = Recorder()
-        let stack = try await Stack.start(port: 47609, approve: { request in
-            asked.add(request.id.uuidString)
-            try? await Task.sleep(for: .seconds(3600)) // the user never answers
-            return nil
-        })
+        let stack = try await Stack.start(
+            port: 47609,
+            approve: { request in
+                asked.add(request.id.uuidString)
+                try? await Task.sleep(for: .seconds(3600)) // the user never answers
+                return nil
+            })
         defer { stack.stop() }
         let withdrawn = Recorder()
-        await stack.router.observe { event in if case .pairingWithdrawn(let id) = event { withdrawn.add(id.uuidString) } }
+        await stack.router.observe { event in if case .pairingWithdrawn(let id) = event { withdrawn.add(id.uuidString) }
+        }
         let app = AppClient(port: stack.port)
         let pairing = Task { try? await app.request("agneta/pair", ["name": "Impatient"]) }
         for _ in 0..<40 where asked.all.isEmpty { try await Task.sleep(for: .milliseconds(25)) }
@@ -1182,7 +1417,8 @@ actor FakeEngines: EngineSource {
         } catch let error as RPCError {
             #expect(error.code == -32011)
         }
-        _ = try await app.request("agneta/steer", ["sessionId": .string(session), "prompt": [["type": "text", "text": "finish"]]])
+        _ = try await app.request(
+            "agneta/steer", ["sessionId": .string(session), "prompt": [["type": "text", "text": "finish"]]])
         #expect(try await first.value["stopReason"]?.stringValue == "end_turn")
         #expect(try await app.prompt(session, "hello")["stopReason"]?.stringValue == "end_turn")
     }
@@ -1191,22 +1427,31 @@ actor FakeEngines: EngineSource {
     @Test func modesThatSkipPermissionsAreRefused() async throws {
         let stack = try await Stack.start(port: 47437)
         defer { stack.stop() }
-        let claude = ClaudeCodeAdapter(executable: URL(filePath: "/usr/bin/false"), cli: InstalledCLI(path: URL(filePath: "/usr/bin/false"), version: "2", source: "path"))
+        let claude = ClaudeCodeAdapter(
+            executable: URL(filePath: "/usr/bin/false"),
+            cli: InstalledCLI(path: URL(filePath: "/usr/bin/false"), version: "2", source: "path"))
         await stack.router.setCatalog(EngineCatalog(ready: [Self.goose, claude]))
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Modes")
         let session = try await stack.session(app, account: "native")
-        for (method, params) in [("session/set_mode", ["modeId": "bypassPermissions"]), ("session/set_config_option", ["configId": "mode", "value": "acceptEdits"])] as [(String, JSONValue)] {
+        for (method, params) in [
+            ("session/set_mode", ["modeId": "bypassPermissions"]),
+            ("session/set_config_option", ["configId": "mode", "value": "acceptEdits"])
+        ] as [(String, JSONValue)] {
             do {
                 _ = try await app.request(method, params.setting("sessionId", to: .string(session)))
                 Issue.record("\(method) was let through")
             } catch let error as RPCError {
-                #expect(error.code == RPCError.invalidParams && error.data?["agneta"]?["unenforceable"] != nil, "\(method)")
+                #expect(
+                    error.code == RPCError.invalidParams && error.data?["agneta"]?["unenforceable"] != nil, "\(method)")
             }
         }
         // Model changes and safe modes still reach the engine (the fake one doesn't know them: methodNotFound).
-        do { _ = try await app.request("session/set_config_option", ["sessionId": .string(session), "configId": "mode", "value": "plan"]) } catch let error as RPCError {
+        do {
+            _ = try await app.request(
+                "session/set_config_option", ["sessionId": .string(session), "configId": "mode", "value": "plan"])
+        } catch let error as RPCError {
             #expect(error.code != RPCError.invalidParams)
         }
     }
@@ -1223,8 +1468,12 @@ actor FakeEngines: EngineSource {
         try await Task.sleep(for: .milliseconds(200))
         let cwd = JSONValue.string(stack.root.appending(path: "work").path(percentEncoded: false))
         do {
-            _ = try await app.request("session/load", ["sessionId": .string(session), "cwd": cwd, "mcpServers": [],
-                                                       "_meta": [SessionPolicy.key: ["tools": "workspace", "approval": "never-ask"]]])
+            _ = try await app.request(
+                "session/load",
+                [
+                    "sessionId": .string(session), "cwd": cwd, "mcpServers": [],
+                    "_meta": [SessionPolicy.key: ["tools": "workspace", "approval": "never-ask"]]
+                ])
             Issue.record("built-ins were enabled on the shared engine")
         } catch let error as RPCError {
             #expect(error.data?["agneta"]?["unenforceable"]?.arrayValue?.first?.stringValue == "tools")
@@ -1241,7 +1490,11 @@ actor FakeEngines: EngineSource {
         app.close()
         try await Task.sleep(for: .milliseconds(400))
         let records = try stack.records(session)
-        #expect(records.contains { $0["event"]?.stringValue == "stop" && $0["by"]?.stringValue == "app" && $0["reason"]?.stringValue == "disconnected" })
+        #expect(
+            records.contains {
+                $0["event"]?.stringValue == "stop" && $0["by"]?.stringValue == "app"
+                    && $0["reason"]?.stringValue == "disconnected"
+            })
         #expect(records.last?["type"]?.stringValue == "end")
         #expect(records.first?["engine"]?["startMs"] != nil)
     }
@@ -1259,11 +1512,14 @@ final class Recorder: @unchecked Sendable {
 @Suite struct EngineKeyTests {
     @Test func sharedKeysAreRecognisedInEveryShape() {
         #expect(EngineKeys.shared(account: "acct", engine: "goose") == "acct/shared-goose")
-        #expect(EngineKeys.isShared("acct/shared-goose") && EngineKeys.isShared("acct/shared-opencode") && !EngineKeys.isShared("acct/shared"))
-        #expect(!EngineKeys.isShared("acct/1f0c-shared") && !EngineKeys.isShared("acct/0e9b2c") && !EngineKeys.isShared("shared-acct/abc"))
+        #expect(
+            EngineKeys.isShared("acct/shared-goose") && EngineKeys.isShared("acct/shared-opencode")
+                && !EngineKeys.isShared("acct/shared"))
+        #expect(
+            !EngineKeys.isShared("acct/1f0c-shared") && !EngineKeys.isShared("acct/0e9b2c")
+                && !EngineKeys.isShared("shared-acct/abc"))
     }
 }
-
 
 /// Grants the router saves, in order; `revoking` removes the grant while the next one is being saved.
 actor SavedGrants {

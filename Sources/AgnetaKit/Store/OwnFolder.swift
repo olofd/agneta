@@ -13,7 +13,8 @@ public enum OwnFolder {
     /// Returns the path with `root` resolved and nothing below it resolved, for a profile's `verbatim`.
     @discardableResult
     public static func ensure(_ folder: URL, under root: URL) throws -> URL {
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createDirectory(
+            at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let base = root.path(percentEncoded: false).trimmingSuffix("/")
         let real = root.realFileURL.path(percentEncoded: false).trimmingSuffix("/")
         var path = folder.path(percentEncoded: false).trimmingSuffix("/")
@@ -30,7 +31,9 @@ public enum OwnFolder {
             } else if errno != ENOENT {
                 throw ChildProcessError.spawnFailed(path: current, errno: errno)
             }
-            guard mkdir(current, 0o700) == 0 || errno == EEXIST else { throw ChildProcessError.spawnFailed(path: current, errno: errno) }
+            guard mkdir(current, 0o700) == 0 || errno == EEXIST else {
+                throw ChildProcessError.spawnFailed(path: current, errno: errno)
+            }
         }
         return URL(filePath: path, directoryHint: .isDirectory)
     }

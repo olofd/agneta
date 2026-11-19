@@ -1,19 +1,28 @@
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 @Suite struct PolicyTests {
-    let root = FileManager.default.temporaryDirectory.appending(path: "agneta-policy-\(UUID().uuidString)", directoryHint: .isDirectory)
+    let root = FileManager.default.temporaryDirectory.appending(
+        path: "agneta-policy-\(UUID().uuidString)", directoryHint: .isDirectory)
     var home: URL { root.appending(path: "home", directoryHint: .isDirectory) }
-    var context: PolicyContext { PolicyContext(userHome: home, agnetaRoots: [home.appending(path: "Library/Application Support/Agneta")]) }
+    var context: PolicyContext {
+        PolicyContext(userHome: home, agnetaRoots: [home.appending(path: "Library/Application Support/Agneta")])
+    }
 
     init() throws {
-        for path in ["home/Documents/Example/Project.example/Workspace", "home/Documents/Example/Project.example/Private", "home/Library/Containers/com.example.app/Data", "home/Library/Application Support/Agneta/Accounts/a"] {
+        for path in [
+            "home/Documents/Example/Project.example/Workspace", "home/Documents/Example/Project.example/Private",
+            "home/Library/Containers/com.example.app/Data", "home/Library/Application Support/Agneta/Accounts/a"
+        ] {
             try FileManager.default.createDirectory(at: root.appending(path: path), withIntermediateDirectories: true)
         }
     }
 
-    var workspace: String { home.appending(path: "Documents/Example/Project.example/Workspace").path(percentEncoded: false) }
+    var workspace: String {
+        home.appending(path: "Documents/Example/Project.example/Workspace").path(percentEncoded: false)
+    }
 
     @Test func missingPolicyFallsBackToWorkspaceToolsWithAppApproval() throws {
         let policy = try SessionPolicy.parse(nil, cwd: workspace, context: context)
@@ -23,9 +32,14 @@ import Testing
     }
 
     @Test func parsesAProjectPackagePolicy() throws {
-        let privateFolder = home.appending(path: "Documents/Example/Project.example/Private").path(percentEncoded: false)
-        let policy = try SessionPolicy.parse(["tools": "workspace", "denied": [.string(privateFolder)], "network": "none", "approval": "never-ask", "limits": ["maxTurns": 50]],
-                                             cwd: workspace, context: context)
+        let privateFolder = home.appending(path: "Documents/Example/Project.example/Private").path(
+            percentEncoded: false)
+        let policy = try SessionPolicy.parse(
+            [
+                "tools": "workspace", "denied": [.string(privateFolder)], "network": "none", "approval": "never-ask",
+                "limits": ["maxTurns": 50]
+            ],
+            cwd: workspace, context: context)
         #expect(policy.denied.count == 1)
         #expect(policy.approval == .neverAsk)
         #expect(policy.limits.maxTurns == 50)
@@ -33,17 +47,28 @@ import Testing
 
     /// Any JSON number an app sends as a limit is refused or used, never a crash: `Int(1e300)` traps.
     @Test func outOfRangeLimitsAreRefusedNotACrash() {
-        for limits: JSONValue in [["maxTurns": .double(1e300)], ["maxSeconds": .double(-1e300)], ["maxTurns": .double(2.5)],
-                                  ["maxSeconds": .double(Double(Int32.max) + 1)], ["maxTurns": 0], ["maxCostUSD": .double(-1)]] {
-            #expect(throws: PolicyRejection.self, "\(limits)") { _ = try SessionPolicy.parse(["limits": limits], cwd: workspace, context: context) }
+        for limits: JSONValue in [
+            ["maxTurns": .double(1e300)], ["maxSeconds": .double(-1e300)], ["maxTurns": .double(2.5)],
+            ["maxSeconds": .double(Double(Int32.max) + 1)], ["maxTurns": 0], ["maxCostUSD": .double(-1)]
+        ] {
+            #expect(throws: PolicyRejection.self, "\(limits)") {
+                _ = try SessionPolicy.parse(["limits": limits], cwd: workspace, context: context)
+            }
         }
-        #expect((try? SessionPolicy.parse(["limits": ["maxTurns": .double(12), "maxSeconds": 600, "maxCostUSD": .double(0.5)]], cwd: workspace, context: context))?.limits.maxTurns == 12)
+        #expect(
+            (try? SessionPolicy.parse(
+                ["limits": ["maxTurns": .double(12), "maxSeconds": 600, "maxCostUSD": .double(0.5)]], cwd: workspace,
+                context: context))?.limits.maxTurns == 12)
     }
 
     /// A field of the wrong type is refused, not taken as left out (which would quietly mean the default).
     @Test func aFieldOfTheWrongTypeIsRefused() {
-        for policy: JSONValue in [["tools": 5], ["tools": .null], ["approval": .bool(true)], ["toolSockets": "/tmp/x.sock"], ["network": 0]] {
-            #expect(throws: PolicyRejection.self, "\(policy)") { _ = try SessionPolicy.parse(policy, cwd: workspace, context: context) }
+        for policy: JSONValue in [
+            ["tools": 5], ["tools": .null], ["approval": .bool(true)], ["toolSockets": "/tmp/x.sock"], ["network": 0]
+        ] {
+            #expect(throws: PolicyRejection.self, "\(policy)") {
+                _ = try SessionPolicy.parse(policy, cwd: workspace, context: context)
+            }
         }
     }
 
@@ -53,41 +78,64 @@ import Testing
         let notes = URL(filePath: workspace).appending(path: "notes", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
         let secret = root.appending(path: "home/Library/Containers/com.example.app/Data", directoryHint: .isDirectory)
-        let policy = try SessionPolicy.parse(["tools": "workspace", "writable": [.string(notes.path(percentEncoded: false))]], cwd: workspace, context: context)
+        let policy = try SessionPolicy.parse(
+            ["tools": "workspace", "writable": [.string(notes.path(percentEncoded: false))]], cwd: workspace,
+            context: context)
         try FileManager.default.removeItem(at: notes)
         try FileManager.default.createSymbolicLink(at: notes, withDestinationURL: secret)
-        for profile in [policy.toolProfile(scratch: root.appending(path: "scratch")).render(), {
-            var engine = SandboxProfile(kind: .engine, writable: [policy.workspace] + policy.writable, denied: [])
-            engine.verbatim = policy.checkedPaths
-            return engine.render()
-        }()] {
-            #expect(!profile.contains(secret.realFileURL.path(percentEncoded: false)), "the profile followed the swapped-in link")
+        for profile in [
+            policy.toolProfile(scratch: root.appending(path: "scratch")).render(),
+            {
+                var engine = SandboxProfile(kind: .engine, writable: [policy.workspace] + policy.writable, denied: [])
+                engine.verbatim = policy.checkedPaths
+                return engine.render()
+            }()
+        ] {
+            #expect(
+                !profile.contains(secret.realFileURL.path(percentEncoded: false)),
+                "the profile followed the swapped-in link")
             #expect(profile.contains("\"\(policy.writable[0].path(percentEncoded: false).trimmingSuffix("/"))\""))
         }
     }
 
     @Test func projectPackageRequirements() throws {
         // Read-only folders inside the workspace, and the one port and Unix socket its tools may reach.
-        let tests = home.appending(path: "Documents/Example/Project.example/Workspace/tests").path(percentEncoded: false)
-        let policy = try SessionPolicy.parse(["readOnly": [.string(tests)], "toolPorts": [47392], "toolSockets": ["/tmp/tools.sock"]], cwd: workspace, context: context)
+        let tests = home.appending(path: "Documents/Example/Project.example/Workspace/tests").path(
+            percentEncoded: false)
+        let policy = try SessionPolicy.parse(
+            ["readOnly": [.string(tests)], "toolPorts": [47392], "toolSockets": ["/tmp/tools.sock"]], cwd: workspace,
+            context: context)
         let profile = policy.toolProfile(scratch: root.appending(path: "scratch")).render()
-        #expect(profile.contains("(deny file-write* (subpath \"\(URL(filePath: tests).realFileURL.path(percentEncoded: false))\"))"))
+        #expect(
+            profile.contains(
+                "(deny file-write* (subpath \"\(URL(filePath: tests).realFileURL.path(percentEncoded: false))\"))"))
         #expect(profile.contains("(allow network-outbound (remote tcp \"localhost:47392\"))"))
-        #expect(profile.contains("(allow network-outbound (remote unix-socket (path-literal \"/private/tmp/tools.sock\")))"))
-        #expect(throws: PolicyRejection.self) { try SessionPolicy.parse(["toolPorts": [0]], cwd: workspace, context: context) }
+        #expect(
+            profile.contains("(allow network-outbound (remote unix-socket (path-literal \"/private/tmp/tools.sock\")))")
+        )
+        #expect(throws: PolicyRejection.self) {
+            try SessionPolicy.parse(["toolPorts": [0]], cwd: workspace, context: context)
+        }
     }
 
     @Test func refusesWhatItCantEnforce() {
         func rejection(_ value: JSONValue, cwd: String? = nil) -> String? {
-            do { _ = try SessionPolicy.parse(value, cwd: cwd ?? workspace, context: context); return nil }
-            catch let error as PolicyRejection { return error.field }
-            catch { return "other" }
+            do { _ = try SessionPolicy.parse(value, cwd: cwd ?? workspace, context: context); return nil } catch let
+                error as PolicyRejection
+            { return error.field } catch { return "other" }
         }
         #expect(rejection(["tools": "everything"]) == "tools")
         #expect(rejection(["network": ["allow": ["example.com"]]]) == "network")
         #expect(rejection(["readable": ["relative/path"]]) == "readable")
-        #expect(rejection([:], cwd: home.appending(path: "Library/Containers/com.example.app/Data").path(percentEncoded: false)) == "cwd")
-        #expect(rejection([:], cwd: home.appending(path: "Library/Application Support/Agneta/Accounts/a").path(percentEncoded: false)) == "cwd")
+        #expect(
+            rejection(
+                [:], cwd: home.appending(path: "Library/Containers/com.example.app/Data").path(percentEncoded: false))
+                == "cwd")
+        #expect(
+            rejection(
+                [:],
+                cwd: home.appending(path: "Library/Application Support/Agneta/Accounts/a").path(percentEncoded: false))
+                == "cwd")
         #expect(rejection([:], cwd: home.path(percentEncoded: false)) == "cwd")
         #expect(rejection(["denied": [.string(workspace)]]) == "denied")
     }
@@ -96,21 +144,30 @@ import Testing
     /// sandboxed one included) could hand its commands another app's socket, such as a password manager's SSH agent in
     /// its group container, or one under Agneta's own data. Sockets get the same protected places as folders.
     @Test func toolSocketsCantReachProtectedPlaces() throws {
-        for socket in ["Library/Group Containers/TEAM.com.example.vault/t/agent.sock", "Library/Containers/com.example.app/Data/app.sock",
-                       "Library/Application Support/Agneta/broker.sock", ".ssh/agent.sock"] {
+        for socket in [
+            "Library/Group Containers/TEAM.com.example.vault/t/agent.sock",
+            "Library/Containers/com.example.app/Data/app.sock",
+            "Library/Application Support/Agneta/broker.sock", ".ssh/agent.sock"
+        ] {
             let path = home.appending(path: socket).path(percentEncoded: false)
-            #expect(throws: PolicyRejection.self, "\(socket)") { _ = try SessionPolicy.parse(["toolSockets": [.string(path)]], cwd: workspace, context: context) }
+            #expect(throws: PolicyRejection.self, "\(socket)") {
+                _ = try SessionPolicy.parse(["toolSockets": [.string(path)]], cwd: workspace, context: context)
+            }
         }
         // An ordinary socket is still a socket: no trailing slash, as the profile's path-literal needs.
         let policy = try SessionPolicy.parse(["toolSockets": ["/tmp/tools.sock"]], cwd: workspace, context: context)
-        #expect(policy.toolSockets.map { $0.path(percentEncoded: false) } == [URL(filePath: "/tmp/tools.sock").realFileURL.path(percentEncoded: false)])
+        #expect(
+            policy.toolSockets.map { $0.path(percentEncoded: false) } == [
+                URL(filePath: "/tmp/tools.sock").realFileURL.path(percentEncoded: false)
+            ])
         #expect(policy.toolSockets.allSatisfy { !$0.path(percentEncoded: false).hasSuffix("/") })
     }
 
     /// Under /private (/tmp, the temporary folder), whether a path existed changed how it was compared, so a missing
     /// folder under an existing one wasn't inside it: a writable folder not made yet slipped past its denied parent.
     @Test func aMissingFolderIsInsideItsExistingParent() throws {
-        let parent = URL(filePath: "/private/tmp", directoryHint: .isDirectory).appending(path: "agneta-inside-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let parent = URL(filePath: "/private/tmp", directoryHint: .isDirectory).appending(
+            path: "agneta-inside-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: parent) }
         #expect(parent.appending(path: "not-yet/deeper", directoryHint: .isDirectory).isInside(parent))
@@ -122,9 +179,12 @@ import Testing
         try FileManager.default.createDirectory(at: denied, withIntermediateDirectories: true)
         let tmpContext = PolicyContext(userHome: home, agnetaRoots: [])
         #expect(throws: PolicyRejection.self) {
-            _ = try SessionPolicy.parse(["denied": [.string(denied.path(percentEncoded: false))],
-                                         "writable": [.string(denied.appending(path: "made-later").path(percentEncoded: false))]],
-                                        cwd: workspace.path(percentEncoded: false), context: tmpContext)
+            _ = try SessionPolicy.parse(
+                [
+                    "denied": [.string(denied.path(percentEncoded: false))],
+                    "writable": [.string(denied.appending(path: "made-later").path(percentEncoded: false))]
+                ],
+                cwd: workspace.path(percentEncoded: false), context: tmpContext)
         }
     }
 
@@ -139,7 +199,8 @@ import Testing
     }
 
     @Test func toolProfileHasNoNetworkAndNoKeychain() {
-        let profile = SandboxProfile(kind: .tool, writable: [URL(filePath: "/w")], denied: [URL(filePath: "/w/held")]).render()
+        let profile = SandboxProfile(kind: .tool, writable: [URL(filePath: "/w")], denied: [URL(filePath: "/w/held")])
+            .render()
         #expect(profile.contains("(deny file-write* (require-not (require-any (subpath \"/w\")"))
         #expect(profile.contains("(deny file-read* file-write* (subpath \"/w/held\"))"))
         // No network at all, not even the resolver: a lookup could carry data out.
@@ -148,12 +209,17 @@ import Testing
         #expect(!profile.contains("(allow network-outbound"))
         #expect(profile.contains("com.apple.securityd"))
         // Reads are allow-listed: the session's folders and system locations, nothing else.
-        #expect(profile.contains("(deny file-read-data (require-all (require-not (literal \"/\")) (require-not (subpath \"/w\")) (require-not (path-ancestors \"/w\"))"))
+        #expect(
+            profile.contains(
+                "(deny file-read-data (require-all (require-not (literal \"/\")) (require-not (subpath \"/w\")) (require-not (path-ancestors \"/w\"))"
+            ))
         #expect(profile.contains("(require-not (subpath \"/usr\"))"))
     }
 
     @Test func engineProfileAllowsProvidersAndTheToolServer() {
-        let profile = SandboxProfile(kind: .engine, writable: [URL(filePath: "/w")], denied: [], loopbackPorts: [47392], remotePorts: [443]).render()
+        let profile = SandboxProfile(
+            kind: .engine, writable: [URL(filePath: "/w")], denied: [], loopbackPorts: [47392], remotePorts: [443]
+        ).render()
         #expect(profile.contains("(allow network-outbound (remote tcp \"localhost:47392\"))"))
         #expect(profile.contains("(allow network-outbound (remote tcp \"*:443\"))"))
         #expect(profile.contains("(deny appleevent-send)")) // engines script no other apps either

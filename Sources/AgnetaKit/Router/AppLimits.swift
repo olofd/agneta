@@ -95,13 +95,19 @@ public struct AppLimits: Sendable, Equatable, Codable {
     /// Why these limits can't be kept, or nil. `global`: how many turns Agneta runs at once, the most "at once" can be.
     public func problem(global: Int) -> String? {
         if let spend {
-            guard spend.max.isFinite, spend.max > 0, spend.max <= Self.maxSpend else { return "A spending limit is more than $0 and at most $10,000" }
+            guard spend.max.isFinite, spend.max > 0, spend.max <= Self.maxSpend else {
+                return "A spending limit is more than $0 and at most $10,000"
+            }
             guard spend.period != .hour else { return "A spending limit is per day, week or month" }
         }
         if let atOnce, !(1...global).contains(atOnce) { return "At once is between 1 and \(global)" }
         if let newTasks {
-            guard (1...Self.maxNewTasks).contains(newTasks.max) else { return "New tasks are between 1 and \(Self.maxNewTasks)" }
-            guard newTasks.period == .hour || newTasks.period == .day else { return "New tasks are counted per hour or per day" }
+            guard (1...Self.maxNewTasks).contains(newTasks.max) else {
+                return "New tasks are between 1 and \(Self.maxNewTasks)"
+            }
+            guard newTasks.period == .hour || newTasks.period == .day else {
+                return "New tasks are counted per hour or per day"
+            }
         }
         return nil
     }
@@ -130,7 +136,9 @@ public struct AppLimits: Sendable, Equatable, Codable {
         var parts: [String] = []
         if let spend { parts.append("\(Self.dollars(spend.max)) \(Self.per(spend.period))") }
         if let atOnce { parts.append("\(atOnce) at once") }
-        if let newTasks { parts.append("\(newTasks.max) new \(newTasks.max == 1 ? "task" : "tasks") \(Self.per(newTasks.period))") }
+        if let newTasks {
+            parts.append("\(newTasks.max) new \(newTasks.max == 1 ? "task" : "tasks") \(Self.per(newTasks.period))")
+        }
         return parts
     }
 
@@ -149,7 +157,11 @@ public struct AppLimits: Sendable, Equatable, Codable {
             return "at \(formatter.string(from: date))"
         }
         if calendar.startOfDay(for: date) == date {
-            if let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)), date == tomorrow { return "at midnight" }
+            if let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)),
+                date == tomorrow
+            {
+                return "at midnight"
+            }
             let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: date).day ?? 8
             formatter.setLocalizedDateFormatFromTemplate(days < 7 ? "EEEE" : "dMMMM")
             return "on \(formatter.string(from: date))"

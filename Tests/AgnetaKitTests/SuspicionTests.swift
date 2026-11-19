@@ -2,6 +2,7 @@
 import Darwin
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 /// A WebSocket client on a plain socket, so a test can make it stop reading for real: what it doesn't read stays in
@@ -16,15 +17,25 @@ final class RawWebSocket {
         setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &small, socklen_t(MemoryLayout<Int32>.size))
         var wait = timeval(tv_sec: 10, tv_usec: 0) // a read that waits longer fails, rather than hang the test
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
-        var address = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: port.bigEndian,
-                                  sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
-        let connected = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        var address = sockaddr_in(
+            sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: port.bigEndian,
+            sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
         guard connected == 0 else { throw POSIXError(.ECONNREFUSED) }
         let key = Data((0..<16).map { _ in UInt8.random(in: 0...255) }).base64EncodedString()
-        try write(Data("GET /acp HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: \(key)\r\nSec-WebSocket-Version: 13\r\n\r\n".utf8))
+        try write(
+            Data(
+                "GET /acp HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: \(key)\r\nSec-WebSocket-Version: 13\r\n\r\n"
+                    .utf8))
         while buffer.range(of: Data("\r\n\r\n".utf8)) == nil { try fill() }
         let end = buffer.range(of: Data("\r\n\r\n".utf8))!
-        guard String(decoding: buffer[..<end.lowerBound], as: UTF8.self).contains(" 101 ") else { throw POSIXError(.EPROTO) }
+        guard String(decoding: buffer[..<end.lowerBound], as: UTF8.self).contains(" 101 ") else {
+            throw POSIXError(.EPROTO)
+        }
         buffer.removeSubrange(..<end.upperBound)
     }
 
@@ -57,10 +68,13 @@ final class RawWebSocket {
     func send(_ value: JSONValue) throws {
         let payload = try JSONCoding.encode(value)
         var frame = Data([0x81])
-        if payload.count < 126 { frame.append(0x80 | UInt8(payload.count)) } else if payload.count < 65536 {
+        if payload.count < 126 {
+            frame.append(0x80 | UInt8(payload.count))
+        } else if payload.count < 65536 {
             frame.append(0x80 | 126); frame.append(contentsOf: [UInt8(payload.count >> 8), UInt8(payload.count & 0xff)])
         } else {
-            frame.append(0x80 | 127); frame.append(contentsOf: (0..<8).reversed().map { UInt8((payload.count >> ($0 * 8)) & 0xff) })
+            frame.append(0x80 | 127);
+            frame.append(contentsOf: (0..<8).reversed().map { UInt8((payload.count >> ($0 * 8)) & 0xff) })
         }
         let mask = (0..<4).map { _ in UInt8.random(in: 0...255) }
         frame.append(contentsOf: mask)
@@ -73,7 +87,11 @@ final class RawWebSocket {
         while true {
             let header = try take(2)
             var length = Int(header[1] & 0x7f)
-            if length == 126 { length = try take(2).reduce(0) { $0 << 8 | Int($1) } } else if length == 127 { length = try take(8).reduce(0) { $0 << 8 | Int($1) } }
+            if length == 126 {
+                length = try take(2).reduce(0) { $0 << 8 | Int($1) }
+            } else if length == 127 {
+                length = try take(8).reduce(0) { $0 << 8 | Int($1) }
+            }
             let payload = try take(length)
             switch header[0] & 0x0f {
             case 0x1: return try JSONCoding.decode(payload)
@@ -89,7 +107,9 @@ final class RawWebSocket {
         while true {
             let message = try receive()
             if message["id"]?.intValue == Int64(id), message["method"] == nil {
-                if let error = message["error"] { throw RPCError(code: error["code"]?.intValue ?? 0, message: error["message"]?.stringValue ?? "") }
+                if let error = message["error"] {
+                    throw RPCError(code: error["code"]?.intValue ?? 0, message: error["message"]?.stringValue ?? "")
+                }
                 return message["result"] ?? .null
             }
         }
@@ -125,15 +145,30 @@ extension RouterIntegrationTests {
     @Test func anAppThatStopsReadingHoldsUpNoOneElse() async throws {
         let stack = try await Stack.start(port: 47629, modelPort: 47630)
         do {
-            let projects = stack.root.appending(path: "projects", directoryHint: .isDirectory).realFileURL.path(percentEncoded: false)
+            let projects = stack.root.appending(path: "projects", directoryHint: .isDirectory).realFileURL.path(
+                percentEncoded: false)
             let stalled = try RawWebSocket(port: stack.port)
-            let paired = try stalled.request(1, "agneta/pair", ["name": "Stalled", "scope": ["tools": "workspace", "folders": [.string(projects)]]])
-            _ = try stalled.request(2, "initialize", ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": paired["token"] ?? .null]]])
-            let created = try stalled.request(3, "session/new", ["cwd": .string(try stack.workspace("Stalled").path(percentEncoded: false)), "mcpServers": [],
-                                                                 "_meta": [SessionPolicy.key: ["tools": "app-only", "approval": "never-ask"], "agneta": ["account": "dev"]]])
+            let paired = try stalled.request(
+                1, "agneta/pair", ["name": "Stalled", "scope": ["tools": "workspace", "folders": [.string(projects)]]])
+            _ = try stalled.request(
+                2, "initialize",
+                [
+                    "protocolVersion": 1, "clientCapabilities": [:],
+                    "_meta": ["agneta": ["token": paired["token"] ?? .null]]
+                ])
+            let created = try stalled.request(
+                3, "session/new",
+                [
+                    "cwd": .string(try stack.workspace("Stalled").path(percentEncoded: false)), "mcpServers": [],
+                    "_meta": [
+                        SessionPolicy.key: ["tools": "app-only", "approval": "never-ask"], "agneta": ["account": "dev"]
+                    ]
+                ])
             let stalledSession = try #require(created["sessionId"]?.stringValue)
-            try stalled.send(["jsonrpc": "2.0", "id": 4, "method": "session/prompt",
-                              "params": ["sessionId": .string(stalledSession), "prompt": [["type": "text", "text": "LONGREPLY 3000"]]]])
+            try stalled.send([
+                "jsonrpc": "2.0", "id": 4, "method": "session/prompt",
+                "params": ["sessionId": .string(stalledSession), "prompt": [["type": "text", "text": "LONGREPLY 3000"]]]
+            ])
             // From here on the stalled app reads nothing.
 
             let app = AppClient(port: stack.port)
@@ -192,7 +227,8 @@ extension RouterIntegrationTests {
             let app = AppClient(port: stack.port)
             defer { app.close() }
             try await app.pairAndInitialize("Counted")
-            let session = try await app.newSession(cwd: try stack.workspace("Counted"), tools: "app-only", account: "oc")
+            let session = try await app.newSession(
+                cwd: try stack.workspace("Counted"), tools: "app-only", account: "oc")
             let result = try await app.prompt(session, "PAUSE 2500 hello") // longer than one 2 s read
             let usage = result["_meta"]?["agneta/usage"]
             // The fake model reports 42 tokens in and 7 out for each call.
@@ -211,29 +247,40 @@ extension ContainmentTests {
     /// gone (one engine home, one process), and a load while a fork's helper holds the home waits for it and gets
     /// a process of its own, started with its own sandbox and setup.
     @Test func aTasksEngineIsNeverShared() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "agneta-s3-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-s3-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory
+        ).realFileURL
         defer { try? FileManager.default.removeItem(at: root) }
         let workspace = root.appending(path: "work", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         // Answers initialize, then takes 0.6 s to exit once told to stop: a window in which a second process could start.
-        let probe = ProbeAdapter(script: """
-        trap 'sleep 0.6; exit 0' TERM
-        IFS= read -r line
-        id=$(printf '%s' "$line" | sed -E 's/.*"id":([0-9]+).*/\\1/')
-        printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\\n' "$id"
-        while true; do sleep 0.05; done
-        """)
-        let supervisor = EngineSupervisor(.init(shellTool: BuiltTools.shell, root: root.appending(path: "agneta")),
-                                          accounts: ["a": ProviderSetup(kind: .openAI, apiKey: "k")])
-        let context = PolicyContext(userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [root.appending(path: "agneta")])
-        let editing = try SessionPolicy.parse(["tools": "workspace"], cwd: workspace.path(percentEncoded: false), context: context)
-        let reading = try SessionPolicy.parse(["tools": "read"], cwd: workspace.path(percentEncoded: false), context: context)
-        func spec(_ policy: SessionPolicy) -> EngineSessionSpec { EngineSessionSpec(policy: policy, servers: [], instructions: nil) }
+        let probe = ProbeAdapter(
+            script: """
+                trap 'sleep 0.6; exit 0' TERM
+                IFS= read -r line
+                id=$(printf '%s' "$line" | sed -E 's/.*"id":([0-9]+).*/\\1/')
+                printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{}}}\\n' "$id"
+                while true; do sleep 0.05; done
+                """)
+        let supervisor = EngineSupervisor(
+            .init(shellTool: BuiltTools.shell, root: root.appending(path: "agneta")),
+            accounts: ["a": ProviderSetup(kind: .openAI, apiKey: "k")])
+        let context = PolicyContext(
+            userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [root.appending(path: "agneta")])
+        let editing = try SessionPolicy.parse(
+            ["tools": "workspace"], cwd: workspace.path(percentEncoded: false), context: context)
+        let reading = try SessionPolicy.parse(
+            ["tools": "read"], cwd: workspace.path(percentEncoded: false), context: context)
+        func spec(_ policy: SessionPolicy) -> EngineSessionSpec {
+            EngineSessionSpec(policy: policy, servers: [], instructions: nil)
+        }
 
-        let first = try await supervisor.open(account: "a", engine: probe, policy: editing, mcpPorts: [], key: nil, session: spec(editing))
+        let first = try await supervisor.open(
+            account: "a", engine: probe, policy: editing, mcpPorts: [], key: nil, session: spec(editing))
         let closing = Task { await supervisor.release(first) }
         try await Task.sleep(for: .milliseconds(50))
-        let loaded = try await supervisor.open(account: "a", engine: probe, policy: editing, mcpPorts: [], key: first.key, session: spec(editing))
+        let loaded = try await supervisor.open(
+            account: "a", engine: probe, policy: editing, mcpPorts: [], key: first.key, session: spec(editing))
         #expect(kill(first.pid, 0) != 0, "a second engine started while the first was still on its home")
         #expect(loaded.pid != first.pid)
         await closing.value
@@ -243,7 +290,8 @@ extension ContainmentTests {
             try? await Task.sleep(for: .milliseconds(200))
             await supervisor.release(loaded)
         }
-        let again = try await supervisor.open(account: "a", engine: probe, policy: reading, mcpPorts: [], key: loaded.key, session: spec(reading))
+        let again = try await supervisor.open(
+            account: "a", engine: probe, policy: reading, mcpPorts: [], key: loaded.key, session: spec(reading))
         #expect(again.pid != loaded.pid && kill(loaded.pid, 0) != 0)
         await helperDone.value
         await supervisor.stopAll()
@@ -262,7 +310,9 @@ extension RouterContractTests {
         let session = try await stack.session(app, account: "brokered")
         for _ in 0..<20 where app.updates(session).isEmpty { try await Task.sleep(for: .milliseconds(25)) }
         let early = app.updates(session).first { $0["sessionUpdate"]?.stringValue == "available_commands_update" }
-        #expect(early?["availableCommands"]?.arrayValue?.first?["name"]?.stringValue == "review", "the update sent during session/new was dropped")
+        #expect(
+            early?["availableCommands"]?.arrayValue?.first?["name"]?.stringValue == "review",
+            "the update sent during session/new was dropped")
     }
 }
 
@@ -278,12 +328,17 @@ extension RouterContractTests {
         defer { app.close() }
         try await app.pairAndInitialize("Modes")
         let session = try await stack.session(app, account: "brokered")
-        for request in [("session/set_mode", ["modeId": "build"] as JSONValue), ("session/set_config_option", ["configId": "mode", "value": "plan"])] {
+        for request in [
+            ("session/set_mode", ["modeId": "build"] as JSONValue),
+            ("session/set_config_option", ["configId": "mode", "value": "plan"])
+        ] {
             do {
                 _ = try await app.request(request.0, request.1.setting("sessionId", to: .string(session)))
                 Issue.record("\(request.0) left Agneta's agent")
             } catch let error as RPCError {
-                #expect(error.code == RPCError.invalidParams && error.data?["agneta"]?["unenforceable"]?.arrayValue?.first?.stringValue == "mode")
+                #expect(
+                    error.code == RPCError.invalidParams
+                        && error.data?["agneta"]?["unenforceable"]?.arrayValue?.first?.stringValue == "mode")
             }
         }
         _ = try await app.request("session/set_mode", ["sessionId": .string(session), "modeId": "agneta"])

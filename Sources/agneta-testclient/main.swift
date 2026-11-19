@@ -11,7 +11,8 @@
 import AppKit
 import Foundation
 
-var port = 47331, cwd = "", mcp: String?, mcpToken: String?, tools = "app-only", prompts: [String] = [], token: String?, account: String?, engine: String?
+var port = 47331, cwd = "", mcp: String?, mcpToken: String?, tools = "app-only", prompts: [String] = [], token: String?,
+    account: String?, engine: String?
 var args = Array(CommandLine.arguments.dropFirst())
 while !args.isEmpty {
     let flag = args.removeFirst()
@@ -45,7 +46,8 @@ nonisolated(unsafe) var codeAlert: NSAlert?
     let alert = NSAlert()
     alert.icon = NSImage(systemSymbolName: "number.square", accessibilityDescription: nil)
     alert.messageText = "Check this code in Agneta"
-    alert.informativeText = "Agneta Test Client's code is \(code.prefix(3)) \(code.suffix(3)). Allow it in Agneta only if Agneta shows the same code."
+    alert.informativeText =
+        "Agneta Test Client's code is \(code.prefix(3)) \(code.suffix(3)). Allow it in Agneta only if Agneta shows the same code."
     alert.addButton(withTitle: "OK")
     codeAlert = alert
     NSApp.activate(ignoringOtherApps: true)
@@ -65,10 +67,14 @@ nonisolated(unsafe) var codeAlert: NSAlert?
 @MainActor func finish(_ status: Int32) -> Never {
     if sandboxed {
         let alert = NSAlert()
-        alert.icon = NSImage(systemSymbolName: status == 0 ? "checkmark.circle" : "exclamationmark.triangle", accessibilityDescription: nil)
+        alert.icon = NSImage(
+            systemSymbolName: status == 0 ? "checkmark.circle" : "exclamationmark.triangle",
+            accessibilityDescription: nil)
         alert.messageText = status == 0 ? "Test task finished" : "Test task failed"
         let reply = transcript.filter { $0.hasPrefix("text: ") }.map { String($0.dropFirst(6)) }.joined()
-        alert.informativeText = (reply.isEmpty ? "" : "Reply: \(reply)\n\n") + transcript.filter { !$0.hasPrefix("text: ") }.suffix(6).joined(separator: "\n")
+        alert.informativeText =
+            (reply.isEmpty ? "" : "Reply: \(reply)\n\n")
+            + transcript.filter { !$0.hasPrefix("text: ") }.suffix(6).joined(separator: "\n")
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
     }
@@ -93,9 +99,13 @@ final class Client: @unchecked Sendable {
             switch result {
             case .failure(let error):
                 say("connection closed: \(error.localizedDescription)")
-                self.lock.withLock { self.waiting.values.forEach { $0.resume(throwing: error) }; self.waiting.removeAll() }
+                self.lock.withLock {
+                    self.waiting.values.forEach { $0.resume(throwing: error) }; self.waiting.removeAll()
+                }
             case .success(let message):
-                if case .string(let text) = message, let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] {
+                if case .string(let text) = message,
+                    let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+                {
                     self.handle(object, raw: Data(text.utf8))
                 }
                 self.receive()
@@ -117,7 +127,9 @@ final class Client: @unchecked Sendable {
             // From a run-loop block, not the main queue: a modal loop inside a main-queue job stops the main queue, and
             // with it the main-actor work that closes the dialog once Agneta answers.
             if sandboxed {
-                CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) { MainActor.assumeIsolated { showCode(code) } }
+                CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+                    MainActor.assumeIsolated { showCode(code) }
+                }
                 CFRunLoopWakeUp(CFRunLoopGetMain())
             }
         } else if method == "session/update", let update = params["update"] as? [String: Any] {
@@ -142,8 +154,12 @@ final class Client: @unchecked Sendable {
     }
 
     func request(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {
-        let id = lock.withLock { () -> Int in defer { nextID += 1 }; return nextID }
-        let body = try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": id, "method": method, "params": params])
+        let id = lock.withLock { () -> Int in
+            defer { nextID += 1 }; return nextID
+        }
+        let body = try JSONSerialization.data(withJSONObject: [
+            "jsonrpc": "2.0", "id": id, "method": method, "params": params
+        ])
         let raw = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
             lock.withLock { waiting[id] = continuation }
             task.send(.string(String(decoding: body, as: UTF8.self))) { [self] error in
@@ -155,7 +171,9 @@ final class Client: @unchecked Sendable {
         let reply = (try JSONSerialization.jsonObject(with: raw) as? [String: Any]) ?? [:]
         if let error = reply["error"] as? [String: Any] {
             let detail = error["data"].map { " (\($0))" } ?? ""
-            throw NSError(domain: "acp", code: error["code"] as? Int ?? 0, userInfo: [NSLocalizedDescriptionKey: (error["message"] as? String ?? "error") + detail])
+            throw NSError(
+                domain: "acp", code: error["code"] as? Int ?? 0,
+                userInfo: [NSLocalizedDescriptionKey: (error["message"] as? String ?? "error") + detail])
         }
         return reply["result"] as? [String: Any] ?? [:]
     }
@@ -163,51 +181,68 @@ final class Client: @unchecked Sendable {
 
 /// The whole exchange: pair, initialize, open a session, prompt. Returns the exit status.
 @MainActor func run() async -> Int32 {
-do {
-    let client = Client(url: URL(string: "ws://127.0.0.1:\(port)/acp")!)
-    if token == nil {
-        // The scope the user approves: the tools this run uses, in the folder it was given (or none: its own workspace).
-        var scope: [String: Any] = ["tools": tools]
-        if !cwd.isEmpty { scope["folders"] = [cwd] }
-        let paired: [String: Any]
-        do { paired = try await client.request("agneta/pair", ["name": "Agneta Test Client", "scope": scope]); hideCode() } catch { hideCode(); throw error }
-        token = paired["token"] as? String ?? ""
-        say("paired")
+    do {
+        let client = Client(url: URL(string: "ws://127.0.0.1:\(port)/acp")!)
+        if token == nil {
+            // The scope the user approves: the tools this run uses, in the folder it was given (or none: its own workspace).
+            var scope: [String: Any] = ["tools": tools]
+            if !cwd.isEmpty { scope["folders"] = [cwd] }
+            let paired: [String: Any]
+            do {
+                paired = try await client.request("agneta/pair", ["name": "Agneta Test Client", "scope": scope]);
+                hideCode()
+            } catch { hideCode(); throw error }
+            token = paired["token"] as? String ?? ""
+            say("paired")
+        }
+        let initialized = try await client.request(
+            "initialize", ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": token ?? ""]]]
+        )
+        say("initialized: \((initialized["agentInfo"] as? [String: Any])?["title"] ?? "?")")
+        // What this app may use: its providers, each with the engines its tasks there may run on (the default first).
+        let access = try await client.request("agneta/access", [:])
+        let providers = access["providers"] as? [[String: Any]] ?? []
+        for provider in providers {
+            say(
+                "provider \(provider["id"] ?? "?") (\(provider["label"] ?? "?")): engines \((provider["engines"] as? [String] ?? []).joined(separator: ", "))"
+            )
+        }
+        if account == nil { account = providers.first { $0["paused"] as? Bool != true }?["id"] as? String }
+        if cwd.isEmpty {
+            // Without a folder of its own choosing, the app works in the workspace Agneta gave it.
+            cwd = access["workspace"] as? String ?? ""
+        }
+        var servers: [[String: Any]] = []
+        if let mcp {
+            servers.append([
+                "type": "http", "name": "app", "url": mcp,
+                "headers": mcpToken.map { [["name": "Authorization", "value": "Bearer \($0)"]] } ?? []
+            ])
+        }
+        let session = try await client.request(
+            "session/new",
+            [
+                "cwd": cwd, "mcpServers": servers,
+                "_meta": [
+                    "agneta/policy": ["tools": tools, "network": "none", "approval": "ask-app"],
+                    "agneta/task": ["title": "Test task"],
+                    "agneta/instructions": ["text": "You are a test assistant."],
+                    "agneta": ["account": account ?? ""].merging(engine.map { ["engine": $0] } ?? [:]) { _, new in new }
+                ]
+            ])
+        let sessionID = session["sessionId"] as? String ?? ""
+        say("session \(sessionID)")
+        for prompt in prompts {
+            let result = try await client.request(
+                "session/prompt", ["sessionId": sessionID, "prompt": [["type": "text", "text": prompt]]])
+            say("turn ended: \(result["stopReason"] ?? "?")")
+        }
+        say("done")
+        return 0
+    } catch {
+        say("failed: \(error.localizedDescription)")
+        return 1
     }
-    let initialized = try await client.request("initialize", ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": token ?? ""]]])
-    say("initialized: \((initialized["agentInfo"] as? [String: Any])?["title"] ?? "?")")
-    // What this app may use: its providers, each with the engines its tasks there may run on (the default first).
-    let access = try await client.request("agneta/access", [:])
-    let providers = access["providers"] as? [[String: Any]] ?? []
-    for provider in providers {
-        say("provider \(provider["id"] ?? "?") (\(provider["label"] ?? "?")): engines \((provider["engines"] as? [String] ?? []).joined(separator: ", "))")
-    }
-    if account == nil { account = providers.first { $0["paused"] as? Bool != true }?["id"] as? String }
-    if cwd.isEmpty {
-        // Without a folder of its own choosing, the app works in the workspace Agneta gave it.
-        cwd = access["workspace"] as? String ?? ""
-    }
-    var servers: [[String: Any]] = []
-    if let mcp {
-        servers.append(["type": "http", "name": "app", "url": mcp, "headers": mcpToken.map { [["name": "Authorization", "value": "Bearer \($0)"]] } ?? []])
-    }
-    let session = try await client.request("session/new", [
-        "cwd": cwd, "mcpServers": servers,
-        "_meta": ["agneta/policy": ["tools": tools, "network": "none", "approval": "ask-app"], "agneta/task": ["title": "Test task"],
-                  "agneta/instructions": ["text": "You are a test assistant."], "agneta": ["account": account ?? ""].merging(engine.map { ["engine": $0] } ?? [:]) { _, new in new }],
-    ])
-    let sessionID = session["sessionId"] as? String ?? ""
-    say("session \(sessionID)")
-    for prompt in prompts {
-        let result = try await client.request("session/prompt", ["sessionId": sessionID, "prompt": [["type": "text", "text": prompt]]])
-        say("turn ended: \(result["stopReason"] ?? "?")")
-    }
-    say("done")
-    return 0
-} catch {
-    say("failed: \(error.localizedDescription)")
-    return 1
-}
 }
 
 say("starting (sandboxed: \(sandboxed))")

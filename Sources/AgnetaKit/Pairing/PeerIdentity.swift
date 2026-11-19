@@ -29,7 +29,9 @@ public struct PeerIdentity: Sendable, Equatable {
         guard capacity > 0 else { return [] }
         var pids = [pid_t](repeating: 0, count: Int(capacity) + 64)
         let count = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
-        let holders = pids.prefix(Int(max(count, 0))).filter { $0 > 0 && $0 != excluding && owns(pid: $0, port: port, serverPort: serverPort) }
+        let holders = pids.prefix(Int(max(count, 0))).filter {
+            $0 > 0 && $0 != excluding && owns(pid: $0, port: port, serverPort: serverPort)
+        }
         // The test process connects to itself; accept it when nothing else matches.
         if holders.isEmpty, owns(pid: excluding, port: port, serverPort: serverPort) { return [excluding] }
         return holders
@@ -44,8 +46,11 @@ public struct PeerIdentity: Sendable, Equatable {
         guard used > 0 else { return false }
         for fd in fds.prefix(Int(used) / stride) where fd.proc_fdtype == UInt32(PROX_FDTYPE_SOCKET) {
             var info = socket_fdinfo()
-            let got = proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDSOCKETINFO, &info, Int32(MemoryLayout<socket_fdinfo>.size))
-            guard got == Int32(MemoryLayout<socket_fdinfo>.size), info.psi.soi_kind == Int32(SOCKINFO_TCP) else { continue }
+            let got = proc_pidfdinfo(
+                pid, fd.proc_fd, PROC_PIDFDSOCKETINFO, &info, Int32(MemoryLayout<socket_fdinfo>.size))
+            guard got == Int32(MemoryLayout<socket_fdinfo>.size), info.psi.soi_kind == Int32(SOCKINFO_TCP) else {
+                continue
+            }
             let tcp = info.psi.soi_proto.pri_tcp
             let local = Int(UInt16(bigEndian: UInt16(truncatingIfNeeded: tcp.tcpsi_ini.insi_lport)))
             let foreign = Int(UInt16(bigEndian: UInt16(truncatingIfNeeded: tcp.tcpsi_ini.insi_fport)))
@@ -59,20 +64,29 @@ public struct PeerIdentity: Sendable, Equatable {
         var identity = PeerIdentity(pid: pid, path: nil, identifier: nil, team: nil, valid: false)
         var buffer = [CChar](repeating: 0, count: Int(4 * MAXPATHLEN))
         let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
-        if length > 0 { identity.path = String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self) }
+        if length > 0 {
+            identity.path = String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        }
         var code: SecCode?
         let attributes = [kSecGuestAttributePid: NSNumber(value: pid)] as CFDictionary
-        guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess, let code else { return identity }
+        guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess, let code else {
+            return identity
+        }
         identity.valid = SecCodeCheckValidity(code, [], nil) == errSecSuccess
         var requirement: SecRequirement?
-        if SecRequirementCreateWithString("anchor apple generic" as CFString, [], &requirement) == errSecSuccess, let requirement {
+        if SecRequirementCreateWithString("anchor apple generic" as CFString, [], &requirement) == errSecSuccess,
+            let requirement
+        {
             identity.trusted = SecCodeCheckValidity(code, [], requirement) == errSecSuccess
         }
         var staticCode: SecStaticCode?
         guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else { return identity }
         var info: CFDictionary?
-        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
-              let fields = info as? [String: Any] else { return identity }
+        guard
+            SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info)
+                == errSecSuccess,
+            let fields = info as? [String: Any]
+        else { return identity }
         identity.identifier = fields[kSecCodeInfoIdentifier as String] as? String
         identity.team = fields[kSecCodeInfoTeamIdentifier as String] as? String
         identity.trusted = identity.trusted && identity.team != nil
@@ -85,7 +99,9 @@ public struct PeerIdentity: Sendable, Equatable {
     public static func forLoopbackPort(_ port: Int, serverPort: Int) -> PeerIdentity? {
         let identities = owners(ofLoopbackPort: port, serverPort: serverPort).map(of(pid:))
         guard var first = identities.first else { return nil }
-        if identities.contains(where: { !$0.trusted || $0.identifier != first.identifier || $0.team != first.team }) { first.trusted = false }
+        if identities.contains(where: { !$0.trusted || $0.identifier != first.identifier || $0.team != first.team }) {
+            first.trusted = false
+        }
         return first
     }
 }

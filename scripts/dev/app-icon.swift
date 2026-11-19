@@ -28,15 +28,20 @@ let evening: [(UInt32, CGFloat)] = [(0xff9a5a, 0), (0xff5f7e, 0.55), (0x8b3dff, 
 let sun: UInt32 = 0xfff1d6, ice: UInt32 = 0xfffaf6
 
 func color(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
-    CGColor(srgbRed: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255, blue: CGFloat(hex & 0xff) / 255, alpha: alpha)
+    CGColor(
+        srgbRed: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
+        blue: CGFloat(hex & 0xff) / 255, alpha: alpha)
 }
 
 /// Apple's icon grid: an 824-point body on a 1024 canvas with 185-point continuous corners.
-func squircle(_ rect: CGRect) -> CGPath { CGPath(roundedRect: rect, cornerWidth: 185, cornerHeight: 185, transform: nil) }
+func squircle(_ rect: CGRect) -> CGPath {
+    CGPath(roundedRect: rect, cornerWidth: 185, cornerHeight: 185, transform: nil)
+}
 
 let space = CGColorSpace(name: CGColorSpace.sRGB)!
-let ctx = CGContext(data: nil, width: Int(size), height: Int(size), bitsPerComponent: 8, bytesPerRow: 0, space: space,
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+let ctx = CGContext(
+    data: nil, width: Int(size), height: Int(size), bitsPerComponent: 8, bytesPerRow: 0, space: space,
+    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
 ctx.scaleBy(x: size / 1024, y: size / 1024)
 ctx.interpolationQuality = .high
 ctx.setShouldAntialias(true)
@@ -126,14 +131,21 @@ write()
 /// sheen from above, as on glass.
 func drawEvening(in rect: CGRect) {
     let space = CGColorSpace(name: CGColorSpace.sRGB)!
-    let sky = CGGradient(colorsSpace: space, colors: evening.map { color($0.0) } as CFArray, locations: evening.map(\.1))!
-    ctx.drawLinearGradient(sky, start: CGPoint(x: rect.minX + 0.02 * rect.width, y: rect.maxY - 0.02 * rect.height),
-                           end: CGPoint(x: rect.maxX - 0.03 * rect.width, y: rect.minY), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+    let sky = CGGradient(
+        colorsSpace: space, colors: evening.map { color($0.0) } as CFArray, locations: evening.map(\.1))!
+    ctx.drawLinearGradient(
+        sky, start: CGPoint(x: rect.minX + 0.02 * rect.width, y: rect.maxY - 0.02 * rect.height),
+        end: CGPoint(x: rect.maxX - 0.03 * rect.width, y: rect.minY),
+        options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
     let glow = CGGradient(colorsSpace: space, colors: [color(sun, 0.45), color(sun, 0)] as CFArray, locations: [0, 1])!
     let centre = CGPoint(x: rect.midX, y: rect.midY - 0.015 * rect.height)
-    ctx.drawRadialGradient(glow, startCenter: centre, startRadius: 0, endCenter: centre, endRadius: 0.52 * rect.width, options: [])
-    let sheen = CGGradient(colorsSpace: space, colors: [color(0xffffff, 0.18), color(0xffffff, 0)] as CFArray, locations: [0, 1])!
-    ctx.drawLinearGradient(sheen, start: CGPoint(x: rect.midX, y: rect.maxY), end: CGPoint(x: rect.midX, y: rect.maxY - 0.44 * rect.height), options: [])
+    ctx.drawRadialGradient(
+        glow, startCenter: centre, startRadius: 0, endCenter: centre, endRadius: 0.52 * rect.width, options: [])
+    let sheen = CGGradient(
+        colorsSpace: space, colors: [color(0xffffff, 0.18), color(0xffffff, 0)] as CFArray, locations: [0, 1])!
+    ctx.drawLinearGradient(
+        sheen, start: CGPoint(x: rect.midX, y: rect.maxY),
+        end: CGPoint(x: rect.midX, y: rect.maxY - 0.44 * rect.height), options: [])
 }
 
 /// The development build's mark: a small claw hammer in the rings' warm white, tilted as if mid-swing, in the lower right
@@ -146,9 +158,15 @@ func drawHammer() {
     ctx.rotate(by: -0.4)
     ctx.setFillColor(color(paint))
     // The handle, then the head across its top: a square face on the left, a short claw on the right.
-    ctx.addPath(CGPath(roundedRect: CGRect(x: -34, y: -190, width: 68, height: 270), cornerWidth: 30, cornerHeight: 30, transform: nil))
+    ctx.addPath(
+        CGPath(
+            roundedRect: CGRect(x: -34, y: -190, width: 68, height: 270), cornerWidth: 30, cornerHeight: 30,
+            transform: nil))
     ctx.fillPath()
-    ctx.addPath(CGPath(roundedRect: CGRect(x: -150, y: 54, width: 96, height: 124), cornerWidth: 18, cornerHeight: 18, transform: nil))
+    ctx.addPath(
+        CGPath(
+            roundedRect: CGRect(x: -150, y: 54, width: 96, height: 124), cornerWidth: 18, cornerHeight: 18,
+            transform: nil))
     ctx.fillPath()
     let head = CGMutablePath()
     head.move(to: CGPoint(x: -64, y: 74))

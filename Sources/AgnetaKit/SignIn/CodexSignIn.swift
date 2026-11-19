@@ -30,23 +30,32 @@ public struct CodexSignIn: Sendable {
     private func codex(_ arguments: [String]) async -> Int32? {
         guard (try? CodexAdapter.prepareAccountHome(codexHome)) != nil else { return nil }
         try? CodexAdapter.writeConfig(codexHome)
-        guard let child = try? ChildProcess(executable: cli.path(percentEncoded: false), arguments: arguments, environment: environment) else { return nil }
+        guard
+            let child = try? ChildProcess(
+                executable: cli.path(percentEncoded: false), arguments: arguments, environment: environment)
+        else { return nil }
         try? child.stdin.close()
-        let deadline = Task { try await Task.sleep(for: .seconds(20)); await child.stop() }
+        let deadline = Task {
+            try await Task.sleep(for: .seconds(20)); await child.stop()
+        }
         defer { deadline.cancel() }
         let status = await child.waitForExit()
         return (status & 0x7f) == 0 ? (status >> 8) & 0xff : nil
     }
 
     private var environment: [String: String] {
-        ["HOME": FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false), "CODEX_HOME": codexHome.path(percentEncoded: false),
-         "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8"]
+        [
+            "HOME": FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false),
+            "CODEX_HOME": codexHome.path(percentEncoded: false),
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8"
+        ]
     }
 
     public func run(progress: @escaping SignInProgress, timeout: Duration = .seconds(600)) async throws {
         _ = try CodexAdapter.prepareAccountHome(codexHome)
         try CodexAdapter.writeConfig(codexHome)
-        let child = try ChildProcess(executable: cli.path(percentEncoded: false), arguments: ["login"], environment: environment)
+        let child = try ChildProcess(
+            executable: cli.path(percentEncoded: false), arguments: ["login"], environment: environment)
         try? child.stdin.close()
         progress(.waiting("Waiting for ChatGPT in your browser…"))
         let watcher = Task {
@@ -54,16 +63,24 @@ public struct CodexSignIn: Sendable {
                 Task {
                     for try await line in LineStream.lines(from: stream) {
                         let text = String(decoding: line, as: UTF8.self)
-                        if let range = text.range(of: #"https://\S+"#, options: .regularExpression), let url = URL(string: String(text[range])),
-                           SignInPage.belongs(url, to: SignInPage.openAI) {
+                        if let range = text.range(of: #"https://\S+"#, options: .regularExpression),
+                            let url = URL(string: String(text[range])),
+                            SignInPage.belongs(url, to: SignInPage.openAI)
+                        {
                             progress(.browserOpened(url))
                         }
                     }
                 }
             }
         }
-        let deadline = Task { try await Task.sleep(for: timeout); await child.stop() }
-        let status = await withTaskCancellationHandler { await child.waitForExit() } onCancel: { killpg(child.pid, SIGTERM) }
+        let deadline = Task {
+            try await Task.sleep(for: timeout); await child.stop()
+        }
+        let status = await withTaskCancellationHandler {
+            await child.waitForExit()
+        } onCancel: {
+            killpg(child.pid, SIGTERM)
+        }
         deadline.cancel()
         watcher.cancel()
         if Task.isCancelled { throw SignInError.cancelled }

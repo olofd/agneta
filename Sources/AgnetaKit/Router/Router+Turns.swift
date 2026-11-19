@@ -7,7 +7,8 @@ extension Router {
     // MARK: Turn queue
 
     func hasRoom(for account: String) -> Bool {
-        runningTurns.count < concurrency.global && runningTurns.values.count { $0.account == account } < concurrency.perAccount
+        runningTurns.count < concurrency.global
+            && runningTurns.values.count { $0.account == account } < concurrency.perAccount
     }
 
     /// Room for a turn of this app on this account: Agneta's, the account's, and the app's own "at once" (AppLimits).
@@ -40,8 +41,9 @@ extension Router {
 
     /// Takes a place in the room for a turn, noting what its task had cost so far.
     func start(_ id: String, account: String, meter: String) {
-        runningTurns[id] = RunningTurn(account: account, meter: meter, counted: countsSpend(account),
-                                       costAtStart: traces?.session(id)?.progress.taskCost ?? 0)
+        runningTurns[id] = RunningTurn(
+            account: account, meter: meter, counted: countsSpend(account),
+            costAtStart: traces?.session(id)?.progress.taskCost ?? 0)
     }
 
     /// Waits for room to run a turn. Returns false if the wait was cancelled; throws when the queue is full, or the
@@ -49,7 +51,9 @@ extension Router {
     func admit(_ id: String, account: String, meter: String) async throws -> Bool {
         // Waits only behind earlier turns that want the same room: on the same account (unless held by their own app's
         // limit), or of the same app held by its limit. One account's or one app's limits never hold up another's.
-        if hasRoom(for: account, meter: meter) && !waiting.indices.contains(where: { waitsBehind($0, account: account, meter: meter) }) {
+        if hasRoom(for: account, meter: meter)
+            && !waiting.indices.contains(where: { waitsBehind($0, account: account, meter: meter) })
+        {
             start(id, account: account, meter: meter)
             return true
         }
@@ -58,8 +62,12 @@ extension Router {
         }
         let position = waiting.count + 1
         let reason = waitingFor(account: account, meter: meter)
-        traces?.session(id)?.writer.record("lifecycle", ["event": "queued", "position": .int(Int64(position)),
-                                                         "running": .int(Int64(runningTurns.count)), "waitingFor": .string(reason)])
+        traces?.session(id)?.writer.record(
+            "lifecycle",
+            [
+                "event": "queued", "position": .int(Int64(position)),
+                "running": .int(Int64(runningTurns.count)), "waitingFor": .string(reason)
+            ])
         let peer = sessions[id].flatMap { apps[$0.app]?.peer }
         let started = ContinuousClock.now
         // Joins the queue before anything can suspend, so a turn finishing or a cancel arriving meanwhile
@@ -67,13 +75,26 @@ extension Router {
         let admission = await withCheckedContinuation { continuation in
             waiting.append(Waiter(session: id, account: account, meter: meter, resume: continuation))
             if let peer {
-                Task { try? await peer.notify("agneta/queued", ["sessionId": .string(id), "position": .int(Int64(position)), "waitingFor": .string(reason)]) }
+                Task {
+                    try? await peer.notify(
+                        "agneta/queued",
+                        ["sessionId": .string(id), "position": .int(Int64(position)), "waitingFor": .string(reason)])
+                }
             }
         }
         let waited = ContinuousClock.now - started
-        let event: JSONValue = switch admission { case .admitted: "dequeued"; case .cancelled: "queue-cancelled"; case .paused: "queue-paused" }
-        traces?.session(id)?.writer.record("lifecycle", ["event": event,
-                                                         "ms": .double(Double(waited.components.seconds) * 1000 + Double(waited.components.attoseconds) / 1e15)])
+        let event: JSONValue =
+            switch admission {
+            case .admitted: "dequeued";
+            case .cancelled: "queue-cancelled";
+            case .paused: "queue-paused"
+            }
+        traces?.session(id)?.writer.record(
+            "lifecycle",
+            [
+                "event": event,
+                "ms": .double(Double(waited.components.seconds) * 1000 + Double(waited.components.attoseconds) / 1e15)
+            ])
         if admission == .paused { throw pausedError(account) }
         return admission == .admitted
     }
@@ -113,7 +134,6 @@ extension Router {
 
     static let queueFull: Int64 = -32012
 
-
     // MARK: Limits and usage
 
     /// A provider's limit ended the turn: say so in the trace, to the app (`agneta/rateLimited` and
@@ -121,7 +141,10 @@ extension Router {
     func rateLimited(_ id: String, account: String, limit: RateLimit, error: RPCError) async -> RPCError {
         let resets: JSONValue = limit.resetsAt.map { .string(TraceWriter.timestamp($0)) } ?? .null
         let details: JSONValue = ["account": .string(account), "message": .string(limit.message), "resetsAt": resets]
-        traces?.session(id)?.writer.record("event", ["kind": "rate-limited", "account": .string(account), "message": .string(limit.message), "resetsAt": resets])
+        traces?.session(id)?.writer.record(
+            "event",
+            ["kind": "rate-limited", "account": .string(account), "message": .string(limit.message), "resetsAt": resets]
+        )
         if let session = sessions[id], let app = apps[session.app] {
             try? await app.peer.notify("agneta/rateLimited", details.setting("sessionId", to: .string(id)))
         }
@@ -141,10 +164,13 @@ extension Router {
             let elapsed = ContinuousClock.now - started
             let progress = traces?.session(id)?.progress ?? (turnModelCalls: 0, taskCost: 0)
             let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-            let policy = limits.breached(seconds: seconds, modelCalls: progress.turnModelCalls, cost: progress.taskCost).map { LimitHit(limit: $0.limit, value: $0.value) }
+            let policy = limits.breached(seconds: seconds, modelCalls: progress.turnModelCalls, cost: progress.taskCost)
+                .map { LimitHit(limit: $0.limit, value: $0.value) }
             guard let hit = policy ?? appSpendHit(id) else { continue }
             sessions[id]?.limitHit = hit
-            traces?.session(id)?.writer.record("lifecycle", ["event": "limit", "limit": .string(hit.limit), "value": hit.value, "setBy": .string(hit.setBy)])
+            traces?.session(id)?.writer.record(
+                "lifecycle",
+                ["event": "limit", "limit": .string(hit.limit), "value": hit.value, "setBy": .string(hit.setBy)])
             // Sent on its own: an engine that isn't reading can hold the write, and the grace runs regardless.
             let peer = session.lease.peer, engineSession = JSONValue.string(session.engineSession)
             Task { try? await peer.notify("session/cancel", ["sessionId": engineSession]) }
@@ -152,7 +178,8 @@ extension Router {
             // or ignoring the cancel) gets its session ended, which stops a dedicated engine, and the prompt is
             // answered as stopped by the limit.
             try? await Task.sleep(for: concurrency.limitGrace)
-            guard !Task.isCancelled, let still = sessions[id], still.generation == generation, still.limitHit != nil else { return }
+            guard !Task.isCancelled, let still = sessions[id], still.generation == generation, still.limitHit != nil
+            else { return }
             traces?.session(id)?.writer.record("lifecycle", ["event": "limit-enforced", "limit": .string(hit.limit)])
             enforcedLimits[id] = hit
             await Self.closeOnEngine(still)
@@ -160,7 +187,9 @@ extension Router {
             guard sessions[id]?.generation == generation else { return }
             if let app = apps[still.app] {
                 let peer = app.peer
-                Task { try? await peer.notify("agneta/sessionStopped", ["sessionId": .string(id), "stoppedBy": "limit"]) }
+                Task {
+                    try? await peer.notify("agneta/sessionStopped", ["sessionId": .string(id), "stoppedBy": "limit"])
+                }
             }
             let call = inFlight[id]
             await end(id, .stopped)
@@ -180,7 +209,8 @@ extension Router {
             "cost": turn["cost"] ?? .null, "costKind": turn["costKind"] ?? .null,
             "billing": .string(accounts[account]?.billing ?? "unknown"), "account": .string(account),
             "taskCost": turn["taskCost"] ?? .null,
-            "ms": turn["ms"] ?? .null, "msToFirstToken": turn["msToFirstToken"] ?? .null, "basis": turn["basis"] ?? "engine-ledger",
+            "ms": turn["ms"] ?? .null, "msToFirstToken": turn["msToFirstToken"] ?? .null,
+            "basis": turn["basis"] ?? "engine-ledger"
         ]
     }
 
@@ -188,7 +218,14 @@ extension Router {
     func usage(_ turn: [String: JSONValue], account: String, meter: String) -> JSONValue {
         let base = usage(turn, account: account)
         let calls = turn["modelCalls"]?.intValue ?? 0
-        let cost: Double = switch turn["cost"] { case .double(let v)?: v; case .int(let v)?: Double(v); default: 0 }
-        return appUsageReport(meter: meter, unpriced: countsSpend(account) && calls > 0 && cost == 0).map { base.setting("app", to: $0) } ?? base
+        let cost: Double =
+            switch turn["cost"] {
+            case .double(let v)?: v;
+            case .int(let v)?: Double(v);
+            default: 0
+            }
+        return appUsageReport(meter: meter, unpriced: countsSpend(account) && calls > 0 && cost == 0).map {
+            base.setting("app", to: $0)
+        } ?? base
     }
 }

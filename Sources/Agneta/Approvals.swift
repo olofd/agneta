@@ -51,12 +51,17 @@ final class Approvals {
     var allowance: @MainActor (Set<String>) -> EngineAllowance = { _ in .all }
 
     /// Asks the user, and waits for the answer: nil for Don't Allow.
-    func ask(_ pairing: Router.PairingRequest, allowed: Set<String>, engines: Set<String>, replaces: Bool = false) async -> Router.PairingAnswer? {
+    func ask(_ pairing: Router.PairingRequest, allowed: Set<String>, engines: Set<String>, replaces: Bool = false) async
+        -> Router.PairingAnswer?
+    {
         await withCheckedContinuation { continuation in
-            let request = Request(id: pairing.id, app: pairing.app, identifier: pairing.peer?.identifier, verified: pairing.code == nil,
-                                  code: pairing.code ?? "", allowed: allowed, engines: engines, tools: pairing.tools, folders: pairing.folders,
-                                  replaces: replaces, sandbox: pairing.sandbox, kinds: pairing.providers, namedEngines: pairing.engines != nil,
-                                  sandboxFixed: pairing.sandboxAsked == .contained)
+            let request = Request(
+                id: pairing.id, app: pairing.app, identifier: pairing.peer?.identifier, verified: pairing.code == nil,
+                code: pairing.code ?? "", allowed: allowed, engines: engines, tools: pairing.tools,
+                folders: pairing.folders,
+                replaces: replaces, sandbox: pairing.sandbox, kinds: pairing.providers,
+                namedEngines: pairing.engines != nil,
+                sandboxFixed: pairing.sandboxAsked == .contained)
             if queue.add(id: pairing.id, request, answer: { continuation.resume(returning: $0) }) { show(pairing.id) }
         }
     }
@@ -75,9 +80,12 @@ final class Approvals {
     func answer(remember: Bool?, for id: UUID? = nil) {
         guard let pending = current, id == nil || pending.id == id else { return }
         let allowed = order().filter(pending.allowed.contains)
-        settle(pending.id, with: remember.map {
-            Router.PairingAnswer(accounts: allowed, engines: allowance(pending.engines), remember: $0, sandbox: pending.sandbox)
-        })
+        settle(
+            pending.id,
+            with: remember.map {
+                Router.PairingAnswer(
+                    accounts: allowed, engines: allowance(pending.engines), remember: $0, sandbox: pending.sandbox)
+            })
     }
 
     /// Answers a request, shown or waiting; nil is Don't Allow. Answering one already answered does nothing.

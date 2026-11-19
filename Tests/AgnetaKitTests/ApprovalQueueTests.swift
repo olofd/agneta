@@ -1,6 +1,7 @@
 // The pairing queue behind Agneta's approval window: every request answered exactly once, whichever way it ends.
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 @Suite struct ApprovalQueueTests {
@@ -8,7 +9,8 @@ import Testing
         private let lock = NSLock()
         private var log: [String] = []
         func record(_ name: String) -> ApprovalQueue<String, [String]>.Answer {
-            { [self] allowed in lock.withLock { log.append("\(name): \(allowed?.joined(separator: ",") ?? "refused")") } }
+            { [self] allowed in lock.withLock { log.append("\(name): \(allowed?.joined(separator: ",") ?? "refused")") }
+            }
         }
         var all: [String] { lock.withLock { log } }
     }

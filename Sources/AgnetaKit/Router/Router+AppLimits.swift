@@ -35,7 +35,9 @@ public struct AppLimitNotice: Sendable, Equatable {
     /// In words: "at midnight".
     public var resets: String?
 
-    public init(grant: String, app: String, limit: String, summary: String, used: String, resetsAt: Date?, resets: String?) {
+    public init(
+        grant: String, app: String, limit: String, summary: String, used: String, resetsAt: Date?, resets: String?
+    ) {
         self.grant = grant
         self.app = app
         self.limit = limit
@@ -73,7 +75,11 @@ extension Router {
         let settled = meter(id).spent(period, now: now(), calendar: calendar)
         return runningTurns.reduce(settled) { sum, entry in
             guard entry.value.meter == id, entry.value.counted else { return sum }
-            return sum + max(0, (traces?.session(entry.key)?.progress.taskCost ?? entry.value.costAtStart) - entry.value.costAtStart)
+            return sum
+                + max(
+                    0,
+                    (traces?.session(entry.key)?.progress.taskCost ?? entry.value.costAtStart) - entry.value.costAtStart
+                )
         }
     }
 
@@ -89,18 +95,23 @@ extension Router {
             let used = spent(meter: grant.meter, period: spend.period)
             if used >= spend.max {
                 let resetsAt = meter(grant.meter).resetsAt(spend.period, now: at, calendar: calendar)
-                return appLimitError(grant, limit: "spend", summary: "\(AppLimits.dollars(spend.max)) \(AppLimits.per(spend.period))",
-                                     max: .double(spend.max), used: .double(used), usedWords: AppLimits.cents(used) + Self.this(spend.period),
-                                     period: spend.period, whenReached: spend.whenReached, resetsAt: resetsAt)
+                return appLimitError(
+                    grant, limit: "spend", summary: "\(AppLimits.dollars(spend.max)) \(AppLimits.per(spend.period))",
+                    max: .double(spend.max), used: .double(used),
+                    usedWords: AppLimits.cents(used) + Self.this(spend.period),
+                    period: spend.period, whenReached: spend.whenReached, resetsAt: resetsAt)
             }
         }
         if let starts = limits.newTasks, newTask != .none {
             let used = meter(grant.meter).tasks(starts.period, now: at, calendar: calendar)
             if newTask == .beforeCounting ? used >= starts.max : used > starts.max {
                 let resetsAt = meter(grant.meter).resetsAt(starts.period, now: at, calendar: calendar)
-                return appLimitError(grant, limit: "newTasks", summary: limits.parts.last { $0.contains("new task") } ?? "\(starts.max) new tasks",
-                                     max: .int(Int64(starts.max)), used: .int(Int64(used)), usedWords: "\(used)" + Self.this(starts.period),
-                                     period: starts.period, whenReached: starts.whenReached, resetsAt: resetsAt)
+                return appLimitError(
+                    grant, limit: "newTasks",
+                    summary: limits.parts.last { $0.contains("new task") } ?? "\(starts.max) new tasks",
+                    max: .int(Int64(starts.max)), used: .int(Int64(used)),
+                    usedWords: "\(used)" + Self.this(starts.period),
+                    period: starts.period, whenReached: starts.whenReached, resetsAt: resetsAt)
             }
         }
         return nil
@@ -116,15 +127,29 @@ extension Router {
     }
 
     /// `-32016`, said as the user's choice, with when it resets; and Agneta's UI hears of it.
-    func appLimitError(_ grant: Grant, limit: String, summary: String, max: JSONValue, used: JSONValue, usedWords: String,
-                       period: AppLimits.Period, whenReached: AppLimits.WhenReached, resetsAt: Date?) -> RPCError {
+    func appLimitError(
+        _ grant: Grant, limit: String, summary: String, max: JSONValue, used: JSONValue, usedWords: String,
+        period: AppLimits.Period, whenReached: AppLimits.WhenReached, resetsAt: Date?
+    ) -> RPCError {
         let resets = resetsAt.map { AppLimits.resets(at: $0, now: now(), calendar: calendar) }
-        let again = resets.map { limit == "spend" || period != .hour ? " It resets \($0)." : " A new task can start \($0)." } ?? ""
-        onEvent(.appLimitReached(AppLimitNotice(grant: grant.meter, app: grant.app, limit: limit, summary: summary, used: usedWords,
-                                                resetsAt: resetsAt, resets: resets)))
-        return RPCError(code: Self.appLimitReached, message: "\(grant.app)'s limit in Agneta is reached: \(summary).\(again)",
-                        data: ["agneta": ["appLimit": ["limit": .string(limit), "max": max, "used": used, "period": .string(period.rawValue),
-                                                       "resetsAt": Self.timestamp(resetsAt), "whenReached": .string(whenReached.rawValue)]]])
+        let again =
+            resets.map { limit == "spend" || period != .hour ? " It resets \($0)." : " A new task can start \($0)." }
+            ?? ""
+        onEvent(
+            .appLimitReached(
+                AppLimitNotice(
+                    grant: grant.meter, app: grant.app, limit: limit, summary: summary, used: usedWords,
+                    resetsAt: resetsAt, resets: resets)))
+        return RPCError(
+            code: Self.appLimitReached, message: "\(grant.app)'s limit in Agneta is reached: \(summary).\(again)",
+            data: [
+                "agneta": [
+                    "appLimit": [
+                        "limit": .string(limit), "max": max, "used": used, "period": .string(period.rawValue),
+                        "resetsAt": Self.timestamp(resetsAt), "whenReached": .string(whenReached.rawValue)
+                    ]
+                ]
+            ])
     }
 
     // MARK: New tasks
@@ -161,13 +186,18 @@ extension Router {
     /// twice, never lost. Its cost counts only on an account charged per call.
     func meterTurn(_ id: String, _ turn: RunningTurn) {
         guard turn.began else { return }
-        let cost = turn.counted ? max(0, (traces?.session(id)?.progress.taskCost ?? turn.costAtStart) - turn.costAtStart) : 0
+        let cost =
+            turn.counted ? max(0, (traces?.session(id)?.progress.taskCost ?? turn.costAtStart) - turn.costAtStart) : 0
         let unpriced = turn.counted && cost == 0 && turn.modelCalls > 0
         if unpriced {
-            traces?.session(id)?.writer.record("lifecycle", ["event": "unpriced", "modelCalls": .int(Int64(turn.modelCalls))])
+            traces?.session(id)?.writer.record(
+                "lifecycle", ["event": "unpriced", "modelCalls": .int(Int64(turn.modelCalls))])
         }
-        addUsage(meter: turn.meter, AppMeter.Usage(cost: cost, inputTokens: turn.tokens.input, outputTokens: turn.tokens.output, turns: 1,
-                                                   unpriced: unpriced ? 1 : 0))
+        addUsage(
+            meter: turn.meter,
+            AppMeter.Usage(
+                cost: cost, inputTokens: turn.tokens.input, outputTokens: turn.tokens.output, turns: 1,
+                unpriced: unpriced ? 1 : 0))
     }
 
     func addUsage(meter id: String, _ usage: AppMeter.Usage) {
@@ -181,18 +211,25 @@ extension Router {
     /// raised meanwhile lets the turn go on. Every running turn of the app it counts finds it at its own watchdog's next
     /// check (within half a second); nothing is written into another session, which could outlive the turn it was for.
     func appSpendHit(_ id: String) -> LimitHit? {
-        guard let turn = runningTurns[id], turn.began, turn.counted, let spend = limits(meter: turn.meter).spend else { return nil }
+        guard let turn = runningTurns[id], turn.began, turn.counted, let spend = limits(meter: turn.meter).spend else {
+            return nil
+        }
         let used = spent(meter: turn.meter, period: spend.period)
         guard used >= spend.max else { return nil }
         let resetsAt = meter(turn.meter).resetsAt(spend.period, now: now(), calendar: calendar)
-        let hit = LimitHit(limit: "appSpend", value: .double(spend.max), setBy: "user",
-                           extra: ["period": .string(spend.period.rawValue), "resetsAt": Self.timestamp(resetsAt)])
-        traces?.session(id)?.writer.record("lifecycle", ["event": "app-limit", "limit": "spend", "max": .double(spend.max), "used": .double(used)])
+        let hit = LimitHit(
+            limit: "appSpend", value: .double(spend.max), setBy: "user",
+            extra: ["period": .string(spend.period.rawValue), "resetsAt": Self.timestamp(resetsAt)])
+        traces?.session(id)?.writer.record(
+            "lifecycle", ["event": "app-limit", "limit": "spend", "max": .double(spend.max), "used": .double(used)])
         if let grant = tokens.values.first(where: { $0.meter == turn.meter }) {
-            onEvent(.appLimitReached(AppLimitNotice(grant: turn.meter, app: grant.app, limit: "spend",
-                                                    summary: "\(AppLimits.dollars(spend.max)) \(AppLimits.per(spend.period))",
-                                                    used: AppLimits.cents(used) + Self.this(spend.period), resetsAt: resetsAt,
-                                                    resets: resetsAt.map { AppLimits.resets(at: $0, now: now(), calendar: calendar) })))
+            onEvent(
+                .appLimitReached(
+                    AppLimitNotice(
+                        grant: turn.meter, app: grant.app, limit: "spend",
+                        summary: "\(AppLimits.dollars(spend.max)) \(AppLimits.per(spend.period))",
+                        used: AppLimits.cents(used) + Self.this(spend.period), resetsAt: resetsAt,
+                        resets: resetsAt.map { AppLimits.resets(at: $0, now: now(), calendar: calendar) })))
         }
         return hit
     }
@@ -201,8 +238,11 @@ extension Router {
     /// this turn on an API key called models its engine gave no price for, so the limit didn't count it.
     func appUsageReport(meter id: String, unpriced: Bool) -> JSONValue? {
         guard let spend = limits(meter: id).spend else { return nil }
-        var report: JSONValue = ["spent": .double(spent(meter: id, period: spend.period)), "max": .double(spend.max), "period": .string(spend.period.rawValue),
-                                 "resetsAt": Self.timestamp(meter(id).resetsAt(spend.period, now: now(), calendar: calendar))]
+        var report: JSONValue = [
+            "spent": .double(spent(meter: id, period: spend.period)), "max": .double(spend.max),
+            "period": .string(spend.period.rawValue),
+            "resetsAt": Self.timestamp(meter(id).resetsAt(spend.period, now: now(), calendar: calendar))
+        ]
         if unpriced { report = report.setting("unpriced", to: true) }
         return report
     }
@@ -213,12 +253,15 @@ extension Router {
     /// report cost (Codex), which the limit couldn't hold.
     func uncounted(_ grant: Grant, account: String) -> Set<String> {
         guard grant.limits.spend != nil, countsSpend(account), let kind = accounts[account]?.kind else { return [] }
-        return Set(ProviderEngines.supported(by: kind).filter { grant.engines.allows($0) && ProviderEngines.cost($0) == .none })
+        return Set(
+            ProviderEngines.supported(by: kind).filter { grant.engines.allows($0) && ProviderEngines.cost($0) == .none }
+        )
     }
 
     /// The refusal for a task on an engine the app's spending limit can't count, or nil.
     func uncountedRefusal(_ engine: String, account: String, grant: Grant) -> RPCError? {
-        uncounted(grant, account: account).contains(engine) ? accessRefusal(.uncounted(engine), account: account, grant: grant) : nil
+        uncounted(grant, account: account).contains(engine)
+            ? accessRefusal(.uncounted(engine), account: account, grant: grant) : nil
     }
 
     /// The grant's engines, less those its spending limit can't count on this account.
@@ -226,7 +269,10 @@ extension Router {
         let excluded = uncounted(grant, account: account)
         guard !excluded.isEmpty else { return grant.engines }
         switch grant.engines {
-        case .all: return .only(Set(AccountKind.allCases.flatMap(ProviderEngines.supported(by:))).union(catalog.entries.keys).subtracting(excluded))
+        case .all:
+            return .only(
+                Set(AccountKind.allCases.flatMap(ProviderEngines.supported(by:))).union(catalog.entries.keys)
+                    .subtracting(excluded))
         case .only(let some): return .only(some.subtracting(excluded))
         }
     }
@@ -240,20 +286,29 @@ extension Router {
         var report = AccessReport.Limits()
         if let spend = limits.spend {
             // The engines the app may use on API keys, by when their cost is known; one that never reports it can't run.
-            let engines = Set(grant.accounts.compactMap { accounts[$0] }.filter { $0.kind.subscription == nil }
-                .flatMap { ProviderEngines.supported(by: $0.kind) }).filter(grant.engines.allows)
-            report.spend = .init(max: spend.max, currency: "USD", period: spend.period.rawValue, whenReached: spend.whenReached.rawValue,
-                                 used: spent(meter: grant.meter, period: spend.period),
-                                 resetsAt: meter(grant.meter).resetsAt(spend.period, now: at, calendar: calendar).map(TraceWriter.timestamp),
-                                 billing: "api-key",
-                                 counted: Dictionary(uniqueKeysWithValues: engines.filter { ProviderEngines.cost($0) != .none }.map { ($0, ProviderEngines.cost($0).rawValue) }),
-                                 uncounted: engines.filter { ProviderEngines.cost($0) == .none && catalog.usable($0) }.sorted())
+            let engines = Set(
+                grant.accounts.compactMap { accounts[$0] }.filter { $0.kind.subscription == nil }
+                    .flatMap { ProviderEngines.supported(by: $0.kind) }
+            ).filter(grant.engines.allows)
+            report.spend = .init(
+                max: spend.max, currency: "USD", period: spend.period.rawValue, whenReached: spend.whenReached.rawValue,
+                used: spent(meter: grant.meter, period: spend.period),
+                resetsAt: meter(grant.meter).resetsAt(spend.period, now: at, calendar: calendar).map(
+                    TraceWriter.timestamp),
+                billing: "api-key",
+                counted: Dictionary(
+                    uniqueKeysWithValues: engines.filter { ProviderEngines.cost($0) != .none }.map {
+                        ($0, ProviderEngines.cost($0).rawValue)
+                    }),
+                uncounted: engines.filter { ProviderEngines.cost($0) == .none && catalog.usable($0) }.sorted())
         }
         if let atOnce = limits.atOnce { report.atOnce = .init(max: atOnce, running: running(meter: grant.meter)) }
         if let starts = limits.newTasks {
-            report.newTasks = .init(max: starts.max, period: starts.period.rawValue, whenReached: starts.whenReached.rawValue,
-                                    used: meter(grant.meter).tasks(starts.period, now: at, calendar: calendar),
-                                    resetsAt: meter(grant.meter).resetsAt(starts.period, now: at, calendar: calendar).map(TraceWriter.timestamp))
+            report.newTasks = .init(
+                max: starts.max, period: starts.period.rawValue, whenReached: starts.whenReached.rawValue,
+                used: meter(grant.meter).tasks(starts.period, now: at, calendar: calendar),
+                resetsAt: meter(grant.meter).resetsAt(starts.period, now: at, calendar: calendar).map(
+                    TraceWriter.timestamp))
         }
         return report
     }
@@ -261,11 +316,14 @@ extension Router {
     /// An app's usage and limits now, for Settings: today's totals, and each limit's count in its period.
     public func appStatus(grant id: String) -> AppLimitStatus {
         let limits = limits(meter: id), at = now()
-        var status = AppLimitStatus(today: meter(id).total(.day, now: at, calendar: calendar), running: running(meter: id))
+        var status = AppLimitStatus(
+            today: meter(id).total(.day, now: at, calendar: calendar), running: running(meter: id))
         status.today.cost = spent(meter: id, period: .day)
         if let spend = limits.spend {
             status.spent = spent(meter: id, period: spend.period)
-            status.spendResets = meter(id).resetsAt(spend.period, now: at, calendar: calendar).map { AppLimits.resets(at: $0, now: at, calendar: calendar) }
+            status.spendResets = meter(id).resetsAt(spend.period, now: at, calendar: calendar).map {
+                AppLimits.resets(at: $0, now: at, calendar: calendar)
+            }
         }
         if let starts = limits.newTasks { status.started = meter(id).tasks(starts.period, now: at, calendar: calendar) }
         return status
@@ -285,7 +343,9 @@ extension Router {
     /// Once grants counting against it), and saves them. A lower spending limit stops the app's running turns at their
     /// next check; a lower "at once" lets running turns finish and holds new ones; a higher one lets waiting turns run.
     public func setLimits(grant id: String, limits: AppLimits) async throws {
-        if let problem = limits.problem(global: concurrency.global) { throw RPCError(code: RPCError.invalidParams, message: problem) }
+        if let problem = limits.problem(global: concurrency.global) {
+            throw RPCError(code: RPCError.invalidParams, message: problem)
+        }
         for (hash, grant) in tokens where grant.id == id || grant.countsAs == id {
             var changed = grant
             changed.limits = limits
@@ -313,7 +373,10 @@ public struct AppLimitStatus: Sendable, Equatable {
     /// New tasks in the new-task limit's period, when one is set.
     public var started: Int?
 
-    public init(today: AppMeter.Usage = .init(), running: Int = 0, spent: Double? = nil, spendResets: String? = nil, started: Int? = nil) {
+    public init(
+        today: AppMeter.Usage = .init(), running: Int = 0, spent: Double? = nil, spendResets: String? = nil,
+        started: Int? = nil
+    ) {
         self.today = today
         self.running = running
         self.spent = spent

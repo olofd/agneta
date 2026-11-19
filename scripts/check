@@ -4,9 +4,8 @@
 #   scripts/check [--fix] [check ...]   (default: every check)
 #
 #   whitespace  no trailing whitespace, CRLF, conflict markers or blank lines at the end of a file
-#   swift       swift-format (.swift-format) on the lines changed since the base, until the one-shot reformat
-#               (CONTRIBUTING.md, Static checks); the whole tree's findings are reported, never failed. Also the
-#               format check's own tests (scripts/dev/tests)
+#   swift       swift-format (.swift-format) on every line of every Swift file; also the format check's own tests
+#               (scripts/dev/tests)
 #   shell       every shell script parses; ShellCheck (.shellcheckrc) when installed
 #   python      every Python file compiles; the file checks' own tests; Ruff (ruff.toml) when installed
 #   js          every JavaScript file parses (node --check)
@@ -14,9 +13,8 @@
 #   actions     actionlint on the workflows, when installed
 #   data        every JSON, lock, plist and TOML file parses
 #
-# --fix repairs what's mechanical: whitespace in tracked files, and Swift formatting around the changed lines.
+# --fix repairs what's mechanical: whitespace in tracked files, and Swift formatting.
 # A check whose tool isn't installed is skipped (and says so); one missing only an optional tool runs without it.
-# AGNETA_CHECK_BASE   what "changed" is measured against (default: the merge base with origin/main, or main).
 # AGNETA_REQUIRE_TOOLS=1   a missing tool fails its check instead of skipping it (CI).
 # AGNETA_CHECK_REPORT_ONLY   tools whose findings are shown but don't fail (default: ShellCheck, actionlint and Ruff,
 #                            until their first findings on main are fixed; CONTRIBUTING.md, Static checks).
@@ -75,9 +73,7 @@ check_swift() {
     echo "note: swift-format $version here, $swift_format_version in CI: its layout may differ"
   fi
   python3 -m unittest discover -s scripts/dev/tests -p test_swift_format_changed.py || return 1
-  # After the one-shot reformat (CONTRIBUTING.md, Static checks), --all here makes every line count.
-  local args=(--report)
-  [[ -n "${AGNETA_CHECK_BASE:-}" ]] && args+=(--base "$AGNETA_CHECK_BASE")
+  local args=(--all)
   $fix && args+=(--fix)
   scripts/dev/swift-format-changed "${args[@]}"
 }

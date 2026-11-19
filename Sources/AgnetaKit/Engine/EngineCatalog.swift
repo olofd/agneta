@@ -90,7 +90,9 @@ public struct EngineCatalog: Sendable {
     /// its sessions can do.
     func report(_ id: String) -> AccessReport.Engine {
         guard let entry = entries[id] else { return AccessReport.Engine(id: id, name: id, state: "unavailable") }
-        var engine = AccessReport.Engine(id: id, name: entry.name, state: entry.state.name, capabilities: entry.adapter.map(SessionCapabilities.init))
+        var engine = AccessReport.Engine(
+            id: id, name: entry.name, state: entry.state.name, capabilities: entry.adapter.map(SessionCapabilities.init)
+        )
         switch entry.state {
         case .downloading(let received, let total): (engine.received, engine.total) = (received, total)
         case .downloadable(let size): engine.size = size

@@ -56,14 +56,23 @@ public enum JSONValue: Sendable, Hashable {
 extension JSONValue: Codable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        if container.decodeNil() { self = .null }
-        else if let value = try? container.decode(Bool.self) { self = .bool(value) }
-        else if let value = try? container.decode(Int64.self) { self = .int(value) }
-        else if let value = try? container.decode(Double.self) { self = .double(value) }
-        else if let value = try? container.decode(String.self) { self = .string(value) }
-        else if let value = try? container.decode([JSONValue].self) { self = .array(value) }
-        else if let value = try? container.decode([String: JSONValue].self) { self = .object(value) }
-        else { throw DecodingError.dataCorruptedError(in: container, debugDescription: "Not a JSON value") }
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Int64.self) {
+            self = .int(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .double(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
+        } else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Not a JSON value")
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -81,7 +90,8 @@ extension JSONValue: Codable {
 }
 
 extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, ExpressibleByBooleanLiteral,
-    ExpressibleByArrayLiteral, ExpressibleByDictionaryLiteral, ExpressibleByNilLiteral, ExpressibleByFloatLiteral {
+    ExpressibleByArrayLiteral, ExpressibleByDictionaryLiteral, ExpressibleByNilLiteral, ExpressibleByFloatLiteral
+{
     public init(stringLiteral value: String) { self = .string(value) }
     public init(integerLiteral value: Int64) { self = .int(value) }
     public init(floatLiteral value: Double) { self = .double(value) }

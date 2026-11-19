@@ -23,9 +23,13 @@ let env = ProcessInfo.processInfo.environment
 /// Runs one command through the broker, handing each output chunk to `output` ("o" stdout, "e" stderr); returns the
 /// exit status, or nil when Agneta closed the command. `onConnect` gets the connection, whose shutdown cancels it:
 /// the broker ends the command and all it started when its client goes.
-func runBrokered(_ command: String, cwd: String, onConnect: (Int32) -> Void = { _ in }, output: (Character, Data) -> Void) -> Int32? {
+func runBrokered(
+    _ command: String, cwd: String, onConnect: (Int32) -> Void = { _ in }, output: (Character, Data) -> Void
+) -> Int32? {
     // The token from the engine's own file (Agneta's way: an environment can be read by other processes), or given directly.
-    let token = env["AGNETA_BROKER_TOKEN_FILE"].flatMap { try? String(contentsOfFile: $0, encoding: .utf8) } ?? env["AGNETA_BROKER_TOKEN"]
+    let token =
+        env["AGNETA_BROKER_TOKEN_FILE"].flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+        ?? env["AGNETA_BROKER_TOKEN"]
     guard let path = env["AGNETA_BROKER_SOCKET"], let token, !token.isEmpty else {
         output("e", Data("agneta-shell: no broker configured\n".utf8))
         return 126
@@ -35,8 +39,14 @@ func runBrokered(_ command: String, cwd: String, onConnect: (Int32) -> Void = { 
     var address = sockaddr_un()
     address.sun_family = sa_family_t(AF_UNIX)
     let bytes = Array(path.utf8)
-    withUnsafeMutableBytes(of: &address.sun_path) { raw in raw.copyBytes(from: bytes); raw[bytes.count] = 0 }
-    let connected = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
+    withUnsafeMutableBytes(of: &address.sun_path) { raw in
+        raw.copyBytes(from: bytes); raw[bytes.count] = 0
+    }
+    let connected = withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
     guard connected == 0 else {
         output("e", Data("agneta-shell: can't reach Agneta (\(String(cString: strerror(errno))))\n".utf8))
         return 126
@@ -44,7 +54,8 @@ func runBrokered(_ command: String, cwd: String, onConnect: (Int32) -> Void = { 
     var noSigPipe: Int32 = 1
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
     onConnect(fd)
-    guard let request = try? JSONSerialization.data(withJSONObject: ["token": token, "cwd": cwd, "command": command]) else { return 126 }
+    guard let request = try? JSONSerialization.data(withJSONObject: ["token": token, "cwd": cwd, "command": command])
+    else { return 126 }
     let line = request + Data("\n".utf8)
     _ = line.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
 
@@ -129,7 +140,9 @@ final class Calls: @unchecked Sendable {
     private var open: [String: Int32] = [:]
     private var cancelled: Set<String> = []
     func connected(_ id: String, _ fd: Int32) {
-        let cancel = lock.withLock { open[id] = fd; return cancelled.contains(id) }
+        let cancel = lock.withLock {
+            open[id] = fd; return cancelled.contains(id)
+        }
         if cancel { shutdown(fd, SHUT_RDWR) }
     }
     func cancel(_ id: String) {
@@ -168,34 +181,45 @@ struct Clip {
 
     var text: String {
         let cut = total - head.count - tail.count
-        return String(decoding: head, as: UTF8.self) + (cut > 0 ? "\n… (\(cut) bytes cut) …\n" : "") + String(decoding: tail, as: UTF8.self)
+        return String(decoding: head, as: UTF8.self) + (cut > 0 ? "\n… (\(cut) bytes cut) …\n" : "")
+            + String(decoding: tail, as: UTF8.self)
     }
 }
 func key(_ id: Any) -> String { "\(id)" }
 
 let tool: [String: Any] = [
     "name": "shell",
-    "description": "Run a shell command (bash) in the session's workspace and return its output and exit status. Commands run in Agneta's sandbox for this session: the workspace and the session's folders, no network unless the session allows it. Use it for builds, tests, scripts and inspecting files.",
+    "description":
+        "Run a shell command (bash) in the session's workspace and return its output and exit status. Commands run in Agneta's sandbox for this session: the workspace and the session's folders, no network unless the session allows it. Use it for builds, tests, scripts and inspecting files.",
     "inputSchema": [
         "type": "object",
         "properties": [
             "command": ["type": "string", "description": "The command, run with bash -c"],
-            "workdir": ["type": "string", "description": "The folder to run it in, inside the workspace (default: the workspace)"],
+            "workdir": [
+                "type": "string",
+                "description": "The folder to run it in, inside the workspace (default: the workspace)"
+            ]
         ],
-        "required": ["command"],
-    ],
+        "required": ["command"]
+    ]
 ]
 
 while let line = readLine(strippingNewline: true) {
-    guard let data = line.data(using: .utf8), let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let method = message["method"] as? String else { continue }
+    guard let data = line.data(using: .utf8),
+        let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let method = message["method"] as? String
+    else { continue }
     let id = message["id"]
     let params = message["params"] as? [String: Any] ?? [:]
     switch method {
     case "initialize":
         guard let id else { continue }
-        Wire.reply(id, ["protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18", "capabilities": ["tools": [:]],
-                   "serverInfo": ["name": "agneta", "version": "1"]])
+        Wire.reply(
+            id,
+            [
+                "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18", "capabilities": ["tools": [:]],
+                "serverInfo": ["name": "agneta", "version": "1"]
+            ])
     case "tools/list":
         guard let id else { continue }
         Wire.reply(id, ["tools": enabled ? [tool] : []])
@@ -208,7 +232,11 @@ while let line = readLine(strippingNewline: true) {
         }
         var folder = workspace
         if let workdir = arguments["workdir"] as? String, !workdir.isEmpty {
-            folder = workdir.hasPrefix("/") ? workdir : URL(filePath: workspace, directoryHint: .isDirectory).appending(path: workdir).path(percentEncoded: false)
+            folder =
+                workdir.hasPrefix("/")
+                ? workdir
+                : URL(filePath: workspace, directoryHint: .isDirectory).appending(path: workdir).path(
+                    percentEncoded: false)
         }
         let name = key(id), cwd = folder
         nonisolated(unsafe) let requestId = id

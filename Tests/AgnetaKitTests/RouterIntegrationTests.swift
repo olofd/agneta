@@ -4,6 +4,7 @@
 import AgnetaFakes
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 /// A minimal ACP client over URLSessionWebSocketTask, like an app's.
@@ -41,7 +42,9 @@ final class AppClient: @unchecked Sendable {
 
     private func receive() {
         task.receive { [weak self] result in
-            guard let self, case .success(.string(let text)) = result, let message = try? RPCMessage.parse(Data(text.utf8)) else {
+            guard let self, case .success(.string(let text)) = result,
+                let message = try? RPCMessage.parse(Data(text.utf8))
+            else {
                 self?.lock.withLock {
                     self?.closed = true
                     self?.waiting.values.forEach { $0.resume(throwing: RPCPeer.PeerError.closed("socket")) }
@@ -67,8 +70,11 @@ final class AppClient: @unchecked Sendable {
             case .notification(let method, let params) where method.hasPrefix("agneta/"):
                 self.lock.withLock { self.others[method, default: []].append(params ?? .null) }
             case .request(let id, "session/request_permission", _):
-                let option = self.lock.withLock { self.permissionCount += 1; return self.permissionOption }
-                let reply = RPCMessage.response(id: id, result: .success(["outcome": ["outcome": "selected", "optionId": .string(option)]]))
+                let option = self.lock.withLock {
+                    self.permissionCount += 1; return self.permissionOption
+                }
+                let reply = RPCMessage.response(
+                    id: id, result: .success(["outcome": ["outcome": "selected", "optionId": .string(option)]]))
                 self.task.send(.string(String(decoding: try! reply.encoded(), as: UTF8.self))) { _ in }
             default: break
             }
@@ -77,7 +83,9 @@ final class AppClient: @unchecked Sendable {
     }
 
     func request(_ method: String, _ params: JSONValue) async throws -> JSONValue {
-        let id = lock.withLock { defer { nextID += 1 }; return nextID }
+        let id = lock.withLock {
+            defer { nextID += 1 }; return nextID
+        }
         let data = try RPCMessage.request(id: .int(id), method: method, params: params).encoded()
         return try await withCheckedThrowingContinuation { continuation in
             let isClosed = lock.withLock { () -> Bool in
@@ -98,25 +106,35 @@ final class AppClient: @unchecked Sendable {
     }
 
     func text(_ session: String) -> String {
-        lock.withLock { (updates[session] ?? []).compactMap { $0["sessionUpdate"]?.stringValue == "agent_message_chunk" ? $0["content"]?["text"]?.stringValue : nil }.joined() }
+        lock.withLock {
+            (updates[session] ?? []).compactMap {
+                $0["sessionUpdate"]?.stringValue == "agent_message_chunk" ? $0["content"]?["text"]?.stringValue : nil
+            }.joined()
+        }
     }
 
     func toolOutput(_ session: String) -> String {
         lock.withLock {
-            (updates[session] ?? []).filter { $0["sessionUpdate"]?.stringValue == "tool_call_update" && $0["status"]?.stringValue == "completed" }
-                .compactMap { $0["content"]?.arrayValue?.first?["content"]?["text"]?.stringValue }.joined()
+            (updates[session] ?? []).filter {
+                $0["sessionUpdate"]?.stringValue == "tool_call_update" && $0["status"]?.stringValue == "completed"
+            }
+            .compactMap { $0["content"]?.arrayValue?.first?["content"]?["text"]?.stringValue }.joined()
         }
     }
 
     func activeRunID(_ session: String) -> String? {
-        lock.withLock { (updates[session] ?? []).reversed().compactMap { $0["_meta"]?["goose"]?["activeRunId"]?.stringValue }.first }
+        lock.withLock {
+            (updates[session] ?? []).reversed().compactMap { $0["_meta"]?["goose"]?["activeRunId"]?.stringValue }.first
+        }
     }
 
     /// The scope each test stack's apps ask for, by the stack's port: its own work folder, with workspace tools.
     nonisolated(unsafe) private static var scopes: [UInt16: JSONValue] = [:]
     private static let scopesLock = NSLock()
     static func register(scope folder: URL, port: UInt16) {
-        scopesLock.withLock { scopes[port] = ["tools": "workspace", "folders": [.string(folder.realFileURL.path(percentEncoded: false))]] }
+        scopesLock.withLock {
+            scopes[port] = ["tools": "workspace", "folders": [.string(folder.realFileURL.path(percentEncoded: false))]]
+        }
     }
     private let port: UInt16
 
@@ -126,28 +144,35 @@ final class AppClient: @unchecked Sendable {
         let paired = try await request("agneta/pair", ["name": .string(name), "scope": scope])
         let token = try #require(paired["token"]?.stringValue)
         lock.withLock { self.token = token }
-        _ = try await request("initialize", ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": .string(token)]]])
+        _ = try await request(
+            "initialize",
+            ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": .string(token)]]])
     }
 
     /// `sandbox`: the app's ask, or nil for the grant's (full power by default).
     func newSession(cwd: URL, tools: String, account: String = "dev", sandbox: String? = nil) async throws -> String {
         var policy: JSONValue = ["tools": .string(tools), "network": "none", "approval": "never-ask"]
         if let sandbox { policy = policy.setting("sandbox", to: .string(sandbox)) }
-        let result = try await request("session/new", [
-            "cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": [],
-            "_meta": [SessionPolicy.key: policy, "agneta": ["account": .string(account)]],
-        ])
+        let result = try await request(
+            "session/new",
+            [
+                "cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": [],
+                "_meta": [SessionPolicy.key: policy, "agneta": ["account": .string(account)]]
+            ])
         return try #require(result["sessionId"]?.stringValue)
     }
 
     func prompt(_ session: String, _ text: String) async throws -> JSONValue {
-        try await request("session/prompt", ["sessionId": .string(session), "prompt": [["type": "text", "text": .string(text)]]])
+        try await request(
+            "session/prompt", ["sessionId": .string(session), "prompt": [["type": "text", "text": .string(text)]]])
     }
 
     func close() { task.cancel(with: .goingAway, reason: nil) }
 }
 
-@Suite(.serialized, .enabled(if: GooseHarness.available && BuiltTools.shellBuilt, "run scripts/fetch-engines and swift build first"))
+@Suite(
+    .serialized,
+    .enabled(if: GooseHarness.available && BuiltTools.shellBuilt, "run scripts/fetch-engines and swift build first"))
 struct RouterIntegrationTests {
     struct Stack {
         let root: URL
@@ -159,7 +184,9 @@ struct RouterIntegrationTests {
         var traces: Traces { runtime.traces }
 
         static func start(port: UInt16, modelPort: Int) async throws -> Stack {
-            let root = FileManager.default.temporaryDirectory.appending(path: "agneta-router-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
+            let root = FileManager.default.temporaryDirectory.appending(
+                path: "agneta-router-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory
+            ).realFileURL
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             let model = try await FakeServer.model(port: modelPort, log: root.appending(path: "model.log"))
             // Anything failing from here (a port in use) stops the fake model: a leaked one holds its port for later runs.
@@ -175,17 +202,27 @@ struct RouterIntegrationTests {
         private static func assemble(root: URL, model: FakeServer, port: UInt16, modelPort: Int) async throws -> Stack {
             let goose = GooseAdapter(executable: GooseHarness.goose)
             let opencode = OpenCodeAdapter(executable: GooseHarness.opencode)
-            let fake = ProviderSetup(kind: .openAI, model: "gpt-4o", apiKey: "fake", baseURL: "http://127.0.0.1:\(modelPort)/v1")
+            let fake = ProviderSetup(
+                kind: .openAI, model: "gpt-4o", apiKey: "fake", baseURL: "http://127.0.0.1:\(modelPort)/v1")
             // The whole runtime, as the app runs it: records, grants and cleanup included.
-            let runtime = try await AgnetaRuntime(.init(store: AgnetaStore(root: root.appending(path: "agneta", directoryHint: .isDirectory)),
-                                                        shellTool: BuiltTools.shell, engineLoopbackPorts: [modelPort])) { _ in
+            let runtime = try await AgnetaRuntime(
+                .init(
+                    store: AgnetaStore(root: root.appending(path: "agneta", directoryHint: .isDirectory)),
+                    shellTool: BuiltTools.shell, engineLoopbackPorts: [modelPort])
+            ) { _ in
                 Router.PairingAnswer(accounts: ["dev", "oc"], remember: true)
             }
             // "dev" runs on Goose, "oc" on OpenCode, both against the same fake OpenAI model: "oc" is filed as an Anthropic
             // key only so its kind's default can be OpenCode while "dev"'s stays Goose.
-            await runtime.setCatalog(EngineCatalog(ready: [goose, opencode], defaults: ProviderEngines(selected: [.anthropicKey: "opencode"])))
-            await runtime.serve(account: "dev", label: "Dev", provider: fake, runner: .brokered, kind: .openAIKey, billing: "api-key", paused: false)
-            await runtime.serve(account: "oc", label: "Dev on OpenCode", provider: fake, runner: .brokered, kind: .anthropicKey, billing: "api-key", paused: false)
+            await runtime.setCatalog(
+                EngineCatalog(
+                    ready: [goose, opencode], defaults: ProviderEngines(selected: [.anthropicKey: "opencode"])))
+            await runtime.serve(
+                account: "dev", label: "Dev", provider: fake, runner: .brokered, kind: .openAIKey, billing: "api-key",
+                paused: false)
+            await runtime.serve(
+                account: "oc", label: "Dev on OpenCode", provider: fake, runner: .brokered, kind: .anthropicKey,
+                billing: "api-key", paused: false)
             let server = try WebSocketServer(port: port)
             try await server.start()
             let router = runtime.router
@@ -224,7 +261,10 @@ struct RouterIntegrationTests {
 
             async let r1 = a.prompt(aChat, "hello")
             async let r2 = b.prompt(bChat, "hello")
-            async let r3 = a.prompt(aWork, #"CALL shell {"command": "echo made > made.txt; cat made.txt; /usr/bin/curl -s -o /dev/null --max-time 3 https://api.github.com && echo NET || echo no-network"}"#)
+            async let r3 = a.prompt(
+                aWork,
+                #"CALL shell {"command": "echo made > made.txt; cat made.txt; /usr/bin/curl -s -o /dev/null --max-time 3 https://api.github.com && echo NET || echo no-network"}"#
+            )
             async let r4 = b.prompt(bWork, #"CALL shell {"command": "ls ../../A.example/Workspace 2>&1 | head -1"}"#)
             let results = try await [r1, r2, r3, r4]
             #expect(results.allSatisfy { $0["stopReason"]?.stringValue == "end_turn" })
@@ -260,10 +300,14 @@ struct RouterIntegrationTests {
             _ = try await app.prompt(session, "Please remember \(words)")
             let meta = try #require(stack.traces.meta(task: session))
             let conversation = try #require(Router.sharedConversation(meta))
-            let sessions = URL(filePath: try #require(meta["engine"]?["stateRoot"]?.stringValue)).appending(path: "data/sessions")
+            let sessions = URL(filePath: try #require(meta["engine"]?["stateRoot"]?.stringValue)).appending(
+                path: "data/sessions")
             func holding() -> [String] {
-                let names = (try? FileManager.default.contentsOfDirectory(atPath: sessions.path(percentEncoded: false))) ?? []
-                return names.filter { (try? Data(contentsOf: sessions.appending(path: $0)))?.range(of: Data(words.utf8)) != nil }
+                let names =
+                    (try? FileManager.default.contentsOfDirectory(atPath: sessions.path(percentEncoded: false))) ?? []
+                return names.filter {
+                    (try? Data(contentsOf: sessions.appending(path: $0)))?.range(of: Data(words.utf8)) != nil
+                }
             }
             #expect(!holding().isEmpty)
             _ = try await app.request("session/close", ["sessionId": .string(session)])
@@ -315,7 +359,9 @@ struct RouterIntegrationTests {
             #expect(records.last?["type"]?.stringValue == "end")
             #expect(lines.first?.hasPrefix(#"{"v":1,"seq":1,"t":""#) == true)
 
-            func events(_ kind: String) -> [JSONValue] { records.filter { $0["type"]?.stringValue == "event" && $0["kind"]?.stringValue == kind } }
+            func events(_ kind: String) -> [JSONValue] {
+                records.filter { $0["type"]?.stringValue == "event" && $0["kind"]?.stringValue == kind }
+            }
             let call = try #require(events("tool-call").first)
             #expect(call["call"]?.stringValue == "c1")
             #expect(call["input"]?["command"]?.stringValue == "echo hi")
@@ -324,7 +370,12 @@ struct RouterIntegrationTests {
             let result = try #require(events("tool-result").first)
             #expect(result["call"]?.stringValue == "c1" && result["isError"]?.boolValue == false)
             // A whole number of milliseconds reads back as an integer.
-            let ms: Double? = switch result["ms"] { case .double(let v)?: v; case .int(let v)?: Double(v); default: nil }
+            let ms: Double? =
+                switch result["ms"] {
+                case .double(let v)?: v;
+                case .int(let v)?: Double(v);
+                default: nil
+                }
             #expect((ms ?? 0) > 0)
 
             // Per model call from Goose's ledger: the tool turn makes two calls, the plain one one.
@@ -333,24 +384,41 @@ struct RouterIntegrationTests {
             #expect(turns.map { $0["modelCalls"]?.intValue } == [2, 1])
             #expect(turns.allSatisfy { $0["msToFirstToken"] != .null && $0["stopReason"]?.stringValue == "end_turn" })
             #expect(events("model-call").count == 3)
-            #expect(events("model-call").allSatisfy { $0["input"]?.intValue == 42 && $0["basis"]?.stringValue == "engine-ledger" })
+            #expect(
+                events("model-call").allSatisfy {
+                    $0["input"]?.intValue == 42 && $0["basis"]?.stringValue == "engine-ledger"
+                })
 
             // Agneta's own decisions and the broker's exact run.
             let shell = try #require(records.first { $0["type"]?.stringValue == "shell" })
-            #expect(shell["command"]?.stringValue == "echo hi" && shell["exit"]?.intValue == 0 && shell["stdoutBytes"]?.intValue == 3)
-            #expect(records.contains { $0["type"]?.stringValue == "permission" && $0["decision"]?.stringValue == "allowed-by-policy" })
-            #expect(records.contains { $0["type"]?.stringValue == "lifecycle" && $0["event"]?.stringValue == "stop" && $0["reason"]?.stringValue == "closed" })
+            #expect(
+                shell["command"]?.stringValue == "echo hi" && shell["exit"]?.intValue == 0
+                    && shell["stdoutBytes"]?.intValue == 3)
+            #expect(
+                records.contains {
+                    $0["type"]?.stringValue == "permission" && $0["decision"]?.stringValue == "allowed-by-policy"
+                })
+            #expect(
+                records.contains {
+                    $0["type"]?.stringValue == "lifecycle" && $0["event"]?.stringValue == "stop"
+                        && $0["reason"]?.stringValue == "closed"
+                })
 
             // Both raw legs, and the context as the model saw it.
             let legs = Set(records.compactMap { $0["type"]?.stringValue == "acp" ? $0["leg"]?.stringValue : nil })
             #expect(legs == ["app→agneta", "agneta→app", "agneta→engine", "engine→agneta"])
-            #expect(records.contains { $0["type"]?.stringValue == "engine.message" && "\($0["content"] ?? .null)".contains("turn-context") })
+            #expect(
+                records.contains {
+                    $0["type"]?.stringValue == "engine.message" && "\($0["content"] ?? .null)".contains("turn-context")
+                })
             // AGNETA_TEST_KEEP=<folder> keeps the trace, e.g. to try agneta-diag on it.
             if let keep = ProcessInfo.processInfo.environment["AGNETA_TEST_KEEP"] {
-                let target = URL(filePath: keep, directoryHint: .isDirectory).appending(path: "Traces", directoryHint: .isDirectory)
+                let target = URL(filePath: keep, directoryHint: .isDirectory).appending(
+                    path: "Traces", directoryHint: .isDirectory)
                 try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
                 try? FileManager.default.removeItem(at: target.appending(path: "\(session).jsonl"))
-                try FileManager.default.copyItem(at: stack.traces.file(for: session), to: target.appending(path: "\(session).jsonl"))
+                try FileManager.default.copyItem(
+                    at: stack.traces.file(for: session), to: target.appending(path: "\(session).jsonl"))
             }
             app.close()
         } catch {
@@ -374,7 +442,9 @@ struct RouterIntegrationTests {
             #expect(await stack.supervisor.processCount == 1)
             _ = try await a.prompt(sessions[0], "hello")
             _ = try await b.prompt(sessions[1], "hello")
-            #expect(a.text(sessions[0]) == "Hello from the fake model." && b.text(sessions[1]) == "Hello from the fake model.")
+            #expect(
+                a.text(sessions[0]) == "Hello from the fake model."
+                    && b.text(sessions[1]) == "Hello from the fake model.")
             a.close()
             b.close()
         } catch {
@@ -396,9 +466,13 @@ struct RouterIntegrationTests {
             let meta = try #require(stack.traces.text(of: session).split(separator: "\n").first)
             let pid = try #require(try JSONCoding.decode(Data(meta.utf8))["engine"]?["pid"]?.intValue)
             kill(pid_t(pid), SIGKILL)
-            for _ in 0..<60 where app.notifications("agneta/sessionStopped").isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+            for _ in 0..<60 where app.notifications("agneta/sessionStopped").isEmpty {
+                try await Task.sleep(for: .milliseconds(50))
+            }
             #expect(app.notifications("agneta/sessionStopped").first?["stoppedBy"]?.stringValue == "engine")
-            for _ in 0..<40 where await stack.supervisor.processCount > 0 { try await Task.sleep(for: .milliseconds(50)) }
+            for _ in 0..<40 where await stack.supervisor.processCount > 0 {
+                try await Task.sleep(for: .milliseconds(50))
+            }
             #expect(await stack.supervisor.processCount == 0)
             app.close()
         } catch {
@@ -420,9 +494,11 @@ struct RouterIntegrationTests {
                 try await Task.sleep(for: .milliseconds(50))
                 runID = app.activeRunID(session)
             }
-            let steered = try await app.request("agneta/steer", [
-                "sessionId": .string(session), "prompt": [["type": "text", "text": "also mention fjords"]],
-            ])
+            let steered = try await app.request(
+                "agneta/steer",
+                [
+                    "sessionId": .string(session), "prompt": [["type": "text", "text": "also mention fjords"]]
+                ])
             #expect(steered["runId"]?.stringValue == runID)
             _ = try await turn.value
             app.close()

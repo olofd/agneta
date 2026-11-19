@@ -1,26 +1,32 @@
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 @Suite struct JSONRPCTests {
     @Test func parsesRequestNotificationAndResponses() throws {
-        let request = try RPCMessage.parse(Data(#"{"jsonrpc":"2.0","id":7,"method":"session/new","params":{"cwd":"/tmp"}}"#.utf8))
+        let request = try RPCMessage.parse(
+            Data(#"{"jsonrpc":"2.0","id":7,"method":"session/new","params":{"cwd":"/tmp"}}"#.utf8))
         #expect(request == .request(id: .int(7), method: "session/new", params: ["cwd": "/tmp"]))
 
-        let note = try RPCMessage.parse(Data(#"{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"s"}}"#.utf8))
+        let note = try RPCMessage.parse(
+            Data(#"{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"s"}}"#.utf8))
         #expect(note == .notification(method: "session/cancel", params: ["sessionId": "s"]))
 
         let ok = try RPCMessage.parse(Data(#"{"jsonrpc":"2.0","id":"a","result":{"stopReason":"end_turn"}}"#.utf8))
         #expect(ok == .response(id: .string("a"), result: .success(["stopReason": "end_turn"])))
 
-        let failed = try RPCMessage.parse(Data(#"{"jsonrpc":"2.0","id":3,"error":{"code":-32602,"message":"bad"}}"#.utf8))
+        let failed = try RPCMessage.parse(
+            Data(#"{"jsonrpc":"2.0","id":3,"error":{"code":-32602,"message":"bad"}}"#.utf8))
         #expect(failed == .response(id: .int(3), result: .failure(RPCError(code: -32602, message: "bad"))))
     }
 
     @Test func rejectsMalformedMessages() {
         #expect(throws: RPCMessage.ParseFailure.notJSON) { try RPCMessage.parse(Data("{".utf8)) }
         #expect(throws: RPCMessage.ParseFailure.notObject) { try RPCMessage.parse(Data("[1]".utf8)) }
-        #expect(throws: RPCMessage.ParseFailure.wrongVersion) { try RPCMessage.parse(Data(#"{"id":1,"method":"x"}"#.utf8)) }
+        #expect(throws: RPCMessage.ParseFailure.wrongVersion) {
+            try RPCMessage.parse(Data(#"{"id":1,"method":"x"}"#.utf8))
+        }
         #expect(throws: RPCMessage.ParseFailure.malformed("response without result or error")) {
             try RPCMessage.parse(Data(#"{"jsonrpc":"2.0","id":1}"#.utf8))
         }
@@ -31,10 +37,14 @@ import Testing
     /// closed. It's an error all the same, and now ends the request as one.
     @Test func aMalformedErrorStillEndsTheRequest() async throws {
         // A usable integer code is kept (the router acts on -32000, sign-in required); otherwise an internal error.
-        for (error, code) in [(#"{"code":-32000}"#, -32000), (#"{"code":"E1","message":"failed"}"#, RPCError.internalError),
-                              (#""failed""#, RPCError.internalError), (#"null"#, RPCError.internalError)] {
+        for (error, code) in [
+            (#"{"code":-32000}"#, -32000), (#"{"code":"E1","message":"failed"}"#, RPCError.internalError),
+            (#""failed""#, RPCError.internalError), (#"null"#, RPCError.internalError)
+        ] {
             let parsed = try RPCMessage.parse(Data(#"{"jsonrpc":"2.0","id":4,"error":\#(error)}"#.utf8))
-            guard case .response(.int(4), .failure(let failure)) = parsed else { Issue.record("\(error): \(parsed)"); continue }
+            guard case .response(.int(4), .failure(let failure)) = parsed else {
+                Issue.record("\(error): \(parsed)"); continue
+            }
             #expect(failure.code == code, "\(error)")
         }
 
@@ -46,9 +56,13 @@ import Testing
         Task { await peer.run(lines) }
         let outcome = try await withThrowingTaskGroup(of: String.self) { group in
             group.addTask {
-                do { _ = try await peer.request("session/prompt"); return "answered" } catch let error as RPCError { return "error \(error.code)" }
+                do { _ = try await peer.request("session/prompt"); return "answered" } catch let error as RPCError {
+                    return "error \(error.code)"
+                }
             }
-            group.addTask { try await Task.sleep(for: .seconds(5)); return "hung" }
+            group.addTask {
+                try await Task.sleep(for: .seconds(5)); return "hung"
+            }
             let first = try await group.next() ?? "none"
             group.cancelAll()
             return first
@@ -58,7 +72,8 @@ import Testing
     }
 
     @Test func roundTripsUnknownFieldsLosslessly() throws {
-        let raw = #"{"id":1,"jsonrpc":"2.0","method":"_goose/unstable/x","params":{"big":9007199254740993,"f":1.5,"n":null,"nested":[true,{"k":"v"}]}}"#
+        let raw =
+            #"{"id":1,"jsonrpc":"2.0","method":"_goose/unstable/x","params":{"big":9007199254740993,"f":1.5,"n":null,"nested":[true,{"k":"v"}]}}"#
         let message = try RPCMessage.parse(Data(raw.utf8))
         #expect(String(decoding: try message.encoded(), as: UTF8.self) == raw)
     }

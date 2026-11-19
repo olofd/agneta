@@ -6,7 +6,9 @@ import AgnetaKit
 import Foundation
 
 var args = Array(CommandLine.arguments.dropFirst())
-guard let route = args.first else { print("usage: agneta-signin claude|codex --home <data folder>/Accounts/<id> [--no-browser] [--raw]"); exit(2) }
+guard let route = args.first else {
+    print("usage: agneta-signin claude|codex --home <data folder>/Accounts/<id> [--no-browser] [--raw]"); exit(2)
+}
 args.removeFirst()
 var home = "", browse = true, raw = false
 while !args.isEmpty {
@@ -27,10 +29,14 @@ let progress: SignInProgress = { step in
     switch step {
     case .openBrowser(let url):
         say("→ browser: \(url.absoluteString)")
-        if openBrowser { _ = try? ChildProcess(executable: "/usr/bin/open", arguments: [url.absoluteString], environment: [:]) }
+        if openBrowser {
+            _ = try? ChildProcess(executable: "/usr/bin/open", arguments: [url.absoluteString], environment: [:])
+        }
     case .confirmCode(let code, let page, let expires):
         say("→ code \(code) at \(page.absoluteString) (valid \(expires / 60) min)")
-        if openBrowser { _ = try? ChildProcess(executable: "/usr/bin/open", arguments: [page.absoluteString], environment: [:]) }
+        if openBrowser {
+            _ = try? ChildProcess(executable: "/usr/bin/open", arguments: [page.absoluteString], environment: [:])
+        }
     case .browserOpened(let url): say("→ opened by Claude: \(url.absoluteString)")
     case .pasteCode(let text): say("→ \(text) Type it here and press Return.")
     case .waiting(let text): say("… \(text)")
@@ -43,15 +49,19 @@ let showRaw = raw
 func runSignIn() async throws {
     switch route {
     case "claude":
-        let repo = URL(filePath: CommandLine.arguments[0]).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let installer = RuntimeInstaller(lockFile: repo.appending(path: "Engines/runtimes.lock"), runtimes: AgnetaStore(root: account.deletingLastPathComponent().deletingLastPathComponent()).runtimesFolder)
+        let repo = URL(filePath: CommandLine.arguments[0]).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let installer = RuntimeInstaller(
+            lockFile: repo.appending(path: "Engines/runtimes.lock"),
+            runtimes: AgnetaStore(root: account.deletingLastPathComponent().deletingLastPathComponent()).runtimesFolder)
         let adapter = try await installer.install("claude-agent-acp", progress: progress)
         say("adapter: \(adapter.path(percentEncoded: false))")
         var echo: (@Sendable (String) -> Void)?
         if showRaw { echo = { chunk in FileHandle.standardError.write(Data(chunk.utf8)) } }
         guard let cli = CLILocator.claudeCode().first else { throw SignInError.provider("Claude Code isn't installed") }
         say("Claude Code: \(cli.label)")
-        let claude = ClaudeCodeSignIn(cli: cli.path, configDirectory: account.appending(path: "claude", directoryHint: .isDirectory))
+        let claude = ClaudeCodeSignIn(
+            cli: cli.path, configDirectory: account.appending(path: "claude", directoryHint: .isDirectory))
         if try await claude.isSignedIn() { say("✓ already signed in to Claude"); return }
         try await claude.run(progress: progress, code: { readLine() }, output: echo)
     case "codex":

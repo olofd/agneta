@@ -18,9 +18,12 @@ public enum IsolatedInstance {
     /// The apps' port from AGNETA_PORT. Required, since a default would put every instance on one port; the
     /// diagnostics port two above it must fit too, and neither may be one of the user's own Agneta's.
     public static func port(_ raw: String?) throws -> UInt16 {
-        guard let raw, !raw.isEmpty else { throw Problem("Set AGNETA_PORT for an isolated instance (AGNETA_HOME is set)") }
+        guard let raw, !raw.isEmpty else {
+            throw Problem("Set AGNETA_PORT for an isolated instance (AGNETA_HOME is set)")
+        }
         guard let port = Int(raw), (1024...65533).contains(port) else {
-            throw Problem("AGNETA_PORT must be a number from 1024 to 65533 (diagnostics listen two above it), not \(raw)")
+            throw Problem(
+                "AGNETA_PORT must be a number from 1024 to 65533 (diagnostics listen two above it), not \(raw)")
         }
         if let taken = [port, port + 2].first(where: reservedPorts.contains) {
             throw Problem("AGNETA_PORT \(port) would use port \(taken), which your own Agneta uses")

@@ -30,7 +30,11 @@ public final class WebSocketServer: @unchecked Sendable {
             self.connection = connection
             self.maxQueued = maxQueued
             self.maxQueuedBytes = maxQueuedBytes
-            if case .hostPort(_, let port) = connection.endpoint { remotePort = Int(port.rawValue) } else { remotePort = nil }
+            if case .hostPort(_, let port) = connection.endpoint {
+                remotePort = Int(port.rawValue)
+            } else {
+                remotePort = nil
+            }
             (messages, input) = AsyncThrowingStream<Data, Error>.makeStream()
         }
 
@@ -55,7 +59,9 @@ public final class WebSocketServer: @unchecked Sendable {
             connection.receiveMessage { [weak self] content, context, _, error in
                 guard let self else { return }
                 if let error { self.input.finish(throwing: error); self.connection.cancel(); return }
-                let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata
+                let metadata =
+                    context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
+                    as? NWProtocolWebSocket.Metadata
                 switch metadata?.opcode {
                 case .text?, .binary?: if let content { self.input.yield(content) }
                 case .close?: self.input.finish(); self.connection.cancel(); return
@@ -86,13 +92,15 @@ public final class WebSocketServer: @unchecked Sendable {
             let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
             let context = NWConnection.ContentContext(identifier: "acp", metadata: [metadata])
             let bytes = data.count
-            connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { [weak self] _ in
-                // A send that failed means the connection did: its receive side ends it.
-                self?.lock.withLock {
-                    self?.queued -= 1
-                    self?.queuedBytes -= bytes
-                }
-            })
+            connection.send(
+                content: data, contentContext: context, isComplete: true,
+                completion: .contentProcessed { [weak self] _ in
+                    // A send that failed means the connection did: its receive side ends it.
+                    self?.lock.withLock {
+                        self?.queued -= 1
+                        self?.queuedBytes -= bytes
+                    }
+                })
         }
 
         public func close() {
@@ -115,7 +123,8 @@ public final class WebSocketServer: @unchecked Sendable {
     public let maxQueued: Int
     public let maxQueuedBytes: Int
 
-    public init(port: UInt16, maxFrame: Int = 16 << 20, maxQueued: Int = 10_000, maxQueuedBytes: Int = 64 << 20) throws {
+    public init(port: UInt16, maxFrame: Int = 16 << 20, maxQueued: Int = 10_000, maxQueuedBytes: Int = 64 << 20) throws
+    {
         self.port = port
         self.maxQueued = maxQueued
         self.maxQueuedBytes = maxQueuedBytes

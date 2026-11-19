@@ -15,13 +15,13 @@ let package = Package(
         .executable(name: "agneta-signin", targets: ["agneta-signin"]),
         .executable(name: "Agneta", targets: ["Agneta"]),
         .executable(name: "agneta-diag", targets: ["agneta-diag"]),
-        .executable(name: "agneta-fakes", targets: ["agneta-fakes"]),
+        .executable(name: "agneta-fakes", targets: ["agneta-fakes"])
     ],
     dependencies: [
         // SQLite with migrations. Pinned exactly; updates are deliberate.
         .package(url: "https://github.com/groue/GRDB.swift", exact: "7.9.0"),
         // Updates for release builds (docs/RELEASING.md, part 3). Pinned exactly, like GRDB.
-        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1")
     ],
     targets: [
         .target(name: "AgnetaKit", dependencies: [.product(name: "GRDB", package: "GRDB.swift")]),
@@ -43,6 +43,6 @@ let package = Package(
         .executableTarget(name: "agneta-fakes", dependencies: ["AgnetaFakes"]),
         .testTarget(name: "AgnetaKitTests", dependencies: ["AgnetaKit", "AgnetaFakes"]),
         // The app's own logic (approvals, sign-in, the engine library), without its windows.
-        .testTarget(name: "AgnetaTests", dependencies: ["Agneta"]),
+        .testTarget(name: "AgnetaTests", dependencies: ["Agneta"])
     ]
 )

@@ -43,8 +43,10 @@ public struct TaskRecord: Sendable, Equatable, Identifiable, Codable, FetchableR
     /// Estimated or reported cost in US dollars, cumulative for the task; unknown stays nil.
     public var cost: Double?
 
-    public init(id: String, app: String, appIdentifier: String? = nil, account: String, title: String, started: Date,
-                ended: Date? = nil, outcome: TaskOutcome? = nil, turns: Int = 0, usedTokens: Int? = nil, cost: Double? = nil) {
+    public init(
+        id: String, app: String, appIdentifier: String? = nil, account: String, title: String, started: Date,
+        ended: Date? = nil, outcome: TaskOutcome? = nil, turns: Int = 0, usedTokens: Int? = nil, cost: Double? = nil
+    ) {
         self.id = id
         self.app = app
         self.appIdentifier = appIdentifier
@@ -76,12 +78,14 @@ public final class AgnetaDatabase: Sendable {
     public init(file: URL) throws {
         self.file = file
         let folder = file.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         var configuration = Configuration()
         configuration.foreignKeysEnabled = true
         configuration.label = "agneta"
         queue = try DatabaseQueue(path: file.path(percentEncoded: false), configuration: configuration)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path(percentEncoded: false))
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: file.path(percentEncoded: false))
         let migrator = Self.migrator
         try queue.read { db in
             if try migrator.hasBeenSuperseded(db) { throw StoreError.otherSchema(file: file.lastPathComponent) }
@@ -155,12 +159,16 @@ public final class AgnetaDatabase: Sendable {
         // An earlier development build's flag, since replaced by the grant's sandbox (below): the column is read by
         // nothing, but the migration stays, so a database that ran it still opens.
         migrator.registerMigration("2026-11-19-developer-access") { db in
-            try db.alter(table: "grants") { t in t.add(column: "developerAccess", .boolean).notNull().defaults(to: false) }
+            try db.alter(table: "grants") { t in
+                t.add(column: "developerAccess", .boolean).notNull().defaults(to: false)
+            }
         }
         // The most each app's tasks may do (Router.Grant.sandbox). Grants made before it were approved as contained, so
         // they stay contained; a new pairing writes what the user chose (developer access unless they choose less).
         migrator.registerMigration("2026-11-19-grant-sandbox") { db in
-            try db.alter(table: "grants") { t in t.add(column: "sandbox", .text).notNull().defaults(to: Sandbox.contained.rawValue) }
+            try db.alter(table: "grants") { t in
+                t.add(column: "sandbox", .text).notNull().defaults(to: Sandbox.contained.rawValue)
+            }
         }
         // The limits the user sets for each app (AppLimits), as JSON so further kinds need no migration; grants made
         // before have none. And each app's usage by hour (AppMeter), kept 35 days whatever task history keeps.
@@ -191,8 +199,10 @@ public final class AgnetaDatabase: Sendable {
         try queue.read { db in
             try Row.fetchAll(db, sql: "SELECT * FROM accounts ORDER BY created").compactMap { row in
                 guard let kind = AccountKind(rawValue: row["kind"]) else { return nil }
-                return AccountRecord(id: row["id"], kind: kind, label: row["label"], email: row["email"], model: row["model"], created: row["created"],
-                                     paused: row["paused"])
+                return AccountRecord(
+                    id: row["id"], kind: kind, label: row["label"], email: row["email"], model: row["model"],
+                    created: row["created"],
+                    paused: row["paused"])
             }
         }
     }
@@ -202,11 +212,16 @@ public final class AgnetaDatabase: Sendable {
     }
 
     private static func insert(_ account: AccountRecord, _ db: GRDB.Database) throws {
-        try db.execute(sql: """
-            INSERT INTO accounts (id, kind, label, email, model, created, paused) VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, label = excluded.label, email = excluded.email,
-                model = excluded.model, paused = excluded.paused
-            """, arguments: [account.id, account.kind.rawValue, account.label, account.email, account.model, account.created, account.paused])
+        try db.execute(
+            sql: """
+                INSERT INTO accounts (id, kind, label, email, model, created, paused) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, label = excluded.label, email = excluded.email,
+                    model = excluded.model, paused = excluded.paused
+                """,
+            arguments: [
+                account.id, account.kind.rawValue, account.label, account.email, account.model, account.created,
+                account.paused
+            ])
     }
 
     public func deleteAccount(_ id: String) throws {
@@ -220,15 +235,23 @@ public final class AgnetaDatabase: Sendable {
         try queue.read { db in
             var grants: [String: Router.Grant] = [:]
             for row in try Row.fetchAll(db, sql: "SELECT * FROM grants") {
-                let accounts = (try? JSONDecoder().decode([String].self, from: Data((row["accounts"] as String).utf8))) ?? []
-                let folders = (try? JSONDecoder().decode([String].self, from: Data((row["folders"] as String).utf8))) ?? []
-                let engines = (try? JSONDecoder().decode(EngineAllowance.self, from: Data((row["engines"] as String).utf8))) ?? .only([])
+                let accounts =
+                    (try? JSONDecoder().decode([String].self, from: Data((row["accounts"] as String).utf8))) ?? []
+                let folders =
+                    (try? JSONDecoder().decode([String].self, from: Data((row["folders"] as String).utf8))) ?? []
+                let engines =
+                    (try? JSONDecoder().decode(EngineAllowance.self, from: Data((row["engines"] as String).utf8)))
+                    ?? .only([])
                 // Limits that can't be read would leave the app unlimited: the grant isn't restored rather than that.
-                guard let limits = try? JSONDecoder().decode(AppLimits.self, from: Data(((row["limits"] as String?) ?? "{}").utf8)) else { continue }
-                grants[row["tokenHash"]] = Router.Grant(id: row["id"], app: row["app"], identifier: row["identifier"], team: row["team"],
-                                                        verified: row["verified"], accounts: accounts, engines: engines, created: row["created"],
-                                                        tools: SessionPolicy.Tools(rawValue: row["tools"]) ?? .appOnly, folders: folders,
-                                                        sandbox: Sandbox(rawValue: row["sandbox"] ?? "") ?? .contained, limits: limits)
+                guard
+                    let limits = try? JSONDecoder().decode(
+                        AppLimits.self, from: Data(((row["limits"] as String?) ?? "{}").utf8))
+                else { continue }
+                grants[row["tokenHash"]] = Router.Grant(
+                    id: row["id"], app: row["app"], identifier: row["identifier"], team: row["team"],
+                    verified: row["verified"], accounts: accounts, engines: engines, created: row["created"],
+                    tools: SessionPolicy.Tools(rawValue: row["tools"]) ?? .appOnly, folders: folders,
+                    sandbox: Sandbox(rawValue: row["sandbox"] ?? "") ?? .contained, limits: limits)
             }
             return grants
         }
@@ -240,7 +263,8 @@ public final class AgnetaDatabase: Sendable {
         try queue.write { db in
             if let replacing {
                 try db.execute(sql: "DELETE FROM grants WHERE id = ?", arguments: [replacing])
-                try db.execute(sql: "UPDATE app_usage SET grantID = ? WHERE grantID = ?", arguments: [grant.id, replacing])
+                try db.execute(
+                    sql: "UPDATE app_usage SET grantID = ? WHERE grantID = ?", arguments: [grant.id, replacing])
             }
             try Self.insert(grant, hash: tokenHash, db)
         }
@@ -251,11 +275,15 @@ public final class AgnetaDatabase: Sendable {
         let folders = String(decoding: try JSONEncoder().encode(grant.folders), as: UTF8.self)
         let engines = String(decoding: try JSONCoding.encode(grant.engines), as: UTF8.self)
         let limits = String(decoding: try JSONEncoder().encode(grant.limits), as: UTF8.self)
-        try db.execute(sql: """
-            INSERT OR REPLACE INTO grants (tokenHash, id, app, identifier, team, verified, accounts, created, tools, folders, engines, sandbox, limits)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, arguments: [hash, grant.id, grant.app, grant.identifier, grant.team, grant.verified, accounts, grant.created,
-                             grant.tools.rawValue, folders, engines, grant.sandbox.rawValue, limits])
+        try db.execute(
+            sql: """
+                INSERT OR REPLACE INTO grants (tokenHash, id, app, identifier, team, verified, accounts, created, tools, folders, engines, sandbox, limits)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+            arguments: [
+                hash, grant.id, grant.app, grant.identifier, grant.team, grant.verified, accounts, grant.created,
+                grant.tools.rawValue, folders, engines, grant.sandbox.rawValue, limits
+            ])
     }
 
     /// Removes a grant (Remove Access), and its app's usage with it.
@@ -272,13 +300,18 @@ public final class AgnetaDatabase: Sendable {
     /// ended after Remove Access (or an Allow Once grant's, kept in memory) leaves nothing behind.
     public func addUsage(grant: String, hour: Date, _ usage: AppMeter.Usage) throws {
         try queue.write { db in
-            try db.execute(sql: """
-                INSERT INTO app_usage (grantID, hour, cost, inputTokens, outputTokens, turns, tasks, unpriced)
-                SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM grants WHERE id = ?)
-                ON CONFLICT(grantID, hour) DO UPDATE SET cost = cost + excluded.cost, inputTokens = inputTokens + excluded.inputTokens,
-                    outputTokens = outputTokens + excluded.outputTokens, turns = turns + excluded.turns, tasks = tasks + excluded.tasks,
-                    unpriced = unpriced + excluded.unpriced
-                """, arguments: [grant, hour, usage.cost, usage.inputTokens, usage.outputTokens, usage.turns, usage.tasks, usage.unpriced, grant])
+            try db.execute(
+                sql: """
+                    INSERT INTO app_usage (grantID, hour, cost, inputTokens, outputTokens, turns, tasks, unpriced)
+                    SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM grants WHERE id = ?)
+                    ON CONFLICT(grantID, hour) DO UPDATE SET cost = cost + excluded.cost, inputTokens = inputTokens + excluded.inputTokens,
+                        outputTokens = outputTokens + excluded.outputTokens, turns = turns + excluded.turns, tasks = tasks + excluded.tasks,
+                        unpriced = unpriced + excluded.unpriced
+                    """,
+                arguments: [
+                    grant, hour, usage.cost, usage.inputTokens, usage.outputTokens, usage.turns, usage.tasks,
+                    usage.unpriced, grant
+                ])
         }
     }
 
@@ -286,7 +319,8 @@ public final class AgnetaDatabase: Sendable {
     public func unreadableLimits() throws -> [String] {
         try queue.read { db in
             try Row.fetchAll(db, sql: "SELECT id, limits FROM grants").compactMap { row in
-                (try? JSONDecoder().decode(AppLimits.self, from: Data(((row["limits"] as String?) ?? "{}").utf8))) == nil ? row["id"] : nil
+                (try? JSONDecoder().decode(AppLimits.self, from: Data(((row["limits"] as String?) ?? "{}").utf8)))
+                    == nil ? row["id"] : nil
             }
         }
     }
@@ -296,9 +330,10 @@ public final class AgnetaDatabase: Sendable {
         try queue.read { db in
             var usage: [String: [Date: AppMeter.Usage]] = [:]
             for row in try Row.fetchAll(db, sql: "SELECT * FROM app_usage WHERE hour >= ?", arguments: [since]) {
-                usage[row["grantID"], default: [:]][row["hour"]] = AppMeter.Usage(cost: row["cost"], inputTokens: row["inputTokens"],
-                                                                                 outputTokens: row["outputTokens"], turns: row["turns"], tasks: row["tasks"],
-                                                                                 unpriced: (row["unpriced"] as Int?) ?? 0)
+                usage[row["grantID"], default: [:]][row["hour"]] = AppMeter.Usage(
+                    cost: row["cost"], inputTokens: row["inputTokens"],
+                    outputTokens: row["outputTokens"], turns: row["turns"], tasks: row["tasks"],
+                    unpriced: (row["unpriced"] as Int?) ?? 0)
             }
             return usage
         }
@@ -317,22 +352,27 @@ public final class AgnetaDatabase: Sendable {
 
     /// A finished task resumed with `session/load` is running again.
     public func taskResumed(_ task: String) throws {
-        try queue.write { db in try db.execute(sql: "UPDATE sessions SET ended = NULL, outcome = NULL WHERE id = ?", arguments: [task]) }
+        try queue.write { db in
+            try db.execute(sql: "UPDATE sessions SET ended = NULL, outcome = NULL WHERE id = ?", arguments: [task])
+        }
     }
 
     public func turnStarted(task: String, at date: Date = Date()) throws {
         try queue.write { db in
-            try db.execute(sql: "INSERT INTO turns (session, started, costAtStart) SELECT id, ?, cost FROM sessions WHERE id = ?", arguments: [date, task])
+            try db.execute(
+                sql: "INSERT INTO turns (session, started, costAtStart) SELECT id, ?, cost FROM sessions WHERE id = ?",
+                arguments: [date, task])
         }
     }
 
     public func turnEnded(task: String, stopReason: String, at date: Date = Date()) throws {
         try queue.write { db in
-            try db.execute(sql: """
-                UPDATE turns SET ended = ?, stopReason = ?,
-                    cost = (SELECT cost FROM sessions WHERE id = turns.session) - COALESCE(costAtStart, 0)
-                WHERE id = (SELECT MAX(id) FROM turns WHERE session = ? AND ended IS NULL)
-                """, arguments: [date, stopReason, task])
+            try db.execute(
+                sql: """
+                    UPDATE turns SET ended = ?, stopReason = ?,
+                        cost = (SELECT cost FROM sessions WHERE id = turns.session) - COALESCE(costAtStart, 0)
+                    WHERE id = (SELECT MAX(id) FROM turns WHERE session = ? AND ended IS NULL)
+                    """, arguments: [date, stopReason, task])
             try db.execute(sql: "UPDATE sessions SET turns = turns + 1 WHERE id = ?", arguments: [task])
         }
     }
@@ -340,21 +380,26 @@ public final class AgnetaDatabase: Sendable {
     /// Latest cumulative usage reported for a task. Unknown values leave what's stored.
     public func usage(task: String, usedTokens: Int?, cost: Double?) throws {
         try queue.write { db in
-            try db.execute(sql: "UPDATE sessions SET usedTokens = COALESCE(?, usedTokens), cost = COALESCE(?, cost) WHERE id = ?",
-                           arguments: [usedTokens, cost, task])
+            try db.execute(
+                sql: "UPDATE sessions SET usedTokens = COALESCE(?, usedTokens), cost = COALESCE(?, cost) WHERE id = ?",
+                arguments: [usedTokens, cost, task])
         }
     }
 
     public func taskEnded(_ task: String, outcome: TaskOutcome, at date: Date = Date()) throws {
         try queue.write { db in
-            try db.execute(sql: "UPDATE sessions SET ended = ?, outcome = ? WHERE id = ? AND ended IS NULL", arguments: [date, outcome.rawValue, task])
+            try db.execute(
+                sql: "UPDATE sessions SET ended = ?, outcome = ? WHERE id = ? AND ended IS NULL",
+                arguments: [date, outcome.rawValue, task])
         }
     }
 
     /// Ended tasks, newest first.
     public func history(limit: Int = 500) throws -> [TaskRecord] {
         try queue.read { db in
-            try TaskRecord.fetchAll(db, sql: "SELECT * FROM sessions WHERE ended IS NOT NULL ORDER BY started DESC LIMIT ?", arguments: [limit])
+            try TaskRecord.fetchAll(
+                db, sql: "SELECT * FROM sessions WHERE ended IS NOT NULL ORDER BY started DESC LIMIT ?",
+                arguments: [limit])
         }
     }
 
@@ -362,8 +407,10 @@ public final class AgnetaDatabase: Sendable {
     @discardableResult
     public func interruptUnfinishedTasks(at date: Date = Date()) throws -> Int {
         try queue.write { db in
-            try db.execute(sql: "UPDATE turns SET ended = ?, stopReason = 'interrupted' WHERE ended IS NULL", arguments: [date])
-            try db.execute(sql: "UPDATE sessions SET ended = ?, outcome = 'interrupted' WHERE ended IS NULL", arguments: [date])
+            try db.execute(
+                sql: "UPDATE turns SET ended = ?, stopReason = 'interrupted' WHERE ended IS NULL", arguments: [date])
+            try db.execute(
+                sql: "UPDATE sessions SET ended = ?, outcome = 'interrupted' WHERE ended IS NULL", arguments: [date])
             return db.changesCount
         }
     }
@@ -373,7 +420,8 @@ public final class AgnetaDatabase: Sendable {
     public func pruneHistory(olderThan days: Int, now: Date = Date()) throws -> [String] {
         let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
         return try queue.write { db in
-            let ids = try String.fetchAll(db, sql: "SELECT id FROM sessions WHERE ended IS NOT NULL AND started < ?", arguments: [cutoff])
+            let ids = try String.fetchAll(
+                db, sql: "SELECT id FROM sessions WHERE ended IS NOT NULL AND started < ?", arguments: [cutoff])
             try db.execute(sql: "DELETE FROM sessions WHERE ended IS NOT NULL AND started < ?", arguments: [cutoff])
             return ids
         }
@@ -406,13 +454,16 @@ public final class AgnetaDatabase: Sendable {
     // MARK: Settings
 
     public func setting(_ key: String) throws -> String? {
-        try queue.read { db in try String.fetchOne(db, sql: "SELECT value FROM settings WHERE key = ?", arguments: [key]) }
+        try queue.read { db in
+            try String.fetchOne(db, sql: "SELECT value FROM settings WHERE key = ?", arguments: [key])
+        }
     }
 
     public func set(_ value: String?, for key: String) throws {
         try queue.write { db in
             if let value {
-                try db.execute(sql: "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", arguments: [key, value])
+                try db.execute(
+                    sql: "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", arguments: [key, value])
             } else {
                 try db.execute(sql: "DELETE FROM settings WHERE key = ?", arguments: [key])
             }

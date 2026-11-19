@@ -9,22 +9,51 @@ import SwiftUI
 enum Palette {
     /// The icon's rose, deepened to read as text and symbols: #B0365F in light mode (5:1 on the panel), #FF9DB4 in dark
     /// mode (8:1 on a dark panel).
-    static let accent = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 1.0, green: 0.616, blue: 0.706, alpha: 1) : NSColor(red: 0.690, green: 0.212, blue: 0.373, alpha: 1) })
+    static let accent = Color(
+        nsColor: NSColor(name: nil) {
+            $0.bestMatch(from: [.darkAqua]) == .darkAqua
+                ? NSColor(red: 1.0, green: 0.616, blue: 0.706, alpha: 1)
+                : NSColor(red: 0.690, green: 0.212, blue: 0.373, alpha: 1)
+        })
     /// The accent as a fill behind white text (a prominent button): deep enough in both modes for the label to read
     /// clearly (#B8466E, 5:1, in dark mode; #B0365F, 5.9:1, in light). The accent itself, pale in dark mode, is for text
     /// and symbols on dark backgrounds; as a fill it made a default button look disabled.
-    static let fill = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 0.722, green: 0.275, blue: 0.431, alpha: 1) : NSColor(red: 0.690, green: 0.212, blue: 0.373, alpha: 1) })
+    static let fill = Color(
+        nsColor: NSColor(name: nil) {
+            $0.bestMatch(from: [.darkAqua]) == .darkAqua
+                ? NSColor(red: 0.722, green: 0.275, blue: 0.431, alpha: 1)
+                : NSColor(red: 0.690, green: 0.212, blue: 0.373, alpha: 1)
+        })
     /// A prominent button's fill: the evening deepened so white text reads across it (at least 4.8:1 at every stop),
     /// coral-rose to rose to violet, left to right. Light: #C2475A, #B0365F, #8E3A92; dark: #BF4866, #B8466E, #9A48A6.
     static func buttonFill(dark: Bool) -> [Color] {
-        dark ? [Color(red: 0.749, green: 0.282, blue: 0.400), Color(red: 0.722, green: 0.275, blue: 0.431), Color(red: 0.604, green: 0.282, blue: 0.651)]
-             : [Color(red: 0.761, green: 0.278, blue: 0.353), Color(red: 0.690, green: 0.212, blue: 0.373), Color(red: 0.557, green: 0.227, blue: 0.573)]
+        dark
+            ? [
+                Color(red: 0.749, green: 0.282, blue: 0.400), Color(red: 0.722, green: 0.275, blue: 0.431),
+                Color(red: 0.604, green: 0.282, blue: 0.651)
+            ]
+            : [
+                Color(red: 0.761, green: 0.278, blue: 0.353), Color(red: 0.690, green: 0.212, blue: 0.373),
+                Color(red: 0.557, green: 0.227, blue: 0.573)
+            ]
     }
     /// The app icon's evening, corner to corner: coral, rose, violet (scripts/dev/app-icon.swift).
-    static let evening: [NSColor] = [NSColor(red: 1.0, green: 0.604, blue: 0.353, alpha: 1), NSColor(red: 1.0, green: 0.373, blue: 0.494, alpha: 1),
-                                     NSColor(red: 0.545, green: 0.239, blue: 1.0, alpha: 1)]
-    static let running = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 0.53, green: 0.79, blue: 0.64, alpha: 1) : NSColor(red: 0.25, green: 0.49, blue: 0.36, alpha: 1) })
-    static let attention = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua]) == .darkAqua ? NSColor(red: 0.91, green: 0.71, blue: 0.42, alpha: 1) : NSColor(red: 0.66, green: 0.41, blue: 0.11, alpha: 1) })
+    static let evening: [NSColor] = [
+        NSColor(red: 1.0, green: 0.604, blue: 0.353, alpha: 1), NSColor(red: 1.0, green: 0.373, blue: 0.494, alpha: 1),
+        NSColor(red: 0.545, green: 0.239, blue: 1.0, alpha: 1)
+    ]
+    static let running = Color(
+        nsColor: NSColor(name: nil) {
+            $0.bestMatch(from: [.darkAqua]) == .darkAqua
+                ? NSColor(red: 0.53, green: 0.79, blue: 0.64, alpha: 1)
+                : NSColor(red: 0.25, green: 0.49, blue: 0.36, alpha: 1)
+        })
+    static let attention = Color(
+        nsColor: NSColor(name: nil) {
+            $0.bestMatch(from: [.darkAqua]) == .darkAqua
+                ? NSColor(red: 0.91, green: 0.71, blue: 0.42, alpha: 1)
+                : NSColor(red: 0.66, green: 0.41, blue: 0.11, alpha: 1)
+        })
 
     static func tile(_ kind: AccountKind) -> Color {
         switch kind {
@@ -78,7 +107,9 @@ enum Mark {
     private static func hammer(scale s: CGFloat) {
         var transform = AffineTransform(translationByX: 20.2 * s, byY: 3.7 * s)
         transform.rotate(byRadians: -0.6)
-        let handle = NSBezierPath(roundedRect: NSRect(x: -0.75 * s, y: -3.6 * s, width: 1.5 * s, height: 5.2 * s), xRadius: 0.75 * s, yRadius: 0.75 * s)
+        let handle = NSBezierPath(
+            roundedRect: NSRect(x: -0.75 * s, y: -3.6 * s, width: 1.5 * s, height: 5.2 * s), xRadius: 0.75 * s,
+            yRadius: 0.75 * s)
         // The head: a square face on the left, a claw tapering to a point on the right.
         let head = NSBezierPath()
         head.move(to: NSPoint(x: -3.4 * s, y: 0.9 * s))
@@ -107,9 +138,6 @@ enum Mark {
     }
 }
 
-
-
-
 extension Date {
     var elapsed: String {
         let seconds = Int(Date().timeIntervalSince(self))
@@ -131,8 +159,12 @@ final class EveningGlow: NSView {
         let view = EveningGlow()
         content.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(content)
-        NSLayoutConstraint.activate([content.leadingAnchor.constraint(equalTo: view.leadingAnchor), content.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                                     content.topAnchor.constraint(equalTo: view.topAnchor), content.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            content.topAnchor.constraint(equalTo: view.topAnchor),
+            content.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
         return view
     }
 

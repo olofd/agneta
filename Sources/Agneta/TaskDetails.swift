@@ -16,7 +16,8 @@ struct TaskDetailsView: View {
     static func provider(_ summary: TraceSummary) -> String {
         guard let kind = summary.kind.flatMap(AccountKind.init(rawValue:)) else { return summary.account ?? "Unknown" }
         // "Claude" and "OpenAI API" are the names Agneta gives a first account of a kind.
-        guard let label = summary.account, ![kind.provider, "\(kind.provider) API", kind.offerName].contains(label) else { return kind.offerName }
+        guard let label = summary.account, ![kind.provider, "\(kind.provider) API", kind.offerName].contains(label)
+        else { return kind.offerName }
         return "\(label) (\(kind.offerName))"
     }
 
@@ -36,7 +37,8 @@ struct TaskDetailsView: View {
     static func access(_ summary: TraceSummary) -> String? {
         guard let sandbox = summary.sandbox, summary.tools != "appOnly", summary.tools != "app-only" else { return nil }
         if sandbox == "developer" { return "Developer access: the internet and your home folder" }
-        let hosts = (summary.network ?? "none").replacing("allow([", with: "").replacing("])", with: "").replacing("\"", with: "")
+        let hosts = (summary.network ?? "none").replacing("allow([", with: "").replacing("])", with: "").replacing(
+            "\"", with: "")
         return hosts.isEmpty || hosts == "none" ? "Contained, no internet" : "Contained, internet: \(hosts)"
     }
 
@@ -49,17 +51,24 @@ struct TaskDetailsView: View {
                     if let tools = summary.tools { LabeledContent("Tools", value: Self.tools(tools, app: summary.app)) }
                     if let access = Self.access(summary) { LabeledContent("Access", value: access) }
                     if let cost = summary.cost {
-                        LabeledContent("Cost", value: String(format: "about $%.2f", cost) + (summary.billing == "subscription" ? " at API prices" : ""))
+                        LabeledContent(
+                            "Cost",
+                            value: String(format: "about $%.2f", cost)
+                                + (summary.billing == "subscription" ? " at API prices" : ""))
                     }
                 }
                 Section("Turns") {
                     if summary.turns.isEmpty { Text("No turns yet.").foregroundStyle(.secondary) }
                     ForEach(summary.turns, id: \.n) { turn in
                         LabeledContent {
-                            Text("\(Self.seconds(turn.ms)) · \(turn.modelCalls) model \(turn.modelCalls == 1 ? "call" : "calls") · \(turn.input + turn.output) tokens")
-                                .monospacedDigit()
+                            Text(
+                                "\(Self.seconds(turn.ms)) · \(turn.modelCalls) model \(turn.modelCalls == 1 ? "call" : "calls") · \(turn.input + turn.output) tokens"
+                            )
+                            .monospacedDigit()
                         } label: {
-                            Text("Turn \(turn.n)") + Text(turn.stopReason == "end_turn" ? "" : "  \(Self.reason(turn.stopReason))").foregroundStyle(Palette.attention)
+                            Text("Turn \(turn.n)")
+                                + Text(turn.stopReason == "end_turn" ? "" : "  \(Self.reason(turn.stopReason))")
+                                .foregroundStyle(Palette.attention)
                         }
                         .help(turn.error ?? "First reply after \(Self.seconds(turn.msToFirstToken))")
                     }
@@ -68,23 +77,44 @@ struct TaskDetailsView: View {
                     if summary.toolStats.isEmpty { Text("No tools used.").foregroundStyle(.secondary) }
                     ForEach(summary.toolStats, id: \.name) { tool in
                         LabeledContent(tool.name) {
-                            Text("\(tool.calls)×\(tool.errors > 0 ? " · \(tool.errors) failed" : "") · \(Self.seconds(tool.totalMs))").monospacedDigit()
+                            Text(
+                                "\(tool.calls)×\(tool.errors > 0 ? " · \(tool.errors) failed" : "") · \(Self.seconds(tool.totalMs))"
+                            ).monospacedDigit()
                         }
                     }
                 }
                 Section("Model") {
-                    LabeledContent("Calls", value: "\(summary.modelCalls)\(summary.compactions > 0 ? " · \(summary.compactions) compactions" : "")")
-                    LabeledContent("Tokens", value: "\(summary.input) in · \(summary.output) out · \(summary.cacheRead) from cache")
+                    LabeledContent(
+                        "Calls",
+                        value:
+                            "\(summary.modelCalls)\(summary.compactions > 0 ? " · \(summary.compactions) compactions" : "")"
+                    )
+                    LabeledContent(
+                        "Tokens", value: "\(summary.input) in · \(summary.output) out · \(summary.cacheRead) from cache"
+                    )
                 }
                 Section("Agneta") {
-                    LabeledContent("Shell commands", value: "\(summary.shellCommands)\(summary.shellFailures > 0 ? " · \(summary.shellFailures) failed" : "")\(summary.shellRefused > 0 ? " · \(summary.shellRefused) refused" : "")")
-                    LabeledContent("Permissions", value: summary.permissions.isEmpty ? "None asked" : summary.permissions.sorted { $0.key < $1.key }.map { "\(Self.decision($0.key)) \($0.value)" }.joined(separator: ", "))
+                    LabeledContent(
+                        "Shell commands",
+                        value:
+                            "\(summary.shellCommands)\(summary.shellFailures > 0 ? " · \(summary.shellFailures) failed" : "")\(summary.shellRefused > 0 ? " · \(summary.shellRefused) refused" : "")"
+                    )
+                    LabeledContent(
+                        "Permissions",
+                        value: summary.permissions.isEmpty
+                            ? "None asked"
+                            : summary.permissions.sorted { $0.key < $1.key }.map {
+                                "\(Self.decision($0.key)) \($0.value)"
+                            }.joined(separator: ", "))
                     ForEach(Array(summary.lifecycle.enumerated()), id: \.offset) { _, record in
-                        if let line = Self.lifecycle(record) { Text(line).font(.system(size: 12)).foregroundStyle(.secondary) }
+                        if let line = Self.lifecycle(record) {
+                            Text(line).font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
                     }
                 }
             } else {
-                Text("This task has no diagnostics. Its trace was removed with its history.").foregroundStyle(.secondary)
+                Text("This task has no diagnostics. Its trace was removed with its history.").foregroundStyle(
+                    .secondary)
             }
         }
         .formStyle(.grouped)
@@ -92,7 +122,8 @@ struct TaskDetailsView: View {
             HStack {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.traceFile(task)]) }
                 Spacer()
-                Button("Export Diagnostics…") { model.exportDiagnostics(task, title: title) }.glassButton(prominent: true)
+                Button("Export Diagnostics…") { model.exportDiagnostics(task, title: title) }.glassButton(
+                    prominent: true)
             }
             .disabled(summary == nil)
             .padding(14)
@@ -102,7 +133,9 @@ struct TaskDetailsView: View {
         .task {
             // Traces can be large: read and add up off the main thread.
             let folder = model.store.tracesFolder, task = task
-            summary = await Task.detached { Traces(folder: folder).records(task: task).map { TraceSummary(records: $0) } }.value
+            summary = await Task.detached {
+                Traces(folder: folder).records(task: task).map { TraceSummary(records: $0) }
+            }.value
         }
     }
 
@@ -134,7 +167,8 @@ struct TaskDetailsView: View {
 
     static func lifecycle(_ record: JSONValue) -> String? {
         switch record["event"]?.stringValue {
-        case "stop": "Stopped by \(record["by"]?.stringValue ?? "?")\(record["reason"]?.stringValue.map { " (\($0))" } ?? "")"
+        case "stop":
+            "Stopped by \(record["by"]?.stringValue ?? "?")\(record["reason"]?.stringValue.map { " (\($0))" } ?? "")"
         case "limit": "Stopped at its \(record["limit"]?.stringValue ?? "?") limit"
         case "queued": "Waited for room"
         case "resumed": "Resumed"

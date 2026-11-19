@@ -86,19 +86,22 @@ public final class SecretMask: @unchecked Sendable {
         lock.withLock { _ = exact.insert(secret) }
     }
 
-    static let secretKeys: Set<String> = ["authorization", "proxy-authorization", "token", "access_token", "refresh_token", "id_token",
-                                          "api_key", "apikey", "x-api-key", "password", "secret", "client_secret", "bearer", "cookie"]
+    static let secretKeys: Set<String> = [
+        "authorization", "proxy-authorization", "token", "access_token", "refresh_token", "id_token",
+        "api_key", "apikey", "x-api-key", "password", "secret", "client_secret", "bearer", "cookie"
+    ]
 
     static func isSecretKey(_ key: String) -> Bool {
         let lower = key.lowercased()
-        return secretKeys.contains(lower) || lower.hasSuffix("_token") || lower.hasSuffix("api_key") || lower.hasSuffix("apikey")
+        return secretKeys.contains(lower) || lower.hasSuffix("_token") || lower.hasSuffix("api_key")
+            || lower.hasSuffix("apikey")
     }
 
     // sk-… (OpenAI, Anthropic), Bearer values, JWTs.
     static let patterns: [NSRegularExpression] = [
         "sk-[A-Za-z0-9_\\-]{16,}",
         "(?i)bearer\\s+[A-Za-z0-9._~+/=\\-]{8,}",
-        "eyJ[A-Za-z0-9_\\-]{8,}\\.[A-Za-z0-9_\\-]{8,}\\.[A-Za-z0-9_\\-]{8,}",
+        "eyJ[A-Za-z0-9_\\-]{8,}\\.[A-Za-z0-9_\\-]{8,}\\.[A-Za-z0-9_\\-]{8,}"
     ].map { try! NSRegularExpression(pattern: $0) }
 
     public func mask(_ value: JSONValue) -> JSONValue {
@@ -138,7 +141,10 @@ public final class SecretMask: @unchecked Sendable {
         for secret in exact where result.contains(secret) {
             result = result.replacingOccurrences(of: secret, with: replacement)
         }
-        guard result.contains("sk-") || result.range(of: "bearer", options: .caseInsensitive) != nil || result.contains("eyJ") else { return result }
+        guard
+            result.contains("sk-") || result.range(of: "bearer", options: .caseInsensitive) != nil
+                || result.contains("eyJ")
+        else { return result }
         for pattern in patterns {
             let range = NSRange(result.startIndex..., in: result)
             result = pattern.stringByReplacingMatches(in: result, range: range, withTemplate: replacement)

@@ -3,6 +3,7 @@
 // it pairs, and hears what of that it didn't get (`unmet`). Ports 4771x.
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 extension RouterContractTests {
@@ -35,7 +36,9 @@ extension RouterContractTests {
         let seen = Noted()
         let stack = try await Stack.start(port: 47711)
         defer { stack.stop() }
-        await stack.router.observe { event in if case .setupRequested(let app, let kind) = event { seen.add("\(app) \(kind?.rawValue ?? "any")") } }
+        await stack.router.observe { event in
+            if case .setupRequested(let app, let kind) = event { seen.add("\(app) \(kind?.rawValue ?? "any")") }
+        }
         let app = AppClient(port: stack.port)
         defer { app.close() }
         #expect(try await app.request("agneta/setup", ["name": "Example App", "kind": "chatgpt"])["shown"] == true)
@@ -44,7 +47,9 @@ extension RouterContractTests {
         // A provider connected meanwhile reaches the app as Agneta's new offer.
         _ = try await app.request("agneta/catalog", [:])
         await stack.router.add(account: "plan", label: "ChatGPT", kind: .chatGPT, billing: "subscription")
-        for _ in 0..<40 where app.notifications("agneta/catalogChanged").isEmpty { try await Task.sleep(for: .milliseconds(25)) }
+        for _ in 0..<40 where app.notifications("agneta/catalogChanged").isEmpty {
+            try await Task.sleep(for: .milliseconds(25))
+        }
         let changed = try #require(app.notifications("agneta/catalogChanged").last?["catalog"])
         #expect(changed["providers"]?.arrayValue?.first { $0["kind"] == "chatgpt" }?["connected"] == true)
     }
@@ -52,19 +57,34 @@ extension RouterContractTests {
     /// What an app names when it pairs reaches the approval window, and the reply says what of it wasn't given.
     @Test func aPairingAskIsNarrowedAndAnsweredHonestly() async throws {
         let asked = Noted()
-        let stack = try await Stack.start(port: 47712, approve: { request in
-            asked.add("\(request.providers?.map(\.rawValue) ?? []) \(request.engines ?? []) \(request.sandboxAsked?.rawValue ?? "any")")
-            return Router.PairingAnswer(accounts: ["native"], engines: .only(["goose"]), remember: true, sandbox: .developer)
-        })
+        let stack = try await Stack.start(
+            port: 47712,
+            approve: { request in
+                asked.add(
+                    "\(request.providers?.map(\.rawValue) ?? []) \(request.engines ?? []) \(request.sandboxAsked?.rawValue ?? "any")"
+                )
+                return Router.PairingAnswer(
+                    accounts: ["native"], engines: .only(["goose"]), remember: true, sandbox: .developer)
+            })
         defer { stack.stop() }
         let app = AppClient(port: stack.port)
         defer { app.close() }
-        let paired = try await app.request("agneta/pair", ["name": "Narrow", "scope": ["tools": "workspace", "providers": ["claude", "chatgpt"],
-                                                                                       "engines": ["goose"], "sandbox": "contained"]])
+        let paired = try await app.request(
+            "agneta/pair",
+            [
+                "name": "Narrow",
+                "scope": [
+                    "tools": "workspace", "providers": ["claude", "chatgpt"],
+                    "engines": ["goose"], "sandbox": "contained"
+                ]
+            ])
         #expect(asked.items == ["[\"claude\", \"chatgpt\"] [\"goose\"] contained"])
         let unmet = paired["unmet"]?.arrayValue ?? []
         // ChatGPT isn't connected; Goose can't keep a Claude plan's tasks contained.
-        #expect(unmet.contains { $0["provider"] == "chatgpt" && $0["reason"]?.stringValue?.contains("not connected") == true }, "\(unmet)")
+        #expect(
+            unmet.contains {
+                $0["provider"] == "chatgpt" && $0["reason"]?.stringValue?.contains("not connected") == true
+            }, "\(unmet)")
         #expect(unmet.contains { $0["provider"] == "claude" && $0["sandbox"] == "contained" }, "\(unmet)")
         #expect(paired["access"]?["providers"]?.arrayValue?.count == 1)
     }
@@ -82,7 +102,9 @@ extension RouterContractTests {
         try await Task.sleep(for: .milliseconds(300))
         await stack.router.stop(session)
         let answered = Task { try await prompt.value }
-        let deadline = Task { try await Task.sleep(for: .seconds(10)); answered.cancel() }
+        let deadline = Task {
+            try await Task.sleep(for: .seconds(10)); answered.cancel()
+        }
         let result = try await answered.value
         deadline.cancel()
         #expect(result["stopReason"] == "cancelled", "\(result)")
@@ -94,13 +116,21 @@ extension RouterContractTests {
     @Test func aScopeNamesKnownProvidersAndEnginesOrAll() throws {
         let context = PolicyContext(userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [])
         let known: Set<String> = ["claude-code", "codex", "goose", "opencode"]
-        let all = try GrantScope.requested(["providers": "all", "engines": "all", "sandbox": "any"], context: context, known: known)
+        let all = try GrantScope.requested(
+            ["providers": "all", "engines": "all", "sandbox": "any"], context: context, known: known)
         #expect(all.providers == AccountKind.allCases && all.engines == known.sorted() && all.sandbox == nil)
-        let narrow = try GrantScope.requested(["providers": ["claude", "claude"], "engines": ["claude-code"], "sandbox": "contained"], context: context, known: known)
+        let narrow = try GrantScope.requested(
+            ["providers": ["claude", "claude"], "engines": ["claude-code"], "sandbox": "contained"], context: context,
+            known: known)
         #expect(narrow.providers == [.claude] && narrow.engines == ["claude-code"] && narrow.sandbox == .contained)
         #expect(try GrantScope.requested(["tools": "read"], context: context, known: known).providers == nil)
-        for bad: JSONValue in [["providers": ["gemini"]], ["engines": ["cursor"]], ["providers": []], ["providers": "some"], ["sandbox": "everything"]] {
-            #expect(throws: PolicyRejection.self, "\(bad)") { _ = try GrantScope.requested(bad, context: context, known: known) }
+        for bad: JSONValue in [
+            ["providers": ["gemini"]], ["engines": ["cursor"]], ["providers": []], ["providers": "some"],
+            ["sandbox": "everything"]
+        ] {
+            #expect(throws: PolicyRejection.self, "\(bad)") {
+                _ = try GrantScope.requested(bad, context: context, known: known)
+            }
         }
     }
 }

@@ -5,7 +5,8 @@ import Foundation
 
 public actor RPCPeer {
     public typealias Send = @Sendable (Data) async throws -> Void
-    public typealias RequestHandler = @Sendable (_ method: String, _ params: JSONValue?) async -> Result<JSONValue, RPCError>
+    public typealias RequestHandler =
+        @Sendable (_ method: String, _ params: JSONValue?) async -> Result<JSONValue, RPCError>
     public typealias NotificationHandler = @Sendable (_ method: String, _ params: JSONValue?) async -> Void
 
     public enum PeerError: Error, Equatable {
@@ -16,7 +17,9 @@ public actor RPCPeer {
     private var nextID: Int64 = 1
     private var pending: [Int64: CheckedContinuation<JSONValue, Error>] = [:]
     private var closedReason: String?
-    private var onRequest: RequestHandler = { method, _ in .failure(RPCError(code: RPCError.methodNotFound, message: "Method not found: \(method)")) }
+    private var onRequest: RequestHandler = { method, _ in
+        .failure(RPCError(code: RPCError.methodNotFound, message: "Method not found: \(method)"))
+    }
     private var onNotification: NotificationHandler = { _, _ in }
     private var onClose: (@Sendable (String) -> Void)?
     private var tap: Tap?
@@ -48,8 +51,10 @@ public actor RPCPeer {
     private var routed = false
     /// Installs a tap and handlers for requests and notifications, once: later calls do nothing. A connection
     /// shared by several sessions is wired by whichever arrives first, completely, before any other sees it.
-    public func route(tap: Tap?, requests: @escaping RequestHandler, notifications: @escaping NotificationHandler,
-                      closed: (@Sendable (String) -> Void)? = nil) {
+    public func route(
+        tap: Tap?, requests: @escaping RequestHandler, notifications: @escaping NotificationHandler,
+        closed: (@Sendable (String) -> Void)? = nil
+    ) {
         guard !routed else { return }
         routed = true
         self.tap = tap
@@ -159,7 +164,9 @@ public actor RPCPeer {
             let handler = onRequest
             Task {
                 let result = await handler(method, params)
-                if let data = try? RPCMessage.response(id: id, result: result).encoded() { try? await self.transmit(data) }
+                if let data = try? RPCMessage.response(id: id, result: result).encoded() {
+                    try? await self.transmit(data)
+                }
             }
         }
     }

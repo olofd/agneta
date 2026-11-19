@@ -26,7 +26,10 @@ public protocol EngineSource: Sendable {
     ///   - key: an earlier lease's key, to resume in the same engine home (its sessions live there).
     ///   - session: the session, for engines configured per process.
     ///   - engine: the engine the task runs on (Router.taskEngine), with the account's provider.
-    func open(account: String, engine: any EngineAdapter, policy: SessionPolicy, mcpPorts: [Int], key: String?, session: EngineSessionSpec?) async throws -> EngineLease
+    func open(
+        account: String, engine: any EngineAdapter, policy: SessionPolicy, mcpPorts: [Int], key: String?,
+        session: EngineSessionSpec?
+    ) async throws -> EngineLease
     /// Called when a session ends; a dedicated engine stops, a shared one stays.
     func release(_ lease: EngineLease) async
 }
@@ -51,9 +54,11 @@ public actor EngineSupervisor: EngineSource {
         /// Agneta's own data roots, which developer access keeps out even though they're in the home folder.
         public var agnetaRoots: [URL]
 
-        public init(shellTool: URL, root: URL, engineLoopbackPorts: [Int] = [], confine: Bool = true,
-                    ledger: (any EngineLedger)? = nil, traces: Traces? = nil, startDeadline: Duration = .seconds(60),
-                    userHome: URL = FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [URL]? = nil) {
+        public init(
+            shellTool: URL, root: URL, engineLoopbackPorts: [Int] = [], confine: Bool = true,
+            ledger: (any EngineLedger)? = nil, traces: Traces? = nil, startDeadline: Duration = .seconds(60),
+            userHome: URL = FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [URL]? = nil
+        ) {
             self.userHome = userHome
             self.agnetaRoots = agnetaRoots ?? [root]
             self.startDeadline = startDeadline
@@ -110,7 +115,9 @@ public actor EngineSupervisor: EngineSource {
     /// An engine left running would keep what it started with (Goose its GOOSE_MODEL) even after a setting is cleared.
     public func renew(account: String) async {
         generations[account, default: 0] += 1
-        let idle = running.filter { $0.value.account == account && EngineKeys.isShared($0.key) && holders[$0.key, default: 0] <= 0 }
+        let idle = running.filter {
+            $0.value.account == account && EngineKeys.isShared($0.key) && holders[$0.key, default: 0] <= 0
+        }
         for (key, engine) in idle where running[key]?.process.pid == engine.process.pid {
             running.removeValue(forKey: key)
             await retire(engine, "the provider's settings changed")
@@ -132,41 +139,53 @@ public actor EngineSupervisor: EngineSource {
     /// One socket per supervisor: two in one process (tests, a restart after Reset) must not take
     /// over each other's broker. sockaddr_un paths are limited to 104 bytes, hence the short temp path.
     public nonisolated let socketPath = FileManager.default.temporaryDirectory
-        .appending(path: "agneta-\(getpid())-\(UUID().uuidString.prefix(8).lowercased()).sock").path(percentEncoded: false)
+        .appending(path: "agneta-\(getpid())-\(UUID().uuidString.prefix(8).lowercased()).sock").path(
+            percentEncoded: false)
 
     private func startBroker() throws -> ToolBroker {
         if let broker { return broker }
         let grants = self.grants
         let traces = configuration.traces
-        let service = ToolBroker(socketPath: socketPath, holder: configuration.shellTool.path(percentEncoded: false),
-                                 resolve: { token, cwd in grants.grant(token: token, cwd: cwd) },
-                                 report: { token, fields in
-                                     if let traces, let lease = grants.lease(token: token) { traces.shell(lease: lease, fields) }
-                                 })
+        let service = ToolBroker(
+            socketPath: socketPath, holder: configuration.shellTool.path(percentEncoded: false),
+            resolve: { token, cwd in grants.grant(token: token, cwd: cwd) },
+            report: { token, fields in
+                if let traces, let lease = grants.lease(token: token) { traces.shell(lease: lease, fields) }
+            })
         try service.start()
         broker = service
         return service
     }
 
-    public func open(account: String, engine adapter: any EngineAdapter, policy: SessionPolicy, mcpPorts: [Int], key resume: String?,
-                     session: EngineSessionSpec?) async throws -> EngineLease {
-        guard let provider = accounts[account] else { throw RPCError(code: RPCError.invalidParams, message: "Unknown account \(account)") }
+    public func open(
+        account: String, engine adapter: any EngineAdapter, policy: SessionPolicy, mcpPorts: [Int], key resume: String?,
+        session: EngineSessionSpec?
+    ) async throws -> EngineLease {
+        guard let provider = accounts[account] else {
+            throw RPCError(code: RPCError.invalidParams, message: "Unknown account \(account)")
+        }
         // A session gets its own engine when the engine is configured per process, when it may use built-in
         // tools (the sandbox profile is per process), and on the Claude Code route (it reads its working folder).
         // A resumed session returns to its earlier engine home, where the engine keeps its sessions.
         let resumable = resume.flatMap { $0.hasPrefix(account + "/") && !$0.contains("..") ? $0 : nil }
-        let dedicated = resumable.map { !EngineKeys.isShared($0) }
+        let dedicated =
+            resumable.map { !EngineKeys.isShared($0) }
             ?? (adapter.capabilities.processPerSession || policy.tools != .appOnly || provider.kind == .claudeCode)
         // A shared engine's key names its engine: two engines on one account never share a process.
-        let key = dedicated ? (resumable ?? "\(account)/\(UUID().uuidString.lowercased())") : EngineKeys.shared(account: account, engine: adapter.id)
+        let key =
+            dedicated
+            ? (resumable ?? "\(account)/\(UUID().uuidString.lowercased())")
+            : EngineKeys.shared(account: account, engine: adapter.id)
         if dedicated, resumable != nil {
             // A task's own engine is never shared. A load (or a fork copying a closed task) waits until no other process
             // is on that engine home, whether still stopping or held by another lease (a fork's helper), so one home
             // never has two processes and no session runs in an engine started with another's sandbox and setup.
             let deadline = ContinuousClock.now + .seconds(20)
-            while stopping.contains(key) || starting[key] != nil || running[key].map({ !$0.process.hasExited }) == true {
+            while stopping.contains(key) || starting[key] != nil || running[key].map({ !$0.process.hasExited }) == true
+            {
                 guard ContinuousClock.now < deadline else {
-                    throw RPCError(code: RPCError.internalError, message: "This task's engine is still busy; try again shortly")
+                    throw RPCError(
+                        code: RPCError.internalError, message: "This task's engine is still busy; try again shortly")
                 }
                 try? await Task.sleep(for: .milliseconds(25))
             }
@@ -178,8 +197,9 @@ public actor EngineSupervisor: EngineSource {
         }
         if let existing = running[key], !existing.process.hasExited {
             holders[key, default: 0] += 1
-            return EngineLease(key: key, peer: existing.peer, pid: existing.process.pid, dedicated: dedicated, engine: existing.engine,
-                               stateRoot: existing.stateRoot, engineInfo: existing.engineInfo)
+            return EngineLease(
+                key: key, peer: existing.peer, pid: existing.process.pid, dedicated: dedicated, engine: existing.engine,
+                stateRoot: existing.stateRoot, engineInfo: existing.engineInfo)
         }
         // One start per key: a second session asking while the engine starts waits for it, so two sessions at
         // once never start two shared engines on one account's state.
@@ -189,8 +209,11 @@ public actor EngineSupervisor: EngineSource {
             return lease
         }
         let generation = generations[account, default: 0]
-        let start = Task { try await self.spawn(key: key, account: account, adapter: adapter, provider: provider, dedicated: dedicated,
-                                                policy: policy, mcpPorts: mcpPorts, session: session, generation: generation) }
+        let start = Task {
+            try await self.spawn(
+                key: key, account: account, adapter: adapter, provider: provider, dedicated: dedicated,
+                policy: policy, mcpPorts: mcpPorts, session: session, generation: generation)
+        }
         starting[key] = start
         defer { starting[key] = nil }
         let lease = try await start.value
@@ -198,8 +221,10 @@ public actor EngineSupervisor: EngineSource {
         return lease
     }
 
-    private func spawn(key: String, account: String, adapter: any EngineAdapter, provider: ProviderSetup, dedicated: Bool,
-                       policy: SessionPolicy, mcpPorts: [Int], session: EngineSessionSpec?, generation: Int) async throws -> EngineLease {
+    private func spawn(
+        key: String, account: String, adapter: any EngineAdapter, provider: ProviderSetup, dedicated: Bool,
+        policy: SessionPolicy, mcpPorts: [Int], session: EngineSessionSpec?, generation: Int
+    ) async throws -> EngineLease {
         let accountHome = configuration.root.appending(path: "Accounts/\(account)", directoryHint: .isDirectory)
         // Each engine process gets its own state so concurrent processes don't share a session database.
         // Agneta's own folders for this engine, each made a real folder at exactly its path and written into the
@@ -207,15 +232,21 @@ public actor EngineSupervisor: EngineSource {
         var owned: Set<String> = []
         // Agneta's roots, which no session writes: its data, the app workspaces, its temp folder, and the folder holding
         // the account's own (an account reused from another Agneta's data, as agnetad does, lives there).
-        let trusted = [configuration.root] + configuration.agnetaRoots + [FileManager.default.temporaryDirectory]
+        let trusted =
+            [configuration.root] + configuration.agnetaRoots + [FileManager.default.temporaryDirectory]
             + (provider.subscription.map { [$0.home.deletingLastPathComponent()] } ?? [])
         func own(_ url: URL) throws -> URL {
             let path = url.path(percentEncoded: false)
-            guard let root = trusted.filter({ path.hasPrefix($0.path(percentEncoded: false).trimmingSuffix("/") + "/")
-                                              || path.hasPrefix($0.realFileURL.path(percentEncoded: false).trimmingSuffix("/") + "/") })
-                .max(by: { $0.path(percentEncoded: false).count < $1.path(percentEncoded: false).count }) else {
+            guard
+                let root = trusted.filter({
+                    path.hasPrefix($0.path(percentEncoded: false).trimmingSuffix("/") + "/")
+                        || path.hasPrefix($0.realFileURL.path(percentEncoded: false).trimmingSuffix("/") + "/")
+                })
+                .max(by: { $0.path(percentEncoded: false).count < $1.path(percentEncoded: false).count })
+            else {
                 // Every folder an engine writes is Agneta's; one elsewhere would be resolved through whatever it is now.
-                throw RPCError(code: RPCError.internalError, message: "An engine asked to write outside Agneta's folders: \(path)")
+                throw RPCError(
+                    code: RPCError.internalError, message: "An engine asked to write outside Agneta's folders: \(path)")
             }
             let made = try OwnFolder.ensure(url, under: root)
             owned.insert(made.path(percentEncoded: false).trimmingSuffix("/"))
@@ -235,8 +266,10 @@ public actor EngineSupervisor: EngineSource {
         let ports = configuration.engineLoopbackPorts + mcpPorts
         var session = session
         session?.policy = policy
-        var launch = try adapter.launch(EngineLaunchContext(home: engineHome, provider: provider, shell: dedicated ? configuration.shellTool : nil,
-                                                            session: session, loopbackPorts: ports))
+        var launch = try adapter.launch(
+            EngineLaunchContext(
+                home: engineHome, provider: provider, shell: dedicated ? configuration.shellTool : nil,
+                session: session, loopbackPorts: ports))
         launch.writable = try launch.writable.map(own)
         launch.toolWritable = try launch.toolWritable.map(own)
         // An engine's own part of a folder it's denied (Claude Code's transcript folder for this workspace) exists before
@@ -256,7 +289,8 @@ public actor EngineSupervisor: EngineSource {
             let toolProfile = tools.render()
             var environment = [
                 "PATH": (SandboxProfile.xcodeTools + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]).joined(separator: ":"),
-                "HOME": scratch.path(percentEncoded: false), "TMPDIR": scratch.path(percentEncoded: false), "LANG": "en_US.UTF-8",
+                "HOME": scratch.path(percentEncoded: false), "TMPDIR": scratch.path(percentEncoded: false),
+                "LANG": "en_US.UTF-8"
             ]
             if let sdk = SandboxProfile.sdkRoot { environment["SDKROOT"] = sdk }
             // Developer access: commands see the user's home and toolchains, as in a terminal (writes stay confined).
@@ -277,45 +311,58 @@ public actor EngineSupervisor: EngineSource {
             // earlier engine on this home left running can read it.
             let tokens = try own(configuration.root.appending(path: "Tokens", directoryHint: .isDirectory))
             tokenFile = tokens.appending(path: UUID().uuidString)
-            guard FileManager.default.createFile(atPath: tokenFile!.path(percentEncoded: false), contents: Data(token.utf8), attributes: [.posixPermissions: 0o600]) else {
+            guard
+                FileManager.default.createFile(
+                    atPath: tokenFile!.path(percentEncoded: false), contents: Data(token.utf8),
+                    attributes: [.posixPermissions: 0o600])
+            else {
                 throw RPCError(code: RPCError.internalError, message: "Agneta couldn't write the engine's token")
             }
             launch.readable.append(tokenFile!)
-            brokerEnvironment = ["AGNETA_BROKER_SOCKET": broker.socketPath, "AGNETA_BROKER_TOKEN_FILE": tokenFile!.path(percentEncoded: false)]
+            brokerEnvironment = [
+                "AGNETA_BROKER_SOCKET": broker.socketPath,
+                "AGNETA_BROKER_TOKEN_FILE": tokenFile!.path(percentEncoded: false)
+            ]
         }
 
         launch.environment.merge(brokerEnvironment) { _, broker in broker }
         var wrapper: [String] = []
         if configuration.confine {
-            var profile = SandboxProfile(kind: .engine,
-                                         writable: [engineHome] + launch.writable
-                                            + (dedicated && policy.tools == .workspace ? [policy.workspace] + policy.writable : []),
-                                         denied: (dedicated ? policy.denied : []) + launch.denied,
-                                         readable: (dedicated ? [policy.workspace] + policy.readable + policy.readOnly : [])
-                                            + [configuration.shellTool.deletingLastPathComponent()] + launch.readable,
-                                         loopbackPorts: ports, remotePorts: [443])
+            var profile = SandboxProfile(
+                kind: .engine,
+                writable: [engineHome] + launch.writable
+                    + (dedicated && policy.tools == .workspace ? [policy.workspace] + policy.writable : []),
+                denied: (dedicated ? policy.denied : []) + launch.denied,
+                readable: (dedicated ? [policy.workspace] + policy.readable + policy.readOnly : [])
+                    + [configuration.shellTool.deletingLastPathComponent()] + launch.readable,
+                loopbackPorts: ports, remotePorts: [443])
             profile.readOnly = policy.readOnly + launch.readOnly
             profile.verbatim = policy.checkedPaths.union(owned)
             profile.literalRoots = trusted
             profile.ownLoopbackServer = launch.ownLoopbackServer
             profile.exceptions = launch.exceptions
             if dedicated, let broker { profile.unixSockets = [URL(filePath: broker.socketPath)] }
-            if !dedicated { profile.loopbackPorts = [] ; profile.allLoopback = true }
+            if !dedicated { profile.loopbackPorts = []; profile.allLoopback = true }
             // Developer access: engines that run their own tools run them in this profile, so it gets the same reach.
             if dedicated, policy.sandbox == .developer {
-                DeveloperAccess.widen(&profile, home: userHome, agnetaRoots: agnetaRoots, caches: policy.caches(scratch: scratch))
+                DeveloperAccess.widen(
+                    &profile, home: userHome, agnetaRoots: agnetaRoots, caches: policy.caches(scratch: scratch))
             }
             // Passed inline, never as a file in a folder the engine (or something it left running) could rewrite
             // between Agneta writing it and the next engine starting under it.
             wrapper = ["/usr/bin/sandbox-exec", "-p", profile.render()]
         }
         let spawned = ContinuousClock.now
-        let process = try ChildProcess(executable: launch.executable.path(percentEncoded: false), arguments: launch.arguments,
-                                       environment: launch.environment, directory: (dedicated ? policy.workspace : engineHome).path(percentEncoded: false),
-                                       wrapper: wrapper)
+        let process = try ChildProcess(
+            executable: launch.executable.path(percentEncoded: false), arguments: launch.arguments,
+            environment: launch.environment,
+            directory: (dedicated ? policy.workspace : engineHome).path(percentEncoded: false),
+            wrapper: wrapper)
         configuration.ledger?.engineStarted(pid: process.pid, account: account)
         let traces = configuration.traces
-        Self.drain(process.stderr, into: engineHome.appending(path: "engine.log")) { line in traces?.stderr(lease: key, line: line) }
+        Self.drain(process.stderr, into: engineHome.appending(path: "engine.log")) { line in
+            traces?.stderr(lease: key, line: line)
+        }
         Task {
             let status = await process.waitForExit()
             traces?.engineExited(lease: key, status: status)
@@ -326,21 +373,28 @@ public actor EngineSupervisor: EngineSource {
         let initialized: JSONValue
         do {
             initialized = try await Self.within(configuration.startDeadline) {
-                try await peer.request("initialize", ["protocolVersion": 1, "clientCapabilities": [:], "clientInfo": ["name": "agneta", "version": "0"]])
+                try await peer.request(
+                    "initialize",
+                    ["protocolVersion": 1, "clientCapabilities": [:], "clientInfo": ["name": "agneta", "version": "0"]])
             }
         } catch {
             await stop(process)
             grants.remove(token: token)
-            for folder in launch.temporary + (tokenFile.map { [$0] } ?? []) { try? FileManager.default.removeItem(at: folder) }
+            for folder in launch.temporary + (tokenFile.map { [$0] } ?? []) {
+                try? FileManager.default.removeItem(at: folder)
+            }
             throw RPCError(code: RPCError.internalError, message: "The engine didn't start: \(error)")
         }
-        running[key] = Running(process: process, peer: peer, token: token, grant: grant, workspace: dedicated ? policy.workspace : nil,
-                               stateRoot: launch.stateRoot, engineInfo: initialized["agentInfo"], engine: adapter, temporary: launch.temporary + (tokenFile.map { [$0] } ?? []),
-                               account: account, generation: generation)
+        running[key] = Running(
+            process: process, peer: peer, token: token, grant: grant, workspace: dedicated ? policy.workspace : nil,
+            stateRoot: launch.stateRoot, engineInfo: initialized["agentInfo"], engine: adapter,
+            temporary: launch.temporary + (tokenFile.map { [$0] } ?? []),
+            account: account, generation: generation)
         let elapsed = ContinuousClock.now - spawned
-        return EngineLease(key: key, peer: peer, pid: process.pid, dedicated: dedicated, engine: adapter, stateRoot: launch.stateRoot,
-                           startMs: Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15,
-                           engineInfo: initialized["agentInfo"])
+        return EngineLease(
+            key: key, peer: peer, pid: process.pid, dedicated: dedicated, engine: adapter, stateRoot: launch.stateRoot,
+            startMs: Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15,
+            engineInfo: initialized["agentInfo"])
     }
 
     /// An engine process exited by itself: it's retired at once (connection closed, broker grant revoked, recorded as
@@ -402,7 +456,8 @@ public actor EngineSupervisor: EngineSource {
     /// the engine's home, kept under 1 MB (the older half is dropped).
     static func drain(_ handle: FileHandle, into file: URL, lines: (@Sendable (String) -> Void)? = nil) {
         // Opened once, never through a link an engine planted in its home (it would append to wherever that points).
-        let fd = Darwin.open(file.path(percentEncoded: false), O_RDWR | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        let fd = Darwin.open(
+            file.path(percentEncoded: false), O_RDWR | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0o600)
         Thread {
             guard fd >= 0 else { while !handle.availableData.isEmpty {}; return }
             let log = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
@@ -440,7 +495,9 @@ final class GrantTable: @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [String: (grant: ToolBroker.Grant, workspace: URL, lease: String)] = [:]
 
-    func set(token: String, grant: ToolBroker.Grant, workspace: URL, lease: String) { lock.withLock { entries[token] = (grant, workspace, lease) } }
+    func set(token: String, grant: ToolBroker.Grant, workspace: URL, lease: String) {
+        lock.withLock { entries[token] = (grant, workspace, lease) }
+    }
     func lease(token: String) -> String? { lock.withLock { entries[token]?.lease } }
     func remove(token: String) { lock.withLock { _ = entries.removeValue(forKey: token) } }
 
@@ -461,10 +518,14 @@ extension EngineSupervisor {
     }
 
     /// `work`'s result, or TimedOut once `limit` has passed (`work` is cancelled then).
-    static func within<T: Sendable>(_ limit: Duration, _ work: @escaping @Sendable () async throws -> T) async throws -> T {
+    static func within<T: Sendable>(_ limit: Duration, _ work: @escaping @Sendable () async throws -> T) async throws
+        -> T
+    {
         try await withThrowingTaskGroup(of: T?.self) { group in
             group.addTask { try await work() }
-            group.addTask { try await Task.sleep(for: limit); return nil }
+            group.addTask {
+                try await Task.sleep(for: limit); return nil
+            }
             defer { group.cancelAll() }
             guard let first = try await group.next(), let value = first else { throw TimedOut(after: limit) }
             return value

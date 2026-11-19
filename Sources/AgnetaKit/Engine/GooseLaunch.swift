@@ -28,7 +28,8 @@ public struct GooseLaunch: Sendable {
             "HOME": home.path(percentEncoded: false),
             "GOOSE_PATH_ROOT": gooseRoot.path(percentEncoded: false),
             "TMPDIR": temporary.path(percentEncoded: false),
-            "PATH": (paths.map { $0.path(percentEncoded: false) } + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]).joined(separator: ":"),
+            "PATH": (paths.map { $0.path(percentEncoded: false) } + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]).joined(
+                separator: ":"),
             "LANG": "en_US.UTF-8",
             // The real user name: tools such as Claude Code key their keychain entries by it.
             "USER": NSUserName(), "LOGNAME": NSUserName(),
@@ -37,7 +38,7 @@ public struct GooseLaunch: Sendable {
             // Goose otherwise spends an extra model call per session to name it, on the user's account.
             "GOOSE_DISABLE_SESSION_NAMING": "true",
             // Every tool call asks; Agneta answers from the session policy or forwards to the app.
-            "GOOSE_MODE": "approve",
+            "GOOSE_MODE": "approve"
         ]
         for (key, value) in provider { env[key] = value }
         return env
@@ -47,7 +48,8 @@ public struct GooseLaunch: Sendable {
     public func prepare() throws {
         let files = FileManager.default
         for folder in [home, gooseRoot, temporary] {
-            try files.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try files.createDirectory(
+                at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         }
     }
 

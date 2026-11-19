@@ -46,8 +46,11 @@ public final class ToolBroker: @unchecked Sendable {
 
     /// - Parameter resolve: maps an engine's token and the command's working directory to the
     ///   session that may run it, or nil to refuse. Each engine process has its own token.
-    public init(socketPath: String, shell: String = "/bin/bash", holder: String? = nil, resolve: @escaping @Sendable (_ token: String, _ cwd: URL) -> Grant?,
-                report: @escaping @Sendable (_ token: String, _ fields: [String: JSONValue]) -> Void = { _, _ in }) {
+    public init(
+        socketPath: String, shell: String = "/bin/bash", holder: String? = nil,
+        resolve: @escaping @Sendable (_ token: String, _ cwd: URL) -> Grant?,
+        report: @escaping @Sendable (_ token: String, _ fields: [String: JSONValue]) -> Void = { _, _ in }
+    ) {
         self.socketPath = socketPath
         self.shell = shell
         self.holder = holder
@@ -62,13 +65,17 @@ public final class ToolBroker: @unchecked Sendable {
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let bytes = Array(socketPath.utf8)
-        guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { throw ChildProcessError.spawnFailed(path: socketPath, errno: ENAMETOOLONG) }
+        guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else {
+            throw ChildProcessError.spawnFailed(path: socketPath, errno: ENAMETOOLONG)
+        }
         withUnsafeMutableBytes(of: &address.sun_path) { raw in
             raw.copyBytes(from: bytes)
             raw[bytes.count] = 0
         }
         let size = socklen_t(MemoryLayout<sockaddr_un>.size)
-        let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(listener, $0, size) } }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(listener, $0, size) }
+        }
         guard bound == 0, chmod(socketPath, 0o600) == 0, listen(listener, 16) == 0 else {
             close(listener)
             throw ChildProcessError.spawnFailed(path: socketPath, errno: errno)
@@ -128,16 +135,23 @@ public final class ToolBroker: @unchecked Sendable {
             if chunk.isEmpty { return }
             requestLine = (try? splitter.push(chunk))?.first
         }
-        guard let line = requestLine, let request = try? JSONDecoder().decode(ToolRequest.self, from: line), !request.token.isEmpty else {
+        guard let line = requestLine, let request = try? JSONDecoder().decode(ToolRequest.self, from: line),
+            !request.token.isEmpty
+        else {
             _ = reply("e " + Data("agneta: refused\n".utf8).base64EncodedString())
             _ = reply("x 126")
             return
         }
         let cwd = URL(filePath: request.cwd, directoryHint: .isDirectory).realFileURL
         let started = ContinuousClock.now
-        var fields: [String: JSONValue] = ["command": .string(request.command), "cwd": .string(cwd.path(percentEncoded: false))]
+        var fields: [String: JSONValue] = [
+            "command": .string(request.command), "cwd": .string(cwd.path(percentEncoded: false))
+        ]
         guard let grant = resolve(request.token, cwd) else {
-            _ = reply("e " + Data("agneta: no session allows commands in \(cwd.path(percentEncoded: false))\n".utf8).base64EncodedString())
+            _ = reply(
+                "e "
+                    + Data("agneta: no session allows commands in \(cwd.path(percentEncoded: false))\n".utf8)
+                    .base64EncodedString())
             _ = reply("x 126")
             fields["refused"] = "outside the session's folders"
             report(request.token, fields)
@@ -156,9 +170,10 @@ public final class ToolBroker: @unchecked Sendable {
         let child: ChildProcess
         do {
             holding = try holder.map { try ChildProcess(executable: $0, arguments: ["--hold"], environment: [:]) }
-            child = try ChildProcess(executable: shell, arguments: ["-c", request.command], environment: grant.environment,
-                                     directory: cwd.path(percentEncoded: false), wrapper: ["/usr/bin/sandbox-exec", "-p", grant.profile],
-                                     joining: holding?.pid)
+            child = try ChildProcess(
+                executable: shell, arguments: ["-c", request.command], environment: grant.environment,
+                directory: cwd.path(percentEncoded: false), wrapper: ["/usr/bin/sandbox-exec", "-p", grant.profile],
+                joining: holding?.pid)
         } catch {
             holding?.signalGroup(SIGKILL)
             _ = reply("e " + Data("agneta: \(error)\n".utf8).base64EncodedString())
@@ -220,7 +235,9 @@ public final class ToolBroker: @unchecked Sendable {
         // pipes open, and waiting for them would hang the tool call and leave the child running.
         let semaphore = DispatchSemaphore(value: 0)
         let box = StatusBox()
-        Task { box.value = await child.waitForExit(); semaphore.signal() }
+        Task {
+            box.value = await child.waitForExit(); semaphore.signal()
+        }
         semaphore.wait()
         let raw = box.value
         // Whatever the command left running in its group (`nohup … &`) ended with it (ChildProcess's reaper), which
@@ -234,12 +251,21 @@ public final class ToolBroker: @unchecked Sendable {
         }
         shutdown(client, SHUT_RDWR)
         let elapsed = ContinuousClock.now - started
-        if (raw & 0x7f) == 0 { fields["exit"] = .int(Int64(status)) } else { fields["signal"] = .int(Int64(raw & 0x7f)) }
-        fields["ms"] = .double(((Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15) * 10).rounded() / 10)
+        if (raw & 0x7f) == 0 {
+            fields["exit"] = .int(Int64(status))
+        } else {
+            fields["signal"] = .int(Int64(raw & 0x7f))
+        }
+        fields["ms"] = .double(
+            ((Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15) * 10).rounded()
+                / 10)
         fields["stdoutBytes"] = .int(Int64(counts.stdout))
         fields["stderrBytes"] = .int(Int64(counts.stderr))
-        if !counts.stderrTail.isEmpty { fields["stderrTail"] = .string(String(decoding: counts.stderrTail, as: UTF8.self)) }
-        fields["profileSha256"] = .string(SHA256.hash(data: Data(grant.profile.utf8)).map { String(format: "%02x", $0) }.joined())
+        if !counts.stderrTail.isEmpty {
+            fields["stderrTail"] = .string(String(decoding: counts.stderrTail, as: UTF8.self))
+        }
+        fields["profileSha256"] = .string(
+            SHA256.hash(data: Data(grant.profile.utf8)).map { String(format: "%02x", $0) }.joined())
         report(request.token, fields)
     }
 }

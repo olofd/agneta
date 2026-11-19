@@ -33,15 +33,22 @@ extension Router {
 
     /// A new session with its account's defaults applied, as the engine reports it after: each default the engine
     /// lists and isn't already current is set with `session/set_config_option`. One the engine refuses is left.
-    func withDefaults(_ result: JSONValue, account: String, lease: EngineLease, engineSession: String) async -> JSONValue {
-        guard let wanted = settingDefaults[account], var options = result["configOptions"]?.arrayValue else { return result }
+    func withDefaults(_ result: JSONValue, account: String, lease: EngineLease, engineSession: String) async
+        -> JSONValue
+    {
+        guard let wanted = settingDefaults[account], var options = result["configOptions"]?.arrayValue else {
+            return result
+        }
         var updated = result
         for category in Self.defaultCategories {
             guard let value = wanted[category],
-                  let option = options.first(where: { $0["category"]?.stringValue == category }),
-                  let configID = option["id"]?.stringValue,
-                  option["currentValue"]?.stringValue != value, Self.choices(option).contains(value) else { continue }
-            let params: JSONValue = ["sessionId": .string(engineSession), "configId": .string(configID), "value": .string(value)]
+                let option = options.first(where: { $0["category"]?.stringValue == category }),
+                let configID = option["id"]?.stringValue,
+                option["currentValue"]?.stringValue != value, Self.choices(option).contains(value)
+            else { continue }
+            let params: JSONValue = [
+                "sessionId": .string(engineSession), "configId": .string(configID), "value": .string(value)
+            ]
             guard let answer = try? await lease.peer.request("session/set_config_option", params) else { continue }
             if let reported = answer["configOptions"], let list = reported.arrayValue {
                 options = list
@@ -54,8 +61,12 @@ extension Router {
     /// What `engine` offers on `account` (its config options), asked by opening a session with no tools and closing
     /// it: no prompt is sent, so nothing is spent. Reported as `settingsSeen` too.
     public func probeSettings(account: String, engine id: String) async throws -> JSONValue {
-        guard accounts[account] != nil else { throw RPCError(code: RPCError.invalidParams, message: "Unknown provider") }
-        guard let adapter = catalog.adapter(id) else { throw RPCError(code: RPCError.invalidParams, message: "That engine isn't here") }
+        guard accounts[account] != nil else {
+            throw RPCError(code: RPCError.invalidParams, message: "Unknown provider")
+        }
+        guard let adapter = catalog.adapter(id) else {
+            throw RPCError(code: RPCError.invalidParams, message: "That engine isn't here")
+        }
         let policy = try ownPolicy("settings-probe")
         let plan = Plan(account: account, engine: adapter, policy: policy, servers: [], instructions: nil)
         let lease: EngineLease
@@ -66,7 +77,9 @@ extension Router {
         beginOpening(lease.key)
         defer { endOpening(lease.key) }
         do {
-            let result = try await lease.peer.request("session/new", adapter.newSession(cwd: policy.workspace, servers: [], policy: policy, title: nil, instructions: nil))
+            let result = try await lease.peer.request(
+                "session/new",
+                adapter.newSession(cwd: policy.workspace, servers: [], policy: policy, title: nil, instructions: nil))
             if let session = result["sessionId"] {
                 _ = try? await lease.peer.request("session/close", ["sessionId": session])
             }

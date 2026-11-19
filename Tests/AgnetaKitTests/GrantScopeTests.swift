@@ -2,20 +2,31 @@
 // grant, and the app's identity on reconnect.
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 @Suite struct GrantScopeTests {
     let home = FileManager.default.homeDirectoryForCurrentUser
-    var context: PolicyContext { PolicyContext(userHome: home, agnetaRoots: [home.appending(path: "Library/Application Support/Agneta")]) }
+    var context: PolicyContext {
+        PolicyContext(userHome: home, agnetaRoots: [home.appending(path: "Library/Application Support/Agneta")])
+    }
 
     @Test func aScopeIsParsedStrictly() throws {
         let none = try GrantScope.requested(nil, context: context, known: ["claude-code", "codex", "goose", "opencode"])
         #expect(none.tools == .appOnly && none.folders.isEmpty)
-        let asked = try GrantScope.requested(["tools": "workspace", "folders": ["/tmp/project"]], context: context, known: [])
-        #expect(asked.tools == .workspace && asked.folders.map { $0.path(percentEncoded: false).hasSuffix("/tmp/project/") } == [true])
-        for bad: JSONValue in [["tools": "everything"], ["folders": "/tmp"], ["folders": [.string(home.path(percentEncoded: false))]],
-                               ["folders": [.string(home.appending(path: ".ssh").path(percentEncoded: false))]], ["extra": true], "workspace"] {
-            #expect(throws: PolicyRejection.self, "\(bad)") { _ = try GrantScope.requested(bad, context: context, known: []) }
+        let asked = try GrantScope.requested(
+            ["tools": "workspace", "folders": ["/tmp/project"]], context: context, known: [])
+        #expect(
+            asked.tools == .workspace
+                && asked.folders.map { $0.path(percentEncoded: false).hasSuffix("/tmp/project/") } == [true])
+        for bad: JSONValue in [
+            ["tools": "everything"], ["folders": "/tmp"], ["folders": [.string(home.path(percentEncoded: false))]],
+            ["folders": [.string(home.appending(path: ".ssh").path(percentEncoded: false))]], ["extra": true],
+            "workspace"
+        ] {
+            #expect(throws: PolicyRejection.self, "\(bad)") {
+                _ = try GrantScope.requested(bad, context: context, known: [])
+            }
         }
     }
 
@@ -23,19 +34,25 @@ import Testing
         // As pairing stores it: resolved (/tmp is /private/tmp), and never resolved again.
         let grant = Router.Grant(app: "App", accounts: ["a"], tools: .read, folders: ["/private/tmp/allowed"])
         func policy(_ tools: String, cwd: String, readable: [String] = []) throws -> SessionPolicy {
-            try SessionPolicy.parse(["tools": .string(tools), "readable": .array(readable.map(JSONValue.string))], cwd: cwd, context: context)
+            try SessionPolicy.parse(
+                ["tools": .string(tools), "readable": .array(readable.map(JSONValue.string))], cwd: cwd,
+                context: context)
         }
         #expect(GrantScope.check(try policy("read", cwd: "/tmp/allowed/project"), against: grant) == nil)
         #expect(GrantScope.check(try policy("workspace", cwd: "/tmp/allowed"), against: grant)?.field == "tools")
         #expect(GrantScope.check(try policy("app-only", cwd: "/tmp/elsewhere"), against: grant)?.field == "cwd")
-        #expect(GrantScope.check(try policy("read", cwd: "/tmp/allowed", readable: ["/tmp/elsewhere"]), against: grant)?.field == "readable")
+        #expect(
+            GrantScope.check(try policy("read", cwd: "/tmp/allowed", readable: ["/tmp/elsewhere"]), against: grant)?
+                .field == "readable")
         // A prefix isn't containment: /tmp/allowed-not is outside /tmp/allowed.
         #expect(GrantScope.check(try policy("read", cwd: "/tmp/allowed-not"), against: grant)?.field == "cwd")
     }
 
     @Test func aVerifiedGrantChecksWhoReconnects() {
-        let grant = Router.Grant(app: "App", identifier: "com.example.app", team: "TEAM1", verified: true, accounts: ["a"])
-        let same = PeerIdentity(pid: 1, path: nil, identifier: "com.example.app", team: "TEAM1", valid: true, trusted: true)
+        let grant = Router.Grant(
+            app: "App", identifier: "com.example.app", team: "TEAM1", verified: true, accounts: ["a"])
+        let same = PeerIdentity(
+            pid: 1, path: nil, identifier: "com.example.app", team: "TEAM1", valid: true, trusted: true)
         #expect(GrantScope.identityMatches(grant, same))
         var adHoc = same
         adHoc.trusted = false
@@ -59,7 +76,12 @@ extension RouterContractTests {
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Plain", scope: .null)
-        let initialized = try await app.request("initialize", ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": .string(try #require(app.token))]]])
+        let initialized = try await app.request(
+            "initialize",
+            [
+                "protocolVersion": 1, "clientCapabilities": [:],
+                "_meta": ["agneta": ["token": .string(try #require(app.token))]]
+            ])
         let workspace = try #require(initialized["_meta"]?["agneta"]?["access"]?["workspace"]?.stringValue)
         #expect(FileManager.default.fileExists(atPath: workspace))
         func newSession(_ cwd: String, tools: String?) async throws -> JSONValue {
@@ -69,12 +91,17 @@ extension RouterContractTests {
         }
         _ = try await newSession(workspace, tools: "app-only")
         _ = try await newSession(workspace, tools: nil) // no policy: the grant's tools, not workspace
-        for (cwd, tools, field) in [(workspace, "workspace", "tools"), (stack.root.appending(path: "work").path(percentEncoded: false), "app-only", "cwd")] {
+        for (cwd, tools, field) in [
+            (workspace, "workspace", "tools"),
+            (stack.root.appending(path: "work").path(percentEncoded: false), "app-only", "cwd")
+        ] {
             do {
                 _ = try await newSession(cwd, tools: tools)
                 Issue.record("\(field) beyond the grant was let through")
             } catch let error as RPCError {
-                #expect(error.code == RPCError.invalidParams && error.data?["agneta"]?["unenforceable"]?.arrayValue?.first?.stringValue == field)
+                #expect(
+                    error.code == RPCError.invalidParams
+                        && error.data?["agneta"]?["unenforceable"]?.arrayValue?.first?.stringValue == field)
             }
         }
     }
@@ -82,8 +109,9 @@ extension RouterContractTests {
     /// "Allow Once" works for the connection that paired, only while it lasts, and is never saved.
     @Test func allowOnceEndsWithItsConnection() async throws {
         let saved = Recorder()
-        let stack = try await Stack.start(port: 47613, commit: { _, grant, _ in saved.add(grant.app) },
-                                          approve: { _ in Router.PairingAnswer(accounts: ["brokered"], remember: false) })
+        let stack = try await Stack.start(
+            port: 47613, commit: { _, grant, _ in saved.add(grant.app) },
+            approve: { _ in Router.PairingAnswer(accounts: ["brokered"], remember: false) })
         defer { stack.stop() }
         let app = AppClient(port: stack.port)
         try await app.pairAndInitialize("Once")
@@ -92,14 +120,18 @@ extension RouterContractTests {
         let other = AppClient(port: stack.port)
         defer { other.close() }
         await #expect(throws: RPCError.self) {
-            _ = try await other.request("initialize", ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": .string(token)]]])
+            _ = try await other.request(
+                "initialize",
+                ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": .string(token)]]])
         }
         app.close()
         try await Task.sleep(for: .milliseconds(200))
         let later = AppClient(port: stack.port)
         defer { later.close() }
         await #expect(throws: RPCError.self) {
-            _ = try await later.request("initialize", ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": .string(token)]]])
+            _ = try await later.request(
+                "initialize",
+                ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": .string(token)]]])
         }
         #expect(saved.all.isEmpty)
     }

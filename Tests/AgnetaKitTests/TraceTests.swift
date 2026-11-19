@@ -2,17 +2,21 @@
 // dropping under pressure (docs/DIAGNOSTICS.md).
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 @Suite struct TraceTests {
     private func folder() throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appending(path: "agneta-trace-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let url = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-trace-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
 
     private func records(_ file: URL) throws -> [JSONValue] {
-        try String(contentsOf: file, encoding: .utf8).split(separator: "\n").map { try JSONCoding.decode(Data($0.utf8)) }
+        try String(contentsOf: file, encoding: .utf8).split(separator: "\n").map {
+            try JSONCoding.decode(Data($0.utf8))
+        }
     }
 
     @Test func masksSecretsButNotUsage() {
@@ -21,8 +25,9 @@ import Testing
         let value: JSONValue = [
             "headers": [["name": "Authorization", "value": "Bearer abcdefghijklmnop"]],
             "api_key": "anything", "refresh_token": "r-123",
-            "text": "use sk-ant-REDACTED-abcdefghijkl and app-token-1234567890 then eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.c2lnbmF0dXJlcw",
-            "usage": ["inputTokens": 42, "cache_read_tokens": 3, "outputTokens": 7],
+            "text":
+                "use sk-ant-REDACTED-abcdefghijkl and app-token-1234567890 then eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.c2lnbmF0dXJlcw",
+            "usage": ["inputTokens": 42, "cache_read_tokens": 3, "outputTokens": 7]
         ]
         let masked = mask.mask(value)
         #expect(masked["headers"]?.arrayValue?.first?["value"]?.stringValue == SecretMask.replacement)
@@ -35,7 +40,9 @@ import Testing
     }
 
     @Test func linesHaveAFixedHeaderAndEscapeText() throws {
-        let line = String(decoding: TraceJSON.line(header: [("v", 1), ("seq", 7)], fields: ["b": "x\n\"y\"\u{1}", "a": [1.5, .null, true]]), as: UTF8.self)
+        let line = String(
+            decoding: TraceJSON.line(
+                header: [("v", 1), ("seq", 7)], fields: ["b": "x\n\"y\"\u{1}", "a": [1.5, .null, true]]), as: UTF8.self)
         #expect(line == #"{"v":1,"seq":7,"a":[1.5,null,true],"b":"x\n\"y\"\u0001"}"# + "\n")
         #expect(try JSONCoding.decode(Data(line.utf8))["b"]?.stringValue == "x\n\"y\"\u{1}")
     }
@@ -49,7 +56,8 @@ import Testing
                 group.addTask {
                     for index in 0..<250 {
                         // A large record now and then, so encoding times differ.
-                        let payload: JSONValue = index % 50 == 0 ? .string(String(repeating: "x", count: 100_000)) : .int(Int64(index))
+                        let payload: JSONValue =
+                            index % 50 == 0 ? .string(String(repeating: "x", count: 100_000)) : .int(Int64(index))
                         writer.record("event", ["kind": "test", "worker": .int(Int64(worker)), "payload": payload])
                     }
                 }
@@ -63,9 +71,12 @@ import Testing
     @Test func dropsOnlyDroppableRecordsPastTheCapAndSaysSo() throws {
         let folder = try folder()
         defer { try? FileManager.default.removeItem(at: folder) }
-        let writer = TraceWriter(task: "t2", file: folder.appending(path: "t2.jsonl"), mask: SecretMask(), limits: .init(maxBytes: 2_000, maxPending: 10_000))
+        let writer = TraceWriter(
+            task: "t2", file: folder.appending(path: "t2.jsonl"), mask: SecretMask(),
+            limits: .init(maxBytes: 2_000, maxPending: 10_000))
         for index in 0..<200 {
-            writer.record("acp", ["leg": "engine→agneta", "msg": .string(String(repeating: "r", count: 100))], droppable: true)
+            writer.record(
+                "acp", ["leg": "engine→agneta", "msg": .string(String(repeating: "r", count: 100))], droppable: true)
             writer.record("event", ["kind": "tool-call", "n": .int(Int64(index))])
             if index == 20 { writer.flush() } // let the byte count catch up
         }
@@ -77,29 +88,43 @@ import Testing
         #expect(all.contains { $0["event"]?.stringValue == "dropped" && ($0["records"]?.intValue ?? 0) > 0 })
         let seqs = all.compactMap { $0["seq"]?.intValue }
         #expect(seqs == Array(1...Int64(seqs.count))) // drops leave no gaps
-        let mode = try FileManager.default.attributesOfItem(atPath: folder.appending(path: "t2.jsonl").path(percentEncoded: false))[.posixPermissions] as? Int
+        let mode =
+            try FileManager.default.attributesOfItem(
+                atPath: folder.appending(path: "t2.jsonl").path(percentEncoded: false))[.posixPermissions] as? Int
         #expect(mode == 0o600)
     }
 }
 
 @Suite struct TraceSummaryTests {
     static let records: [JSONValue] = [
-        ["type": "meta", "app": ["name": "Example App"], "account": ["label": "Claude", "billing": "subscription"],
-         "engine": ["info": ["name": "goose", "version": "1.59.2"], "dedicated": true], "policy": ["tools": "workspace", "network": "none"],
-         "request": ["cwd": "/w"], "instructions": "secret plan"],
+        [
+            "type": "meta", "app": ["name": "Example App"], "account": ["label": "Claude", "billing": "subscription"],
+            "engine": ["info": ["name": "goose", "version": "1.59.2"], "dedicated": true],
+            "policy": ["tools": "workspace", "network": "none"],
+            "request": ["cwd": "/w"], "instructions": "secret plan"
+        ],
         ["type": "event", "kind": "prompt", "prompt": [["type": "text", "text": "model the knee"]]],
-        ["type": "event", "kind": "tool-call", "call": "c1", "tool": "echo", "extension": "app", "name": "echo · knee", "input": ["text": "knee"]],
-        ["type": "event", "kind": "tool-result", "call": "c1", "ms": 40, "isError": false, "content": [["type": "text", "text": "knee"]]],
+        [
+            "type": "event", "kind": "tool-call", "call": "c1", "tool": "echo", "extension": "app",
+            "name": "echo · knee", "input": ["text": "knee"]
+        ],
+        [
+            "type": "event", "kind": "tool-result", "call": "c1", "ms": 40, "isError": false,
+            "content": [["type": "text", "text": "knee"]]
+        ],
         ["type": "event", "kind": "tool-call", "call": "c2", "tool": "echo", "extension": "app", "name": "echo · x"],
         ["type": "event", "kind": "tool-result", "call": "c2", "ms": 60.5, "isError": true],
         ["type": "event", "kind": "tool-call", "call": "c3", "tool": "shell", "extension": "developer"],
         ["type": "event", "kind": "model-call", "input": 100, "output": 10, "cacheRead": 80, "compaction": false],
         ["type": "event", "kind": "model-call", "input": 50, "output": 5, "cacheRead": 0, "compaction": true],
-        ["type": "event", "kind": "turn", "n": 1, "stopReason": "end_turn", "ms": 900, "modelCalls": 2, "ledger": ["input": 150, "output": 15], "cost": 0.25],
+        [
+            "type": "event", "kind": "turn", "n": 1, "stopReason": "end_turn", "ms": 900, "modelCalls": 2,
+            "ledger": ["input": 150, "output": 15], "cost": 0.25
+        ],
         ["type": "shell", "command": "rm -rf x", "exit": 1],
         ["type": "permission", "decision": "allowed-by-policy"],
         ["type": "lifecycle", "event": "stop", "by": "user"],
-        ["type": "end"],
+        ["type": "end"]
     ]
 
     @Test func addsUpATask() {
@@ -107,7 +132,8 @@ import Testing
         #expect(s.app == "Example App" && s.billing == "subscription" && s.engine == "goose 1.59.2" && s.dedicated)
         #expect(s.toolCalls == 3 && s.unfinishedToolCalls == 1)
         #expect(s.toolStats.map(\.name) == ["app/echo"])
-        #expect(s.toolStats.first?.errors == 1 && s.toolStats.first?.totalMs == 100.5 && s.toolStats.first?.p95Ms == 60.5)
+        #expect(
+            s.toolStats.first?.errors == 1 && s.toolStats.first?.totalMs == 100.5 && s.toolStats.first?.p95Ms == 60.5)
         #expect(s.modelCalls == 2 && s.input == 150 && s.cacheRead == 80 && s.compactions == 1)
         #expect(s.turns.first?.modelCalls == 2 && s.cost == 0.25)
         #expect(s.shellCommands == 1 && s.shellFailures == 1 && s.permissions == ["allowed-by-policy": 1])
@@ -120,18 +146,29 @@ import Testing
         try TraceExport.write(Self.records, to: file, redactContent: true)
         let text = try String(contentsOf: file, encoding: .utf8)
         // Content, names and paths go: the app's name, the account's label, the working folder, tool names.
-        for secret in ["model the knee", "secret plan", "rm -rf", "echo · knee", "\"knee\"", "Example App", "\"Claude\"", "\"/w\"", "\"echo\""] {
+        for secret in [
+            "model the knee", "secret plan", "rm -rf", "echo · knee", "\"knee\"", "Example App", "\"Claude\"", "\"/w\"",
+            "\"echo\""
+        ] {
             #expect(!text.contains(secret), "\(secret)")
         }
         let lines = text.split(separator: "\n").compactMap { try? JSONCoding.decode(Data($0.utf8)) }
         #expect(lines.count == Self.records.count)
         // Structure, timing and what's structural stay; one tool keeps one token within the export.
-        #expect(lines[2]["tool"]?.stringValue?.hasPrefix("‹name ") == true && lines[2]["tool"] == lines[4]["tool"] && lines[2]["tool"] != lines[6]["tool"])
-        #expect(lines[3]["ms"]?.intValue == 40 && lines[9]["stopReason"]?.stringValue == "end_turn" && lines[11]["decision"]?.stringValue == "allowed-by-policy")
-        #expect(lines[0]["engine"]?["info"]?["name"]?.stringValue == "goose" && lines[0]["account"]?["billing"]?.stringValue == "subscription")
+        #expect(
+            lines[2]["tool"]?.stringValue?.hasPrefix("‹name ") == true && lines[2]["tool"] == lines[4]["tool"]
+                && lines[2]["tool"] != lines[6]["tool"])
+        #expect(
+            lines[3]["ms"]?.intValue == 40 && lines[9]["stopReason"]?.stringValue == "end_turn"
+                && lines[11]["decision"]?.stringValue == "allowed-by-policy")
+        #expect(
+            lines[0]["engine"]?["info"]?["name"]?.stringValue == "goose"
+                && lines[0]["account"]?["billing"]?.stringValue == "subscription")
         #expect(lines[1]["prompt"]?.stringValue?.hasPrefix("‹content removed") == true)
         // Content inside lists goes too.
-        let nested = TraceRedactor().redact(["kind": "plan", "list": [["text": "secret step"], ["error": "secret error"]]])
+        let nested = TraceRedactor().redact([
+            "kind": "plan", "list": [["text": "secret step"], ["error": "secret error"]]
+        ])
         var encoded = ""
         TraceJSON.encode(nested, into: &encoded)
         #expect(!encoded.contains("secret"))
@@ -139,32 +176,40 @@ import Testing
 
     /// Exporting from the trace file, record by record, writes what exporting the records in memory writes.
     @Test func aStreamedExportMatchesTheRecords() throws {
-        let folder = FileManager.default.temporaryDirectory.appending(path: "agneta-export-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let folder = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-export-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let trace = folder.appending(path: "trace.jsonl")
         try TraceExport.write(Self.records, to: trace, redactContent: false)
         for redact in [false, true] {
-            let streamed = folder.appending(path: "streamed-\(redact).jsonl"), whole = folder.appending(path: "whole-\(redact).jsonl")
+            let streamed = folder.appending(path: "streamed-\(redact).jsonl"),
+                whole = folder.appending(path: "whole-\(redact).jsonl")
             try TraceExport.write(trace: trace, to: streamed, redactContent: redact)
             try TraceExport.write(Self.records, to: whole, redactContent: redact)
             // Tool names are tokens salted per export: the same up to the token.
             func normalized(_ file: URL) throws -> String {
-                try String(contentsOf: file, encoding: .utf8).replacingOccurrences(of: "‹name [0-9a-f]{8}›", with: "‹name›", options: .regularExpression)
+                try String(contentsOf: file, encoding: .utf8).replacingOccurrences(
+                    of: "‹name [0-9a-f]{8}›", with: "‹name›", options: .regularExpression)
             }
             #expect(try normalized(streamed) == normalized(whole))
-            #expect((try FileManager.default.attributesOfItem(atPath: streamed.path(percentEncoded: false))[.posixPermissions] as? Int) == 0o600)
+            #expect(
+                (try FileManager.default.attributesOfItem(atPath: streamed.path(percentEncoded: false))[
+                    .posixPermissions] as? Int) == 0o600)
         }
         // No trace, no file.
         let missing = folder.appending(path: "missing.jsonl")
-        #expect(throws: (any Error).self) { try TraceExport.write(trace: folder.appending(path: "none.jsonl"), to: missing, redactContent: true) }
+        #expect(throws: (any Error).self) {
+            try TraceExport.write(trace: folder.appending(path: "none.jsonl"), to: missing, redactContent: true)
+        }
         #expect(!FileManager.default.fileExists(atPath: missing.path(percentEncoded: false)))
     }
 }
 
 @Suite struct OperationalLogTests {
     @Test func logsEventsRotatesAndMasks() throws {
-        let folder = FileManager.default.temporaryDirectory.appending(path: "agneta-log-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let folder = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-log-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: folder) }
         let log = OperationalLog(folder: folder, maxBytes: 600)
         for n in 0..<12 { log.log("turn-ended", ["task": .string("s_\(n)"), "stopReason": "end_turn"]) }
@@ -175,7 +220,9 @@ import Testing
         let tail = log.tail(3)
         #expect(tail.count == 3 && tail.last?.contains(#""level":"error""#) == true)
         #expect(tail.last?.hasPrefix(#"{"t":""#) == true && !(tail.last ?? "").contains("abcdefghijkl"))
-        let mode = try FileManager.default.attributesOfItem(atPath: log.file.path(percentEncoded: false))[.posixPermissions] as? Int
+        let mode =
+            try FileManager.default.attributesOfItem(atPath: log.file.path(percentEncoded: false))[.posixPermissions]
+            as? Int
         #expect(mode == 0o600)
     }
 }
@@ -183,20 +230,29 @@ import Testing
 /// Traces stay bounded and honest: hard caps, oversize records, unwritable files, streamed pages and live overflow.
 @Suite struct TraceBoundsTests {
     func folder() throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appending(path: "agneta-bounds-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
+        let url = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-bounds-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
 
     func lines(_ file: URL) throws -> [JSONValue] {
-        try String(contentsOf: file, encoding: .utf8).split(separator: "\n").map { try JSONCoding.decode(Data($0.utf8)) }
+        try String(contentsOf: file, encoding: .utf8).split(separator: "\n").map {
+            try JSONCoding.decode(Data($0.utf8))
+        }
     }
 
     /// Past the hard cap only the note that says so and the task's end go in; everything else is counted.
     @Test func theHardCapStopsEverythingButTheEnd() throws {
         let file = try folder().appending(path: "t.jsonl")
-        let writer = TraceWriter(task: "t", file: file, mask: SecretMask(), limits: .init(maxBytes: 1_000, maxTotalBytes: 3_000))
-        for index in 0..<200 { writer.record("event", ["kind": "tool-result", "n": .int(Int64(index)), "content": .string(String(repeating: "x", count: 100))]) }
+        let writer = TraceWriter(
+            task: "t", file: file, mask: SecretMask(), limits: .init(maxBytes: 1_000, maxTotalBytes: 3_000))
+        for index in 0..<200 {
+            writer.record(
+                "event",
+                ["kind": "tool-result", "n": .int(Int64(index)), "content": .string(String(repeating: "x", count: 100))]
+            )
+        }
         writer.record("end", [:])
         writer.close()
         let records = try lines(file)
@@ -210,7 +266,8 @@ import Testing
     @Test func anOversizeRecordBecomesAStub() throws {
         let file = try folder().appending(path: "t.jsonl")
         let writer = TraceWriter(task: "t", file: file, mask: SecretMask(), limits: .init(maxRecordBytes: 2_000))
-        writer.record("event", ["kind": "tool-result", "call": "c1", "content": .string(String(repeating: "y", count: 10_000))])
+        writer.record(
+            "event", ["kind": "tool-result", "call": "c1", "content": .string(String(repeating: "y", count: 10_000))])
         writer.close()
         let record = try #require(try lines(file).first)
         #expect(record["kind"]?.stringValue == "tool-result" && record["call"]?.stringValue == "c1")
@@ -272,7 +329,11 @@ import Testing
             private let lock = NSLock()
             private var handedOut = false
             func read() -> (messages: [[String: JSONValue]], usage: [[String: JSONValue]], problem: String?) {
-                guard lock.withLock({ () -> Bool in defer { handedOut = true }; return !handedOut }) else { return ([], [], nil) }
+                guard
+                    lock.withLock({ () -> Bool in
+                        defer { handedOut = true }; return !handedOut
+                    })
+                else { return ([], [], nil) }
                 reading.signal()
                 release.wait() // the poll is in flight: it has its row but hasn't counted it
                 return ([], [["id": "1", "model": "m", "cost": 0.5]], nil)
@@ -284,7 +345,11 @@ import Testing
         session.follow(ledger)
         session.pollInterval = .milliseconds(10)
         session.turnStarted(prompt: nil)
-        await withCheckedContinuation { done in DispatchQueue.global().async { ledger.reading.wait(); done.resume() } }
+        await withCheckedContinuation { done in
+            DispatchQueue.global().async {
+                ledger.reading.wait(); done.resume()
+            }
+        }
         let ended = Task { await session.turnEnded(stopReason: "end_turn", usage: nil) }
         try await Task.sleep(for: .milliseconds(100))
         ledger.release.signal()
@@ -312,14 +377,20 @@ import Testing
         let root = try folder()
         let traces = Traces(folder: root)
         let session = traces.open(task: "t", lease: "l", engineSession: "e")
-        for index in 0..<50 { session.writer.record("event", ["kind": "tool-result", "n": .int(Int64(index)), "content": .string(String(repeating: "z", count: 300))]) }
+        for index in 0..<50 {
+            session.writer.record(
+                "event",
+                ["kind": "tool-result", "n": .int(Int64(index)), "content": .string(String(repeating: "z", count: 300))]
+            )
+        }
         session.writer.record("end", [:])
         traces.close(task: "t")
         var after: Int64 = 0
         var seen: [Int64] = []
         var pages = 0
         while true {
-            let page = try #require(traces.read(task: "t", after: after, types: Traces.defaultTypes, limit: 500, maxBytes: 2_000))
+            let page = try #require(
+                traces.read(task: "t", after: after, types: Traces.defaultTypes, limit: 500, maxBytes: 2_000))
             #expect(!page.records.isEmpty || page.complete)
             seen += page.records.compactMap { $0["seq"]?.intValue }
             pages += 1
@@ -334,9 +405,11 @@ import Testing
     @Test func liveDeliveryOverflowsCleanly() async throws {
         let sent = Recorder()
         let stopped = Recorder()
-        let forwarder = TraceForwarder(include: ["event"], limit: 3, send: { records in
-            for record in records { sent.add("\(record["seq"]?.intValue ?? 0)") }
-        }, overflow: { after in stopped.add("\(after)") })
+        let forwarder = TraceForwarder(
+            include: ["event"], limit: 3,
+            send: { records in
+                for record in records { sent.add("\(record["seq"]?.intValue ?? 0)") }
+            }, overflow: { after in stopped.add("\(after)") })
         for seq in 1...5 { forwarder.accept(["type": "event", "seq": .int(Int64(seq))]) }
         await forwarder.finish()
         #expect(sent.all == ["1", "2", "3"] && stopped.all == ["3"])

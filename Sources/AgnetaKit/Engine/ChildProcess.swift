@@ -31,8 +31,11 @@ public final class ChildProcess: @unchecked Sendable {
     ///   - wrapper: optional launcher prefix, for example `sandbox-exec -f profile`.
     ///   - joining: an existing process group to start in, whose leader (a holder) keeps it, rather than a group of its
     ///     own. Its exit then ends nothing else, and only it is signalled: the group is its holder's to end.
-    public init(executable: String, arguments: [String], environment: [String: String], directory: String? = nil, wrapper: [String] = [],
-                joining: pid_t? = nil) throws {
+    public init(
+        executable: String, arguments: [String], environment: [String: String], directory: String? = nil,
+        wrapper: [String] = [],
+        joining: pid_t? = nil
+    ) throws {
         ownsGroup = joining == nil
         var inPipe: [Int32] = [0, 0], outPipe: [Int32] = [0, 0], errPipe: [Int32] = [0, 0]
         for index in 0..<3 {
@@ -58,7 +61,9 @@ public final class ChildProcess: @unchecked Sendable {
         // close every other descriptor so no Agneta socket or file leaks into the engine.
         // Reset signal dispositions and the mask: a test runner or launcher that ignores
         // SIGTERM must not make the engine immune to Stop.
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK))
+        posix_spawnattr_setflags(
+            &attributes,
+            Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK))
         posix_spawnattr_setpgroup(&attributes, joining ?? 0)
         var allSignals = sigset_t(), noSignals = sigset_t()
         sigfillset(&allSignals)
@@ -113,7 +118,9 @@ public final class ChildProcess: @unchecked Sendable {
         let queue = kqueue()
         guard queue >= 0 else { return false }
         defer { close(queue) }
-        var change = kevent(ident: UInt(pid), filter: Int16(EVFILT_PROC), flags: UInt16(EV_ADD | EV_ONESHOT), fflags: UInt32(NOTE_EXIT), data: 0, udata: nil)
+        var change = kevent(
+            ident: UInt(pid), filter: Int16(EVFILT_PROC), flags: UInt16(EV_ADD | EV_ONESHOT), fflags: UInt32(NOTE_EXIT),
+            data: 0, udata: nil)
         var event = kevent()
         while true {
             let count = kevent(queue, &change, 1, &event, 1, nil)

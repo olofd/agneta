@@ -6,9 +6,12 @@
 import AgnetaFakes
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
-@Suite(.serialized, .enabled(if: GooseHarness.available && BuiltTools.shellBuilt, "run scripts/fetch-engines and swift build first"))
+@Suite(
+    .serialized,
+    .enabled(if: GooseHarness.available && BuiltTools.shellBuilt, "run scripts/fetch-engines and swift build first"))
 struct AppScenarioTests {
     /// A read-only review that starts with a copy of a finished run's conversation.
     @Test func aForkStartsWithTheConversationAndLeavesTheOriginal() async throws {
@@ -32,12 +35,16 @@ struct AppScenarioTests {
             #expect(fork != run)
             let answer = try await client.prompt(fork, "what was the word?")
             #expect(answer["stopReason"]?.stringValue == "end_turn")
-            let lastRequest = try String(contentsOf: stack.root.appending(path: "model.log"), encoding: .utf8).split(separator: "\n").last ?? ""
+            let lastRequest =
+                try String(contentsOf: stack.root.appending(path: "model.log"), encoding: .utf8).split(separator: "\n")
+                .last ?? ""
             #expect(lastRequest.contains("remember the word fjord"))
 
             // The original is untouched; the fork is its own task, read-only by default, linked to its source.
             #expect(try stack.traces.text(of: run).split(separator: "\n").count == originalLines)
-            let forkTrace = try stack.traces.text(of: fork).split(separator: "\n").map { try JSONCoding.decode(Data($0.utf8)) }
+            let forkTrace = try stack.traces.text(of: fork).split(separator: "\n").map {
+                try JSONCoding.decode(Data($0.utf8))
+            }
             #expect(forkTrace.first?["policy"]?["tools"]?.stringValue == "read")
             // The mode it ran in: a read-only fork runs contained.
             #expect(forkTrace.first?["policy"]?["sandbox"]?.stringValue == "contained")
@@ -45,7 +52,9 @@ struct AppScenarioTests {
             // Only the owner can fork.
             let other = AppClient(port: stack.port)
             try await other.pairAndInitialize("Other")
-            await #expect(throws: RPCError.self) { _ = try await other.request("agneta/fork", ["sessionId": .string(run), "mcpServers": []]) }
+            await #expect(throws: RPCError.self) {
+                _ = try await other.request("agneta/fork", ["sessionId": .string(run), "mcpServers": []])
+            }
             client.close()
             other.close()
         } catch {
@@ -64,7 +73,8 @@ struct AppScenarioTests {
     static func tool(_ name: String, _ account: String) -> String { account == "oc" ? "app_\(name)" : "app__\(name)" }
 
     @Test(arguments: engines) func aClosedTaskResumesWithItsConversation(account: String) async throws {
-        let stack = try await RouterIntegrationTests.Stack.start(port: UInt16(47452 + Self.offset(account)), modelPort: 47462 + Self.offset(account))
+        let stack = try await RouterIntegrationTests.Stack.start(
+            port: UInt16(47452 + Self.offset(account)), modelPort: 47462 + Self.offset(account))
         do {
             let client = AppClient(port: stack.port)
             try await client.pairAndInitialize("Example App")
@@ -76,25 +86,48 @@ struct AppScenarioTests {
             #expect(await stack.supervisor.processCount == 0) // the dedicated engine stopped with the session
             let before = client.text(session)
 
-            let loaded = try await client.request("session/load", ["sessionId": .string(session), "cwd": .string(project.path(percentEncoded: false)), "mcpServers": []])
+            let loaded = try await client.request(
+                "session/load",
+                ["sessionId": .string(session), "cwd": .string(project.path(percentEncoded: false)), "mcpServers": []])
             #expect(loaded["_meta"]?["agneta"]?["resumed"]?.boolValue == true)
             #expect(client.text(session).count > before.count) // the conversation was replayed
             let next = try await client.prompt(session, "what was the word?")
             #expect(next["stopReason"]?.stringValue == "end_turn")
             // The model saw the earlier turn.
-            let lastRequest = try String(contentsOf: stack.root.appending(path: "model.log"), encoding: .utf8).split(separator: "\n").last ?? ""
+            let lastRequest =
+                try String(contentsOf: stack.root.appending(path: "model.log"), encoding: .utf8).split(separator: "\n")
+                .last ?? ""
             #expect(lastRequest.contains("remember the word fjord"))
             // A second load while open is refused; another app can't load it.
-            await #expect(throws: RPCError.self) { _ = try await client.request("session/load", ["sessionId": .string(session), "cwd": .string(project.path(percentEncoded: false)), "mcpServers": []]) }
+            await #expect(throws: RPCError.self) {
+                _ = try await client.request(
+                    "session/load",
+                    [
+                        "sessionId": .string(session), "cwd": .string(project.path(percentEncoded: false)),
+                        "mcpServers": []
+                    ])
+            }
             let other = AppClient(port: stack.port)
             try await other.pairAndInitialize("Other")
-            await #expect(throws: RPCError.self) { _ = try await other.request("session/load", ["sessionId": .string(session), "cwd": .string(project.path(percentEncoded: false)), "mcpServers": []]) }
+            await #expect(throws: RPCError.self) {
+                _ = try await other.request(
+                    "session/load",
+                    [
+                        "sessionId": .string(session), "cwd": .string(project.path(percentEncoded: false)),
+                        "mcpServers": []
+                    ])
+            }
             _ = try await client.request("session/close", ["sessionId": .string(session)])
             try await Task.sleep(for: .milliseconds(300))
 
-            let records = try stack.traces.text(of: session).split(separator: "\n").map { try JSONCoding.decode(Data($0.utf8)) }
+            let records = try stack.traces.text(of: session).split(separator: "\n").map {
+                try JSONCoding.decode(Data($0.utf8))
+            }
             #expect(records.map { $0["seq"]?.intValue } == (1...Int64(records.count)).map { $0 })
-            #expect(records.filter { $0["type"]?.stringValue == "event" && $0["kind"]?.stringValue == "turn" }.map { $0["n"]?.intValue } == [1, 2])
+            #expect(
+                records.filter { $0["type"]?.stringValue == "event" && $0["kind"]?.stringValue == "turn" }.map {
+                    $0["n"]?.intValue
+                } == [1, 2])
             #expect(records.contains { $0["event"]?.stringValue == "resumed" })
             #expect(records.filter { $0["type"]?.stringValue == "end" }.count == 2)
             client.close()
@@ -107,7 +140,8 @@ struct AppScenarioTests {
     }
 
     @Test(arguments: engines) func aLongTaskEndToEnd(account: String) async throws {
-        let stack = try await RouterIntegrationTests.Stack.start(port: UInt16(47451 + Self.offset(account)), modelPort: 47461 + Self.offset(account))
+        let stack = try await RouterIntegrationTests.Stack.start(
+            port: UInt16(47451 + Self.offset(account)), modelPort: 47461 + Self.offset(account))
         let mcpPort = 47471 + Self.offset(account)
         let bearer = "app-mcp-\(UUID().uuidString)"
         let mcp = try await FakeServer.mcp(port: mcpPort, bearer: bearer, log: stack.root.appending(path: "mcp.log"))
@@ -118,18 +152,26 @@ struct AppScenarioTests {
             let project = try stack.workspace("Meeting Notes")
 
             // 1. A session in the project's workspace with the app's tools, instructions, a title and a live trace.
-            let created = try await client.request("session/new", [
-                "cwd": .string(project.path(percentEncoded: false)),
-                "mcpServers": [["type": "http", "name": "app", "url": .string("http://127.0.0.1:\(mcpPort)/mcp"),
-                                "headers": [["name": "Authorization", "value": .string("Bearer \(bearer)")]]]],
-                "_meta": [
-                    SessionPolicy.key: ["tools": "workspace", "network": "none", "approval": "never-ask"],
-                    "agneta": ["account": .string(account)],
-                    "agneta/task": ["title": "Summarizing meeting notes", "stopWarning": "The app keeps the work so far"],
-                    "agneta/instructions": ["text": "You are the app's agent. Use the app's tools."],
-                    "agneta/trace": ["live": true],
-                ],
-            ])
+            let created = try await client.request(
+                "session/new",
+                [
+                    "cwd": .string(project.path(percentEncoded: false)),
+                    "mcpServers": [
+                        [
+                            "type": "http", "name": "app", "url": .string("http://127.0.0.1:\(mcpPort)/mcp"),
+                            "headers": [["name": "Authorization", "value": .string("Bearer \(bearer)")]]
+                        ]
+                    ],
+                    "_meta": [
+                        SessionPolicy.key: ["tools": "workspace", "network": "none", "approval": "never-ask"],
+                        "agneta": ["account": .string(account)],
+                        "agneta/task": [
+                            "title": "Summarizing meeting notes", "stopWarning": "The app keeps the work so far"
+                        ],
+                        "agneta/instructions": ["text": "You are the app's agent. Use the app's tools."],
+                        "agneta/trace": ["live": true]
+                    ]
+                ])
             let session = try #require(created["sessionId"]?.stringValue)
             let model = created["configOptions"]?.arrayValue?.first { $0["id"]?.stringValue == "model" }
             let modelID = try #require(model?["currentValue"]?.stringValue) // "gpt-4o" on Goose, "agneta/gpt-4o" on OpenCode
@@ -137,7 +179,9 @@ struct AppScenarioTests {
             let capabilities = try #require(created["_meta"]?["agneta"]?["capabilities"])
 
             // 2. The app picks the model before the first prompt.
-            _ = try await client.request("session/set_config_option", ["sessionId": .string(session), "configId": "model", "value": .string(modelID)])
+            _ = try await client.request(
+                "session/set_config_option",
+                ["sessionId": .string(session), "configId": "model", "value": .string(modelID)])
 
             // 3. The app's text tool and image tool, over its MCP server with the bearer.
             let echo = try await client.prompt(session, "CALL \(Self.tool("echo", account)) " + #"{"text": "agneta"}"#)
@@ -156,15 +200,20 @@ struct AppScenarioTests {
             var steered: JSONValue?
             for _ in 0..<40 where steered == nil {
                 try await Task.sleep(for: .milliseconds(100))
-                steered = try? await client.request("agneta/steer", ["sessionId": .string(session), "prompt": [["type": "text", "text": "keep the knee soft"]]])
+                steered = try? await client.request(
+                    "agneta/steer",
+                    ["sessionId": .string(session), "prompt": [["type": "text", "text": "keep the knee soft"]]])
             }
             #expect(steered?["delivery"]?.stringValue == "accepted")
             _ = try await slow.value
             if capabilities["instructionsBetweenTurns"]?.boolValue == true {
-                _ = try await client.request("agneta/instructions/set", ["sessionId": .string(session), "text": "Be brief from now on.", "mode": "append"])
+                _ = try await client.request(
+                    "agneta/instructions/set",
+                    ["sessionId": .string(session), "text": "Be brief from now on.", "mode": "append"])
             } else {
                 await #expect(throws: RPCError.self) {
-                    _ = try await client.request("agneta/instructions/set", ["sessionId": .string(session), "text": "Be brief from now on."])
+                    _ = try await client.request(
+                        "agneta/instructions/set", ["sessionId": .string(session), "text": "Be brief from now on."])
                 }
             }
 
@@ -184,22 +233,41 @@ struct AppScenarioTests {
             var read: [JSONValue] = []
             var after: Int64 = 0
             while true {
-                let page = try await client.request("agneta/trace/read", ["sessionId": .string(session), "after": .int(after), "limit": 2000])
+                let page = try await client.request(
+                    "agneta/trace/read", ["sessionId": .string(session), "after": .int(after), "limit": 2000])
                 read += page["records"]?.arrayValue ?? []
                 if page["complete"]?.boolValue == true { break }
                 after = try #require(page["next"]?.intValue)
             }
             #expect(live == read)
-            func events(_ kind: String) -> [JSONValue] { read.filter { $0["type"]?.stringValue == "event" && $0["kind"]?.stringValue == kind } }
-            let tools = events("tool-call").map { "\($0["extension"]?.stringValue ?? "?")/\($0["tool"]?.stringValue ?? "?")" }
+            func events(_ kind: String) -> [JSONValue] {
+                read.filter { $0["type"]?.stringValue == "event" && $0["kind"]?.stringValue == kind }
+            }
+            let tools = events("tool-call").map {
+                "\($0["extension"]?.stringValue ?? "?")/\($0["tool"]?.stringValue ?? "?")"
+            }
             #expect(tools == ["app/echo", "app/swatch"])
-            #expect(events("tool-result").count == 2 && events("tool-result").allSatisfy { $0["isError"]?.boolValue == false })
-            let image = events("tool-result").last?["content"]?.arrayValue?.contains { $0["content"]?["type"]?.stringValue == "image" } ?? false
+            #expect(
+                events("tool-result").count == 2
+                    && events("tool-result").allSatisfy { $0["isError"]?.boolValue == false })
+            let image =
+                events("tool-result").last?["content"]?.arrayValue?.contains {
+                    $0["content"]?["type"]?.stringValue == "image"
+                } ?? false
             #expect(image)
-            #expect(events("turn").map { $0["stopReason"]?.stringValue } == ["end_turn", "end_turn", "end_turn", "cancelled"])
+            #expect(
+                events("turn").map { $0["stopReason"]?.stringValue } == [
+                    "end_turn", "end_turn", "end_turn", "cancelled"
+                ])
             #expect(read.contains { $0["event"]?.stringValue == "steer" && $0["delivery"]?.stringValue == "accepted" })
-            #expect(read.contains { $0["type"]?.stringValue == "config" && $0["method"]?.stringValue == "session/set_config_option" })
-            #expect(read.contains { $0["type"]?.stringValue == "config" && $0["method"]?.stringValue == "agneta/instructions/set" }
+            #expect(
+                read.contains {
+                    $0["type"]?.stringValue == "config" && $0["method"]?.stringValue == "session/set_config_option"
+                })
+            #expect(
+                read.contains {
+                    $0["type"]?.stringValue == "config" && $0["method"]?.stringValue == "agneta/instructions/set"
+                }
                     == (capabilities["instructionsBetweenTurns"]?.boolValue == true))
             #expect(read.first?["instructions"]?.stringValue == "You are the app's agent. Use the app's tools.")
             #expect(events("init").first?["model"]?.stringValue?.hasSuffix("gpt-4o") == true)

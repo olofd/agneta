@@ -29,7 +29,10 @@ public struct AppMeter: Sendable, Equatable {
         /// model it has no price for): what they cost isn't known, so a spending limit didn't count it.
         public var unpriced: Int
 
-        public init(cost: Double = 0, inputTokens: Int = 0, outputTokens: Int = 0, turns: Int = 0, tasks: Int = 0, unpriced: Int = 0) {
+        public init(
+            cost: Double = 0, inputTokens: Int = 0, outputTokens: Int = 0, turns: Int = 0, tasks: Int = 0,
+            unpriced: Int = 0
+        ) {
             self.cost = cost
             self.inputTokens = inputTokens
             self.outputTokens = outputTokens
@@ -39,8 +42,10 @@ public struct AppMeter: Sendable, Equatable {
         }
 
         public static func + (a: Usage, b: Usage) -> Usage {
-            Usage(cost: a.cost + b.cost, inputTokens: a.inputTokens + b.inputTokens, outputTokens: a.outputTokens + b.outputTokens,
-                  turns: a.turns + b.turns, tasks: a.tasks + b.tasks, unpriced: a.unpriced + b.unpriced)
+            Usage(
+                cost: a.cost + b.cost, inputTokens: a.inputTokens + b.inputTokens,
+                outputTokens: a.outputTokens + b.outputTokens,
+                turns: a.turns + b.turns, tasks: a.tasks + b.tasks, unpriced: a.unpriced + b.unpriced)
         }
 
         public var isEmpty: Bool { self == Usage() }
@@ -93,7 +98,8 @@ public struct AppMeter: Sendable, Equatable {
         case .week: component = .weekOfYear
         case .month: component = .month
         }
-        return calendar.dateInterval(of: component, for: now) ?? DateInterval(start: calendar.startOfDay(for: now), duration: 86_400)
+        return calendar.dateInterval(of: component, for: now)
+            ?? DateInterval(start: calendar.startOfDay(for: now), duration: 86_400)
     }
 
     /// Everything counted in the period `now` is in. For an hour, only the new tasks are exact (the rest is by bucket).
@@ -114,7 +120,8 @@ public struct AppMeter: Sendable, Equatable {
     public func tasks(_ period: AppLimits.Period, now: Date, calendar: Calendar) -> Int {
         guard period == .hour else { return total(period, now: now, calendar: calendar).tasks }
         let since = now.addingTimeInterval(-3600)
-        return starts.count(where: { $0 > since }) + earlierStarts.reduce(0) { $0 + ($1.key.addingTimeInterval(7200) > now ? $1.value : 0) }
+        return starts.count(where: { $0 > since })
+            + earlierStarts.reduce(0) { $0 + ($1.key.addingTimeInterval(7200) > now ? $1.value : 0) }
     }
 
     /// When the count starts again: the next period's start, or for the rolling hour when the oldest new task in it
@@ -122,7 +129,8 @@ public struct AppMeter: Sendable, Equatable {
     public func resetsAt(_ period: AppLimits.Period, now: Date, calendar: Calendar) -> Date? {
         guard period == .hour else { return Self.interval(period, now: now, calendar: calendar).end }
         let since = now.addingTimeInterval(-3600)
-        let leaving = starts.filter { $0 > since }.map { $0.addingTimeInterval(3600) }
+        let leaving =
+            starts.filter { $0 > since }.map { $0.addingTimeInterval(3600) }
             + earlierStarts.keys.filter { $0.addingTimeInterval(7200) > now }.map { $0.addingTimeInterval(7200) }
         return leaving.min()
     }

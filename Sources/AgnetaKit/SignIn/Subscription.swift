@@ -33,9 +33,12 @@ public struct SubscriptionAccount: Sendable, Equatable {
     /// shared with the user's own Claude Code, and it puts Unix sockets inside, so the path is kept
     /// short (sockaddr_un allows 104 bytes): the system temp folder plus a short account hash.
     public var claudeTemp: URL {
-        let digest = home.path(percentEncoded: false).utf8.reduce(UInt64(1469598103934665603)) { ($0 ^ UInt64($1)) &* 1099511628211 }
+        let digest = home.path(percentEncoded: false).utf8.reduce(UInt64(1469598103934665603)) {
+            ($0 ^ UInt64($1)) &* 1099511628211
+        }
         // The temp folder resolved, never this folder: an engine may have replaced it with a link (OwnFolder).
-        return FileManager.default.temporaryDirectory.realFileURL.appending(path: "agneta-c\(String(digest, radix: 36).prefix(8))", directoryHint: .isDirectory)
+        return FileManager.default.temporaryDirectory.realFileURL.appending(
+            path: "agneta-c\(String(digest, radix: 36).prefix(8))", directoryHint: .isDirectory)
     }
 
     /// Makes the account's folders its engines write real folders again, whatever an engine planted in their place.
@@ -49,13 +52,17 @@ public struct SubscriptionAccount: Sendable, Equatable {
 
     /// Folders the account's engines must be able to read beyond their own home.
     public var runtimeFolders: [URL] {
-        (adapter.map { [$0.deletingLastPathComponent()] } ?? []) + (claudeCode.map { [ClaudeCodeAdapter.bundle(of: $0)] } ?? [])
+        (adapter.map { [$0.deletingLastPathComponent()] } ?? [])
+            + (claudeCode.map { [ClaudeCodeAdapter.bundle(of: $0)] } ?? [])
     }
 
     /// Goose's environment for a Claude plan: its `claude-acp` provider, run with the user's own Claude Code.
     public func gooseEnvironment(model: String? = nil) -> [String: String] {
-        var env = ["GOOSE_PROVIDER": "claude-acp", "GOOSE_MODEL": model ?? "current",
-                   "CLAUDE_CONFIG_DIR": ClaudeCodeSignIn.configPath(claudeConfig), "CLAUDE_CODE_TMPDIR": claudeTemp.path(percentEncoded: false)]
+        var env = [
+            "GOOSE_PROVIDER": "claude-acp", "GOOSE_MODEL": model ?? "current",
+            "CLAUDE_CONFIG_DIR": ClaudeCodeSignIn.configPath(claudeConfig),
+            "CLAUDE_CODE_TMPDIR": claudeTemp.path(percentEncoded: false)
+        ]
         try? prepareFolders()
         if let adapter { env["AGNETA_EXTRA_PATH"] = adapter.deletingLastPathComponent().path(percentEncoded: false) }
         // The adapter runs the user's own Claude Code, not the copy its binary embeds.

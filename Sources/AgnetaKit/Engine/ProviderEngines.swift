@@ -54,6 +54,7 @@ public struct ProviderEngines: Sendable, Equatable {
     /// Why an engine can't contain its own tools for a kind of provider, in plain words, or nil when it can.
     public static func uncontainedReason(_ engine: String, for kind: AccountKind) -> String? {
         guard uncontained(by: kind).contains(engine) else { return nil }
-        return "On a Claude plan, Goose runs Claude Code with all its own tools and your claude.ai connectors, which Agneta can't contain"
+        return
+            "On a Claude plan, Goose runs Claude Code with all its own tools and your claude.ai connectors, which Agneta can't contain"
     }
 }

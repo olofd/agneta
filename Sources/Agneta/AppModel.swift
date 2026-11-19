@@ -122,8 +122,11 @@ final class AppModel {
             isolated = false
         }
         let libraryFolder = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
-        log = OperationalLog(folder: isolated ? store.root.appending(path: "Logs", directoryHint: .isDirectory)
-                                              : libraryFolder.appending(path: "Logs/\(id.hasSuffix(".dev") ? "Agneta Dev" : "Agneta")", directoryHint: .isDirectory))
+        log = OperationalLog(
+            folder: isolated
+                ? store.root.appending(path: "Logs", directoryHint: .isDirectory)
+                : libraryFolder.appending(
+                    path: "Logs/\(id.hasSuffix(".dev") ? "Agneta Dev" : "Agneta")", directoryHint: .isDirectory))
         library = EngineLibrary(runtimes: store.runtimesFolder, log: log)
         signIn = SignInFlow(library: library, log: log)
         library.kindsInUse = { [weak self] in Set(self?.accounts.map(\.kind) ?? []) }
@@ -137,7 +140,9 @@ final class AppModel {
 
     // MARK: Paths inside the app bundle
 
-    private var bundleFolder: URL { Bundle.main.bundleURL.appending(path: "Contents/MacOS", directoryHint: .isDirectory) }
+    private var bundleFolder: URL {
+        Bundle.main.bundleURL.appending(path: "Contents/MacOS", directoryHint: .isDirectory)
+    }
     var shellToolURL: URL { bundleFolder.appending(path: "agneta-shell") }
     var testClientURL: URL? { Bundle.main.url(forResource: "AgnetaTestClient", withExtension: "app") }
 
@@ -150,12 +155,19 @@ final class AppModel {
             await finishReset(reset)
             guard resetProblem == nil else { return }
         }
-        log.log("start", ["version": .string(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"),
-                          "development": .bool(isDevelopment), "isolated": .bool(isolated), "port": .int(Int64(port))])
+        log.log(
+            "start",
+            [
+                "version": .string(
+                    Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"),
+                "development": .bool(isDevelopment), "isolated": .bool(isolated), "port": .int(Int64(port))
+            ])
         let runtime: AgnetaRuntime
         do {
-            runtime = try await AgnetaRuntime(.init(store: store, shellTool: shellToolURL, appWorkspaces: appWorkspaces),
-                                              log: log) { [weak self] request in await self?.askForApproval(request) }
+            runtime = try await AgnetaRuntime(
+                .init(store: store, shellTool: shellToolURL, appWorkspaces: appWorkspaces),
+                log: log
+            ) { [weak self] request in await self?.askForApproval(request) }
         } catch let error as StoreError {
             storeProblem = error.description
             log.error("store-unavailable", ["reason": .string(error.description)])
@@ -196,7 +208,9 @@ final class AppModel {
             let server = try WebSocketServer(port: port)
             try await server.start()
             self.server = server
-            _Concurrency.Task.detached { for await connection in server.connections { _Concurrency.Task { await router.serve(connection) } } }
+            _Concurrency.Task.detached {
+                for await connection in server.connections { _Concurrency.Task { await router.serve(connection) } }
+            }
         } catch {
             serverProblem = "Agneta couldn't open its connection for apps (port \(port) may be in use)."
             log.error("server-unavailable", ["port": .int(Int64(port)), "reason": .string("\(error)")])
@@ -250,14 +264,19 @@ final class AppModel {
     struct Defaults: Codable, Equatable { var model: String?; var effort: String? }
 
     func defaults(of account: AccountRecord) -> Defaults {
-        guard let text = try? database?.setting("defaults.\(account.id)"), let data = text.data(using: .utf8) else { return Defaults() }
+        guard let text = try? database?.setting("defaults.\(account.id)"), let data = text.data(using: .utf8) else {
+            return Defaults()
+        }
         return (try? JSONDecoder().decode(Defaults.self, from: data)) ?? Defaults()
     }
 
     func setDefaults(_ account: AccountRecord, _ chosen: Defaults) {
         let text = (try? JSONEncoder().encode(chosen)).map { String(decoding: $0, as: UTF8.self) }
         try? database?.set(chosen == Defaults() ? nil : text, for: "defaults.\(account.id)")
-        log.log("defaults-set", ["account": .string(account.id), "model": .bool(chosen.model != nil), "effort": .bool(chosen.effort != nil)])
+        log.log(
+            "defaults-set",
+            ["account": .string(account.id), "model": .bool(chosen.model != nil), "effort": .bool(chosen.effort != nil)]
+        )
         guard let runtime else { return }
         _Concurrency.Task { await runtime.setDefaults(account: account.id, model: chosen.model, effort: chosen.effort) }
     }
@@ -267,7 +286,8 @@ final class AppModel {
     func options(account: String, engine: String) -> [JSONValue] {
         if let sample = sampleOptions["\(account).\(engine)"] { return sample }
         guard let text = try? database?.setting("options.\(account).\(engine)"), let data = text.data(using: .utf8),
-              let value = try? JSONCoding.decode(data) else { return [] }
+            let value = try? JSONCoding.decode(data)
+        else { return [] }
         return value.arrayValue ?? []
     }
 
@@ -301,7 +321,6 @@ final class AppModel {
         _Concurrency.Task { await configure(account) }
     }
 
-
     /// Tells the supervisor and router how to serve an account: its engine and its provider.
     /// Reset may replace the router and supervisor while this waits (an adapter download), and the user may sign the
     /// account out: it stops at the first wait after either, so a deleted account is never added back.
@@ -314,14 +333,17 @@ final class AppModel {
         var billing = "api-key"
         switch account.kind {
         case .chatGPT:
-            provider = ProviderSetup(kind: .chatGPT, model: account.model, subscription: SubscriptionAccount(route: .chatGPT, home: home))
+            provider = ProviderSetup(
+                kind: .chatGPT, model: account.model, subscription: SubscriptionAccount(route: .chatGPT, home: home))
             billing = "subscription"
         case .claude:
             let adapter = try? await library.install("claude-code")
             guard current() else { return }
-            provider = ProviderSetup(kind: .claudeCode, model: account.model,
-                                     subscription: SubscriptionAccount(route: .claudeCode, home: home, adapter: adapter,
-                                                                       claudeCode: library.program("claude")?.path))
+            provider = ProviderSetup(
+                kind: .claudeCode, model: account.model,
+                subscription: SubscriptionAccount(
+                    route: .claudeCode, home: home, adapter: adapter,
+                    claudeCode: library.program("claude")?.path))
             runner = .native // Claude Code runs its own tools; Agneta gates each call
             billing = "subscription"
         case .anthropicKey:
@@ -333,8 +355,9 @@ final class AppModel {
         for secret in provider.secrets { runtime.traces.mask.register(secret) }
         // Claude Code and Codex run their own tools whatever the account; the router decides per session, since each
         // task picks its engine (Router.runner(account:engine:)).
-        await runtime.serve(account: account.id, label: account.label, provider: provider, runner: runner, kind: account.kind,
-                            billing: billing, paused: account.paused)
+        await runtime.serve(
+            account: account.id, label: account.label, provider: provider, runner: runner, kind: account.kind,
+            billing: billing, paused: account.paused)
         let wanted = defaults(of: account)
         await runtime.setDefaults(account: account.id, model: wanted.model, effort: wanted.effort)
         // Its default engine downloads now if it isn't here.
@@ -360,8 +383,14 @@ final class AppModel {
     private func handle(_ event: Router.Event) {
         switch event {
         case .paired(let hash, let grant, let replaced):
-            log.log("paired", ["grant": .string(grant.id), "app": .string(grant.app), "verified": .bool(grant.verified), "accounts": .int(Int64(grant.accounts.count)),
-                               "tools": .string(grant.tools.rawValue), "folders": .int(Int64(grant.folders.count)), "remembered": .bool(grant.remembered)])
+            log.log(
+                "paired",
+                [
+                    "grant": .string(grant.id), "app": .string(grant.app), "verified": .bool(grant.verified),
+                    "accounts": .int(Int64(grant.accounts.count)),
+                    "tools": .string(grant.tools.rawValue), "folders": .int(Int64(grant.folders.count)),
+                    "remembered": .bool(grant.remembered)
+                ])
             // Saved by the router before the token went out; an "Allow Once" grant is never saved or listed. Pairing again
             // replaced the app's earlier token, if it had one.
             if grant.remembered {
@@ -369,12 +398,25 @@ final class AppModel {
                 grants[hash] = grant
             }
         case .grantChanged(let hash, let grant):
-            log.log("app-access-changed", ["grant": .string(grant.id), "accounts": .int(Int64(grant.accounts.count)),
-                                           "engines": { if case .only(let some) = grant.engines { .int(Int64(some.count)) } else { "all" } }()])
+            log.log(
+                "app-access-changed",
+                [
+                    "grant": .string(grant.id), "accounts": .int(Int64(grant.accounts.count)),
+                    "engines": { if case .only(let some) = grant.engines { .int(Int64(some.count)) } else { "all" } }()
+                ])
             if grant.remembered { grants[hash] = grant }
         case .sessionStarted(let info):
-            log.log("task-started", ["task": .string(info.id), "app": .string(info.app), "account": .string(info.account), "resumed": .bool(info.resumed)])
-            tasks.append(Task(id: info.id, app: info.app, appIdentifier: info.appIdentifier, account: info.account, title: info.title, started: info.started, running: false, stopWarning: info.stopWarning, sandbox: info.sandbox))
+            log.log(
+                "task-started",
+                [
+                    "task": .string(info.id), "app": .string(info.app), "account": .string(info.account),
+                    "resumed": .bool(info.resumed)
+                ])
+            tasks.append(
+                Task(
+                    id: info.id, app: info.app, appIdentifier: info.appIdentifier, account: info.account,
+                    title: info.title, started: info.started, running: false, stopWarning: info.stopWarning,
+                    sandbox: info.sandbox))
         case .turnStarted(let id):
             if let index = tasks.firstIndex(where: { $0.id == id }) { tasks[index].running = true }
         case .turnEnded(let id, let reason):
@@ -396,15 +438,21 @@ final class AppModel {
             log.log("needs-sign-in", ["account": .string(account)])
         case .rateLimited(let account, let resetsAt, _):
             limited[account] = resetsAt
-            log.log("rate-limited", ["account": .string(account), "resetsAt": resetsAt.map { .string(TraceWriter.timestamp($0)) } ?? .null])
+            log.log(
+                "rate-limited",
+                ["account": .string(account), "resetsAt": resetsAt.map { .string(TraceWriter.timestamp($0)) } ?? .null])
         case .usage(let id, _, let cost):
             if let index = tasks.firstIndex(where: { $0.id == id }), let cost { tasks[index].cost = cost }
         case .appUsage(let grant, _, _):
             refreshStatus(grant)
         case .appLimitReached(let notice):
             if limitReached[notice.grant] == nil {
-                log.log("app-limit-reached", ["grant": .string(notice.grant), "limit": .string(notice.limit),
-                                              "resetsAt": notice.resetsAt.map { .string(TraceWriter.timestamp($0)) } ?? .null])
+                log.log(
+                    "app-limit-reached",
+                    [
+                        "grant": .string(notice.grant), "limit": .string(notice.limit),
+                        "resetsAt": notice.resetsAt.map { .string(TraceWriter.timestamp($0)) } ?? .null
+                    ])
             }
             limitReached[notice.grant] = notice
             refreshStatus(notice.grant)
@@ -438,17 +486,23 @@ final class AppModel {
     private func askForApproval(_ pairing: Router.PairingRequest) async -> Router.PairingAnswer? {
         let verified = pairing.code == nil
         let replaces = grants.values.contains {
-            Router.sameApp($0, app: pairing.app, identifier: verified ? pairing.peer?.identifier : nil, team: verified ? pairing.peer?.team : nil, verified: verified)
+            Router.sameApp(
+                $0, app: pairing.app, identifier: verified ? pairing.peer?.identifier : nil,
+                team: verified ? pairing.peer?.team : nil, verified: verified)
         }
         let usable = accounts.filter { !$0.paused }
         let allowed: [AccountRecord]
         if let kinds = pairing.providers {
-            allowed = kinds.count == AccountKind.allCases.count ? usable : kinds.compactMap { kind in usable.first { $0.kind == kind } }
+            allowed =
+                kinds.count == AccountKind.allCases.count
+                ? usable : kinds.compactMap { kind in usable.first { $0.kind == kind } }
         } else {
             allowed = Array(usable.prefix(1))
         }
-        return await approvals.ask(pairing, allowed: Set(allowed.map(\.id)), engines: Set(pairing.engines ?? Array(library.catalog.entries.keys)),
-                                   replaces: replaces)
+        return await approvals.ask(
+            pairing, allowed: Set(allowed.map(\.id)),
+            engines: Set(pairing.engines ?? Array(library.catalog.entries.keys)),
+            replaces: replaces)
     }
 
     /// An app asked Agneta to help the user connect a provider (`agneta/setup`).
@@ -470,7 +524,9 @@ final class AppModel {
         }
         let log = log
         _Concurrency.Task {
-            do { try await runtime.setAccess(grant: grant.id, accounts: accountIDs, engines: allowance, sandbox: sandbox) } catch {
+            do {
+                try await runtime.setAccess(grant: grant.id, accounts: accountIDs, engines: allowance, sandbox: sandbox)
+            } catch {
                 log.error("app-access-not-saved", ["grant": .string(grant.id), "reason": .string("\(error)")])
             }
         }
@@ -482,8 +538,12 @@ final class AppModel {
         for (hash, shown) in grants where shown.id == grant.id { grants[hash]?.limits = limits }
         // A limit raised or removed lets the app go on: the notice goes.
         limitReached[grant.id] = nil
-        log.log("app-limits-changed", ["grant": .string(grant.id), "spend": .bool(limits.spend != nil), "atOnce": .bool(limits.atOnce != nil),
-                                       "newTasks": .bool(limits.newTasks != nil)])
+        log.log(
+            "app-limits-changed",
+            [
+                "grant": .string(grant.id), "spend": .bool(limits.spend != nil), "atOnce": .bool(limits.atOnce != nil),
+                "newTasks": .bool(limits.newTasks != nil)
+            ])
         let log = log
         _Concurrency.Task {
             do { try await runtime.setLimits(grant: grant.id, limits: limits) } catch {
@@ -517,7 +577,8 @@ final class AppModel {
                 grants.merge(removed) { current, _ in current }
                 let alert = NSAlert()
                 alert.messageText = "Agneta couldn't remove \(removed.first?.value.app ?? "the app")'s access"
-                alert.informativeText = "It can't connect until Agneta quits, but its access would come back after that. Try Remove Access again.\n\n\(error.localizedDescription)"
+                alert.informativeText =
+                    "It can't connect until Agneta quits, but its access would come back after that. Try Remove Access again.\n\n\(error.localizedDescription)"
                 alert.runModal()
             }
         }
@@ -528,7 +589,9 @@ final class AppModel {
     /// Signs in a new account, or `again` signs an existing one in again (same account, folder and settings).
     func startSignIn(_ kind: AccountKind, again existing: AccountRecord? = nil) {
         var record = existing ?? AccountRecord(kind: kind, label: kind.provider)
-        if existing == nil, accounts.contains(where: { $0.kind == kind }) { record.label = "\(kind.provider) \(accounts.filter { $0.kind.provider == kind.provider }.count + 1)" }
+        if existing == nil, accounts.contains(where: { $0.kind == kind }) {
+            record.label = "\(kind.provider) \(accounts.filter { $0.kind.provider == kind.provider }.count + 1)"
+        }
         // A new provider's folder is made by its sign-in; one cancelled, failed or replaced removes it again, so nothing
         // is left of a provider that never was. Signing in again keeps the existing provider's folder.
         let home = store.home(of: record)
@@ -542,7 +605,11 @@ final class AppModel {
         }
         let attempt = signIn.start(kind, home: home, account: record.id, discard: discard) { [weak self] in
             guard let self else { return }
-            if let index = accounts.firstIndex(where: { $0.id == record.id }) { accounts[index] = record } else { added(record) }
+            if let index = accounts.firstIndex(where: { $0.id == record.id }) {
+                accounts[index] = record
+            } else {
+                added(record)
+            }
             needsSignIn.remove(record.id)
             try? database?.save(record)
             await configure(record)
@@ -660,14 +727,16 @@ final class AppModel {
 
     private func makeReset() -> Reset {
         if isolated { return Reset(root: store.root, folders: [store.root, appWorkspaces], keychain: keychain) }
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appending(path: bundleID, directoryHint: .isDirectory)
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appending(
+            path: bundleID, directoryHint: .isDirectory)
         return Reset(root: store.root, folders: [store.root, appWorkspaces, caches, logsFolder], keychain: keychain)
     }
 
     /// Each paired app's own workspace (`<this>/<grant id>`), beside Agneta's data rather than in it: sessions may
     /// never reach Agneta's data, but an app's workspace is where its sessions work.
     var appWorkspaces: URL {
-        store.root.deletingLastPathComponent().appending(path: store.root.lastPathComponent + " Workspaces", directoryHint: .isDirectory)
+        store.root.deletingLastPathComponent().appending(
+            path: store.root.lastPathComponent + " Workspaces", directoryHint: .isDirectory)
     }
 
     /// Reset Agneta: refuse new tasks, stop every engine, delete Agneta's
@@ -744,10 +813,15 @@ final class AppModel {
     /// Claude Code and Codex keep each plan account's sign-in in the login Keychain, keyed by the account's folder,
     /// and only their own logout removes it (PlanSignOut). Returns the sign-ins that may remain.
     private func signOutOfPlans(homes: [URL]) async -> [PlanSignOut.Leftover] {
-        let leftovers = await PlanSignOut.signOut(homes: homes, claudeCode: library.program("claude")?.path, codex: library.program("codex")?.path)
+        let leftovers = await PlanSignOut.signOut(
+            homes: homes, claudeCode: library.program("claude")?.path, codex: library.program("codex")?.path)
         for leftover in leftovers {
-            log.error("sign-out-incomplete", ["program": .string(leftover.program),
-                                              "reason": .string(leftover.reason == .noProgram ? "no supported install" : "logout failed")])
+            log.error(
+                "sign-out-incomplete",
+                [
+                    "program": .string(leftover.program),
+                    "reason": .string(leftover.reason == .noProgram ? "no supported install" : "logout failed")
+                ])
         }
         return leftovers
     }
@@ -756,7 +830,8 @@ final class AppModel {
 
     /// Every account folder on disk (Reset, including one resumed after an interruption).
     private var accountHomes: [URL] {
-        ((try? FileManager.default.contentsOfDirectory(at: store.accountsFolder, includingPropertiesForKeys: nil)) ?? []).filter(\.hasDirectoryPath)
+        ((try? FileManager.default.contentsOfDirectory(at: store.accountsFolder, includingPropertiesForKeys: nil)) ?? [])
+            .filter(\.hasDirectoryPath)
     }
 
     /// Asks before Reset Agneta: Cancel is the default, resetting takes a deliberate click.
@@ -800,7 +875,8 @@ final class AppModel {
     }
 
     var needsAttention: Bool {
-        serverProblem != nil || !needsSignIn.isEmpty || resetProblem != nil || storeProblem != nil || !leftoverSignIns.isEmpty
+        serverProblem != nil || !needsSignIn.isEmpty || resetProblem != nil || storeProblem != nil
+            || !leftoverSignIns.isEmpty
             || conversationsLeft != nil || !reachedLimits.isEmpty
     }
 
@@ -811,42 +887,62 @@ final class AppModel {
         }
         if let problem = storeProblem {
             // Before 1.0 no build reads another's data: Reset starts fresh.
-            return ("Agneta needs a reset", "\(problem) Reset Agneta to start fresh; you'll connect your providers and allow your apps again.", "Reset…",
-                    { self.confirmReset() })
+            return (
+                "Agneta needs a reset",
+                "\(problem) Reset Agneta to start fresh; you'll connect your providers and allow your apps again.",
+                "Reset…",
+                { self.confirmReset() }
+            )
         }
         if let explanation = PlanSignOut.explanation(leftoverSignIns) {
             return ("Sign-ins may remain in your Keychain", explanation, "Dismiss", { self.dismissLeftoverSignIns() })
         }
         if let problem = serverProblem {
-            return ("Apps can't connect", problem, "Settings", { WindowPresenter.shared.showSettings(self, section: .general) })
+            return (
+                "Apps can't connect", problem, "Settings",
+                { WindowPresenter.shared.showSettings(self, section: .general) }
+            )
         }
         if let problem = traceProblem {
-            return ("Task records are incomplete", "Agneta couldn't save a task's record (\(problem)). Tasks keep running; check that the disk has space.",
-                    "Dismiss", { self.traceProblem = nil })
+            return (
+                "Task records are incomplete",
+                "Agneta couldn't save a task's record (\(problem)). Tasks keep running; check that the disk has space.",
+                "Dismiss", { self.traceProblem = nil }
+            )
         }
         if let left = conversationsLeft {
             if left.count == 0 {
-                return ("Some conversations weren't deleted",
-                        "Clearing history couldn't delete every conversation from its engine's storage (\(left.problem)).",
-                        "Dismiss", { self.conversationsLeft = nil })
+                return (
+                    "Some conversations weren't deleted",
+                    "Clearing history couldn't delete every conversation from its engine's storage (\(left.problem)).",
+                    "Dismiss", { self.conversationsLeft = nil }
+                )
             }
             let count = left.count == 1 ? "1 conversation" : "\(left.count) conversations"
-            return ("Some conversations aren't deleted yet",
-                    "\(count) from cleared history are still in an engine's storage (\(left.problem)). Agneta tries again "
+            return (
+                "Some conversations aren't deleted yet",
+                "\(count) from cleared history are still in an engine's storage (\(left.problem)). Agneta tries again "
                     + "each time it starts and whenever history is cleared.",
-                    "Try Again", { self.retryForgetting() })
+                "Try Again", { self.retryForgetting() }
+            )
         }
         if let notice = reachedLimits.first {
-            return (Self.limitTitle(notice), Self.limitDetail(notice), "Change Limit…", {
-                self.limitReached[notice.grant] = nil
-                WindowPresenter.shared.showSettings(self, section: .apps)
-            })
+            return (
+                Self.limitTitle(notice), Self.limitDetail(notice), "Change Limit…",
+                {
+                    self.limitReached[notice.grant] = nil
+                    WindowPresenter.shared.showSettings(self, section: .apps)
+                }
+            )
         }
         if let account = accounts.first(where: { needsSignIn.contains($0.id) }) {
             let kind = account.kind
             // The engine's own sign-in when the account runs on Codex; Agneta's otherwise.
             let action: () -> Void = { self.startSignIn(kind, again: account) }
-            return ("Sign in to \(account.label) again", "Its sign-in expired. Tasks on it wait until you sign in.", "Sign In", action)
+            return (
+                "Sign in to \(account.label) again", "Its sign-in expired. Tasks on it wait until you sign in.",
+                "Sign In", action
+            )
         }
         return nil
     }
@@ -856,7 +952,10 @@ final class AppModel {
 
     /// "$5.04 today, of $5 a day · resets at midnight"; for new tasks, "10 in the last hour, of 10 new tasks an hour".
     static func limitDetail(_ notice: AppLimitNotice) -> String {
-        "\(notice.used), of \(notice.summary)" + (notice.resets.map { " · \(notice.limit == "newTasks" && notice.summary.hasSuffix("an hour") ? "frees up" : "resets") \($0)" } ?? "")
+        "\(notice.used), of \(notice.summary)"
+            + (notice.resets.map {
+                " · \(notice.limit == "newTasks" && notice.summary.hasSuffix("an hour") ? "frees up" : "resets") \($0)"
+            } ?? "")
     }
 
     // MARK: Developer
@@ -864,19 +963,32 @@ final class AppModel {
     /// Sample data for design snapshots (AGNETA_SHOWCASE).
     func loadSample() {
         library.useSample()
-        accounts = [AccountRecord(id: "a", kind: .claude, label: "Claude", email: "work@example.com"),
-                    AccountRecord(id: "b", kind: .chatGPT, label: "ChatGPT", email: "me@example.com"),
-                    AccountRecord(id: "c", kind: .openAIKey, label: "OpenAI API")]
-        tasks = [Task(id: "1", app: "Example App", appIdentifier: nil, account: "a", title: "Summarizing meeting notes", started: Date().addingTimeInterval(-840), running: true, sandbox: .developer),
-                 Task(id: "2", app: "Example App", appIdentifier: nil, account: "b", title: "Naming a project", started: Date(), running: true)]
-        grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"],
-                                    limits: AppLimits(spend: .init(max: 5, period: .day), atOnce: 2))]
+        accounts = [
+            AccountRecord(id: "a", kind: .claude, label: "Claude", email: "work@example.com"),
+            AccountRecord(id: "b", kind: .chatGPT, label: "ChatGPT", email: "me@example.com"),
+            AccountRecord(id: "c", kind: .openAIKey, label: "OpenAI API")
+        ]
+        tasks = [
+            Task(
+                id: "1", app: "Example App", appIdentifier: nil, account: "a", title: "Summarizing meeting notes",
+                started: Date().addingTimeInterval(-840), running: true, sandbox: .developer),
+            Task(
+                id: "2", app: "Example App", appIdentifier: nil, account: "b", title: "Naming a project",
+                started: Date(), running: true)
+        ]
+        grants = [
+            "h": Router.Grant(
+                app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"],
+                limits: AppLimits(spend: .init(max: 5, period: .day), atOnce: 2))
+        ]
         if let grant = grants["h"] {
-            appStatus[grant.id] = AppLimitStatus(today: .init(cost: 1.2, turns: 9, tasks: 4), running: 1, spent: 1.2, spendResets: "at midnight")
+            appStatus[grant.id] = AppLimitStatus(
+                today: .init(cost: 1.2, turns: 9, tasks: 4), running: 1, spent: 1.2, spendResets: "at midnight")
             // AGNETA_SHOWCASE_LIMIT shows the panel's card for an app that reached its limit.
             if ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_LIMIT"] != nil {
-                limitReached[grant.id] = AppLimitNotice(grant: grant.id, app: grant.app, limit: "spend", summary: "$5 a day", used: "$5.04 today",
-                                                        resetsAt: Date().addingTimeInterval(3600), resets: "at midnight")
+                limitReached[grant.id] = AppLimitNotice(
+                    grant: grant.id, app: grant.app, limit: "spend", summary: "$5 a day", used: "$5.04 today",
+                    resetsAt: Date().addingTimeInterval(3600), resets: "at midnight")
             }
         }
         let sample = UUID()
@@ -886,16 +998,22 @@ final class AppModel {
         let environment = ProcessInfo.processInfo.environment
         let unverified = environment["AGNETA_SHOWCASE_UNVERIFIED"] != nil
         let home = FileManager.default.homeDirectoryForCurrentUser
-        var request = Approvals.Request(id: sample, app: "Example App", identifier: "com.example.app", verified: !unverified, code: "123456",
-                                        allowed: ["a", "c"], engines: Set(library.catalog.entries.keys), tools: .workspace,
-                                        folders: unverified ? ["Documents/Example Project", ".rustup", ".cargo/bin"].map { home.appending(path: $0) }
-                                                            : [home.appending(path: "Documents/Example Project")])
+        var request = Approvals.Request(
+            id: sample, app: "Example App", identifier: "com.example.app", verified: !unverified, code: "123456",
+            allowed: ["a", "c"], engines: Set(library.catalog.entries.keys), tools: .workspace,
+            folders: unverified
+                ? ["Documents/Example Project", ".rustup", ".cargo/bin"].map { home.appending(path: $0) }
+                : [home.appending(path: "Documents/Example Project")])
         switch environment["AGNETA_SHOWCASE_REQUEST"] {
         case "narrow"?:
-            (request.kinds, request.allowed, request.engines, request.namedEngines) = ([.claude], ["a"], ["claude-code"], true)
+            (request.kinds, request.allowed, request.engines, request.namedEngines) = (
+                [.claude], ["a"], ["claude-code"], true
+            )
             (request.sandbox, request.sandboxFixed) = (.contained, true)
         case "missing"?:
-            (request.kinds, request.allowed, request.engines, request.namedEngines) = ([.claude, .anthropicKey], ["a"], ["claude-code"], true)
+            (request.kinds, request.allowed, request.engines, request.namedEngines) = (
+                [.claude, .anthropicKey], ["a"], ["claude-code"], true
+            )
         case "none"?:
             accounts = []
             request.allowed = []
@@ -903,24 +1021,42 @@ final class AppModel {
         }
         approvals.addSample(request)
         if let engine = library.engine(for: .chatGPT) {
-            func option(_ id: String, _ category: String, _ current: String, _ values: [(String, String)]) -> JSONValue {
-                ["id": .string(id), "category": .string(category), "type": "select", "currentValue": .string(current),
-                 "options": .array(values.map { ["value": .string($0.0), "name": .string($0.1)] })]
+            func option(_ id: String, _ category: String, _ current: String, _ values: [(String, String)]) -> JSONValue
+            {
+                [
+                    "id": .string(id), "category": .string(category), "type": "select",
+                    "currentValue": .string(current),
+                    "options": .array(values.map { ["value": .string($0.0), "name": .string($0.1)] })
+                ]
             }
             sampleOptions["b.\(engine)"] = [
-                option("model", "model", "frontier", [("frontier", "Frontier"), ("frontier-mini", "Frontier Mini"), ("coder", "Coder")]),
-                option("reasoning_effort", "thought_level", "medium", [("low", "Low"), ("medium", "Medium"), ("high", "High"), ("xhigh", "Extra High")]),
+                option(
+                    "model", "model", "frontier",
+                    [("frontier", "Frontier"), ("frontier-mini", "Frontier Mini"), ("coder", "Coder")]),
+                option(
+                    "reasoning_effort", "thought_level", "medium",
+                    [("low", "Low"), ("medium", "Medium"), ("high", "High"), ("xhigh", "Extra High")])
             ]
         }
-        signIn.showSample(SignInFlow.State(kind: .claude, text: "When Claude shows you a code, paste it here.", page: URL(string: "https://claude.com"), needsCode: true))
-        history = [TaskRecord(id: "3", app: "Example App", account: "a", title: "Drafting release notes", started: Date().addingTimeInterval(-7_200),
-                              ended: Date().addingTimeInterval(-6_100), outcome: .finished, turns: 6, cost: 0.42),
-                   TaskRecord(id: "4", app: "Example App", account: "b", title: "Naming a folder", started: Date().addingTimeInterval(-90_000),
-                              ended: Date().addingTimeInterval(-89_970), outcome: .finished, turns: 1),
-                   TaskRecord(id: "5", app: "Example App", account: "a", title: "Checking a spreadsheet", started: Date().addingTimeInterval(-200_000),
-                              ended: Date().addingTimeInterval(-199_000), outcome: .stopped, turns: 3, cost: 0.18)]
+        signIn.showSample(
+            SignInFlow.State(
+                kind: .claude, text: "When Claude shows you a code, paste it here.",
+                page: URL(string: "https://claude.com"), needsCode: true))
+        history = [
+            TaskRecord(
+                id: "3", app: "Example App", account: "a", title: "Drafting release notes",
+                started: Date().addingTimeInterval(-7_200),
+                ended: Date().addingTimeInterval(-6_100), outcome: .finished, turns: 6, cost: 0.42),
+            TaskRecord(
+                id: "4", app: "Example App", account: "b", title: "Naming a folder",
+                started: Date().addingTimeInterval(-90_000),
+                ended: Date().addingTimeInterval(-89_970), outcome: .finished, turns: 1),
+            TaskRecord(
+                id: "5", app: "Example App", account: "a", title: "Checking a spreadsheet",
+                started: Date().addingTimeInterval(-200_000),
+                ended: Date().addingTimeInterval(-199_000), outcome: .stopped, turns: 3, cost: 0.18)
+        ]
     }
-
 
     /// Starts the bundled sandboxed test client, which pairs and runs one small task.
     func runTestTask() {

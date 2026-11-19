@@ -3,6 +3,7 @@
 // agneta-shell executable.
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 enum BuiltTools {
@@ -26,20 +27,28 @@ struct ToolBrokerTests {
 
     /// Starts a broker for one workspace, runs `command` through agneta-shell from `cwd`, stops the broker.
     static func run(_ command: String, cwd: URL? = nil, token: String = "t0ken") async throws -> (Result, URL) {
-        let root = FileManager.default.temporaryDirectory.appending(path: "agneta-broker-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-broker-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory
+        ).realFileURL
         let workspace = root.appending(path: "work", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: root.appending(path: "outside"), withIntermediateDirectories: true)
         let profile = SandboxProfile(kind: .tool, writable: [workspace], denied: []).render()
         let reports = Reports()
-        let broker = ToolBroker(socketPath: root.appending(path: "b.sock").path(percentEncoded: false), resolve: { token, cwd in
-            token == "t0ken" && cwd.isInside(workspace) ? .init(profile: profile, environment: ["PATH": "/usr/bin:/bin", "HOME": workspace.path(percentEncoded: false)]) : nil
-        }, report: { _, fields in reports.add(fields) })
+        let broker = ToolBroker(
+            socketPath: root.appending(path: "b.sock").path(percentEncoded: false),
+            resolve: { token, cwd in
+                token == "t0ken" && cwd.isInside(workspace)
+                    ? .init(
+                        profile: profile,
+                        environment: ["PATH": "/usr/bin:/bin", "HOME": workspace.path(percentEncoded: false)]) : nil
+            }, report: { _, fields in reports.add(fields) })
         try broker.start()
         defer { broker.stop() }
-        let child = try ChildProcess(executable: shell.path(percentEncoded: false), arguments: ["-c", command],
-                                     environment: ["AGNETA_BROKER_SOCKET": broker.socketPath, "AGNETA_BROKER_TOKEN": token],
-                                     directory: (cwd ?? workspace).path(percentEncoded: false))
+        let child = try ChildProcess(
+            executable: shell.path(percentEncoded: false), arguments: ["-c", command],
+            environment: ["AGNETA_BROKER_SOCKET": broker.socketPath, "AGNETA_BROKER_TOKEN": token],
+            directory: (cwd ?? workspace).path(percentEncoded: false))
         try? child.stdin.close()
         async let out = collect(child.stdout)
         async let err = collect(child.stderr)
@@ -71,7 +80,12 @@ struct ToolBrokerTests {
         #expect(report["exit"]?.intValue == 3 && report["signal"] == nil)
         #expect(report["stdoutBytes"]?.intValue == 4 && report["stderrBytes"]?.intValue == 4)
         #expect(report["stderrTail"]?.stringValue == "err\n")
-        let ms: Double = switch report["ms"] { case .double(let v)?: v; case .int(let v)?: Double(v); default: 0 }
+        let ms: Double =
+            switch report["ms"] {
+            case .double(let v)?: v;
+            case .int(let v)?: Double(v);
+            default: 0
+            }
         #expect(ms >= 100)
         #expect(report["profileSha256"]?.stringValue?.count == 64)
 
@@ -96,11 +110,14 @@ struct ToolBrokerTests {
         #expect(result.out == "started\n")
         try await Task.sleep(for: .milliseconds(300))
         // The background `sleep 30` must be gone: nothing in the workspace's group survives.
-        let check = try ChildProcess(executable: "/bin/sh", arguments: ["-c", "pgrep -f 'sleep 30; touch late.txt' || echo none"], environment: ["PATH": "/usr/bin:/bin"])
+        let check = try ChildProcess(
+            executable: "/bin/sh", arguments: ["-c", "pgrep -f 'sleep 30; touch late.txt' || echo none"],
+            environment: ["PATH": "/usr/bin:/bin"])
         let out = String(decoding: check.stdout.readDataToEndOfFile(), as: UTF8.self)
         _ = await check.waitForExit()
         #expect(out.trimmingCharacters(in: .whitespacesAndNewlines) == "none")
-        #expect(!FileManager.default.fileExists(atPath: root.appending(path: "work/late.txt").path(percentEncoded: false)))
+        #expect(
+            !FileManager.default.fileExists(atPath: root.appending(path: "work/late.txt").path(percentEncoded: false)))
     }
 
     /// A background child that keeps the output open doesn't hold the command up or outlive it.
@@ -112,22 +129,26 @@ struct ToolBrokerTests {
         #expect(ContinuousClock.now - started < .seconds(10), "the command waited for its background child")
         #expect(result.out == "started\n" && result.status == 0)
         try await Task.sleep(for: .milliseconds(300))
-        let check = try ChildProcess(executable: "/usr/bin/pgrep", arguments: ["-f", marker], environment: ["PATH": "/usr/bin:/bin"])
+        let check = try ChildProcess(
+            executable: "/usr/bin/pgrep", arguments: ["-f", marker], environment: ["PATH": "/usr/bin:/bin"])
         let out = String(decoding: check.stdout.readDataToEndOfFile(), as: UTF8.self)
         _ = await check.waitForExit()
         #expect(out.isEmpty, "still running: \(out)")
-        #expect(!FileManager.default.fileExists(atPath: root.appending(path: "work/\(marker)").path(percentEncoded: false)))
+        #expect(
+            !FileManager.default.fileExists(atPath: root.appending(path: "work/\(marker)").path(percentEncoded: false)))
     }
 
     @Test func commandsHaveNoNetworkAndStayInTheWorkspace() async throws {
-        let (result, root) = try await Self.run("""
-        /usr/bin/curl -s -o /dev/null --max-time 4 https://api.github.com && echo NET || echo no-network
-        touch inside.txt && echo wrote-inside
-        touch ../outside/escape.txt 2>/dev/null && echo ESCAPED || echo outside-denied
-        ls "/Users/$(/usr/bin/id -un)/Library/Preferences" >/dev/null 2>&1 && echo HOME-READ || echo home-denied
-        """)
+        let (result, root) = try await Self.run(
+            """
+            /usr/bin/curl -s -o /dev/null --max-time 4 https://api.github.com && echo NET || echo no-network
+            touch inside.txt && echo wrote-inside
+            touch ../outside/escape.txt 2>/dev/null && echo ESCAPED || echo outside-denied
+            ls "/Users/$(/usr/bin/id -un)/Library/Preferences" >/dev/null 2>&1 && echo HOME-READ || echo home-denied
+            """)
         #expect(result.out == "no-network\nwrote-inside\noutside-denied\nhome-denied\n")
-        #expect(FileManager.default.fileExists(atPath: root.appending(path: "work/inside.txt").path(percentEncoded: false)))
+        #expect(
+            FileManager.default.fileExists(atPath: root.appending(path: "work/inside.txt").path(percentEncoded: false)))
     }
 
     @Test func refusesUnknownFoldersAndWrongTokens() async throws {
@@ -145,26 +166,32 @@ extension ToolBrokerTests {
     /// A token's commands stop with its engine, even when their client (a detached shell) lives on: the broker lists
     /// what each token runs, and once the engine ends nothing it started keeps running, nor can it start more.
     @Test func anEnginesCommandsStopWithItAndItStartsNoMore() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "agneta-broker-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-broker-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory
+        ).realFileURL
         let workspace = root.appending(path: "work", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let profile = SandboxProfile(kind: .tool, writable: [workspace], denied: []).render()
-        let broker = ToolBroker(socketPath: root.appending(path: "b.sock").path(percentEncoded: false), resolve: { token, cwd in
-            cwd.isInside(workspace) ? .init(profile: profile, environment: ["PATH": "/usr/bin:/bin"]) : nil
-        })
+        let broker = ToolBroker(
+            socketPath: root.appending(path: "b.sock").path(percentEncoded: false),
+            resolve: { token, cwd in
+                cwd.isInside(workspace) ? .init(profile: profile, environment: ["PATH": "/usr/bin:/bin"]) : nil
+            })
         try broker.start()
         defer { broker.stop() }
         func start(_ command: String, token: String) throws -> ChildProcess {
-            let child = try ChildProcess(executable: Self.shell.path(percentEncoded: false), arguments: ["-c", command],
-                                         environment: ["AGNETA_BROKER_SOCKET": broker.socketPath, "AGNETA_BROKER_TOKEN": token],
-                                         directory: workspace.path(percentEncoded: false))
+            let child = try ChildProcess(
+                executable: Self.shell.path(percentEncoded: false), arguments: ["-c", command],
+                environment: ["AGNETA_BROKER_SOCKET": broker.socketPath, "AGNETA_BROKER_TOKEN": token],
+                directory: workspace.path(percentEncoded: false))
             try? child.stdin.close()
             return child
         }
         let long = try start("sleep 30", token: "engine-a")
         let other = try start("sleep 30", token: "engine-b")
-        for _ in 0..<100 where broker.runningCommands(token: "engine-a") == 0 || broker.runningCommands(token: "engine-b") == 0 {
+        for _ in 0..<100
+        where broker.runningCommands(token: "engine-a") == 0 || broker.runningCommands(token: "engine-b") == 0 {
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(broker.runningCommands(token: "engine-a") == 1 && broker.runningCommands(token: "engine-b") == 1)
@@ -193,22 +220,33 @@ extension ToolBrokerTests {
     struct Held {
         let root: URL, workspace: URL, broker: ToolBroker
         init() throws {
-            root = FileManager.default.temporaryDirectory.appending(path: "agneta-held-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
+            root =
+                FileManager.default.temporaryDirectory.appending(
+                    path: "agneta-held-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory
+                ).realFileURL
             workspace = root.appending(path: "work", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
             let profile = SandboxProfile(kind: .tool, writable: [workspace], denied: []).render()
             let workspace = workspace
-            broker = ToolBroker(socketPath: root.appending(path: "b.sock").path(percentEncoded: false), holder: ToolBrokerTests.shell.path(percentEncoded: false),
-                                resolve: { _, cwd in cwd.isInside(workspace) ? .init(profile: profile, environment: ["PATH": "/usr/bin:/bin"]) : nil })
+            broker = ToolBroker(
+                socketPath: root.appending(path: "b.sock").path(percentEncoded: false),
+                holder: ToolBrokerTests.shell.path(percentEncoded: false),
+                resolve: { _, cwd in
+                    cwd.isInside(workspace) ? .init(profile: profile, environment: ["PATH": "/usr/bin:/bin"]) : nil
+                })
             try broker.start()
         }
         /// As an engine runs it: the token from the engine's file, never its environment.
         func run(_ command: String, token: String = "engine") async throws -> (status: Int32, out: String) {
             let file = root.appending(path: "token-\(token)")
             try token.write(to: file, atomically: true, encoding: .utf8)
-            let child = try ChildProcess(executable: ToolBrokerTests.shell.path(percentEncoded: false), arguments: ["-c", command],
-                                         environment: ["AGNETA_BROKER_SOCKET": broker.socketPath, "AGNETA_BROKER_TOKEN_FILE": file.path(percentEncoded: false)],
-                                         directory: workspace.path(percentEncoded: false))
+            let child = try ChildProcess(
+                executable: ToolBrokerTests.shell.path(percentEncoded: false), arguments: ["-c", command],
+                environment: [
+                    "AGNETA_BROKER_SOCKET": broker.socketPath,
+                    "AGNETA_BROKER_TOKEN_FILE": file.path(percentEncoded: false)
+                ],
+                directory: workspace.path(percentEncoded: false))
             try? child.stdin.close()
             let out = try await ToolBrokerTests.collect(child.stdout)
             let raw = await child.waitForExit()
@@ -224,37 +262,53 @@ extension ToolBrokerTests {
         let started = ContinuousClock.now
         let first = try await held.run("(sleep 2; echo finished > bg.txt) > /dev/null 2>&1 & echo started")
         #expect(first.status == 0 && first.out.contains("started"))
-        #expect(ContinuousClock.now - started < .seconds(2), "the command returned without waiting for its background job")
+        #expect(
+            ContinuousClock.now - started < .seconds(2), "the command returned without waiting for its background job")
         #expect(held.broker.runningCommands(token: "engine") == 1, "the background job is listed")
         try await Task.sleep(for: .seconds(3))
-        #expect(FileManager.default.fileExists(atPath: held.workspace.appending(path: "bg.txt").path(percentEncoded: false)), "it finished after its command")
+        #expect(
+            FileManager.default.fileExists(
+                atPath: held.workspace.appending(path: "bg.txt").path(percentEncoded: false)),
+            "it finished after its command")
         // Its group emptied: the holder left and nothing is listed.
-        for _ in 0..<60 where held.broker.runningCommands(token: "engine") > 0 { try await Task.sleep(for: .milliseconds(100)) }
+        for _ in 0..<60 where held.broker.runningCommands(token: "engine") > 0 {
+            try await Task.sleep(for: .milliseconds(100))
+        }
         #expect(held.broker.runningCommands(token: "engine") == 0)
 
         // One still running when its engine ends is stopped with it.
         _ = try await held.run("(sleep 3; echo leaked > late.txt) > /dev/null 2>&1 &")
         #expect(held.broker.stopCommands(token: "engine") == 1)
         try await Task.sleep(for: .seconds(4))
-        #expect(!FileManager.default.fileExists(atPath: held.workspace.appending(path: "late.txt").path(percentEncoded: false)), "it ended with its engine")
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: held.workspace.appending(path: "late.txt").path(percentEncoded: false)),
+            "it ended with its engine")
     }
 
     /// A command whose client goes away (the engine timed it out) still ends with all it started.
     @Test func aCommandWhoseClientGoesEndsWithAllItStarted() async throws {
         let held = try Held()
         defer { held.stop() }
-        let child = try ChildProcess(executable: Self.shell.path(percentEncoded: false),
-                                     arguments: ["-c", "(sleep 3; echo leaked > orphan.txt) & sleep 30"],
-                                     environment: ["AGNETA_BROKER_SOCKET": held.broker.socketPath, "AGNETA_BROKER_TOKEN": "engine"],
-                                     directory: held.workspace.path(percentEncoded: false))
+        let child = try ChildProcess(
+            executable: Self.shell.path(percentEncoded: false),
+            arguments: ["-c", "(sleep 3; echo leaked > orphan.txt) & sleep 30"],
+            environment: ["AGNETA_BROKER_SOCKET": held.broker.socketPath, "AGNETA_BROKER_TOKEN": "engine"],
+            directory: held.workspace.path(percentEncoded: false))
         try? child.stdin.close()
-        for _ in 0..<100 where held.broker.runningCommands(token: "engine") == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        for _ in 0..<100 where held.broker.runningCommands(token: "engine") == 0 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         try await Task.sleep(for: .milliseconds(300))
         child.signalGroup(SIGKILL)
         _ = await child.waitForExit()
         try await Task.sleep(for: .seconds(4))
-        #expect(!FileManager.default.fileExists(atPath: held.workspace.appending(path: "orphan.txt").path(percentEncoded: false)))
-        for _ in 0..<60 where held.broker.runningCommands(token: "engine") > 0 { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: held.workspace.appending(path: "orphan.txt").path(percentEncoded: false)))
+        for _ in 0..<60 where held.broker.runningCommands(token: "engine") > 0 {
+            try await Task.sleep(for: .milliseconds(100))
+        }
         #expect(held.broker.runningCommands(token: "engine") == 0)
     }
 
@@ -267,19 +321,23 @@ extension ToolBrokerTests {
         held.broker.stop()
         #expect(held.broker.runningCommands(token: "engine") == 0)
         try await Task.sleep(for: .seconds(4))
-        #expect(!FileManager.default.fileExists(atPath: held.workspace.appending(path: "late.txt").path(percentEncoded: false)))
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: held.workspace.appending(path: "late.txt").path(percentEncoded: false)))
     }
 
     /// The holder's stdin is Agneta's: closed before the command joins, it leaves at once (the command never started);
     /// closed after, Agneta has gone, and it ends everything in its group.
     @Test(.timeLimit(.minutes(1))) func theHolderEndsItsGroupWhenAgnetaGoes() async throws {
-        let idle = try ChildProcess(executable: Self.shell.path(percentEncoded: false), arguments: ["--hold"], environment: [:])
+        let idle = try ChildProcess(
+            executable: Self.shell.path(percentEncoded: false), arguments: ["--hold"], environment: [:])
         let started = ContinuousClock.now
         try idle.stdin.close()
         _ = await idle.waitForExit()
         #expect(ContinuousClock.now - started < .seconds(2))
 
-        let holder = try ChildProcess(executable: Self.shell.path(percentEncoded: false), arguments: ["--hold"], environment: [:])
+        let holder = try ChildProcess(
+            executable: Self.shell.path(percentEncoded: false), arguments: ["--hold"], environment: [:])
         let job = try ChildProcess(executable: "/bin/sleep", arguments: ["30"], environment: [:], joining: holder.pid)
         try holder.stdin.write(contentsOf: Data("g".utf8))
         try await Task.sleep(for: .milliseconds(500))
@@ -295,9 +353,12 @@ extension ToolBrokerTests {
     @Test(.timeLimit(.minutes(1))) func theMCPShellRunsCallsAtOnceAndHonoursCancel() async throws {
         let held = try Held()
         defer { held.stop() }
-        let server = try ChildProcess(executable: Self.shell.path(percentEncoded: false), arguments: ["--mcp"],
-                                      environment: ["AGNETA_BROKER_SOCKET": held.broker.socketPath, "AGNETA_BROKER_TOKEN": "engine", "AGNETA_SHELL": "1",
-                                                    "AGNETA_SHELL_CWD": held.workspace.path(percentEncoded: false)])
+        let server = try ChildProcess(
+            executable: Self.shell.path(percentEncoded: false), arguments: ["--mcp"],
+            environment: [
+                "AGNETA_BROKER_SOCKET": held.broker.socketPath, "AGNETA_BROKER_TOKEN": "engine", "AGNETA_SHELL": "1",
+                "AGNETA_SHELL_CWD": held.workspace.path(percentEncoded: false)
+            ])
         defer { server.signalGroup(SIGKILL) }
         final class Replies: @unchecked Sendable {
             let lock = NSLock()
@@ -315,9 +376,15 @@ extension ToolBrokerTests {
                 while let newline = buffer.firstIndex(of: 0x0A) {
                     let line = buffer[buffer.startIndex..<newline]
                     buffer.removeSubrange(buffer.startIndex...newline)
-                    if let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any], let id = message["id"] as? Int {
-                        let text = ((message["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String
-                        replies.lock.withLock { replies.order.append(id); replies.texts[id] = text }
+                    if let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                        let id = message["id"] as? Int
+                    {
+                        let text =
+                            ((message["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"]
+                            as? String
+                        replies.lock.withLock {
+                            replies.order.append(id); replies.texts[id] = text
+                        }
                     }
                 }
             }
@@ -326,10 +393,15 @@ extension ToolBrokerTests {
             try server.stdin.write(contentsOf: try JSONSerialization.data(withJSONObject: message) + Data("\n".utf8))
         }
         func call(_ id: Int, _ command: String) throws {
-            try send(["jsonrpc": "2.0", "id": id, "method": "tools/call", "params": ["name": "shell", "arguments": ["command": command]]])
+            try send([
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": ["name": "shell", "arguments": ["command": command]]
+            ])
         }
         func waitFor(_ id: Int) async throws {
-            for _ in 0..<200 where !replies.lock.withLock({ replies.order.contains(id) }) { try await Task.sleep(for: .milliseconds(50)) }
+            for _ in 0..<200 where !replies.lock.withLock({ replies.order.contains(id) }) {
+                try await Task.sleep(for: .milliseconds(50))
+            }
         }
         try send(["jsonrpc": "2.0", "id": 0, "method": "initialize", "params": [:]])
         try await waitFor(0)
@@ -339,9 +411,13 @@ extension ToolBrokerTests {
         #expect(replies.lock.withLock { replies.order } == [0, 2, 1], "the quick call answered first")
 
         try call(3, "sleep 30; echo late > cancelled.txt")
-        for _ in 0..<100 where held.broker.runningCommands(token: "engine") == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        for _ in 0..<100 where held.broker.runningCommands(token: "engine") == 0 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         try send(["jsonrpc": "2.0", "method": "notifications/cancelled", "params": ["requestId": 3]])
-        for _ in 0..<100 where held.broker.runningCommands(token: "engine") > 0 { try await Task.sleep(for: .milliseconds(50)) }
+        for _ in 0..<100 where held.broker.runningCommands(token: "engine") > 0 {
+            try await Task.sleep(for: .milliseconds(50))
+        }
         #expect(held.broker.runningCommands(token: "engine") == 0, "the cancelled command ended")
         try call(4, "echo four")
         try await waitFor(4)
@@ -349,7 +425,8 @@ extension ToolBrokerTests {
         try call(5, "head -c 3000000 /dev/zero | tr '\\0' x; echo; echo the-end")
         try await waitFor(5)
         let big = try #require(replies.lock.withLock { replies.texts[5] })
-        #expect(big.utf8.count < 110_000 && big.contains("bytes cut") && big.contains("the-end"), "\(big.utf8.count) bytes")
+        #expect(
+            big.utf8.count < 110_000 && big.contains("bytes cut") && big.contains("the-end"), "\(big.utf8.count) bytes")
         #expect(!replies.lock.withLock { replies.order }.contains(3), "a cancelled call gets no reply")
     }
 }

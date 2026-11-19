@@ -1,12 +1,15 @@
 // The diagnostics MCP server over real HTTP on loopback (docs/DIAGNOSTICS.md, D3).
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 @Suite(.serialized) struct DiagnosticsMCPTests {
     struct Reply { var status: Int; var body: JSONValue? }
 
-    static func post(_ port: UInt16, _ body: JSONValue, token: String? = "agd_test", origin: String? = nil) async throws -> Reply {
+    static func post(_ port: UInt16, _ body: JSONValue, token: String? = "agd_test", origin: String? = nil) async throws
+        -> Reply
+    {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/mcp")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -17,19 +20,31 @@ import Testing
         return Reply(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: try? JSONCoding.decode(data))
     }
 
-    static func call(_ port: UInt16, _ tool: String, _ arguments: JSONValue) async throws -> (text: String, isError: Bool) {
-        let reply = try await post(port, ["jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": ["name": .string(tool), "arguments": arguments]])
+    static func call(_ port: UInt16, _ tool: String, _ arguments: JSONValue) async throws -> (
+        text: String, isError: Bool
+    ) {
+        let reply = try await post(
+            port,
+            [
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": ["name": .string(tool), "arguments": arguments]
+            ])
         let result = reply.body?["result"]
-        return (result?["content"]?.arrayValue?.first?["text"]?.stringValue ?? "", result?["isError"]?.boolValue == true)
+        return (
+            result?["content"]?.arrayValue?.first?["text"]?.stringValue ?? "", result?["isError"]?.boolValue == true
+        )
     }
 
     @Test func toolsReadTracesWithTheTokenOnly() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "agneta-dmcp-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-dmcp-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
         let traces = Traces(folder: root.appending(path: "Traces", directoryHint: .isDirectory))
         try FileManager.default.createDirectory(at: traces.folder, withIntermediateDirectories: true)
         // A finished task (seq numbers as a real trace has them) and one still running.
-        let finished = TraceSummaryTests.records.enumerated().map { index, record in record.setting("seq", to: .int(Int64(index + 1))).setting("turn", to: 1) }
+        let finished = TraceSummaryTests.records.enumerated().map { index, record in
+            record.setting("seq", to: .int(Int64(index + 1))).setting("turn", to: 1)
+        }
         try TraceExport.write(finished, to: traces.file(for: "s_finished"), redactContent: false)
         let running = traces.open(task: "s_running", lease: "acct/x", engineSession: "e")
         running.writer.record("meta", ["app": ["name": "Example App"], "engine": ["key": "acct/x", "dedicated": true]])
@@ -43,11 +58,18 @@ import Testing
         try await server.start(port: port)
         defer { server.stop() }
 
-        #expect(try await Self.post(port, ["jsonrpc": "2.0", "id": 1, "method": "tools/list"], token: nil).status == 401)
-        #expect(try await Self.post(port, ["jsonrpc": "2.0", "id": 1, "method": "tools/list"], token: "wrong").status == 401)
-        #expect(try await Self.post(port, ["jsonrpc": "2.0", "id": 1, "method": "tools/list"], origin: "https://example.com").status == 403)
+        #expect(
+            try await Self.post(port, ["jsonrpc": "2.0", "id": 1, "method": "tools/list"], token: nil).status == 401)
+        #expect(
+            try await Self.post(port, ["jsonrpc": "2.0", "id": 1, "method": "tools/list"], token: "wrong").status == 401
+        )
+        #expect(
+            try await Self.post(
+                port, ["jsonrpc": "2.0", "id": 1, "method": "tools/list"], origin: "https://example.com"
+            ).status == 403)
 
-        let initialized = try await Self.post(port, ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": ["protocolVersion": "2025-06-18"]])
+        let initialized = try await Self.post(
+            port, ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": ["protocolVersion": "2025-06-18"]])
         #expect(initialized.body?["result"]?["serverInfo"]?["name"]?.stringValue == "agneta-diagnostics")
         #expect(try await Self.post(port, ["jsonrpc": "2.0", "method": "notifications/initialized"]).status == 202)
         let tools = try await Self.post(port, ["jsonrpc": "2.0", "id": 2, "method": "tools/list"])

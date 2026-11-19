@@ -4,11 +4,14 @@
 // out by hand from those rules, not derived from the code under test.
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 @Suite struct SandboxTests {
-    typealias Row = (requested: Sandbox?, ceiling: Sandbox, levels: [Sandbox], tools: SessionPolicy.Tools,
-                     expect: (profile: Sandbox, effective: Sandbox)?)
+    typealias Row = (
+        requested: Sandbox?, ceiling: Sandbox, levels: [Sandbox], tools: SessionPolicy.Tools,
+        expect: (profile: Sandbox, effective: Sandbox)?
+    )
     static let both: [Sandbox] = [.contained, .developer]
     static let uncontained: [Sandbox] = [.developer]
 
@@ -35,32 +38,41 @@ import Testing
         (.contained, .developer, uncontained, .read, nil),
         (nil, .contained, uncontained, .workspace, nil),
         (nil, .contained, uncontained, .appOnly, nil),
-        (.developer, .contained, uncontained, .workspace, nil),
+        (.developer, .contained, uncontained, .workspace, nil)
     ]
 
     @Test func everyCombinationResolvesByTheRules() {
         for row in Self.rows {
-            let got = SandboxResolution.resolve(requested: row.requested, ceiling: row.ceiling, levels: row.levels, tools: row.tools,
-                                                provider: "Claude", why: "it can't")
-            let label = "asked \(row.requested?.rawValue ?? "nothing"), user \(row.ceiling.rawValue), engine \(row.levels.map(\.rawValue)), tools \(row.tools.rawValue)"
+            let got = SandboxResolution.resolve(
+                requested: row.requested, ceiling: row.ceiling, levels: row.levels, tools: row.tools,
+                provider: "Claude", why: "it can't")
+            let label =
+                "asked \(row.requested?.rawValue ?? "nothing"), user \(row.ceiling.rawValue), engine \(row.levels.map(\.rawValue)), tools \(row.tools.rawValue)"
             switch (got, row.expect) {
             case (.success(let outcome), let expect?):
-                #expect(outcome.profile == expect.profile && outcome.effective == expect.effective, "\(label): \(outcome)")
+                #expect(
+                    outcome.profile == expect.profile && outcome.effective == expect.effective, "\(label): \(outcome)")
             case (.failure(let refusal), nil):
                 #expect(refusal.field == "sandbox", "\(label)")
             case (.success(let outcome), nil): Issue.record("\(label): expected a refusal, got \(outcome)")
-            case (.failure(let refusal), _?): Issue.record("\(label): expected a sandbox, got refused: \(refusal.reason)")
+            case (.failure(let refusal), _?):
+                Issue.record("\(label): expected a sandbox, got refused: \(refusal.reason)")
             }
         }
     }
 
     /// A refusal says why, in words an app can show: the user's choice, or what the engine can't do.
     @Test func refusalsSayWhy() {
-        guard case .failure(let ceiling) = SandboxResolution.resolve(requested: .developer, ceiling: .contained, levels: Self.both, tools: .workspace,
-                                                                     provider: "Claude", why: nil) else { Issue.record("not refused"); return }
+        guard
+            case .failure(let ceiling) = SandboxResolution.resolve(
+                requested: .developer, ceiling: .contained, levels: Self.both, tools: .workspace,
+                provider: "Claude", why: nil)
+        else { Issue.record("not refused"); return }
         #expect(ceiling.reason.contains("Settings → Apps") && ceiling.reason.contains("less, not more"))
-        guard case .failure(let engine) = SandboxResolution.resolve(requested: .contained, ceiling: .developer, levels: Self.uncontained, tools: .workspace,
-                                                                    provider: "Claude", why: ProviderEngines.uncontainedReason("goose", for: .claude))
+        guard
+            case .failure(let engine) = SandboxResolution.resolve(
+                requested: .contained, ceiling: .developer, levels: Self.uncontained, tools: .workspace,
+                provider: "Claude", why: ProviderEngines.uncontainedReason("goose", for: .claude))
         else { Issue.record("not refused"); return }
         #expect(engine.reason.contains("Goose") && engine.reason.contains("choose another engine"))
     }
@@ -75,7 +87,9 @@ import Testing
                 if kind == .claude, engine == "goose" {
                     #expect(levels == [.developer] && ProviderEngines.uncontainedReason(engine, for: kind) != nil)
                 } else {
-                    #expect(levels == Sandbox.allCases && ProviderEngines.uncontainedReason(engine, for: kind) == nil, "\(engine) on \(kind)")
+                    #expect(
+                        levels == Sandbox.allCases && ProviderEngines.uncontainedReason(engine, for: kind) == nil,
+                        "\(engine) on \(kind)")
                 }
             }
         }
@@ -85,13 +99,22 @@ import Testing
     /// The policy's `sandbox` field: the two levels by name, developer only with workspace tools, nothing else; the
     /// old `access` field is gone and refused like any unknown field.
     @Test func thePolicyFieldParsesStrictly() throws {
-        let context = PolicyContext(userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [URL(filePath: "/tmp/agneta-none")])
+        let context = PolicyContext(
+            userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [URL(filePath: "/tmp/agneta-none")])
         let cwd = FileManager.default.temporaryDirectory.path(percentEncoded: false)
         #expect(try SessionPolicy.parse(["tools": "workspace"], cwd: cwd, context: context).requestedSandbox == nil)
-        #expect(try SessionPolicy.parse(["sandbox": "contained"], cwd: cwd, context: context).requestedSandbox == .contained)
-        #expect(try SessionPolicy.parse(["tools": "workspace", "sandbox": "developer"], cwd: cwd, context: context).requestedSandbox == .developer)
-        #expect(try SessionPolicy.parse(["tools": "read", "sandbox": "contained"], cwd: cwd, context: context).requestedSandbox == .contained)
-        for bad: JSONValue in [["tools": "read", "sandbox": "developer"], ["sandbox": "standard"], ["sandbox": 1], ["access": "developer"]] {
+        #expect(
+            try SessionPolicy.parse(["sandbox": "contained"], cwd: cwd, context: context).requestedSandbox == .contained
+        )
+        #expect(
+            try SessionPolicy.parse(["tools": "workspace", "sandbox": "developer"], cwd: cwd, context: context)
+                .requestedSandbox == .developer)
+        #expect(
+            try SessionPolicy.parse(["tools": "read", "sandbox": "contained"], cwd: cwd, context: context)
+                .requestedSandbox == .contained)
+        for bad: JSONValue in [
+            ["tools": "read", "sandbox": "developer"], ["sandbox": "standard"], ["sandbox": 1], ["access": "developer"]
+        ] {
             #expect(throws: PolicyRejection.self, "\(bad)") { try SessionPolicy.parse(bad, cwd: cwd, context: context) }
         }
     }

@@ -3,6 +3,7 @@
 import Darwin
 import Foundation
 import Testing
+
 @testable import AgnetaKit
 
 extension RouterIntegrationTests {
@@ -20,7 +21,9 @@ extension RouterIntegrationTests {
         let stack = try await Stack.start(port: 47621, modelPort: 47622)
         do {
             let ended = Recorder()
-            await stack.runtime.observe { event in if case .router(.sessionEnded(let id, let ending)) = event { ended.add("\(id) \(ending.rawValue)") } }
+            await stack.runtime.observe { event in
+                if case .router(.sessionEnded(let id, let ending)) = event { ended.add("\(id) \(ending.rawValue)") }
+            }
             let app = AppClient(port: stack.port)
             defer { app.close() }
             try await app.pairAndInitialize("Wedged")
@@ -37,7 +40,9 @@ extension RouterIntegrationTests {
             _ = await turn.value
             #expect(ended.all == ["\(session) stopped"])
             #expect(await stack.runtime.history().first { $0.id == session }?.outcome == .stopped)
-            let last = try stack.traces.text(of: session).split(separator: "\n").last.map { try JSONCoding.decode(Data($0.utf8)) }
+            let last = try stack.traces.text(of: session).split(separator: "\n").last.map {
+                try JSONCoding.decode(Data($0.utf8))
+            }
             #expect(last?["type"]?.stringValue == "end")
             #expect(await stack.supervisor.processCount == 0)
         } catch {
@@ -60,10 +65,15 @@ extension RouterIntegrationTests {
             #expect(try await app.prompt(session, "hello")["stopReason"]?.stringValue == "end_turn")
             _ = try await app.request("session/close", ["sessionId": .string(session)])
             let key = try #require(stack.traces.meta(task: session)?["engine"]?["key"]?.stringValue)
-            try FileManager.default.removeItem(at: EngineHomes.home(root: stack.root.appending(path: "agneta"), key: key))
-            let load: JSONValue = ["sessionId": .string(session), "cwd": .string(workspace.path(percentEncoded: false)), "mcpServers": []]
+            try FileManager.default.removeItem(
+                at: EngineHomes.home(root: stack.root.appending(path: "agneta"), key: key))
+            let load: JSONValue = [
+                "sessionId": .string(session), "cwd": .string(workspace.path(percentEncoded: false)), "mcpServers": []
+            ]
             await #expect(throws: RPCError.self) { _ = try await app.request("session/load", load) }
-            for _ in 0..<40 where await stack.supervisor.processCount > 0 { try await Task.sleep(for: .milliseconds(50)) }
+            for _ in 0..<40 where await stack.supervisor.processCount > 0 {
+                try await Task.sleep(for: .milliseconds(50))
+            }
             #expect(await stack.supervisor.processCount == 0)
             #expect(await stack.runtime.router.sessionCount == 0)
             // Not stuck as "already open": a second try is answered the same way.
@@ -82,14 +92,24 @@ extension RouterIntegrationTests {
         let volume = stack.root.appending(path: "small", directoryHint: .isDirectory)
         let image = stack.root.appending(path: "small.dmg")
         func hdiutil(_ arguments: [String]) async -> Int32 {
-            guard let child = try? ChildProcess(executable: "/usr/bin/hdiutil", arguments: arguments, environment: ["PATH": "/usr/bin:/bin"]) else { return -1 }
+            guard
+                let child = try? ChildProcess(
+                    executable: "/usr/bin/hdiutil", arguments: arguments, environment: ["PATH": "/usr/bin:/bin"])
+            else { return -1 }
             return await child.waitForExit()
         }
         do {
             // A 2 MB volume of its own, filled to the last few kilobytes, where the traces are written.
             try FileManager.default.createDirectory(at: volume, withIntermediateDirectories: true)
-            #expect(await hdiutil(["create", "-size", "2m", "-fs", "HFS+", "-volname", "agneta-full", image.path(percentEncoded: false)]) == 0)
-            #expect(await hdiutil(["attach", image.path(percentEncoded: false), "-mountpoint", volume.path(percentEncoded: false), "-nobrowse", "-quiet"]) == 0)
+            #expect(
+                await hdiutil([
+                    "create", "-size", "2m", "-fs", "HFS+", "-volname", "agneta-full", image.path(percentEncoded: false)
+                ]) == 0)
+            #expect(
+                await hdiutil([
+                    "attach", image.path(percentEncoded: false), "-mountpoint", volume.path(percentEncoded: false),
+                    "-nobrowse", "-quiet"
+                ]) == 0)
             let filler = volume.appending(path: "filler")
             FileManager.default.createFile(atPath: filler.path(percentEncoded: false), contents: nil)
             let handle = try FileHandle(forWritingTo: filler)
@@ -139,13 +159,17 @@ extension RouterContractTests {
         await stack.router.revoke(grant: grant.id)
         await #expect(throws: (any Error).self) { _ = try await opening.value }
         // The engine is let go once its start finishes: waited for, not timed (a slow runner took longer than 800 ms).
-        for _ in 0..<100 where await stack.engines.opened != stack.engines.released { try await Task.sleep(for: .milliseconds(50)) }
+        for _ in 0..<100 where await stack.engines.opened != stack.engines.released {
+            try await Task.sleep(for: .milliseconds(50))
+        }
         #expect(await stack.router.sessionCount == 0)
         #expect(await stack.engines.opened == stack.engines.released, "an engine was kept for a session nobody got")
         let other = AppClient(port: stack.port)
         defer { other.close() }
         await #expect(throws: RPCError.self) {
-            _ = try await other.request("initialize", ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": .string(token)]]])
+            _ = try await other.request(
+                "initialize",
+                ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": .string(token)]]])
         }
     }
 }

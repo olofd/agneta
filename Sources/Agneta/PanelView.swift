@@ -18,7 +18,9 @@ struct PanelView: View {
                 VStack(spacing: 12) {
                     if let problem = model.attentionMessage { attention(problem) }
                     if let update = updateMessage { notice(update) }
-                    ForEach(model.library.downloads.values.sorted { $0.engine < $1.engine }, id: \.engine) { download in downloadCard(download) }
+                    ForEach(model.library.downloads.values.sorted { $0.engine < $1.engine }, id: \.engine) { download in
+                        downloadCard(download)
+                    }
                     if !model.tasks.isEmpty { tasksCard }
                     accountsCard
                 }
@@ -27,12 +29,23 @@ struct PanelView: View {
         }
         .padding(14)
         .frame(width: 360)
-        .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in resized() }
-        .confirmationDialog(confirmStop.map { "Stop “\($0.title)”?" } ?? "", isPresented: Binding(get: { confirmStop != nil }, set: { if !$0 { confirmStop = nil } })) {
-            Button("Stop Task", role: .destructive) { if let task = confirmStop { model.stop(task) }; confirmStop = nil }
+        .onGeometryChange(for: CGSize.self) {
+            $0.size
+        } action: { _ in
+            resized()
+        }
+        .confirmationDialog(
+            confirmStop.map { "Stop “\($0.title)”?" } ?? "",
+            isPresented: Binding(get: { confirmStop != nil }, set: { if !$0 { confirmStop = nil } })
+        ) {
+            Button("Stop Task", role: .destructive) {
+                if let task = confirmStop { model.stop(task) }; confirmStop = nil
+            }
             Button("Keep Running", role: .cancel) { confirmStop = nil }
         } message: {
-            if let task = confirmStop { Text("It has run for \(task.started.elapsed). \(task.stopWarning ?? "The app keeps the work so far.")") }
+            if let task = confirmStop {
+                Text("It has run for \(task.started.elapsed). \(task.stopWarning ?? "The app keeps the work so far.")")
+            }
         }
     }
 
@@ -47,11 +60,16 @@ struct PanelView: View {
             }
             Spacer()
             Menu {
-                Button("Run a Test Task") { model.runTestTask() }.disabled(model.testClientURL == nil || model.accounts.isEmpty)
+                Button("Run a Test Task") { model.runTestTask() }.disabled(
+                    model.testClientURL == nil || model.accounts.isEmpty)
                 Divider()
                 // Always here: a build that doesn't update itself says why instead of leaving the item missing.
-                Button("Check for Updates…") { open { model.updates.enabled ? model.updates.check() : WindowPresenter.shared.explainNoUpdates(model) } }
-                    .disabled(model.updates.enabled && !model.updates.canCheck)
+                Button("Check for Updates…") {
+                    open {
+                        model.updates.enabled ? model.updates.check() : WindowPresenter.shared.explainNoUpdates(model)
+                    }
+                }
+                .disabled(model.updates.enabled && !model.updates.canCheck)
                 Button("Settings…") { open { WindowPresenter.shared.showSettings(model) } }.keyboardShortcut(",")
                 Button("About Agneta") { open { WindowPresenter.shared.showSettings(model, section: .about) } }
                 Divider()
@@ -72,10 +90,12 @@ struct PanelView: View {
             Image(systemName: "exclamationmark.circle.fill").font(.system(size: 20)).foregroundStyle(Palette.attention)
             VStack(alignment: .leading, spacing: 1) {
                 Text(message.title).font(.system(size: 13, weight: .semibold))
-                Text(message.detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(message.detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(
+                    horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
-            Button(message.action, action: message.run).glassButton(prominent: true).tint(Palette.fill).controlSize(.small)
+            Button(message.action, action: message.run).glassButton(prominent: true).tint(Palette.fill).controlSize(
+                .small)
         }
         .padding(12)
         .frostedCard(tint: Palette.attention)
@@ -88,11 +108,18 @@ struct PanelView: View {
         let updates = model.updates
         if let version = updates.waitingToInstall {
             let count = model.tasks.count
-            return ("Agneta \(version) is ready", count == 1 ? "It installs when the running task ends." : "It installs when the \(count) running tasks end.",
-                    "Install Now", { open { WindowPresenter.shared.installUpdate(model) } })
+            return (
+                "Agneta \(version) is ready",
+                count == 1
+                    ? "It installs when the running task ends." : "It installs when the \(count) running tasks end.",
+                "Install Now", { open { WindowPresenter.shared.installUpdate(model) } }
+            )
         }
         if let version = updates.available {
-            return ("Agneta \(version) is available", "Running tasks finish before it installs.", "Update…", { open { updates.check() } })
+            return (
+                "Agneta \(version) is available", "Running tasks finish before it installs.", "Update…",
+                { open { updates.check() } }
+            )
         }
         return nil
     }
@@ -102,10 +129,12 @@ struct PanelView: View {
             Image(systemName: "arrow.down.circle.fill").font(.system(size: 20)).foregroundStyle(Palette.accent)
             VStack(alignment: .leading, spacing: 1) {
                 Text(message.title).font(.system(size: 13, weight: .semibold))
-                Text(message.detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(message.detail).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(
+                    horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
-            Button(message.action, action: message.run).glassButton(prominent: true).tint(Palette.fill).controlSize(.small)
+            Button(message.action, action: message.run).glassButton(prominent: true).tint(Palette.fill).controlSize(
+                .small)
         }
         .padding(12)
         .frostedCard(tint: Palette.accent)
@@ -122,17 +151,25 @@ struct PanelView: View {
             Image(systemName: failed ? "exclamationmark.circle.fill" : "arrow.down.circle.fill").font(.system(size: 20))
                 .foregroundStyle(failed ? Palette.attention : Palette.accent)
             VStack(alignment: .leading, spacing: 3) {
-                Text(failed ? "\(download.title) couldn't be downloaded" : "Downloading \(download.title)").font(.system(size: 13, weight: .semibold))
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(failed ? "\(download.title) couldn't be downloaded" : "Downloading \(download.title)").font(
+                    .system(size: 13, weight: .semibold)
+                )
+                .fixedSize(horizontal: false, vertical: true)
                 if failed {
                     Text("Check your connection, then try again.").font(.system(size: 12)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Button("Try Again") { model.library.download(download.engine, reason: "retry") }.glassButton(prominent: true).tint(Palette.fill).controlSize(.small)
+                    Button("Try Again") { model.library.download(download.engine, reason: "retry") }.glassButton(
+                        prominent: true
+                    ).tint(Palette.fill).controlSize(.small)
                         .padding(.top, 5)
                 } else {
                     // The download's own colour, as its icon, not the system blue on a rose card.
                     Group {
-                        if let fraction = download.fraction { ProgressView(value: fraction) } else { ProgressView().progressViewStyle(.linear) }
+                        if let fraction = download.fraction {
+                            ProgressView(value: fraction)
+                        } else {
+                            ProgressView().progressViewStyle(.linear)
+                        }
                     }
                     .controlSize(.small).tint(Palette.accent)
                     Text(download.amount).font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
@@ -140,9 +177,13 @@ struct PanelView: View {
             }
             Spacer(minLength: 6)
             if failed {
-                Button { model.library.putAway(download.engine) } label: { Image(systemName: "xmark") }
-                    .buttonStyle(.borderless).foregroundStyle(.secondary).help("Hide; it downloads again when it's needed")
-                    .accessibilityLabel("Hide")
+                Button {
+                    model.library.putAway(download.engine)
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless).foregroundStyle(.secondary).help("Hide; it downloads again when it's needed")
+                .accessibilityLabel("Hide")
             }
         }
         .padding(12)
@@ -185,13 +226,18 @@ struct PanelView: View {
                 VStack(spacing: 10) {
                     Text("Connect the AI you already pay for, and the apps you allow can use it.")
                         .font(.system(size: 12.5)).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Button("Connect a Provider…") { open { WindowPresenter.shared.showWelcome(model) } }.glassButton(prominent: true).tint(Palette.fill)
+                    Button("Connect a Provider…") { open { WindowPresenter.shared.showWelcome(model) } }.glassButton(
+                        prominent: true
+                    ).tint(Palette.fill)
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
             ForEach(model.accounts) { account in
-                AccountRow(account: account, engine: model.library.name(model.library.engine(for: account.kind)), needsSignIn: model.needsSignIn.contains(account.id),
-                           limitedUntil: model.limited[account.id], planUsage: model.planUsage[account.id]) {
+                AccountRow(
+                    account: account, engine: model.library.name(model.library.engine(for: account.kind)),
+                    needsSignIn: model.needsSignIn.contains(account.id),
+                    limitedUntil: model.limited[account.id], planUsage: model.planUsage[account.id]
+                ) {
                     open { WindowPresenter.shared.showSettings(model, section: .providers) }
                 }
             }
@@ -204,9 +250,17 @@ struct PanelView: View {
 
     private var footer: some View {
         HStack(spacing: 8) {
-            Button { open { WindowPresenter.shared.showSettings(model) } } label: { Label("Settings", systemImage: "gearshape") }
+            Button {
+                open { WindowPresenter.shared.showSettings(model) }
+            } label: {
+                Label("Settings", systemImage: "gearshape")
+            }
             Spacer()
-            Button { open { WindowPresenter.shared.showSettings(model, section: .activity) } } label: { Label("Activity", systemImage: "clock") }
+            Button {
+                open { WindowPresenter.shared.showSettings(model, section: .activity) }
+            } label: {
+                Label("Activity", systemImage: "clock")
+            }
         }
         .glassButton().controlSize(.regular).labelStyle(.titleAndIcon)
     }
@@ -278,13 +332,16 @@ struct AccountRow: View {
                 } else if account.paused {
                     StatusPill(text: "Paused", color: .secondary)
                 } else if let limitedUntil, limitedUntil.map({ $0 > Date() }) ?? true {
-                    StatusPill(text: limitedUntil.map { "Limit · resets \($0.formatted(date: .omitted, time: .shortened))" } ?? "Limit reached", color: Palette.attention)
+                    StatusPill(
+                        text: limitedUntil.map { "Limit · resets \($0.formatted(date: .omitted, time: .shortened))" }
+                            ?? "Limit reached", color: Palette.attention)
                 }
                 Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
             }
             .padding(.vertical, 7).padding(.horizontal, 8)
         }
         .buttonStyle(RowButtonStyle())
-        .accessibilityLabel("\(account.label), \(account.kind.plan), runs on \(engine)\(needsSignIn ? ", needs sign-in" : "")")
+        .accessibilityLabel(
+            "\(account.label), \(account.kind.plan), runs on \(engine)\(needsSignIn ? ", needs sign-in" : "")")
     }
 }

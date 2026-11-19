@@ -1,8 +1,8 @@
 // Agneta: a menu bar app. No Dock icon (LSUIElement); the glass panel lives
 // under the linked-rings symbol beside the clock (StatusItemController).
 import AppKit
-import os
 import SwiftUI
+import os
 
 @main
 struct AgnetaApp: App {
@@ -48,13 +48,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let rest = model.beginStopping()
         let answered = OSAllocatedUnfairLock(initialState: false)
         @Sendable func answer() {
-            guard answered.withLock({ done in defer { done = true }; return !done }) else { return }
+            guard
+                answered.withLock({ done in
+                    defer { done = true }; return !done
+                })
+            else { return }
             CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
                 MainActor.assumeIsolated { NSApplication.shared.reply(toApplicationShouldTerminate: true) }
             }
             CFRunLoopWakeUp(CFRunLoopGetMain())
         }
-        Task.detached { await rest(); answer() }
+        Task.detached {
+            await rest(); answer()
+        }
         DispatchQueue.global().asyncAfter(deadline: .now() + 10) { answer() }
         return .terminateLater
     }

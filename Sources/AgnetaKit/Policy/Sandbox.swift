@@ -39,11 +39,18 @@ public enum SandboxResolution {
     ///   - tools: the policy's tools. Developer access means commands like a terminal's, so it applies to workspace
     ///     tools; a session that asked for fewer tools stays contained unless the engine can't be.
     ///   - why: why the engine can't contain its tools there, for the refusal.
-    public static func resolve(requested: Sandbox?, ceiling: Sandbox, levels: [Sandbox], tools: SessionPolicy.Tools,
-                               provider: String, why: String?) -> Result<Outcome, PolicyRejection> {
+    public static func resolve(
+        requested: Sandbox?, ceiling: Sandbox, levels: [Sandbox], tools: SessionPolicy.Tools,
+        provider: String, why: String?
+    ) -> Result<Outcome, PolicyRejection> {
         let wanted = requested ?? (tools == .workspace ? ceiling : .contained)
         if wanted > ceiling {
-            return .failure(PolicyRejection(field: "sandbox", reason: "the user keeps this app's tasks contained (Settings → Apps in Agneta); an app can ask for less, not more"))
+            return .failure(
+                PolicyRejection(
+                    field: "sandbox",
+                    reason:
+                        "the user keeps this app's tasks contained (Settings → Apps in Agneta); an app can ask for less, not more"
+                ))
         }
         if levels.contains(wanted) {
             return .success(Outcome(profile: tools == .workspace ? wanted : .contained, effective: wanted))
@@ -53,6 +60,10 @@ public enum SandboxResolution {
         if requested == nil, ceiling == .developer, levels.contains(.developer) {
             return .success(Outcome(profile: .contained, effective: .developer))
         }
-        return .failure(PolicyRejection(field: "sandbox", reason: (why ?? "this engine can't keep \(provider)'s tasks contained") + "; choose another engine, or developer access"))
+        return .failure(
+            PolicyRejection(
+                field: "sandbox",
+                reason: (why ?? "this engine can't keep \(provider)'s tasks contained")
+                    + "; choose another engine, or developer access"))
     }
 }

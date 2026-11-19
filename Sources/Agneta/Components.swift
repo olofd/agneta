@@ -41,7 +41,8 @@ struct EveningButtonStyle: ButtonStyle {
     @Environment(\.colorScheme) private var scheme
 
     func makeBody(configuration: Configuration) -> some View {
-        EveningButton(configuration: configuration, controlSize: controlSize, isEnabled: isEnabled, dark: scheme == .dark)
+        EveningButton(
+            configuration: configuration, controlSize: controlSize, isEnabled: isEnabled, dark: scheme == .dark)
     }
 
     private struct EveningButton: View {
@@ -52,18 +53,28 @@ struct EveningButtonStyle: ButtonStyle {
         @State private var hovered = false
 
         var body: some View {
-            let (horizontal, vertical, size): (CGFloat, CGFloat, CGFloat) = switch controlSize {
-            case .mini, .small: (10, 4, 11.5)
-            case .large, .extraLarge: (18, 8, 14)
-            default: (14, 5.5, 13)
-            }
+            let (horizontal, vertical, size): (CGFloat, CGFloat, CGFloat) =
+                switch controlSize {
+                case .mini, .small: (10, 4, 11.5)
+                case .large, .extraLarge: (18, 8, 14)
+                default: (14, 5.5, 13)
+                }
             let shape = Capsule()
             configuration.label
                 .font(.system(size: size, weight: .medium))
                 .foregroundStyle(.white)
                 .padding(.horizontal, horizontal).padding(.vertical, vertical)
-                .background(shape.fill(LinearGradient(colors: Palette.buttonFill(dark: dark), startPoint: .leading, endPoint: .trailing)))
-                .overlay(shape.fill(LinearGradient(colors: [.white.opacity(dark ? 0.14 : 0.2), .white.opacity(0)], startPoint: .top, endPoint: .center)))
+                .background(
+                    shape.fill(
+                        LinearGradient(
+                            colors: Palette.buttonFill(dark: dark), startPoint: .leading, endPoint: .trailing))
+                )
+                .overlay(
+                    shape.fill(
+                        LinearGradient(
+                            colors: [.white.opacity(dark ? 0.14 : 0.2), .white.opacity(0)], startPoint: .top,
+                            endPoint: .center))
+                )
                 .overlay(shape.strokeBorder(.white.opacity(dark ? 0.18 : 0.3), lineWidth: 0.5))
                 .brightness(configuration.isPressed ? -0.08 : hovered ? 0.04 : 0)
                 .opacity(isEnabled ? 1 : 0.45)
@@ -76,7 +87,10 @@ struct EveningButtonStyle: ButtonStyle {
 
 extension View {
     /// A glass surface (macOS 26) or a material one (earlier).
-    @ViewBuilder func glassSurface(_ shape: some Shape = RoundedRectangle(cornerRadius: 16, style: .continuous), tint: Color? = nil, interactive: Bool = false) -> some View {
+    @ViewBuilder func glassSurface(
+        _ shape: some Shape = RoundedRectangle(cornerRadius: 16, style: .continuous), tint: Color? = nil,
+        interactive: Bool = false
+    ) -> some View {
         if #available(macOS 26, *) {
             self.glassEffect(interactive ? Glass.regular.tint(tint).interactive() : Glass.regular.tint(tint), in: shape)
         } else {
@@ -92,7 +106,9 @@ extension View {
         if condition { self.keyboardShortcut(.defaultAction) } else { self }
     }
 
-    func hoverHighlight(cornerRadius: CGFloat = 10) -> some View { modifier(HoverHighlight(cornerRadius: cornerRadius)) }
+    func hoverHighlight(cornerRadius: CGFloat = 10) -> some View {
+        modifier(HoverHighlight(cornerRadius: cornerRadius))
+    }
 
     /// A card on top of glass: a light frosted tint and a hairline edge. Glass on glass turns
     /// grey and opaque, so cards inside glass use this instead.
@@ -112,8 +128,10 @@ struct FrostedCard: ViewModifier {
         content
             .background(shape.fill(tint.map { $0.opacity(0.18) } ?? Color.white.opacity(0.08)))
             .background(shape.fill(.ultraThinMaterial).opacity(0.55))
-            .overlay(shape.strokeBorder(contrast == .increased ? Color.primary.opacity(0.45) : Color.white.opacity(0.28),
-                                        lineWidth: contrast == .increased ? 1 : 0.5))
+            .overlay(
+                shape.strokeBorder(
+                    contrast == .increased ? Color.primary.opacity(0.45) : Color.white.opacity(0.28),
+                    lineWidth: contrast == .increased ? 1 : 0.5))
     }
 }
 
@@ -132,7 +150,10 @@ struct HoverHighlight: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .background(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(Color.primary.opacity(hovered ? 0.07 : 0)))
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(
+                    Color.primary.opacity(hovered ? 0.07 : 0))
+            )
             .onHover { hovered = $0 }
             .animation(.easeOut(duration: 0.12), value: hovered)
     }
@@ -149,8 +170,10 @@ struct RowButtonStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .contentShape(Rectangle())
-                .background(RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(Color.primary.opacity(configuration.isPressed ? 0.12 : hovered ? 0.07 : 0)))
+                .background(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(Color.primary.opacity(configuration.isPressed ? 0.12 : hovered ? 0.07 : 0))
+                )
                 .onHover { hovered = $0 }
                 .animation(.easeOut(duration: 0.12), value: hovered)
                 .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
@@ -217,7 +240,9 @@ struct ProviderIcon: View {
     }
 
     var body: some View {
-        if framed { tile } else {
+        if framed {
+            tile
+        } else {
             Image(systemName: symbol).font(.system(size: size * 0.8, weight: .semibold)).foregroundStyle(.secondary)
                 .frame(width: size, height: size).accessibilityHidden(true)
         }
@@ -230,9 +255,16 @@ struct ProviderIcon: View {
             .frame(width: size, height: size)
             .background(
                 RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
-                    .fill(LinearGradient(colors: [Palette.tile(kind).opacity(0.95), Palette.tile(kind).opacity(0.7)], startPoint: .top, endPoint: .bottom))
+                    .fill(
+                        LinearGradient(
+                            colors: [Palette.tile(kind).opacity(0.95), Palette.tile(kind).opacity(0.7)],
+                            startPoint: .top, endPoint: .bottom))
             )
-            .overlay(RoundedRectangle(cornerRadius: size * 0.3, style: .continuous).strokeBorder(.white.opacity(0.35), lineWidth: 0.5).blendMode(.plusLighter))
+            .overlay(
+                RoundedRectangle(cornerRadius: size * 0.3, style: .continuous).strokeBorder(
+                    .white.opacity(0.35), lineWidth: 0.5
+                ).blendMode(.plusLighter)
+            )
             .shadow(color: .black.opacity(0.12), radius: 1.5, y: 1)
             .accessibilityHidden(true)
     }
@@ -246,16 +278,25 @@ struct AppIcon: View {
 
     var body: some View {
         if let identifier, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path(percentEncoded: false))).resizable().frame(width: size, height: size)
-                .accessibilityHidden(true)
+            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path(percentEncoded: false))).resizable().frame(
+                width: size, height: size
+            )
+            .accessibilityHidden(true)
         } else {
             Text(String(name.prefix(1)).uppercased())
                 .font(.system(size: size * 0.46, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white)
                 .frame(width: size, height: size)
-                .background(LinearGradient(colors: [Color(red: 0.27, green: 0.35, blue: 0.41), Color(red: 0.1, green: 0.14, blue: 0.17)], startPoint: .top, endPoint: .bottom),
-                            in: RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous).strokeBorder(.white.opacity(0.18), lineWidth: 0.5))
+                .background(
+                    LinearGradient(
+                        colors: [Color(red: 0.27, green: 0.35, blue: 0.41), Color(red: 0.1, green: 0.14, blue: 0.17)],
+                        startPoint: .top, endPoint: .bottom),
+                    in: RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: size * 0.24, style: .continuous).strokeBorder(
+                        .white.opacity(0.18), lineWidth: 0.5)
+                )
                 .accessibilityHidden(true)
         }
     }
@@ -266,7 +307,11 @@ struct MarkTile: View {
     var size: CGFloat = 30
     var body: some View {
         Image(nsImage: Mark.image(size: size * 0.62)).renderingMode(.template)
-            .foregroundStyle(LinearGradient(colors: Palette.evening.map { Color(nsColor: $0) }, startPoint: .topLeading, endPoint: .bottomTrailing))
+            .foregroundStyle(
+                LinearGradient(
+                    colors: Palette.evening.map { Color(nsColor: $0) }, startPoint: .topLeading,
+                    endPoint: .bottomTrailing)
+            )
             .frame(width: size, height: size)
             .glassSurface(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
             .accessibilityHidden(true)
@@ -282,7 +327,10 @@ struct LiveDot: View {
 
     var body: some View {
         Circle().fill(Palette.running).frame(width: 7, height: 7)
-            .background(Circle().fill(Palette.running.opacity(0.35)).scaleEffect(pulse && !reduceMotion ? 2.4 : 1).opacity(pulse && !reduceMotion ? 0 : 0.8))
+            .background(
+                Circle().fill(Palette.running.opacity(0.35)).scaleEffect(pulse && !reduceMotion ? 2.4 : 1).opacity(
+                    pulse && !reduceMotion ? 0 : 0.8)
+            )
             .onAppear { withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) { pulse = true } }
             .accessibilityLabel("Running")
     }
@@ -324,7 +372,11 @@ struct DownloadStatus: View {
         } else {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Downloading \(download.title)").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                if let fraction = download.fraction { ProgressView(value: fraction).controlSize(.small) } else { ProgressView().progressViewStyle(.linear).controlSize(.small) }
+                if let fraction = download.fraction {
+                    ProgressView(value: fraction).controlSize(.small)
+                } else {
+                    ProgressView().progressViewStyle(.linear).controlSize(.small)
+                }
                 Text(download.amount).font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit().lineLimit(1)
             }
             .frame(maxWidth: 240, alignment: .leading)

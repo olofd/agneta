@@ -37,34 +37,60 @@ import Observation
 
     /// Every engine, in the order Settings shows them.
     static let all: [EngineSource] = [
-        EngineSource(id: "goose", name: "Goose", make: { .success(GooseAdapter(executable: $0.bundled("goose-acp"))) },
-                     origin: { "Built in · \($0.lockedVersion("goose"))" }),
-        EngineSource(id: "opencode", name: "OpenCode",
-                     download: { $0.download(lock: "opencode", name: "opencode", executable: "opencode", title: "OpenCode") },
-                     make: { library in
-                         guard let program = library.verified("opencode") else { return .failure(.download) }
-                         return .success(OpenCodeAdapter(executable: program))
-                     },
-                     origin: { "OpenCode \($0.lockedVersion("opencode")) · \($0.downloadOrigin("opencode"))" }),
-        EngineSource(id: "claude-code", name: "Claude Code",
-                     program: UserProgram(key: "claude", title: "Claude Code install", missing: "Install the Claude app or Claude Code to use it.",
-                                          locate: { CLILocator.claudeCode() }),
-                     download: { $0.download(lock: "runtimes", name: "claude-agent-acp", executable: "claude-agent-acp", title: "Claude Code's adapter") },
-                     make: { library in
-                         guard let cli = library.program("claude") else { return .failure(.unavailable("Install the Claude app or Claude Code")) }
-                         return library.verified("claude-code").map { .success(ClaudeCodeAdapter(executable: $0, cli: cli)) } ?? .failure(.download)
-                     },
-                     origin: { "Your Claude Code, through claude-agent-acp \($0.lockedVersion("runtimes", entry: "claude-agent-acp"))" }),
-        EngineSource(id: "codex", name: "Codex",
-                     program: UserProgram(key: "codex", title: "Codex install", missing: "Install Codex to use it.", locate: { CLILocator.codex() }),
-                     // A development build bundles Node and codex-acp; a release downloads them (`codex-runtime.lock`).
-                     download: { $0.codexBundled ? nil : $0.download(lock: "codex-runtime", name: "codex-runtime", executable: "node", title: "Codex's runtime") },
-                     make: { library in
-                         guard let cli = library.program("codex") else { return .failure(.unavailable("Install Codex \(CLILocator.codexMinimum) or later")) }
-                         guard let (node, script) = library.codexRuntime else { return .failure(.download) }
-                         return .success(CodexAdapter(node: node, script: script, cli: cli))
-                     },
-                     origin: { "Your Codex, through codex-acp on Node.js · \($0.codexBundled ? "built in" : $0.downloadOrigin("codex"))" }),
+        EngineSource(
+            id: "goose", name: "Goose", make: { .success(GooseAdapter(executable: $0.bundled("goose-acp"))) },
+            origin: { "Built in · \($0.lockedVersion("goose"))" }),
+        EngineSource(
+            id: "opencode", name: "OpenCode",
+            download: { $0.download(lock: "opencode", name: "opencode", executable: "opencode", title: "OpenCode") },
+            make: { library in
+                guard let program = library.verified("opencode") else { return .failure(.download) }
+                return .success(OpenCodeAdapter(executable: program))
+            },
+            origin: { "OpenCode \($0.lockedVersion("opencode")) · \($0.downloadOrigin("opencode"))" }),
+        EngineSource(
+            id: "claude-code", name: "Claude Code",
+            program: UserProgram(
+                key: "claude", title: "Claude Code install",
+                missing: "Install the Claude app or Claude Code to use it.",
+                locate: { CLILocator.claudeCode() }),
+            download: {
+                $0.download(
+                    lock: "runtimes", name: "claude-agent-acp", executable: "claude-agent-acp",
+                    title: "Claude Code's adapter")
+            },
+            make: { library in
+                guard let cli = library.program("claude") else {
+                    return .failure(.unavailable("Install the Claude app or Claude Code"))
+                }
+                return library.verified("claude-code").map { .success(ClaudeCodeAdapter(executable: $0, cli: cli)) }
+                    ?? .failure(.download)
+            },
+            origin: {
+                "Your Claude Code, through claude-agent-acp \($0.lockedVersion("runtimes", entry: "claude-agent-acp"))"
+            }),
+        EngineSource(
+            id: "codex", name: "Codex",
+            program: UserProgram(
+                key: "codex", title: "Codex install", missing: "Install Codex to use it.",
+                locate: { CLILocator.codex() }),
+            // A development build bundles Node and codex-acp; a release downloads them (`codex-runtime.lock`).
+            download: {
+                $0.codexBundled
+                    ? nil
+                    : $0.download(
+                        lock: "codex-runtime", name: "codex-runtime", executable: "node", title: "Codex's runtime")
+            },
+            make: { library in
+                guard let cli = library.program("codex") else {
+                    return .failure(.unavailable("Install Codex \(CLILocator.codexMinimum) or later"))
+                }
+                guard let (node, script) = library.codexRuntime else { return .failure(.download) }
+                return .success(CodexAdapter(node: node, script: script, cli: cli))
+            },
+            origin: {
+                "Your Codex, through codex-acp on Node.js · \($0.codexBundled ? "built in" : $0.downloadOrigin("codex"))"
+            })
     ]
 }
 
@@ -89,8 +115,10 @@ struct Bundled: Sendable {
     let resources: URL
 
     static var app: Bundled {
-        Bundled(programs: Bundle.main.bundleURL.appending(path: "Contents/MacOS", directoryHint: .isDirectory),
-                resources: Bundle.main.resourceURL ?? Bundle.main.bundleURL.appending(path: "Contents/Resources", directoryHint: .isDirectory))
+        Bundled(
+            programs: Bundle.main.bundleURL.appending(path: "Contents/MacOS", directoryHint: .isDirectory),
+            resources: Bundle.main.resourceURL
+                ?? Bundle.main.bundleURL.appending(path: "Contents/Resources", directoryHint: .isDirectory))
     }
 
     /// A lock this build carries (`opencode.lock`), if it does.
@@ -159,10 +187,14 @@ final class EngineLibrary {
     func start(_ runtime: AgnetaRuntime) async {
         database = runtime.database
         for kind in AccountKind.allCases {
-            if let engine = try? runtime.database.setting(ProviderEngines.settingKey(kind)) { defaults.selected[kind] = engine }
+            if let engine = try? runtime.database.setting(ProviderEngines.settingKey(kind)) {
+                defaults.selected[kind] = engine
+            }
         }
         for source in sources {
-            if let key = source.program?.key, let path = try? runtime.database.setting("cli.\(key)") { chosenPrograms[key] = path }
+            if let key = source.program?.key, let path = try? runtime.database.setting("cli.\(key)") {
+                chosenPrograms[key] = path
+            }
         }
         // Both before the first catalog (until then nothing is known to be here, and a download not yet checked would
         // look missing and start again), and at once: finding the user's installs runs their `--version`, checking the
@@ -203,7 +235,9 @@ final class EngineLibrary {
         let downloads = sources.compactMap { source in source.download(self).map { (source.id, $0) } }
         return await withTaskGroup(of: (String, URL?).self) { group in
             for (id, download) in downloads {
-                group.addTask(priority: .userInitiated) { (id, download.installer.verified(download.name, executable: download.executable)) }
+                group.addTask(priority: .userInitiated) {
+                    (id, download.installer.verified(download.name, executable: download.executable))
+                }
             }
             var checked: [String: URL?] = [:]
             for await (id, program) in group { checked[id] = .some(program) }
@@ -219,7 +253,9 @@ final class EngineLibrary {
         catalog = makeCatalog()
         sink?.yield(catalog)
         for kind in kindsInUse() {
-            if let engine = catalog.defaultEngine(for: kind), case .downloadable? = catalog.entries[engine]?.state, !putAway.contains(engine) {
+            if let engine = catalog.defaultEngine(for: kind), case .downloadable? = catalog.entries[engine]?.state,
+                !putAway.contains(engine)
+            {
                 download(engine, reason: "default")
             }
         }
@@ -266,7 +302,9 @@ final class EngineLibrary {
 
     /// The default the user chose for a kind of provider (Settings → Engines' picker), else the one in use.
     func chosenEngine(for kind: AccountKind) -> String? {
-        defaults.selected[kind].flatMap { ProviderEngines.supported(by: kind).contains($0) && catalog.usable($0) ? $0 : nil } ?? engine(for: kind)
+        defaults.selected[kind].flatMap {
+            ProviderEngines.supported(by: kind).contains($0) && catalog.usable($0) ? $0 : nil
+        } ?? engine(for: kind)
     }
 
     /// An engine's name ("Codex").
@@ -278,14 +316,17 @@ final class EngineLibrary {
     /// An engine's label in a provider's default picker: its name, marked when it's the one recommended for that
     /// provider, and with what it downloads first.
     func choice(_ engine: EngineCatalog.Entry, for kind: AccountKind) -> String {
-        let notes = [ProviderEngines.supported(by: kind).first == engine.id ? "recommended" : nil, downloadNote(for: engine.id)].compactMap { $0 }
+        let notes = [
+            ProviderEngines.supported(by: kind).first == engine.id ? "recommended" : nil, downloadNote(for: engine.id)
+        ].compactMap { $0 }
         return notes.isEmpty ? engine.name : "\(engine.name) (\(notes.joined(separator: ", ")))"
     }
 
     /// What using this engine would download first, e.g. "downloads 108 MB"; nil when it's here already.
     func downloadNote(for engine: String) -> String? {
         guard case .downloadable(let size)? = catalog.entries[engine]?.state else { return nil }
-        return size.map { "downloads \(ByteCountFormatter.string(fromByteCount: $0, countStyle: .file))" } ?? "downloads first"
+        return size.map { "downloads \(ByteCountFormatter.string(fromByteCount: $0, countStyle: .file))" }
+            ?? "downloads first"
     }
 
     /// Every engine ticked is "all", which includes engines Agneta adds later; otherwise only those ticked.
@@ -304,7 +345,9 @@ final class EngineLibrary {
     /// Why a provider can't run anything with these engines now, or nil when it can: none of the engines it supports is
     /// ticked, or none of those is on this Mac (with what to install). Allowing it anyway is fine: it runs once it can.
     func cantRun(_ account: AccountRecord, engines: Set<String>) -> String? {
-        guard Access.engines(for: account.kind, allowed: allowance(engines), catalog: catalog).isEmpty else { return nil }
+        guard Access.engines(for: account.kind, allowed: allowance(engines), catalog: catalog).isEmpty else {
+            return nil
+        }
         let ticked = ProviderEngines.supported(by: account.kind).filter(engines.contains)
         if ticked.isEmpty { return "\(account.label) can't run on any engine ticked here" }
         if ticked.count == 1, case .unavailable(let reason)? = catalog.entries[ticked[0]]?.state {
@@ -332,16 +375,22 @@ final class EngineLibrary {
         guard !providers.isEmpty else { return nil }
         let reasons = providers.compactMap { account -> String? in
             let usable = Access.engines(for: account.kind, allowed: allowance(engines), catalog: catalog)
-            guard !usable.isEmpty, !usable.contains(where: { ProviderEngines.sandboxLevels($0, for: account.kind).contains(level) }) else { return nil }
+            guard !usable.isEmpty,
+                !usable.contains(where: { ProviderEngines.sandboxLevels($0, for: account.kind).contains(level) })
+            else { return nil }
             return usable.compactMap { ProviderEngines.uncontainedReason($0, for: account.kind) }.first
         }
-        return reasons.count == providers.count ? reasons.first.map { $0 + ". Tick another engine under Advanced to keep this app's tasks contained." } : nil
+        return reasons.count == providers.count
+            ? reasons.first.map { $0 + ". Tick another engine under Advanced to keep this app's tasks contained." }
+            : nil
     }
 
     /// The providers on which an engine can't provide a level, for its row under Advanced ("Developer access only on Claude").
     func sandboxNote(_ engine: String, level: Sandbox, providers: [AccountRecord]) -> String? {
-        let labels = providers.filter { ProviderEngines.supported(by: $0.kind).contains(engine)
-            && !ProviderEngines.sandboxLevels(engine, for: $0.kind).contains(level) }.map(\.label)
+        let labels = providers.filter {
+            ProviderEngines.supported(by: $0.kind).contains(engine)
+                && !ProviderEngines.sandboxLevels(engine, for: $0.kind).contains(level)
+        }.map(\.label)
         return labels.isEmpty ? nil : "\(Sandbox.developer.title) only on \(labels.joined(separator: ", "))"
     }
 
@@ -356,7 +405,12 @@ final class EngineLibrary {
     func choose(_ key: String, install: InstalledCLI) {
         chosenPrograms[key] = install.id
         try? database?.set(install.id, for: "cli.\(key)")
-        log.log("cli-chosen", ["cli": .string(key), "version": install.version.map(JSONValue.string) ?? .null, "source": .string(install.source)])
+        log.log(
+            "cli-chosen",
+            [
+                "cli": .string(key), "version": install.version.map(JSONValue.string) ?? .null,
+                "source": .string(install.source)
+            ])
         refresh()
     }
 
@@ -385,22 +439,31 @@ final class EngineLibrary {
     /// Downloads, checks and installs what an engine needs in the background; the catalog follows each step, so apps
     /// and windows see it downloading, then ready (or failed). Downloads asked for meanwhile share this one.
     func download(_ engine: String, reason: String) {
-        guard let download = sources.first(where: { $0.id == engine })?.download(self), let asset = download.asset else { return }
+        guard let download = sources.first(where: { $0.id == engine })?.download(self), let asset = download.asset
+        else { return }
         if reason != "default" { putAway.remove(engine) }
         // One already going is joined (RuntimeInstaller shares it); one that failed starts again.
         guard downloads[engine].map({ $0.problem != nil }) ?? true else { return }
         downloads[engine] = EngineDownload(engine: engine, title: download.title, total: asset.size.map(Int64.init))
-        log.log("engine-download", ["engine": .string(engine), "version": .string(asset.version), "reason": .string(reason)])
+        log.log(
+            "engine-download", ["engine": .string(engine), "version": .string(asset.version), "reason": .string(reason)]
+        )
         refresh()
         let started = Date(), generation = generation
         downloading[engine] = _Concurrency.Task {
             defer { if self.generation == generation { downloading[engine] = nil } }
             do {
-                let program = try await download.installer.install(download.name, executable: download.executable, received: { received, total in
-                    _Concurrency.Task { @MainActor [weak self] in self?.progressed(engine, received: received, total: total) }
-                })
+                let program = try await download.installer.install(
+                    download.name, executable: download.executable,
+                    received: { received, total in
+                        _Concurrency.Task { @MainActor [weak self] in
+                            self?.progressed(engine, received: received, total: total)
+                        }
+                    })
                 guard self.generation == generation else { return } // Reset meanwhile: it deleted what this installed
-                log.log("engine-downloaded", ["engine": .string(engine), "seconds": .int(Int64(Date().timeIntervalSince(started)))])
+                log.log(
+                    "engine-downloaded",
+                    ["engine": .string(engine), "seconds": .int(Int64(Date().timeIntervalSince(started)))])
                 downloads[engine] = nil
                 checked[engine] = .some(program) // just checked by the install
             } catch {
@@ -419,11 +482,13 @@ final class EngineLibrary {
         guard let download = sources.first(where: { $0.id == engine })?.download(self) else {
             throw SignInError.provider("\(name(engine)) isn't pinned in this build")
         }
-        let tracked = download.asset != nil && downloads[engine] == nil
+        let tracked =
+            download.asset != nil && downloads[engine] == nil
             && download.installer.installed(download.name, executable: download.executable) == nil
         if tracked, let asset = download.asset {
             downloads[engine] = EngineDownload(engine: engine, title: download.title, total: asset.size.map(Int64.init))
-            log.log("engine-download", ["engine": .string(engine), "version": .string(asset.version), "reason": "sign-in"])
+            log.log(
+                "engine-download", ["engine": .string(engine), "version": .string(asset.version), "reason": "sign-in"])
             refresh()
         }
         let report: @Sendable (Int64, Int64?) -> Void = { received, total in
@@ -432,7 +497,8 @@ final class EngineLibrary {
         let received = tracked ? report : nil
         let generation = generation
         do {
-            let program = try await download.installer.install(download.name, executable: download.executable, progress: progress, received: received)
+            let program = try await download.installer.install(
+                download.name, executable: download.executable, progress: progress, received: received)
             // Reset meanwhile: what this installed is gone, and nothing of it is shown or remembered.
             guard self.generation == generation else { throw CancellationError() }
             // Installed, whoever started the download: no progress or earlier failure is left on a card.
@@ -476,7 +542,9 @@ final class EngineLibrary {
     /// A download pinned by a lock the app carries, if this build carries it.
     func download(lock: String, name: String, executable: String, title: String) -> Download? {
         bundled.lock(lock).map {
-            Download(installer: RuntimeInstaller(lockFile: $0, runtimes: runtimes), name: name, executable: executable, title: title)
+            Download(
+                installer: RuntimeInstaller(lockFile: $0, runtimes: runtimes), name: name, executable: executable,
+                title: title)
         }
     }
 
@@ -496,7 +564,8 @@ final class EngineLibrary {
     /// A version from a lock the app carries (`goose.lock`: its `version`; `runtimes.lock`: an entry's).
     func lockedVersion(_ lock: String, entry: String? = nil) -> String {
         guard let url = bundled.lock(lock), let data = try? Data(contentsOf: url),
-              let value = try? JSONCoding.decode(data) else { return "–" }
+            let value = try? JSONCoding.decode(data)
+        else { return "–" }
         return (entry.map { value[$0]?["version"] } ?? value["version"])??.stringValue ?? "–"
     }
 
@@ -515,13 +584,19 @@ final class EngineLibrary {
     /// leaves the downloads out (the README's screenshots).
     func useSample() {
         let none = URL(filePath: "/usr/bin/false")
-        sample = [GooseAdapter(executable: none), OpenCodeAdapter(executable: none),
-                  ClaudeCodeAdapter(executable: none, cli: InstalledCLI(path: none, version: "2.1.0", source: "path")),
-                  CodexAdapter(node: none, script: none, cli: InstalledCLI(path: none, version: "0.166.0", source: "path"))]
+        sample = [
+            GooseAdapter(executable: none), OpenCodeAdapter(executable: none),
+            ClaudeCodeAdapter(executable: none, cli: InstalledCLI(path: none, version: "2.1.0", source: "path")),
+            CodexAdapter(node: none, script: none, cli: InstalledCLI(path: none, version: "0.166.0", source: "path"))
+        ]
         if ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_DOWNLOADS"] != "0" {
-            downloads = ["opencode": EngineDownload(engine: "opencode", title: "OpenCode", received: 52_400_000, total: 113_407_057),
-                         "codex": EngineDownload(engine: "codex", title: "Codex's runtime",
-                                                 problem: "Codex's runtime couldn't be downloaded: The Internet connection appears to be offline.")]
+            downloads = [
+                "opencode": EngineDownload(
+                    engine: "opencode", title: "OpenCode", received: 52_400_000, total: 113_407_057),
+                "codex": EngineDownload(
+                    engine: "codex", title: "Codex's runtime",
+                    problem: "Codex's runtime couldn't be downloaded: The Internet connection appears to be offline.")
+            ]
         }
         catalog = makeCatalog()
     }
