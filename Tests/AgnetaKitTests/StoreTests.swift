@@ -140,7 +140,9 @@ private func temporaryFolder() throws -> URL {
     @Test func reapsOnlyTheRecordedProcess() async throws {
         let sleeper = try ChildProcess(executable: "/bin/sleep", arguments: ["30"], environment: [:])
         let other = try ChildProcess(executable: "/bin/sleep", arguments: ["30"], environment: [:])
-        defer { killpg(other.pid, SIGKILL); killpg(sleeper.pid, SIGKILL) }
+        // Through ChildProcess, which signals a group only while its leader is unreaped: the sleeper is reaped by the
+        // time this runs, and its number may already lead another test's process group.
+        defer { other.signalGroup(SIGKILL); sleeper.signalGroup(SIGKILL) }
         let started = try #require(EngineReaper.startTime(of: sleeper.pid))
         let otherStarted = try #require(EngineReaper.startTime(of: other.pid))
         let records = [EngineRecord(pid: sleeper.pid, started: started, account: "a"),

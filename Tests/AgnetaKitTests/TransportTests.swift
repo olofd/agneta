@@ -69,7 +69,8 @@ import Testing
         #expect(kill(grandchild, 0) == 0)
         let started = ContinuousClock.now
         await child.stop(grace: .milliseconds(200))
-        #expect(ContinuousClock.now - started < .seconds(2))
+        // It doesn't wait for the grandchild's minute (a loaded CI runner took 4.5 s, so the bound is loose).
+        #expect(ContinuousClock.now - started < .seconds(20))
         try await Task.sleep(for: .milliseconds(100))
         #expect(kill(grandchild, 0) != 0)
     }
