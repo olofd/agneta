@@ -98,7 +98,8 @@ public enum RPCMessage: Sendable, Hashable {
         // request it answers would wait for ever.
         guard let error = error ?? fields["error"] else { throw ParseFailure.malformed("response without result or error") }
         let message = error["message"]?.stringValue ?? error.stringValue ?? "The other side answered with a malformed error"
-        return .response(id: id, result: .failure(RPCError(code: RPCError.internalError, message: message, data: error)))
+        // A usable code stays: -32000 (sign-in required) and -32601 (method not found) are acted on by code.
+        return .response(id: id, result: .failure(RPCError(code: error["code"]?.intValue ?? RPCError.internalError, message: message, data: error)))
     }
 
     public var json: JSONValue {

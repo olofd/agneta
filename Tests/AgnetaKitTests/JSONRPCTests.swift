@@ -30,10 +30,12 @@ import Testing
     /// request it answered waited forever: a turn, or a permission request to an app, stuck until the connection
     /// closed. It's an error all the same, and now ends the request as one.
     @Test func aMalformedErrorStillEndsTheRequest() async throws {
-        for error in [#"{"code":-32000}"#, #"{"code":"E1","message":"failed"}"#, #""failed""#, #"null"#] {
+        // A usable integer code is kept (the router acts on -32000, sign-in required); otherwise an internal error.
+        for (error, code) in [(#"{"code":-32000}"#, -32000), (#"{"code":"E1","message":"failed"}"#, RPCError.internalError),
+                              (#""failed""#, RPCError.internalError), (#"null"#, RPCError.internalError)] {
             let parsed = try RPCMessage.parse(Data(#"{"jsonrpc":"2.0","id":4,"error":\#(error)}"#.utf8))
             guard case .response(.int(4), .failure(let failure)) = parsed else { Issue.record("\(error): \(parsed)"); continue }
-            #expect(failure.code == RPCError.internalError, "\(error)")
+            #expect(failure.code == code, "\(error)")
         }
 
         let (lines, input) = AsyncThrowingStream<Data, Error>.makeStream()
@@ -51,7 +53,7 @@ import Testing
             group.cancelAll()
             return first
         }
-        #expect(outcome == "error \(RPCError.internalError)")
+        #expect(outcome == "error -32000")
         input.finish()
     }
 
