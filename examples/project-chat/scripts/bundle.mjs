@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const electron = join(root, 'node_modules/electron/dist/Electron.app');
 const out = join(root, 'build/Project Chat.app');
-// The app's own files, and its one dependency, @agneta/client (built: npm run build in packages/client). Electron and
+// The app's own files, and its one dependency, @agneta/client (built: npm run build in clients/typescript). Electron and
 // Node provide everything else.
 const files = ['chat.mjs', 'main.mjs', 'preload.cjs', 'project-tools.mjs', 'renderer.js', 'index.html', 'styles.css', 'package.json'];
 const client = await realpath(join(root, 'node_modules/@agneta/client'));

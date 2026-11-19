@@ -1,4 +1,4 @@
-// ACP over a Node WebSocket, hand-rolled before @agneta/client (packages/client), which new apps should use instead: in
+// ACP over a Node WebSocket, hand-rolled before @agneta/client (clients/typescript), which new apps should use instead: in
 // Electron's main process and in the headless runner alike.
 // Browser WebSockets send an Origin header, which Agneta deliberately refuses.
 export class AcpConnection {

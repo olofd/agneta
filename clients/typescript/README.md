@@ -424,8 +424,8 @@ The integration test needs, from the repository root, `scripts/fetch-engines` an
 
 ## Releasing
 
-Maintainers publish from GitHub Actions only (`.github/workflows/client-release.yml`), with npm's trusted publishing and provenance:
+Maintainers publish from GitHub Actions only (`.github/workflows/client-typescript-release.yml`), with npm's trusted publishing and provenance:
 
 1. Bump `version` in `package.json` and add its notes to [CHANGELOG.md](CHANGELOG.md), on `main`.
-2. Push a tag `client-v<version>` (for example `client-v0.1.0`).
+2. Push a tag `client-typescript-v<version>` (for example `client-typescript-v0.1.0`).
 3. The workflow checks that the tag matches `package.json`, builds, type-checks and tests, then waits in the `npm` environment for a maintainer's approval before `npm publish --provenance`.

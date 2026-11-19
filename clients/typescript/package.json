@@ -4,11 +4,11 @@
   "description": "The official TypeScript client for Agneta: run AI work on your users' own plans and API keys, over the Agent Client Protocol.",
   "license": "Apache-2.0",
   "author": "Olof Dahlbom",
-  "homepage": "https://github.com/olofd/agneta/tree/main/packages/client#readme",
+  "homepage": "https://github.com/olofd/agneta/tree/main/clients/typescript#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/olofd/agneta.git",
-    "directory": "packages/client"
+    "directory": "clients/typescript"
   },
   "bugs": "https://github.com/olofd/agneta/issues",
   "keywords": ["agneta", "acp", "agent-client-protocol", "ai", "agents", "macos", "claude", "codex", "goose", "opencode"],

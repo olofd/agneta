@@ -1,20 +1,20 @@
-# Builds, type-checks and unit-tests the TypeScript client (packages/client) on the Node versions it supports
-# (packages/client/DESIGN.md). Its integration test against agnetad runs in ci.yml, on macOS, where agnetad is built.
-name: Client
+# Builds, type-checks and unit-tests the TypeScript client (clients/typescript) on the Node versions it supports
+# (clients/typescript/DESIGN.md). Its integration test against agnetad runs in ci.yml, on macOS, where agnetad is built.
+name: TypeScript client
 
 on:
   push:
     branches: [main]
-    paths: ['packages/client/**', '.github/workflows/client.yml']
+    paths: ['clients/typescript/**', '.github/workflows/client-typescript.yml']
   pull_request:
-    paths: ['packages/client/**', '.github/workflows/client.yml']
+    paths: ['clients/typescript/**', '.github/workflows/client-typescript.yml']
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: client-${{ github.ref }}
+  group: client-typescript-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 10
     defaults:
       run:
-        working-directory: packages/client
+        working-directory: clients/typescript
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

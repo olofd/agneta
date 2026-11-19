@@ -80,10 +80,10 @@ jobs:
         with:
           node-version: '24'
 
-      # The TypeScript client (packages/client) against agnetad with Goose and the fake model, built above. Its unit
-      # tests and type checks also run on Linux (client.yml); this is the part that needs a Mac.
+      # The TypeScript client (clients/typescript) against agnetad with Goose and the fake model, built above. Its unit
+      # tests and type checks also run on Linux (client-typescript.yml); this is the part that needs a Mac.
       - name: Test the client library
-        working-directory: packages/client
+        working-directory: clients/typescript
         run: |
           npm ci
           npm run build

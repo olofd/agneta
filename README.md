@@ -147,7 +147,7 @@ python3 site/build.py && python3 -m http.server 8642 --bind 127.0.0.1 --director
 
 ## For app developers
 
-**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app, built on [`@agneta/client`](packages/client/README.md), pairs with Agneta, keeps its access and reconnects by itself, offers to open Agneta when it isn't running, lets you choose Agneta or Agneta Dev, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review. **[Replica Bench](examples/replica-bench/README.md)** shows the sandbox modes: it runs a demanding workload on every engine in both modes, and shows what each task got and how a refusal looks.
+**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app, built on [`@agneta/client`](clients/typescript/README.md), pairs with Agneta, keeps its access and reconnects by itself, offers to open Agneta when it isn't running, lets you choose Agneta or Agneta Dev, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review. **[Replica Bench](examples/replica-bench/README.md)** shows the sandbox modes: it runs a demanding workload on every engine in both modes, and shows what each task got and how a refusal looks.
 
 Your app is an ACP **client** and Agneta is the ACP **agent**. If your app already speaks ACP, most of what follows is familiar. What Agneta adds is how you reach it, how the user lets your app in, and the rules a task runs under.
 
@@ -159,7 +159,7 @@ Your app is an ACP **client** and Agneta is the ACP **agent**. If your app alrea
 | What the agent may touch | Whatever the agent process can reach | A policy you send with each session (tools, folders, sandbox mode, network, approval, limits), within the mode the user chose for your app, enforced by sandboxes, or refused |
 | Afterwards | Nothing standard | Usage in every prompt result, and the task's full trace, live or later |
 
-**In TypeScript or JavaScript (Node 22+ or Electron's main process), use [`@agneta/client`](packages/client/README.md),** the official client. It does everything below for you, typed, and keeps a raw layer for anything else:
+**In TypeScript or JavaScript (Node 22+ or Electron's main process), use [`@agneta/client`](clients/typescript/README.md),** the official client. It does everything below for you, typed, and keeps a raw layer for anything else:
 
 ```js
 import { AgnetaClient } from '@agneta/client';

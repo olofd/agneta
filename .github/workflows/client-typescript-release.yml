@@ -1,19 +1,19 @@
-# Publishes @agneta/client to npm from a client-v* tag (packages/client/README.md, Releasing). A run by hand is a dry
+# Publishes @agneta/client to npm from a client-typescript-v* tag (clients/typescript/README.md, Releasing). A run by hand is a dry
 # run: everything but publishing. npm's trusted publishing authenticates this workflow by OIDC, so no npm token is
 # stored anywhere, and --provenance links the published package to this run and commit. The publish job waits in the
 # `npm` environment for the maintainer's approval.
-name: Client release
+name: TypeScript client release
 
 on:
   push:
-    tags: ['client-v*']
+    tags: ['client-typescript-v*']
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: client-release-${{ github.ref }}
+  group: client-typescript-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -30,7 +30,7 @@ jobs:
       tarball: ${{ steps.pack.outputs.tarball }}
     defaults:
       run:
-        working-directory: packages/client
+        working-directory: clients/typescript
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,7 +46,7 @@ jobs:
         run: |
           version=$(node -p "require('./package.json').version")
           if [[ "$GITHUB_EVENT_NAME" == push ]]; then
-            [[ "${GITHUB_REF_NAME#client-v}" == "$version" ]] || { echo "::error::Tag $GITHUB_REF_NAME doesn't match package.json's $version"; exit 1; }
+            [[ "${GITHUB_REF_NAME#client-typescript-v}" == "$version" ]] || { echo "::error::Tag $GITHUB_REF_NAME doesn't match package.json's $version"; exit 1; }
             publish=true
           else
             publish=false
