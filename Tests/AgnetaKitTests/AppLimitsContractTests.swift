@@ -438,6 +438,34 @@ final class TestLedger: UsageLedger, @unchecked Sendable {
         #expect(slowest < .milliseconds(100), "the slowest took \(slowest)")
     }
 
+    /// Each of the app's turns stopped by its spending limit says so, however their watchdogs' checks fall: here the
+    /// second turn's checks come 300 ms after the first's, so the first is cancelled well before the second is found
+    /// over the limit. (A cancel for one session once ended every slow turn of the fake engine, so the second answered
+    /// as plainly cancelled, the limit unsaid, on runners fast enough to beat its own watchdog.)
+    @Test func eachTurnStoppedByTheSpendingLimitSaysSo() async throws {
+        let stack = try await Stack.start(port: 47681, concurrency: .init(limitGrace: .milliseconds(300)))
+        defer { stack.stop() }
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Spender")
+        try await stack.router.setLimits(
+            grant: try await AppLimitsContractTests.grant(stack, "Spender"),
+            limits: AppLimits(spend: .init(max: 1, period: .day)))
+        let one = try await stack.session(app, account: "brokered"),
+            two = try await stack.session(app, account: "brokered")
+        let first = Task { try await app.prompt(one, "slow") }
+        try await AppLimitsContractTests.running(stack, one)
+        try await Task.sleep(for: .milliseconds(300))
+        let second = Task { try await app.prompt(two, "slow") }
+        try await AppLimitsContractTests.running(stack, two)
+        stack.traces.session(one)?.ingest(modelCall: ["id": "call-1", "cost": .double(1.5)])
+        for result in [try await first.value, try await second.value] {
+            #expect(
+                result["stopReason"] == "cancelled" && result["_meta"]?["agneta/limit"]?["limit"] == "appSpend",
+                "\(result)")
+        }
+    }
+
     /// A turn that called a model its engine gave no price for is marked, not silently counted as free.
     @Test func aTurnWithNoPriceIsMarked() async throws {
         let stack = try await Stack.start(port: 47669)
