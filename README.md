@@ -37,7 +37,7 @@ For app developers, this means agent features without running an agent loop, bui
   &nbsp;&nbsp;
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/approval-dark.png">
-    <img src="docs/images/approval.png" width="400" alt="An app asks to use Agneta; the user ticks which providers it may use, with engines under Advanced">
+    <img src="docs/images/approval.png" width="400" alt="An app asks to use Agneta; the user ticks which providers it may use, and chooses developer access or contained for its tasks">
   </picture>
 </p>
 
@@ -46,13 +46,14 @@ For app developers, this means agent features without running an agent loop, bui
 > **Status: early.** Agneta runs real tasks on real ChatGPT and Claude plans. Before you rely on it, know that:
 > - the app protocol may still change before 1.0;
 > - an engine can reach any HTTPS host, not only its provider's (a per-provider host allowlist isn't built yet);
+> - apps that edit files and run commands get developer access unless you choose Contained: their commands reach the internet and read your home folder (credentials and Agneta's data excepted);
 > - the tests, the sandbox acceptance test among them, pass on macOS 15 and 26, Apple silicon and Intel ([CI.md](docs/CI.md)), but the app has been used day to day only on an Intel Mac with macOS 26, and macOS 14 is untested.
 
 ## What it is
 
 - **A local agent runtime that apps share.** An app sends a task: a workspace folder, its own tools (an MCP server), instructions and limits. Agneta runs an agent engine on it and streams back ACP updates, usage and a full trace.
 - **One place for your providers.** It handles sign-in for ChatGPT and Claude plans through your own Codex's and Claude Code's logins, so Agneta never holds a plan's tokens. API keys stay in your Keychain. One provider can serve several apps, and every task shows which app it belongs to, which provider it runs on and what it costs.
-- **A consent layer.** An app has to pair before it can do anything. You approve it in a window that shows whether its code signature checks out and what it will be able to do (its tools and folders), and you choose which of your providers (plans and API keys) it may use, once or always. Engines are all allowed unless you narrow them under Advanced; the app picks the engine for each task. You can see and stop every task, and remove an app's access at any time.
+- **A consent layer.** An app has to pair before it can do anything. You approve it in a window that shows whether its code signature checks out and what it will be able to do (its tools and folders), and you choose which of your providers (plans and API keys) it may use, once or always, and for an app that edits files and runs commands, Developer access or Contained. Engines are all allowed unless you narrow them (Engines… in that window, or Advanced in Settings → Apps); the app picks the engine for each task. You can see and stop every task, and remove an app's access at any time.
 - **A sandbox.** Every engine runs under a macOS sandbox profile. When contained, it can read the task's workspace, the folders the policy names and what the engine itself needs, and nothing else in your home folder. The engine itself can reach any HTTPS host, which is how it reaches its provider. Shell commands, on every engine, go through Agneta and run under an even stricter profile, confined to the workspace with no network. Developer access, the default for an app that edits files and runs commands (you can choose Contained when you approve it, or later in Settings), gives a terminal's reach instead: the home folder apart from credentials and Agneta's data, the internet and your own toolchains. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#sandbox-profiles) lists exactly what each part can reach.
 - **A flight recorder.** Every task leaves a structured trace: prompts, tool calls, model calls, permission decisions and timing. You read it with the `agneta-diag` command-line tool or an optional local MCP server. Apps can read their own tasks' traces live.
 
@@ -80,8 +81,8 @@ For app developers, this means agent features without running an agent loop, bui
                        accounts · consent · policy · limits · traces
 ```
 
-1. **Pair once.** The app connects and calls `agneta/pair` with the scope it needs (tools and folders). Agneta identifies the process by its code signature; the user sees the scope, ticks the providers it may use, and allows it once or always. The app keeps a token in its Keychain, and `agneta/access` tells it which providers and engines it may use.
-2. **Start a session.** It calls `session/new` with a provider and, if it wants, an engine, a workspace, the app's MCP server and a policy, for example `{"tools": "workspace", "network": "none", "limits": {"maxTurns": 200}}`. Agneta refuses any policy it can't enforce rather than quietly weakening it.
+1. **Pair once.** The app connects and calls `agneta/pair` with the scope it needs (tools and folders, and optionally providers, engines and sandbox mode). Agneta identifies the process by its code signature; the user sees the scope, ticks the providers it may use, chooses Developer access or Contained, and allows it once or always. The app keeps a token in its Keychain, and `agneta/access` tells it which providers and engines it may use.
+2. **Start a session.** It calls `session/new` with a provider and, if it wants, an engine, a workspace, the app's MCP server and a policy, for example `{"tools": "workspace", "sandbox": "contained", "network": "none", "limits": {"maxTurns": 200}}`. Agneta refuses any policy it can't enforce rather than quietly weakening it.
 3. **Prompt.** Agneta queues the turn within the account's limits and starts or reuses an engine under the right sandbox profile. It streams the engine's ACP updates back, answers permission requests from the policy (or asks the app), and returns usage with the result.
 4. **Watch and stop.** The task appears in the menu bar panel, its trace is written as it runs, and the user can stop it at any time.
 
@@ -146,7 +147,7 @@ python3 site/build.py && python3 -m http.server 8642 --bind 127.0.0.1 --director
 
 ## For app developers
 
-**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app pairs with Agneta, keeps its access and reconnects by itself, offers to open Agneta when it isn't running, lets you choose Agneta or Agneta Dev, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review.
+**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app pairs with Agneta, keeps its access and reconnects by itself, offers to open Agneta when it isn't running, lets you choose Agneta or Agneta Dev, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review. **[Replica Bench](examples/replica-bench/README.md)** shows the sandbox modes: it runs a demanding workload on every engine in both modes, and shows what each task got and how a refusal looks.
 
 Your app is an ACP **client** and Agneta is the ACP **agent**. If your app already speaks ACP, most of what follows is familiar. What Agneta adds is how you reach it, how the user lets your app in, and the rules a task runs under.
 
@@ -155,24 +156,24 @@ Your app is an ACP **client** and Agneta is the ACP **agent**. If your app alrea
 | Transport | Usually stdio to an agent process the client starts | A WebSocket on loopback (`ws://127.0.0.1:47321/acp`, or 47331 for development builds), one JSON-RPC 2.0 message per text frame. Agneta is already running; your app never starts an agent |
 | Who may connect | Whoever starts the process | Apps the user approved. Pairing gives your app a token, sent in `initialize` |
 | Which provider, engine and model | The agent's own configuration | The providers and engines the user allowed your app, picked per session (`agneta/access` lists them); model and effort through the engine's own config options |
-| What the agent may touch | Whatever the agent process can reach | A policy you send with each session (tools, folders, network, approval, limits), enforced by sandboxes, or refused |
+| What the agent may touch | Whatever the agent process can reach | A policy you send with each session (tools, folders, sandbox mode, network, approval, limits), within the mode the user chose for your app, enforced by sandboxes, or refused |
 | Afterwards | Nothing standard | Usage in every prompt result, and the task's full trace, live or later |
 
 No SDK is needed. Any WebSocket and JSON-RPC 2.0 code will do, including in a sandboxed Mac App Store app. That needs `com.apple.security.network.client` to connect, plus `com.apple.security.network.server` if the app serves its own MCP tools; its folders come from the user (an open panel or a security-scoped bookmark), since Agneta keeps app containers out of reach ([details](docs/APP_PROTOCOL.md#connecting)). To see the whole exchange in Swift, read [`Sources/agneta-testclient/main.swift`](Sources/agneta-testclient/main.swift), the maintainers' test client: it pairs, opens a session with a policy and an MCP server, prompts and prints the stream in about 220 lines. It's a demonstration, not a client library: a real app keeps its token in the Keychain and reconnects with it, as Project Chat does.
 
 ### The conversation, step by step
 
-**1. Connect.** Open `ws://127.0.0.1:47321/acp`, the port of releases; development builds listen on 47331. If the connection is refused, Agneta isn't running: ask the user whether to open it, and on a yes open `agneta://open` (`agneta-dev://open` for development builds), wait for the port and connect. Never open it without asking.
+**1. Connect.** Open `ws://127.0.0.1:47321/acp`, the port of releases; development builds listen on 47331. If the connection is refused, Agneta isn't running: ask the user whether to open it, and on a yes open `agneta://open` (`agneta-dev://open` for development builds), wait for the port and connect. Never open it without asking. Before pairing you may call `agneta/catalog` (what Agneta offers: each kind of provider, whether one is connected, the engines; never the user's accounts) and `agneta/setup` (Agneta's window for connecting a provider). See [Before pairing](docs/APP_PROTOCOL.md#before-pairing-what-agneta-offers).
 
 **2. Pair, once.** Ask to be let in, and show the user that you're waiting:
 
 ```json
 → {"jsonrpc": "2.0", "id": 1, "method": "agneta/pair",
    "params": {"name": "Example App", "scope": {"tools": "workspace", "folders": ["/Users/me/Documents/Example Project"]}}}
-← {"jsonrpc": "2.0", "id": 1, "result": {"token": "…", "remembered": true, "access": {…}}}
+← {"jsonrpc": "2.0", "id": 1, "result": {"token": "…", "remembered": true, "access": {…}, "unmet": []}}
 ```
 
-The `scope` says what your app will need: the most built-in tools, and the user's folders its sessions will work in. Without one, your app gets its own tools only, in a workspace Agneta makes for it (`workspace`). Agneta opens its approval window, which shows the scope; the user ticks the providers your app may use (engines are all allowed unless they narrow them) and chooses Allow Once or Always Allow. Every later session must fit the scope. If your app is signed with a Developer ID or App Store certificate, Agneta checks the signature and shows the app as verified. If it isn't (ad hoc or development builds), Agneta first sends you `agneta/pairingCode {"code": "123456"}`. Show that code; the user allows your app only if it matches the one in Agneta's window. When `remembered` is true (Always Allow), store the token in your Keychain and connect with it next time, without pairing; Allow Once ends with the connection. Pairing again with Always Allow replaces your app's access rather than adding to it; an unverified app starts afresh, with a new workspace. A refusal comes back as error `-32002`.
+The `scope` says what your app will need: the most built-in tools, and the user's folders its sessions will work in. It can also name the provider kinds, engines and sandbox mode you want (`"providers": ["claude"]`, `"engines": ["claude-code"]`, `"sandbox": "contained"`), which narrow the approval window to them ([details](docs/APP_PROTOCOL.md#pairing-once-per-app)). Without a scope, your app gets its own tools only, in a workspace Agneta makes for it (`workspace`). Agneta opens its approval window, which shows the scope; the user ticks the providers your app may use (engines are all allowed unless they narrow them under Engines…), chooses Developer access or Contained for an app with `workspace` tools, and chooses Allow Once or Always Allow. `unmet` lists what of your ask wasn't given, and why. Every later session must fit the grant. If your app is signed with a Developer ID or App Store certificate, Agneta checks the signature and shows the app as verified. If it isn't (ad hoc or development builds), Agneta first sends you `agneta/pairingCode {"code": "123456"}`. Show that code; the user allows your app only if it matches the one in Agneta's window. When `remembered` is true (Always Allow), store the token in your Keychain and connect with it next time, without pairing; Allow Once ends with the connection. Pairing again with Always Allow replaces your app's access rather than adding to it; an unverified app starts afresh, with a new workspace. A refusal comes back as error `-32002`.
 
 **3. Initialize, on every connection.**
 
@@ -198,18 +199,20 @@ The `scope` says what your app will need: the most built-in tools, and the user'
                      "headers": [{"name": "Authorization", "value": "Bearer <per-session secret>"}]}],
      "_meta": {
        "agneta": {"account": "acct-1", "engine": "claude-code"},
-       "agneta/policy": {"tools": "workspace", "network": "none", "approval": "never-ask",
+       "agneta/policy": {"tools": "workspace", "sandbox": "contained", "network": "none", "approval": "never-ask",
                            "limits": {"maxTurns": 100, "maxSeconds": 900}},
        "agneta/task": {"title": "Tidying the project notes"},
        "agneta/instructions": {"text": "You are Example App's assistant."},
        "agneta/trace": {"live": true}}}}
 ← {"jsonrpc": "2.0", "id": 3, "result": {"sessionId": "s_…", "configOptions": […],
-   "_meta": {"agneta": {"account": "acct-1", "capabilities": {"engine": "claude-code", "steer": true, "fork": false, …}}}}}
+   "_meta": {"agneta": {"account": "acct-1", "sandbox": "contained",
+                        "capabilities": {"engine": "claude-code", "steer": true, "fork": false, …}}}}}
 ```
 
 - **Your tools** are an MCP server (Streamable HTTP) that your app runs on loopback, with a fresh bearer per session. Agneta accepts only loopback HTTP servers and masks the bearer in traces. A session with its own engine may reach exactly those ports; app-only sessions on Goose share one engine per account, and OpenCode runs a private server, so those may reach any loopback port. Your tools run in your app, with your app's permissions, not inside Agneta's sandbox.
-- **`tools`** is `app-only` (only your MCP tools), `read` (plus reading files) or `workspace` (plus editing and a shell confined to `cwd`).
-- **A policy Agneta can't enforce is refused** with `-32602` and `data.agneta.unenforceable` naming the field. Examples: an unknown field, a folder containing the home folder, or a cost limit on an engine that can't report cost while a turn runs.
+- **`tools`** is `app-only` (only your MCP tools), `read` (plus reading files) or `workspace` (plus editing and a shell; confined to `cwd` when contained).
+- **`sandbox`** is `contained` or `developer`, at most what the user chose for your app. Without it, a `workspace` session gets the grant's mode, and developer access is the default: commands reach the internet and read the home folder, as in a terminal, and `network` doesn't apply. Ask for `contained` unless you need that ([Sandbox](docs/APP_PROTOCOL.md#sandbox)). The result's `sandbox` says what the task got.
+- **A policy Agneta can't enforce is refused** with `-32602` and `data.agneta.unenforceable` naming the field. Examples: an unknown field, a folder containing the home folder, a `sandbox` above what the user allowed, or a cost limit on an engine that can't report cost while a turn runs.
 - **`engine`** is optional: without it, the provider's `defaultEngine`. One that's still downloading answers `-32015` with its progress; try again shortly.
 - **`configOptions`** are the engine's own settings. Find the model and reasoning effort by their ACP categories, `model` and `thought_level` (each engine names them differently), and change them with `session/set_config_option`.
 - **`capabilities`** tells you what this session's engine can do. Offer steering, forking or cost limits only where it says so.
@@ -246,7 +249,8 @@ The engine's standard ACP `session/update` notifications arrive unchanged, under
 
 | From Agneta | Meaning, and what to show |
 | --- | --- |
-| `agneta/accessChanged {"access"}` | What your app may use changed: providers or engines added, removed, paused, downloading or ready. Update your pickers |
+| `agneta/catalogChanged {"catalog"}` | Before pairing: a provider was connected or removed, or an engine changed |
+| `agneta/accessChanged {"access"}` | What your app may use changed: providers or engines added, removed, paused, downloading or ready, or its sandbox mode. Update your pickers |
 | `agneta/queued {"sessionId", "position"}` | The provider is busy; the turn waits its place and runs later |
 | `agneta/sessionStopped {"stoppedBy": "user"}` | The user pressed Stop in Agneta. Show it as stopped, not as an error |
 | `agneta/sessionStopped {"stoppedBy": "engine"}` | The engine ended on its own; resume the task with `session/load` |
@@ -325,7 +329,7 @@ The documents below are also on [agneta.dahlbom.io/docs](https://agneta.dahlbom.
 
 | Document | For |
 | --- | --- |
-| [docs/APP_PROTOCOL.md](docs/APP_PROTOCOL.md) | The protocol in full, for integrating an app: connecting and pairing, sessions and their policy, model choice, turns, permissions, the trace, and every error |
+| [docs/APP_PROTOCOL.md](docs/APP_PROTOCOL.md) | The protocol in full, for integrating an app: connecting and pairing, sessions and their policy, the sandbox modes, model choice, turns, permissions, the trace, and every error |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How Agneta is built, and its security model |
 | [docs/ENGINES.md](docs/ENGINES.md) | Goose, OpenCode, Claude Code and Codex behind the engine boundary |
 | [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) | Traces, `agneta-diag` and the diagnostics MCP server |

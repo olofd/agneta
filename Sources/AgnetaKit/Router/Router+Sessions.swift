@@ -253,7 +253,7 @@ extension Router {
         guard current(id, generation) else { return .failure(Self.endedWhileOpening) }
         if let traces {
             openTrace(traces, task: id, grant: grant, accountID: plan.account, lease: lease, engineSession: engineSession,
-                      policy: plan.policy, request: params, result: result, instructions: plan.instructions)
+                      policy: plan.policy, sandbox: plan.sandbox, request: params, result: result, instructions: plan.instructions)
         }
         announce(id, grant: grant, account: plan.account, title: meta?["agneta/task"]?["title"]?.stringValue ?? "AI task",
                  stopWarning: meta?["agneta/task"]?["stopWarning"]?.stringValue)
@@ -399,7 +399,7 @@ extension Router {
             var request = (params ?? [:]).setting("cwd", to: cwd.map(JSONValue.string) ?? .null)
             request = request.setting("_meta", to: (request["_meta"] ?? [:]).setting(SessionPolicy.key, to: policyValue))
             openTrace(traces, task: id, grant: grant, accountID: plan.account, lease: lease, engineSession: engineSession,
-                      policy: plan.policy, request: request, result: result, instructions: plan.instructions)
+                      policy: plan.policy, sandbox: plan.sandbox, request: request, result: result, instructions: plan.instructions)
             traces.session(id)?.writer.record("lifecycle", ["event": "forked", "from": .string(source), "messages": imported["messageCount"] ?? .null])
             announce(id, grant: grant, account: plan.account,
                      title: params?["_meta"]?["agneta/task"]?["title"]?.stringValue
@@ -444,7 +444,7 @@ extension Router {
 
     /// Starts a new task's trace with everything that shapes the run (docs/DIAGNOSTICS.md, `meta`).
     func openTrace(_ traces: Traces, task: String, grant: Grant, accountID: String, lease: EngineLease, engineSession: String,
-                           policy: SessionPolicy, request: JSONValue?, result: JSONValue, instructions: String?) {
+                           policy: SessionPolicy, sandbox: Sandbox, request: JSONValue?, result: JSONValue, instructions: String?) {
         let account = accounts[accountID]
         func paths(_ urls: [URL]) -> JSONValue { .array(urls.map { .string($0.path(percentEncoded: false)) }) }
         let meta: [String: JSONValue] = [
@@ -461,7 +461,9 @@ extension Router {
                        "stateRoot": lease.stateRoot.map { .string($0.path(percentEncoded: false)) } ?? .null],
             "policy": ["tools": .string("\(policy.tools)"), "network": .string("\(policy.network)"), "approval": .string("\(policy.approval)"),
                        "workspace": .string(policy.workspace.path(percentEncoded: false)), "readable": paths(policy.readable),
-                       "writable": paths(policy.writable), "readOnly": paths(policy.readOnly), "denied": paths(policy.denied)],
+                       "writable": paths(policy.writable), "readOnly": paths(policy.readOnly), "denied": paths(policy.denied),
+                       // The mode the task ran in, and which variables the app set for its commands (names: values may hold paths of its own).
+                       "sandbox": .string(sandbox.rawValue), "toolEnvironment": .array(policy.toolEnvironment.keys.sorted().map(JSONValue.string))],
             "request": request ?? .null,
             "engineResult": result,
             "instructions": instructions.map(JSONValue.string) ?? .null,

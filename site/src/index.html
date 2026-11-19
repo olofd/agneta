@@ -3,7 +3,7 @@
     <div class="hero-text">
       <img class="hero-icon" src="/assets/icon-256.png" width="72" height="72" alt="">
       <h1>Give Mac apps an AI agent you control.</h1>
-      <p class="lede">Agneta is an open-source menu bar app for macOS. Connect the AI you already pay for once: a ChatGPT or Claude plan, or an OpenAI or Anthropic API key. Then decide which apps may use it. Agneta runs each task on your Mac, in a sandbox, on your account, and shows you every task with a stop button.</p>
+      <p class="lede">Agneta is an open-source menu bar app for macOS. Connect the AI you already pay for once: a ChatGPT or Claude plan, or an OpenAI or Anthropic API key. Then decide which apps may use it. Agneta runs each task on your Mac, in the sandbox you choose, on your account, and shows you every task with a stop button.</p>
       <div class="actions">
         <a class="button primary" href="#install">Download</a>
         <a class="button" href="/docs/apps/">Add it to your app</a>
@@ -14,8 +14,8 @@
       <div class="desk">
         <div class="menubar" aria-hidden="true"><span class="status-item"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M12.89 15.6A5.6 5.6 0 1 0 10.52 17.26M11.11 8.4A5.6 5.6 0 1 0 13.48 6.74"/></svg></span></div>
         <div class="win win-approval">
-          <img class="light" src="/images/approval.png" width="508" height="648" alt="An app asks to use Agneta. The window shows what it may do and that it’s verified, and the user ticks which providers it may use">
-          <img class="dark" src="/images/approval-dark.png" width="508" height="648" loading="lazy" alt="An app asks to use Agneta. The window shows what it may do and that it’s verified, and the user ticks which providers it may use">
+          <img class="light" src="/images/approval.png" width="528" height="703" alt="An app asks to use Agneta. The window shows what it may do and that it’s verified; the user ticks which providers it may use and chooses developer access or contained">
+          <img class="dark" src="/images/approval-dark.png" width="528" height="703" loading="lazy" alt="An app asks to use Agneta. The window shows what it may do and that it’s verified; the user ticks which providers it may use and chooses developer access or contained">
         </div>
         <div class="win win-panel">
           <img class="light" src="/images/panel.png" width="408" height="485" fetchpriority="high" alt="Agneta’s menu bar panel: two running tasks from Example App, each with a stop button, and three connected providers with the engine each runs on">
@@ -40,6 +40,7 @@
       <ul class="points">
         <li>An app has to ask first. You see the tools and folders it wants and whether its code signature checks out, then allow it once or always.</li>
         <li>You choose which of your plans and API keys each app may use, and can remove its access at any time.</li>
+        <li>You choose how far its tasks reach: Developer access, like Terminal with your passwords and keys kept out, or Contained, its folders only and no internet.</li>
         <li>Every task shows the app it belongs to, the provider it runs on and what it costs.</li>
       </ul>
     </div>
@@ -49,6 +50,7 @@
       <ul class="points">
         <li>Speak the <a href="https://agentclientprotocol.com" rel="noopener">Agent Client Protocol</a> over a local WebSocket. No SDK is needed, and a sandboxed Mac App Store app can do it too.</li>
         <li>Keep your tools and data in your app, served as an MCP server on loopback. The agent uses them on the user’s account.</li>
+        <li>Ask for exactly what you need: the providers, engines and mode. Find out first what Agneta offers, and ask it to help the user connect a provider.</li>
         <li>Send a policy with each session: tools, folders, network, approval and limits. Agneta enforces it with sandboxes, or refuses it.</li>
         <li>Usage comes back with every result, and every task leaves a full trace, live or later.</li>
       </ul>
@@ -81,8 +83,8 @@
       <dl class="facts">
         <div><dt>Your sign-ins</dt><dd>Plans are signed in by your own Codex or Claude Code, which keep and refresh their credentials. Agneta never holds a plan’s tokens, and API keys stay in your Keychain.</dd></div>
         <div><dt>Loopback only</dt><dd>Agneta listens on 127.0.0.1 and refuses requests from web pages. Nothing listens beyond your Mac.</dd></div>
-        <div><dt>Sandboxed engines</dt><dd>Each engine runs under a macOS sandbox profile: the task’s workspace, the folders its policy names and what the engine itself needs, and nothing else in your home folder.</dd></div>
-        <div><dt>Commands, stricter still</dt><dd>Shell commands run confined to the workspace, with no network when the policy says none.</dd></div>
+        <div><dt>Sandboxed engines</dt><dd>Each engine runs under a macOS sandbox profile. Contained, it reaches the task’s workspace, the folders its policy names and what the engine itself needs, and nothing else in your home folder. With developer access it reaches what Terminal does, apart from your credentials, other apps’ data and Agneta’s own.</dd></div>
+        <div><dt>Every command through Agneta</dt><dd>Every engine’s shell commands go through Agneta, each one in the task’s trace. Contained, they stay in the workspace with no internet; with developer access they build with each app’s own caches, never yours.</dd></div>
         <div><dt>Traces you keep</dt><dd>Every task leaves a trace of its prompts, tool calls, model calls and decisions, readable only by you and kept 30 days by default.</dd></div>
         <div><dt>Updates, once you allow them</dt><dd>Release builds ask before they first check GitHub for updates. The check carries Agneta’s version and nothing of yours.</dd></div>
       </dl>

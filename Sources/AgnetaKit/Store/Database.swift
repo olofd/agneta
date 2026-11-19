@@ -1,8 +1,9 @@
 // Agneta's records in one SQLite file: accounts, app grants, task
 // history, the engines it started, and settings. GRDB with a single writer.
-// Before 1.0 there are no migrations: the schema below is the only one, changed
-// in place under a new id, and a database made with another id is left
-// untouched and refused, so the user resets (docs/ARCHITECTURE.md). Secrets
+// Before 1.0 there's no compatibility promise: the schema may change in place
+// under a new id, and a database made with another id is left untouched and
+// refused, so the user resets (docs/ARCHITECTURE.md). Small forward migrations
+// are added where they're cheap (the sandbox modes added two). Secrets
 // never land here: API keys are in the Keychain, subscription tokens in each
 // account's folder, app tokens only as SHA-256 hashes.
 import Foundation

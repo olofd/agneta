@@ -39,6 +39,8 @@ struct AppScenarioTests {
             #expect(try stack.traces.text(of: run).split(separator: "\n").count == originalLines)
             let forkTrace = try stack.traces.text(of: fork).split(separator: "\n").map { try JSONCoding.decode(Data($0.utf8)) }
             #expect(forkTrace.first?["policy"]?["tools"]?.stringValue == "read")
+            // The mode it ran in: a read-only fork runs contained.
+            #expect(forkTrace.first?["policy"]?["sandbox"]?.stringValue == "contained")
             #expect(forkTrace.contains { $0["event"]?.stringValue == "forked" && $0["from"]?.stringValue == run })
             // Only the owner can fork.
             let other = AppClient(port: stack.port)

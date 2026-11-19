@@ -28,7 +28,7 @@ Replica Bench/
 
 ## The window
 
-1. **Connect.** Compare the pairing code if one appears. In Agneta, tick a provider, pick the app's sandbox mode, and choose **Always Allow** (the token is kept in the Keychain through Electron's `safeStorage`) or **Allow Once**. The pairing asks for workspace tools in the bench's folder and starts the mode picker at developer ([Pairing and policy](#pairing-and-policy)). The header shows the mode the user granted (**Grant: contained** or **Grant: developer**).
+1. **Connect.** Compare the pairing code if one appears. In Agneta, tick a provider, pick the app's sandbox mode, and choose **Always Allow** (the token is kept in the Keychain through Electron's `safeStorage`) or **Allow Once**. The pairing asks for workspace tools in the bench's folder, every provider and engine, and any mode, so the mode picker starts at developer ([Pairing and policy](#pairing-and-policy)). The header shows the mode the user granted (**Grant: contained** or **Grant: developer**).
 2. **Choose** the provider, the engine and **Contained** or **Developer** in the header. An engine Agneta can't confine is marked "uncontained" in the picker. If Agneta will refuse what you picked (developer above a contained grant, or contained on an uncontained engine), a bar says so and why before you run. The next run's session opens straight away, so the engine's **Model** and **Effort** choices appear before you run anything (as in Project Chat).
 3. **Run** a scenario from the list on the left. Each runs in a fresh workspace and session. The transcript shows the agent's replies and every tool call with its status. The right-hand panel shows what the app saw:
    - **Sandbox:** the mode the run asked for and the mode the task got (`_meta.agneta.sandbox`), or "refused by Agneta" with Agneta's own reason, which the transcript also shows;
@@ -163,7 +163,7 @@ How far an app's tasks reach is one of two modes, the same for every engine ([AP
 
 **Who decides what.** Three things, in this order:
 
-1. **The user sets the ceiling for each app.** They pick the mode in Agneta's approval window when the app pairs (the picker starts where the app's scope asks, developer for the bench), and can change it later in Settings → Apps. The grant's mode comes back as `access.scope.sandbox` in `initialize`, `agneta/pair` and `agneta/accessChanged`. The bench shows it in the header, the Sandbox tab, `--list` and every report.
+1. **The user sets the ceiling for each app.** They pick the mode in Agneta's approval window when the app pairs (the picker starts where the app's scope asks: the bench asks for `any`, so it starts on developer access), and can change it later in Settings → Apps. The grant's mode comes back as `access.scope.sandbox` in `initialize`, `agneta/pair` and `agneta/accessChanged`. The bench shows it in the header, the Sandbox tab, `--list` and every report.
 2. **The app may ask for less, never more.** Each session asks with `"sandbox"` in its policy. The bench always sends it, so the report can show **Asked** beside **Got**. A session that asks above the grant is refused before any engine starts.
 3. **The engine must be able to provide it.** The access report gives each provider's `sandboxLevels` (`{"claude-code": ["contained", "developer"], ...}`) and `uncontained` engines. Goose on a Claude plan is uncontained: it runs Claude Code with all of Claude Code's own tools and the claude.ai connectors, so it provides developer only, and asking for contained there is refused. The bench marks such engines "uncontained" in the window, `--list` and the modes table.
 
@@ -190,17 +190,18 @@ This is the quick, cheap demonstration. For every provider × engine the app may
 | Provider | Engine | Can provide | Asked | Got | As declared | Agneta's reason |
 | Claude | claude-code | contained, developer | contained | contained | yes | |
 | Claude | claude-code | contained, developer | developer | refused | yes | the user keeps this app's tasks contained … |
-| Claude | goose (uncontained) | developer | contained | refused | yes | Goose … can't keep Claude's tasks contained; choose another engine, or developer access |
+| Claude | goose (uncontained) | developer | contained | refused | yes | On a Claude plan, Goose runs Claude Code with all its own tools … which Agneta can't contain; choose another engine, or developer access |
 ```
 
-To see a contained grant without changing your own, run an isolated Agneta that grants it: `agnetad --sandbox contained` (the headless host the integration check uses), then `AGNETA_PORT=<its port> npm run bench -- --modes`.
+To see a contained grant without changing your own, run an isolated Agneta that grants it: `agnetad` (the headless host the integration check uses, contained unless started with `--sandbox developer`), then `AGNETA_PORT=<its port> npm run bench -- --modes`.
 
 ## Pairing and policy
 
 The pairing scope:
 
 ```json
-{"name": "Replica Bench", "scope": {"tools": "workspace", "folders": ["<bench folder>", "~/.rustup", "~/.cargo/bin"], "sandbox": "developer"}}
+{"name": "Replica Bench", "scope": {"tools": "workspace", "folders": ["<bench folder>", "~/.rustup", "~/.cargo/bin"],
+                                    "providers": "all", "engines": "all", "sandbox": "any"}}
 ```
 
 The user picks the grant's mode in the approval window; the bench reads it back from `access.scope.sandbox` and never assumes it. A kept grant that doesn't cover the bench folder (after `REPLICA_BENCH_HOME` changed) is replaced by pairing again. `--pair` (or **Pair Again** in the window) pairs again, so the user can pick another mode.
@@ -237,7 +238,7 @@ Developer runs send `"sandbox": "developer"`, without the toolchain (the agent f
 - pairing and access against a stand-in Agneta that follows the protocol's sandbox rules: the scope asked for, the grant's mode read back and changed by `agneta/accessChanged`, each engine's `sandboxLevels` and `uncontained`, kept grants;
 - the modes check against the same stand-in, under a developer grant, under a contained grant, with an answer that disagrees with the declarations, and with an unavailable engine.
 
-The integration check runs the bench against a headless Agneta (`agnetad`) with real Goose and the fake model (`agneta-fakes`). It uses its own temporary `AGNETA_HOME` and bench folder, and ports in 47900–47999 (Agneta's own Swift tests use 474xx and 476xx). From the repository root:
+The integration check runs the bench against a headless Agneta (`agnetad`) with real Goose and the fake model (`agneta-fakes`). It uses its own temporary `AGNETA_HOME` and bench folder, and ports in 47900–47999 (Agneta's own Swift tests use 474xx, 476xx and 477xx). From the repository root:
 
 ```sh
 scripts/fetch-engines
@@ -249,8 +250,8 @@ npm run test:integration
 
 The fake model makes one tool call per prompt, so the integration check proves the path rather than an agent's skill. It runs twice:
 
-- **agnetad's default grant (developer).** The bench connects and reads the grant and Goose's levels. A run asking contained gets contained, and one asking developer gets developer, each making an MCP tool call through the `bench` server. A contained shell command goes through Agneta's broker, where the kit reaches the gateway on `toolPorts`. The modes check opens both modes as declared, and the report has the Sandbox section, the modes table and the Asked/Got columns.
-- **`agnetad --sandbox contained`.** A run asking contained still works. One asking developer is refused (`-32602`, `unenforceable: ["sandbox"]`) with Agneta's reason, before any engine starts. The modes check agrees, and the report shows the refusal and its reason.
+- **`agnetad --sandbox developer`.** The bench connects and reads the grant and Goose's levels. A run asking contained gets contained, and one asking developer gets developer, each making an MCP tool call through the `bench` server. A contained shell command goes through Agneta's broker, where the kit reaches the gateway on `toolPorts`. The modes check opens both modes as declared, and the report has the Sandbox section, the modes table and the Asked/Got columns.
+- **`agnetad`'s default grant (contained).** A run asking contained still works. One asking developer is refused (`-32602`, `unenforceable: ["sandbox"]`) with Agneta's reason, before any engine starts. The modes check agrees, and the report shows the refusal and its reason.
 
 **Known limit.** Agneta's live trace trails the turn: its last command records arrive 100–500 ms after `session/prompt` answers. Before judging, the bench waits for 500 ms without trace records (at most 5 s), so a record later than that would be missed.
 

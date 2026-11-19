@@ -4,7 +4,7 @@ How Agneta keeps an engine, and the commands it runs, inside what the user and t
 
 ## What Agneta relies on
 
-macOS's Seatbelt sandbox, through `/usr/bin/sandbox-exec`. Each engine process runs under a profile Agneta writes for it (`Policy/SandboxProfile.swift`), and every engine's shell commands run under a stricter one, through Agneta's tool broker. The profiles allow-list what may be read, written and run, and which network connections may be made; they deny Apple Events, LaunchServices, signals and process inspection outside the sandbox.
+macOS's Seatbelt sandbox, through `/usr/bin/sandbox-exec`. Each engine process runs under a profile Agneta writes for it (`Policy/SandboxProfile.swift`), and every engine's shell commands run under a stricter one, through Agneta's tool broker. The profiles allow-list what may be read, written and run, and which network connections may be made; they deny Apple Events, LaunchServices, signals and process inspection outside the sandbox. Profiles are passed inline (`sandbox-exec -p`), never as a file. What they allow depends on the app's sandbox mode, contained or developer access ([APP_PROTOCOL.md](APP_PROTOCOL.md#sandbox)).
 
 `sandbox-exec` is marked deprecated in its manual page, and the profile language isn't documented by Apple. It's still in macOS 26, and other agent tools rely on the same mechanism on macOS (Codex's and Claude Code's own sandboxes among them). The risks are that a macOS release:
 
@@ -32,7 +32,7 @@ The second is the dangerous one, so it is tested rather than assumed.
 | Connect to port 80 on another host | Refused by the sandbox |
 | Connect to port 443 on another host | Not refused by the sandbox (the engine's provider) |
 
-`ToolBrokerTests` does the same for the shell commands' profile (no network, the workspace only, no LaunchServices, background processes ended), and `EngineContractTests` checks which built-in tools each engine is given under each policy.
+`ToolBrokerTests` does the same for the shell commands' profile (no network, the workspace only, no LaunchServices, background jobs living on until their engine ends, none outliving Agneta). `DeveloperAccessTests` checks the developer profile (the home folder readable, secrets and Agneta's data refused, the app's caches writable), that a contained command resolves no names, and that planted links and swapped folders grant nothing. `EngineContractTests` checks which built-in tools each engine is given under each policy.
 
 The test names the macOS version it ran on. It runs in CI on every supported major version ([CI.md](CI.md)), and a release is made only from a commit that passed on all of them.
 
@@ -62,6 +62,8 @@ None of these is built. The acceptance test is written against behaviour, not ag
 
 ## Known limits
 
+- **Developer access is a terminal's reach.** Commands and the engine's own tools get the internet, the home folder (credentials and Agneta's data excepted) and every loopback port. It's the default for an app with `workspace` tools, unless the user chooses Contained.
+- **A command that detaches** (`setsid`, `set -m`) can outlive its engine and Agneta, in both modes: the sandbox can't refuse it without breaking ordinary tools.
 - **Engines reach any host on port 443.** Seatbelt filters connections by port, not host name, and engines need HTTPS for their provider. A per-host allowlist needs a network layer Agneta owns (a proxy, or the virtual machine route above).
 - **Claude Code's and Codex's other built-in tools (reading, editing, fetching) run inside the engine's profile,** not the stricter shell profile; their commands go through the broker. Agneta refuses what the policy forbids in their permission requests ([APP_PROTOCOL.md](APP_PROTOCOL.md#permissions)). The acceptance test hasn't yet run with their real programs; it needs signed-in accounts.
 - **Other processes' environments are readable** to any process of the user's, sandboxed or not: no Seatbelt rule stops `KERN_PROCARGS2` without stopping every program (measured). Agneta keeps its broker tokens in files; an API-key account's key is still in its engine's environment.

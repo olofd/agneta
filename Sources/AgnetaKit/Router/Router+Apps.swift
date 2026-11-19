@@ -59,7 +59,8 @@ extension Router {
             }
         }
         if asked.sandbox == .developer, grant.ceiling == .contained {
-            unmet.append(["sandbox": "developer", "reason": "the user chose contained"])
+            // Developer access is a terminal's commands: offered only with workspace tools.
+            unmet.append(["sandbox": "developer", "reason": grant.tools == .workspace ? "the user chose contained" : "developer access needs workspace tools"])
         }
         if asked.sandbox == .contained {
             for kind in given {
