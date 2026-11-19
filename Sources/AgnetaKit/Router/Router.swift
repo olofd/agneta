@@ -372,8 +372,9 @@ public actor Router {
     }
 
     /// What Agneta offers any app, paired or not (`agneta/catalog`): each provider kind, whether one is connected, the
-    /// engines it runs on and the modes each can provide; and the engines on this Mac. Never the user's accounts
-    /// themselves (labels, addresses, how many): pairing guards those.
+    /// engines it runs on and the modes each can provide; the engines on this Mac; and Agneta's version, so an app that
+    /// needs a newer one can say so before pairing. Never the user's accounts themselves (labels, addresses, how many):
+    /// pairing guards those.
     func catalogReport() -> JSONValue {
         let connected = Set(accounts.values.map(\.kind))
         let providers: [JSONValue] = AccountKind.allCases.map { kind in
@@ -390,7 +391,7 @@ public actor Router {
             if let reason = report.reason { engine = engine.setting("reason", to: .string(reason)) }
             return engine
         }
-        return ["providers": .array(providers), "engines": .array(engines), "connected": .bool(!accounts.isEmpty)]
+        return ["providers": .array(providers), "engines": .array(engines), "connected": .bool(!accounts.isEmpty), "version": .string(Self.version)]
     }
 
     /// The Codex program this Agneta runs, for what only Codex itself can do outside a task (deleting a saved session).

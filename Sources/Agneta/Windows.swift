@@ -19,6 +19,7 @@ final class WindowPresenter {
     /// `onClose` runs when the window closes for any reason (its close button, Command-W, or code).
     private func show<Content: View>(_ key: String, title: String, size: NSSize, glass: Bool = true, resizable: Bool = false,
                                      onClose: (@MainActor () -> Void)? = nil, @ViewBuilder content: () -> Content) {
+        if Self.replacesWelcome(key) { closeWelcome() }
         if let window = windows[key] {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -71,6 +72,11 @@ final class WindowPresenter {
     func window(_ key: String) -> NSWindow? { windows[key] }
     func register(_ key: String, _ window: NSWindow) { windows[key] = window }
 
+    /// Windows that do the first-run window's job, and say who asked: an app's "Connect Your AI" (it names the app),
+    /// its approval window (with a Connect row for each provider it needs), and a sign-in. With one of them up, Welcome
+    /// would be a second window saying nearly the same, so it closes (an app waiting on a fresh install opens them).
+    nonisolated static func replacesWelcome(_ key: String) -> Bool { ["setup", "approval", "signin"].contains(key) }
+
     func showWelcome(_ model: AppModel) { show("welcome", title: "Welcome to Agneta", size: NSSize(width: 460, height: 520)) { WelcomeView(model: model) } }
     func closeWelcome() { close("welcome") }
     /// An app asked Agneta to help connect a provider: the add-provider window, naming it. A repeat brings it forward.
@@ -80,7 +86,6 @@ final class WindowPresenter {
     func closeSetup() { close("setup") }
     /// Closing the window cancels the sign-in it shows (one left running would hold its sign-in callback port).
     func showSignIn(_ model: AppModel, attempt: UUID) {
-        closeWelcome()
         closeSetup()
         show("signin", title: "Sign In", size: NSSize(width: 420, height: 340), onClose: { model.signIn.windowClosed(attempt) }) { SignInView(model: model) }
     }
