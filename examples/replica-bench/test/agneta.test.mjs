@@ -91,13 +91,15 @@ test('a kept token is used while its grant covers the bench folder, and replaced
   moved.close();
 });
 
-test('the headless runner says what is missing, and how to get it, without opening anything', () => {
+test('the headless runner says what is missing, for either build, without opening anything', () => {
   const release = { agnetaName: 'Agneta', installURL: 'https://agneta.dahlbom.io/get/', homebrew: 'brew install olofd/tap/agneta' };
-  assert.equal(whatIsMissing({ state: 'notInstalled' }, release, 'arm64'),
-    'Agneta isn\'t installed. Get it from https://agneta.dahlbom.io/get/#arm64, or install it with: brew install olofd/tap/agneta. Then open it and run this again.');
-  assert.match(whatIsMissing({ state: 'onDiskImage' }, release), /drag it into Applications/);
-  assert.match(whatIsMissing({ state: 'notRunning', location: 'applications', version: '0.5.0' }, release), /isn't running\. Open it/);
   const dev = { agnetaName: 'Agneta Dev', installURL: 'https://github.com/olofd/agneta#build-and-run', homebrew: null };
-  assert.equal(whatIsMissing({ state: 'notInstalled' }, dev, 'x86_64'),
-    'Agneta Dev isn\'t installed. Get it from https://github.com/olofd/agneta#build-and-run. Then open it and run this again.');
+  const found = (releaseState, devState) => [{ agneta: release, presence: { state: releaseState } }, { agneta: dev, presence: { state: devState } }];
+  assert.equal(whatIsMissing(found('notInstalled', 'notInstalled'), 'arm64'),
+    'Agneta isn\'t installed. Get it from https://agneta.dahlbom.io/get/#arm64, or install it with: brew install olofd/tap/agneta. Then open it and run this again.');
+  // Only Agneta Dev on this Mac: open it, rather than "not installed".
+  assert.match(whatIsMissing(found('notInstalled', 'notRunning')), /^Agneta Dev isn't running\. Open it/);
+  assert.match(whatIsMissing(found('notRunning', 'notRunning')), /^Agneta isn't running/);
+  assert.match(whatIsMissing(found('onDiskImage', 'notInstalled')), /^Agneta is on its disk image: drag it into Applications/);
+  assert.match(whatIsMissing(found('unknown', 'unknown')), /Neither Agneta/);
 });

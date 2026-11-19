@@ -109,8 +109,12 @@ async function choosePort(given) {
     return { port, name: agnetas.find((entry) => entry.port === port)?.name ?? `Agneta on port ${port}` };
   }
   for (const entry of agnetas) if (await isListening(entry.port)) return entry;
-  const release = new AgnetaClient({ name: 'Replica Bench', environment: nodeEnvironment() });
-  throw new Error(whatIsMissing(await release.presence(), release, await macArchitecture()));
+  const environment = nodeEnvironment();
+  const found = await Promise.all(agnetas.map(async (entry) => {
+    const agneta = new AgnetaClient({ name: 'Replica Bench', build: entry.id, environment });
+    return { agneta, presence: await agneta.presence() };
+  }));
+  throw new Error(whatIsMissing(found, await macArchitecture()));
 }
 
 /** Hosts one run for plain Claude Code in a terminal: the reference column, measured the same way but run by hand. */

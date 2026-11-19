@@ -23,20 +23,26 @@ export const agnetas = [
 export const memoryTokens = memoryTokenStore;
 
 /**
- * What the headless runner says when no Agneta answers, from the client's `presence()`: how to get it (the install page
- * for this Mac and Homebrew), to drag it into Applications, or to open it. A script has no one to ask, so it never opens
- * anything itself (docs/APP_PROTOCOL.md, Getting Agneta).
+ * What the headless runner says when no Agneta answers, from each build's `presence()` (`found`: the release first,
+ * then Agneta Dev): to open one that's installed, to drag one off its disk image, else how to get the release (the
+ * install page for this Mac and Homebrew). A script has no one to ask, so it never opens anything itself
+ * (docs/APP_PROTOCOL.md, Getting Agneta).
  */
-export function whatIsMissing(presence, { agnetaName, installURL, homebrew }, architecture = null) {
-  switch (presence.state) {
-    case 'notInstalled':
-      return [`${agnetaName} isn't installed. Get it from ${installPageURL(installURL ?? '', architecture) || 'its website'}`,
-        homebrew ? `, or install it with: ${homebrew}` : '', `. Then open it and run this again.`].join('');
-    case 'onDiskImage': return `${agnetaName} is on its disk image: drag it into Applications, open it from there, and run this again.`;
-    case 'notRunning': return `${agnetaName} isn't running. Open it (it lives in the menu bar), then run this again.`;
-    case 'blocked': return presence.reason;
-    default: return `${agnetaName} isn't running. Open it, then run this again, or give --port.`;
+export function whatIsMissing(found, architecture = null) {
+  const first = (state) => found.find(({ presence }) => presence.state === state);
+  const installed = first('notRunning');
+  if (installed) return `${installed.agneta.agnetaName} isn't running. Open it (it lives in the menu bar), then run this again.`;
+  const onImage = first('onDiskImage');
+  if (onImage) return `${onImage.agneta.agnetaName} is on its disk image: drag it into Applications, open it from there, and run this again.`;
+  const blocked = first('blocked');
+  if (blocked) return blocked.presence.reason;
+  const missing = first('notInstalled');
+  if (missing) {
+    const { agnetaName, installURL, homebrew } = missing.agneta;
+    return [`${agnetaName} isn't installed. Get it from ${installPageURL(installURL ?? '', architecture) || 'its website'}`,
+      homebrew ? `, or install it with: ${homebrew}` : '', '. Then open it and run this again.'].join('');
   }
+  return 'Neither Agneta (47321) nor Agneta Dev (47331) is running. Open one, then run this again, or give --port.';
 }
 
 /** The fields Agneta says it can't enforce (`UnenforceableError.fields`), or an empty list. */
