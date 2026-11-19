@@ -270,15 +270,6 @@ actor FakeEngines: EngineSource {
             return Stack(root: root, engines: engines, traces: traces, router: router, server: server, port: port)
         }
 
-        init(root: URL, engines: FakeEngines, traces: Traces, router: Router, server: WebSocketServer, port: UInt16) {
-            self.root = root
-            self.engines = engines
-            self.traces = traces
-            self.router = router
-            self.server = server
-            self.port = port
-        }
-
         /// `sandbox`: the app's ask, or nil for the grant's (full power by default).
         func session(_ app: AppClient, account: String, approval: String = "never-ask", tools: String = "app-only", network: String = "none",
                      sandbox: String? = nil, meta: [String: JSONValue] = [:]) async throws -> String {
