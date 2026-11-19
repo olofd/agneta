@@ -58,6 +58,20 @@
       </div>
 
       <div class="composer">
+        <section class="guide" id="guide" aria-live="polite" hidden>
+          <h2 id="guide-title"></h2>
+          <p id="guide-detail"></p>
+          <div class="homebrew" id="guide-homebrew" hidden>
+            <span>Or with Homebrew:</span> <code id="guide-homebrew-command"></code>
+            <button class="quiet small" id="guide-copy" type="button">Copy</button>
+          </div>
+          <div class="guide-actions">
+            <button class="quiet" id="guide-reopen" type="button" hidden>Open the page again</button>
+            <button class="quiet" id="guide-wait" type="button" hidden>Keep Waiting</button>
+            <button class="quiet" id="guide-cancel" type="button">Cancel</button>
+            <button id="guide-confirm" type="button" hidden></button>
+          </div>
+        </section>
         <div class="pairing" id="pairing" hidden>
           <strong id="pairing-code"></strong>
           <span>Match this code in Agneta, then allow Replica Bench.</span>

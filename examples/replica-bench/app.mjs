@@ -7,8 +7,6 @@ import { EventEmitter } from 'node:events';
 import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { NotRunningError } from '@agneta/client';
-import { waitForPort } from '@agneta/client/node';
 import { Agneta, describeError, memoryTokens } from './agneta.mjs';
 import { plan, resultsFolder, runMatrix, timestamp } from './bench.mjs';
 import { checkModes } from './modes.mjs';
@@ -46,25 +44,37 @@ function runView(run) {
   };
 }
 
+/** Steps of getting Agneta the window's panel shows (`@agneta/client` words each one); the rest go in the status line. */
+const panelSteps = new Set(['notInstalled', 'installing', 'onDiskImage', 'installed', 'notRunning', 'opening', 'slow', 'outdated', 'needsProvider', 'settingUp']);
+
 export class BenchApp extends EventEmitter {
   #agneta;
   #tokens;
-  #openAgneta;
+  /** How to find and open Agneta (main.mjs: `electronEnvironment`), and more of the client's options. */
+  #environment;
+  #clientOptions;
+  /** Ends the connect in progress: its waits for Agneta, and a question on screen. */
+  #controller = null;
+  /** Answers the question the panel shows. */
+  #answer = null;
   /** The run on screen: prepared ahead (its session open, so the model and effort can be picked), or done. */
   #run = null;
   #preparing = null;
   #wanted = {};
   #matrixStop = false;
 
-  constructor(port, { home, tokens = memoryTokens(), openAgneta = null, name = 'Agneta' }) {
+  constructor(port, { home, tokens = memoryTokens(), environment = undefined, name = 'Agneta', client = {} }) {
     super();
     this.port = port;
     this.home = home;
     this.name = name;
     this.#tokens = tokens;
-    this.#openAgneta = openAgneta;
+    this.#environment = environment;
+    this.#clientOptions = client;
     this.view = {
       phase: 'disconnected', status: 'Connect to start.', code: '', home,
+      // While getting Agneta: what the panel shows ({ step, title, detail }), with the question to answer, if any.
+      guide: null,
       providers: [], account: '', engine: '', sandbox: 'contained',
       // The grant's mode (the ceiling the user set in Agneta), what the chosen engine would give, and the words for both.
       grant: null, prediction: null, explain: { meaning, whoDecides, uncontained: uncontainedMeaning },
@@ -94,12 +104,20 @@ export class BenchApp extends EventEmitter {
     }));
   }
 
+  /**
+   * Connects (pairing when needed). When Agneta isn't installed or running, the window's panel asks the user and shows
+   * each step (docs/APP_PROTOCOL.md, Getting Agneta); `quiet` (at launch) only offers to open it to someone with kept
+   * access, and never pairs.
+   */
   async connect({ quiet = false, pair = false } = {}) {
     if (this.view.phase !== 'disconnected') return;
-    this.#update({ phase: 'connecting', status: `Connecting to ${this.name}…`, code: '' });
-    const agneta = new Agneta(this.port, { home: this.home, tokens: this.#tokens, name: this.name });
+    this.#update({ phase: 'connecting', status: `Connecting to ${this.name}…`, code: '', guide: null });
+    const agneta = new Agneta(this.port, { home: this.home, tokens: this.#tokens, name: this.name, environment: this.#environment, client: this.#clientOptions });
     this.#agneta = agneta;
-    agneta.on('code', (code) => { if (this.#agneta === agneta) this.#update({ code, phase: 'pairing', status: `Approve Replica Bench in ${this.name}: check the code matches.` }); });
+    const controller = this.#controller = new AbortController();
+    agneta.on('code', (code) => { if (this.#agneta === agneta) this.#update({ code, phase: 'pairing', guide: null, status: `Approve Replica Bench in ${this.name}: check the code matches.` }); });
+    // Every step of every connect (the bench pairs again when its grant no longer covers its folder).
+    agneta.client.on('progress', (progress) => { if (this.#agneta === agneta) this.#progress(progress); });
     agneta.on('access', () => { if (this.#agneta === agneta && this.view.phase !== 'connecting') this.#setAccess(); });
     agneta.on('disconnected', () => {
       if (this.#agneta !== agneta) return;
@@ -108,34 +126,81 @@ export class BenchApp extends EventEmitter {
       this.#update({ phase: 'disconnected', status: `${this.name} closed the connection. Connect to go on.`, providers: [], ...noSettings });
     });
     try {
-      if (!quiet) this.#update({ phase: 'pairing', status: `Approve Replica Bench in ${this.name} if it asks.` });
-      const access = await agneta.connect({ quiet, pair });
+      const access = await agneta.connect({
+        quiet, pair, signal: controller.signal,
+        // Without an environment (the headless runner's tests, an isolated instance) nothing can be opened or asked.
+        ...(this.#environment ? { guide: (question) => this.#ask(question, agneta) } : {})
+      });
       if (this.#agneta !== agneta) return;
       if (!access) {
         this.#agneta = undefined;
-        this.#update({ phase: 'disconnected', status: 'Connect to start.' });
+        this.#update({ phase: 'disconnected', status: 'Connect to start.', guide: null });
         return;
       }
       this.#setAccess();
-      this.#update({ phase: 'ready', status: 'Ready', code: '' });
+      this.#update({ phase: 'ready', status: 'Ready', code: '', guide: null });
       this.#prepare();
     } catch (error) {
       if (this.#agneta !== agneta) return;
       this.#agneta = undefined;
-      const notRunning = error instanceof NotRunningError;
-      this.#update({ phase: 'disconnected', code: '', status: notRunning ? `${this.name} isn't running. Open it, then connect.` : describeError(error) });
-      if (notRunning && this.#openAgneta && (!quiet || await this.#tokens.load())) await this.#offerToOpen(quiet);
+      const status = {
+        declined: 'Connect to start.', aborted: 'Connect to start.',
+        notInstalled: `${this.name} isn't installed. Connect to get it.`, notRunning: `${this.name} isn't running. Connect to open it.`
+      }[error?.kind] ?? describeError(error);
+      this.#update({ phase: 'disconnected', code: '', guide: null, status });
     }
   }
 
-  async #offerToOpen(quiet) {
-    if (!await this.#openAgneta()) return;
-    this.#update({ status: `Opening ${this.name}…` });
-    if (!await waitForPort(this.port, 20_000)) {
-      this.#update({ status: `${this.name} didn't start. Open it, then connect.` });
+  /** A question only the user answers, in the window's panel; resolves to their answer. */
+  #ask(question, agneta) {
+    if (this.#agneta !== agneta) return false;
+    return new Promise((resolve) => {
+      this.#answer = resolve;
+      this.#update({
+        phase: 'guide', status: question.title,
+        guide: {
+          step: question.kind, title: question.title, detail: question.detail,
+          question: { kind: question.kind, confirm: question.confirm, cancel: question.cancel },
+          homebrew: question.kind === 'install' && !question.onDiskImage ? question.homebrew : null
+        }
+      });
+    });
+  }
+
+  /** The user's answer to the panel's question (`yes`), or Keep Waiting while Agneta is slow to open (`wait`). */
+  answer(choice) {
+    if (choice === 'wait' && this.view.guide?.keepWaiting) {
+      this.#update({ guide: { ...this.view.guide, keepWaiting: false } });
       return;
     }
-    await this.connect({ quiet });
+    const resolve = this.#answer;
+    this.#answer = null;
+    resolve?.(choice === 'yes');
+  }
+
+  /** Opens the install page again (the user closed it), during the install wait. */
+  async openInstallPage() {
+    if (['installing', 'onDiskImage'].includes(this.view.guide?.step)) await this.#agneta?.client.openInstallPage();
+  }
+
+  /** Homebrew's command, for the panel's Copy (main.mjs puts it on the clipboard). */
+  get homebrew() {
+    return this.#agneta?.client.homebrew ?? null;
+  }
+
+  /** Steps of getting Agneta go in the panel; pairing and connecting in the status line. */
+  #progress(progress) {
+    if (panelSteps.has(progress.step)) {
+      const homebrew = ['notInstalled', 'installing'].includes(progress.step) ? this.homebrew : null;
+      this.#update({
+        phase: 'guide', status: progress.title,
+        guide: { step: progress.step, title: progress.title, detail: progress.detail, homebrew, keepWaiting: progress.step === 'slow' && progress.keepWaiting }
+      });
+    } else if (progress.step === 'pairing') {
+      this.#update({ phase: 'pairing', status: progress.title, guide: null, ...(progress.code ? { code: progress.code } : {}) });
+    } else if (progress.step === 'connecting' || progress.step === 'looking') {
+      this.#update({ phase: 'connecting', status: progress.title, guide: null });
+    }
   }
 
   #setAccess() {
@@ -149,13 +214,18 @@ export class BenchApp extends EventEmitter {
     });
   }
 
+
   disconnect() {
+    // Ends a wait for Agneta, and answers no to a question on screen.
+    this.#controller?.abort();
+    this.#controller = null;
+    this.answer('no');
     this.#matrixStop = true;
     this.#dropRun();
     const agneta = this.#agneta;
     this.#agneta = undefined;
     agneta?.close();
-    this.#update({ phase: 'disconnected', status: 'Disconnected.', code: '', providers: [], grant: null, ...noSettings });
+    this.#update({ phase: 'disconnected', status: 'Disconnected.', code: '', guide: null, providers: [], grant: null, ...noSettings });
   }
 
   /** Pairs again: the approval window lets the user change the app's sandbox mode, and covers a moved bench folder. */

@@ -5,8 +5,8 @@ import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 
-/** A one-connection-at-a-time WebSocket server speaking JSON-RPC through `answer(message)`. */
-export async function standIn(answer) {
+/** A one-connection-at-a-time WebSocket server speaking JSON-RPC through `answer(message)`, on `port` (default: any free one). */
+export async function standIn(answer, { port = 0 } = {}) {
   const server = createServer();
   const sockets = new Set();
   const send = (socket, message) => {
@@ -38,7 +38,7 @@ export async function standIn(answer) {
     });
     socket.on('error', () => {});
   });
-  server.listen(0, '127.0.0.1');
+  server.listen(port, '127.0.0.1');
   await once(server, 'listening');
   return {
     port: server.address().port,
