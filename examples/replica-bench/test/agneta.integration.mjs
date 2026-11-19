@@ -3,7 +3,7 @@
 // fake model makes one tool call per prompt ("CALL <tool> <json>"), so this proves the wire path, not an agent:
 // connect → pair → session/new with each sandbox mode → a tool call through the app's MCP server and one through the
 // shell and the probe gateway → the modes check → the report written. Twice: under agnetad's default grant
-// (developer: both modes open as asked), and with agnetad --sandbox contained (developer refused, with the reason).
+// (agnetad --sandbox developer: both modes open as asked), and with --sandbox contained (developer refused, with the reason).
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -118,10 +118,11 @@ const prompts = {
   'python-probe': `CALL shell ${JSON.stringify({ command: `python3 -c ${JSON.stringify(python)}` })}`
 };
 
-test('under the default grant both modes open as asked, the tools and gateway work, and the modes check agrees', { timeout: 180_000 }, async (t) => {
-  const { agneta, home, root, port } = await bench(t);
+test('under a developer grant both modes open as asked, the tools and gateway work, and the modes check agrees', { timeout: 180_000 }, async (t) => {
+  // agnetad answers every pairing contained unless told otherwise (it approves anything that connects); the app's
+  // default in Agneta itself is developer access, which this stands for.
+  const { agneta, home, root, port } = await bench(t, { sandbox: 'developer' });
   assert.deepEqual(agneta.providers().map(({ id }) => id), ['dev']);
-  // agnetad's default pairing answer is the protocol's default: developer.
   assert.equal(agneta.grant, 'developer');
   const goose = agneta.providers()[0].engines.find(({ id }) => id === 'goose');
   assert.deepEqual(goose.levels, ['contained', 'developer']);

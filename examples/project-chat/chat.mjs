@@ -86,6 +86,8 @@ export class ProjectChat extends EventEmitter {
   #tools;
   #workspace;
   #reply;
+  /** Waiting for a provider to be connected in Agneta (`agneta/setup`); a disconnect lets the wait go. */
+  #onCatalog = null;
   #access;
   #tokens;
   #openAgneta;
@@ -184,6 +186,17 @@ export class ProjectChat extends EventEmitter {
         if (quiet) {
           this.disconnect(kept ? `Your access was removed in ${this.name}. Connect to ask again.` : 'Connect to start chatting.');
           return;
+        }
+        // With no AI connected in Agneta yet, ask it to help the user connect one, then pair (the user pressed
+        // Connect, so the window is theirs to expect). An Agneta without agneta/catalog just pairs.
+        const catalog = await connection.request('agneta/catalog', {}).catch(() => null);
+        if (this.#connection !== connection) return;
+        if (catalog && catalog.connected === false) {
+          this.#update({ phase: 'pairing', status: `Connect your AI in ${this.name} to start chatting.` });
+          const connected = this.#providerConnected();
+          await connection.request('agneta/setup', { name: 'Project Chat' });
+          await connected;
+          if (this.#connection !== connection) return;
         }
         this.#update({ phase: 'pairing', status: `Approve Project Chat in ${this.name}.` });
         // Ask for the app's own tools and no user folders.
@@ -429,6 +442,7 @@ export class ProjectChat extends EventEmitter {
   disconnect(status = 'Disconnected. Connect to start a new chat.') {
     const connection = this.#connection;
     this.#connection = undefined;
+    this.#onCatalog?.({ connected: true });
     this.#dropSession();
     connection?.close();
     this.#update({ phase: 'disconnected', status, code: '', providers: [], account: '', engine: '', ...noSettings });
@@ -458,7 +472,13 @@ export class ProjectChat extends EventEmitter {
     return message;
   }
 
+  /** Resolves once Agneta says a provider is connected (`agneta/catalogChanged`), or the connection goes. */
+  #providerConnected() {
+    return new Promise((resolve) => { this.#onCatalog = (catalog) => { if (catalog?.connected) { this.#onCatalog = null; resolve(); } }; });
+  }
+
   #notification(method, params) {
+    if (method === 'agneta/catalogChanged') this.#onCatalog?.(params?.catalog);
     if (method === 'agneta/pairingCode' && this.view.phase === 'pairing') {
       this.#update({ code: params?.code ?? '' });
     }

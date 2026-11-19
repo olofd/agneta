@@ -22,6 +22,8 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 **For apps**
 
+- **Ask for exactly what you need.** A pairing scope can name the `providers` (kinds, or `"all"`), the `engines` and the `sandbox` (`contained`, `developer` or `any`), and the approval window is narrowed to them. The reply's `unmet` says what wasn't given, and why.
+- **Before pairing:** `agneta/catalog` says what Agneta offers (each provider kind, whether one is connected, its engines and their modes), and `agneta/setup` asks Agneta to help the user connect a provider. With nothing connected, the approval window lets the user connect one in place.
 - **Claude Code and Codex run commands on the contained path.** Claude Code's Bash goes through Agneta's broker, as Goose's does, and so do Codex's commands, through Agneta's own `shell` tool in place of Codex's: under the session's command sandbox, with no network, every command in the trace. Monitor stays off.
 - **Background jobs live on, as in a terminal.** A command's background job keeps running after the command returns, and ends with its engine.
 - **`toolEnvironment`** sets variables for commands: your toolchain's `PATH` (inside the session's folders, ahead of everything else), `CARGO_HOME`, `PYTHONPATH`, winning over developer access's own. Commands also find the selected Xcode's own `cc`, `git` and `python3`, wherever Xcode is installed.

@@ -20,8 +20,9 @@ test('pairing asks for workspace tools in the bench folder and the developer san
   await agneta.connect();
   const pairs = fake.calls.filter(({ method }) => method === 'agneta/pair');
   assert.equal(pairs.length, 1);
-  assert.deepEqual(pairs[0].params, { name: 'Replica Bench', scope: { tools: 'workspace', folders: ['/tmp', ...toolchainFolders()], sandbox: 'developer' } });
-  assert.deepEqual(pairingScope('/x'), { tools: 'workspace', folders: ['/x', ...toolchainFolders()], sandbox: 'developer' });
+  const big = { providers: 'all', engines: 'all', sandbox: 'any' };
+  assert.deepEqual(pairs[0].params, { name: 'Replica Bench', scope: { tools: 'workspace', folders: ['/tmp', ...toolchainFolders()], ...big } });
+  assert.deepEqual(pairingScope('/x'), { tools: 'workspace', folders: ['/x', ...toolchainFolders()], ...big });
 });
 
 test('the grant\'s mode is what the user picked, read from the access report', async (t) => {

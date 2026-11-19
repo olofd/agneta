@@ -25,6 +25,11 @@ final class Approvals {
         var replaces = false
         /// The most its tasks may do: where the app's own ask starts it (full power unless it asks for less).
         var sandbox: Sandbox = .default
+        /// What the app asked for, which narrows the window: the provider kinds it named (nil: the user picks among
+        /// all), whether it named its engines, and whether it asked for contained (then fixed: it asked for no more).
+        var kinds: [AccountKind]?
+        var namedEngines = false
+        var sandboxFixed = false
     }
 
     /// A request nobody answers is refused after this long: a window nobody saw shouldn't keep its app waiting.
@@ -50,7 +55,8 @@ final class Approvals {
         await withCheckedContinuation { continuation in
             let request = Request(id: pairing.id, app: pairing.app, identifier: pairing.peer?.identifier, verified: pairing.code == nil,
                                   code: pairing.code ?? "", allowed: allowed, engines: engines, tools: pairing.tools, folders: pairing.folders,
-                                  replaces: replaces, sandbox: pairing.sandbox)
+                                  replaces: replaces, sandbox: pairing.sandbox, kinds: pairing.providers, namedEngines: pairing.engines != nil,
+                                  sandboxFixed: pairing.sandboxAsked == .contained)
             if queue.add(id: pairing.id, request, answer: { continuation.resume(returning: $0) }) { present(pairing.id) }
             _Concurrency.Task { [weak self] in
                 try? await _Concurrency.Task.sleep(for: Self.timeout)
@@ -78,9 +84,10 @@ final class Approvals {
         }
     }
 
-    /// A provider just connected: a request with none ticked (there was none to offer) gets it.
-    func providerAdded(_ id: String) {
-        if current?.allowed.isEmpty == true { current?.allowed.insert(id) }
+    /// A provider just connected: a request with none ticked (there was none to offer) gets it, and so does one that
+    /// asked for its kind.
+    func providerAdded(_ id: String, kind: AccountKind) {
+        if current?.allowed.isEmpty == true || current?.kinds?.contains(kind) == true { current?.allowed.insert(id) }
     }
 
     /// Refuses every request (Reset).

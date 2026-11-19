@@ -20,6 +20,10 @@ enum Snapshots {
         presenter.showApproval(model, request: model.approvals.current?.id ?? UUID())
         presenter.showSignIn(model, attempt: UUID())
         presenter.showWelcome(model) // after sign-in, which closes the welcome window
+        // AGNETA_SHOWCASE_SETUP shows the window an app opens with agneta/setup: a kind ("chatgpt"), or "any".
+        if let kind = ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_SETUP"] {
+            presenter.showSetup(model, app: "Example App", kind: AccountKind(rawValue: kind))
+        }
         // AGNETA_SHOWCASE_PANE picks the Settings pane, e.g. Activity or Privacy.
         let paneName = ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_PANE"]
         // "Defaults" opens a provider's model and effort sheet over Providers.
@@ -34,7 +38,7 @@ enum Snapshots {
         }
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1600, height: 1000)
         var x = screen.minX + 20
-        for key in ["panel", "welcome", "approval", "signin"] {
+        for key in ["panel", "welcome", "approval", "signin", "setup"] {
             guard let window = presenter.window(key) else { continue }
             window.setFrameTopLeftPoint(NSPoint(x: x, y: screen.maxY - 20))
             x += window.frame.width + 20
@@ -45,7 +49,7 @@ enum Snapshots {
         // One window at a time becomes key, as it would in use, so buttons show their active tint.
         // Each line says where a capture went or why it failed; the app quits after the last one.
         NSApp.activate()
-        let keys = ["panel", "welcome", "approval", "signin", "settings"]
+        let keys = ["panel", "welcome", "approval", "signin", "setup", "settings"]
         let step = 0.8, first = 1.5, settle = 0.5
         for (index, key) in keys.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + first + Double(index) * step) {

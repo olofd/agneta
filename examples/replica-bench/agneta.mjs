@@ -80,9 +80,12 @@ export async function listening(port, seconds) {
   return false;
 }
 
-/** The pairing scope: workspace tools in the bench folder and its toolchain, starting the user's picker at developer. */
+/**
+ * The pairing scope: workspace tools in the bench folder and its toolchain, and the big grant a comparison bench needs:
+ * every provider and engine, and any mode (the user's picker starts at developer access).
+ */
 export function pairingScope(home) {
-  return { tools: 'workspace', folders: [home, ...toolchainFolders()], sandbox: 'developer' };
+  return { tools: 'workspace', folders: [home, ...toolchainFolders()], providers: 'all', engines: 'all', sandbox: 'any' };
 }
 
 /** An access report's providers and engines, with each engine's sandbox levels and whether it's uncontained. */

@@ -102,6 +102,9 @@ public actor Router {
         /// What an engine offered on an account when a session opened (its config options: models, efforts), for
         /// Settings to list (Router+Settings).
         case settingsSeen(account: String, engine: String, options: JSONValue)
+        /// An app, paired or not, asked Agneta to help the user connect a provider (`agneta/setup`): the host shows its
+        /// add-provider window naming the app, narrowed to `kind` when given.
+        case setupRequested(app: String, kind: AccountKind?)
     }
 
     /// How an account's engine runs tools. Goose's own tools go through Agneta's broker;
@@ -124,6 +127,11 @@ public actor Router {
         public var folders: [URL] = []
         /// The most its tasks will need: less than the default if the app says so, which the dialog starts from.
         public var sandbox: Sandbox = .default
+        /// What the app asked for, to narrow the dialog to: provider kinds (nil: the user picks), engines (nil: all),
+        /// and the mode (nil: any, the picker on developer access; contained: fixed, the app asked for no more).
+        public var providers: [AccountKind]?
+        public var engines: [String]?
+        public var sandboxAsked: Sandbox?
 
         public init(id: UUID = UUID(), app: String, peer: PeerIdentity? = nil, code: String? = nil, tools: SessionPolicy.Tools = .appOnly, folders: [URL] = []) {
             self.id = id
@@ -358,8 +366,38 @@ public actor Router {
                             workspace: Self.workspace(of: grant, in: context)?.path(percentEncoded: false)).json
     }
 
+    /// What Agneta offers any app, paired or not (`agneta/catalog`): each provider kind, whether one is connected, the
+    /// engines it runs on and the modes each can provide; and the engines on this Mac. Never the user's accounts
+    /// themselves (labels, addresses, how many): pairing guards those.
+    func catalogReport() -> JSONValue {
+        let connected = Set(accounts.values.map(\.kind))
+        let providers: [JSONValue] = AccountKind.allCases.map { kind in
+            let engines: [JSONValue] = ProviderEngines.supported(by: kind).map { id in
+                var engine: JSONValue = ["id": .string(id), "sandboxLevels": .array(ProviderEngines.sandboxLevels(id, for: kind).map { .string($0.rawValue) })]
+                if ProviderEngines.uncontained(by: kind).contains(id) { engine = engine.setting("uncontained", to: true) }
+                return engine
+            }
+            return ["kind": .string(kind.rawValue), "name": .string(kind.offerName), "connected": .bool(connected.contains(kind)), "engines": .array(engines)]
+        }
+        let engines = catalog.entries.keys.sorted().map { id -> JSONValue in
+            let report = catalog.report(id)
+            var engine: JSONValue = ["id": .string(report.id), "name": .string(report.name), "state": .string(report.state)]
+            if let reason = report.reason { engine = engine.setting("reason", to: .string(reason)) }
+            return engine
+        }
+        return ["providers": .array(providers), "engines": .array(engines), "connected": .bool(!accounts.isEmpty)]
+    }
+
     /// Tells connected apps (those holding `grant`, or every one) that what they may use changed, with what it is now.
+    /// A change for every app also reaches the ones not paired yet, as what Agneta offers (`agneta/catalogChanged`).
     func accessChanged(grant only: String? = nil) {
+        if only == nil {
+            let catalog = catalogReport()
+            for app in apps.values where app.grant == nil {
+                let peer = app.peer
+                Task { try? await peer.notify("agneta/catalogChanged", ["catalog": catalog]) }
+            }
+        }
         for app in apps.values {
             guard let grant = app.grant, only == nil || grant.id == only else { continue }
             let peer = app.peer, access = access(grant)

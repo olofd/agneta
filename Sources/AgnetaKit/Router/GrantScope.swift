@@ -17,40 +17,75 @@ extension SessionPolicy.Tools: Codable {
 }
 
 public enum GrantScope {
+    /// What an app asks for when it pairs. Each part narrows the approval window to it; left out, the user decides.
+    public struct Request: Sendable, Equatable {
+        /// The most built-in tools, and folders of the user's beyond the app's own workspace.
+        public var tools: SessionPolicy.Tools = .appOnly
+        public var folders: [URL] = []
+        /// The provider kinds asked for: nil leaves it to the user (one provider ticked to start), every kind for "all".
+        public var providers: [AccountKind]?
+        /// The engines asked for: nil for all of them.
+        public var engines: [String]?
+        /// The mode asked for: nil for any (the window's picker starts on developer access).
+        public var sandbox: Sandbox?
+        public init(tools: SessionPolicy.Tools = .appOnly, folders: [URL] = [], providers: [AccountKind]? = nil, engines: [String]? = nil, sandbox: Sandbox? = nil) {
+            (self.tools, self.folders, self.providers, self.engines, self.sandbox) = (tools, folders, providers, engines, sandbox)
+        }
+    }
+
     /// The scope an app asks for: `{"tools": "app-only" | "read" | "workspace", "folders": [absolute paths],
-    /// "sandbox": "contained" | "developer"}`. `sandbox` is the most its tasks will need, where the approval window's
-    /// picker starts; the user decides (full power, `developer`, by default).
-    /// No scope asks for app-only tools and no folders of the user's (the app still gets its own workspace).
-    /// Folders follow the session policy's rules: absolute, and nothing that reaches the home folder as a whole,
-    /// other apps' storage, Agneta's data or secrets.
-    public static func requested(_ value: JSONValue?, context: PolicyContext) throws -> (tools: SessionPolicy.Tools, folders: [URL], sandbox: Sandbox) {
-        guard let value, value != .null else { return (.appOnly, [], .default) }
+    /// "providers": "all" | [kinds], "engines": "all" | [engine ids], "sandbox": "contained" | "developer" | "any"}`.
+    /// No scope asks for app-only tools and no folders of the user's (the app still gets its own workspace), and leaves
+    /// providers, engines and mode to the user. Folders follow the session policy's rules: absolute, and nothing that
+    /// reaches the home folder as a whole, other apps' storage, Agneta's data or secrets. `engines` names engines Agneta
+    /// knows (`known`); an unknown kind or engine is refused, with the ones there are.
+    public static func requested(_ value: JSONValue?, context: PolicyContext, known engines: Set<String>) throws -> Request {
+        guard let value, value != .null else { return Request() }
         guard let fields = value.objectValue else { throw PolicyRejection(field: "scope", reason: "expected an object") }
-        let unknown = Set(fields.keys).subtracting(["tools", "folders", "sandbox"])
+        let unknown = Set(fields.keys).subtracting(["tools", "folders", "sandbox", "providers", "engines"])
         guard unknown.isEmpty else { throw PolicyRejection(field: "scope", reason: "unknown fields \(unknown.sorted().joined(separator: ", "))") }
-        var tools = SessionPolicy.Tools.appOnly
+        var request = Request()
         if let raw = fields["tools"] {
             guard let name = raw.stringValue, let parsed = SessionPolicy.Tools(rawValue: name) else {
                 throw PolicyRejection(field: "scope.tools", reason: "expected app-only, read or workspace")
             }
-            tools = parsed
+            request.tools = parsed
         }
-        var folders: [URL] = []
         if let raw = fields["folders"] {
             guard let items = raw.arrayValue else { throw PolicyRejection(field: "scope.folders", reason: "expected a list of absolute paths") }
             for item in items {
                 guard let path = item.stringValue else { throw PolicyRejection(field: "scope.folders", reason: "expected absolute paths") }
-                folders.append(try SessionPolicy.canonical(path, field: "scope.folders", context: context))
+                request.folders.append(try SessionPolicy.canonical(path, field: "scope.folders", context: context))
             }
         }
-        var sandbox = Sandbox.default
         if let raw = fields["sandbox"] {
-            guard let name = raw.stringValue, let parsed = Sandbox(rawValue: name) else {
-                throw PolicyRejection(field: "scope.sandbox", reason: "expected contained or developer")
+            switch raw.stringValue {
+            case "any"?: request.sandbox = nil
+            case let name? where Sandbox(rawValue: name) != nil: request.sandbox = Sandbox(rawValue: name)
+            default: throw PolicyRejection(field: "scope.sandbox", reason: "expected contained, developer or any")
             }
-            sandbox = parsed
         }
-        return (tools, folders, sandbox)
+        if let raw = fields["providers"] {
+            let kinds = AccountKind.allCases.map(\.rawValue)
+            request.providers = try list(raw, field: "scope.providers", all: kinds, valid: kinds).compactMap(AccountKind.init(rawValue:))
+        }
+        if let raw = fields["engines"] {
+            request.engines = try list(raw, field: "scope.engines", all: engines.sorted(), valid: engines.sorted())
+        }
+        return request
+    }
+
+    /// `"all"`, or a non-empty list of distinct known names.
+    private static func list(_ raw: JSONValue, field: String, all: [String], valid: [String]) throws -> [String] {
+        if raw.stringValue == "all" { return all }
+        guard let items = raw.arrayValue?.compactMap(\.stringValue), items.count == raw.arrayValue?.count, !items.isEmpty else {
+            throw PolicyRejection(field: field, reason: "expected \"all\" or a list of: \(valid.joined(separator: ", "))")
+        }
+        if let bad = items.first(where: { !valid.contains($0) }) {
+            throw PolicyRejection(field: field, reason: "\(bad) isn't one of: \(valid.joined(separator: ", "))")
+        }
+        var seen = Set<String>()
+        return items.filter { seen.insert($0).inserted }
     }
 
     /// Why a session doesn't fit its app's grant, or nil when it does: no more built-in tools than granted, and

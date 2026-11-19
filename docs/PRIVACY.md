@@ -57,7 +57,7 @@ What Agneta protects: your AI accounts (credentials and spend), your files, and 
 | Who | What Agneta does | Status |
 | --- | --- | --- |
 | **An app you allowed** | It gets the accounts you picked, at most the tools and folders it asked for and you saw, and a token. Every session is held to that grant; anything beyond it is refused. You see and can stop each task. A verified app's token works only for that app's signature | Defended |
-| **A program you didn't allow** (another app, a sandboxed app, a script) | It can't use Agneta without pairing, and pairing needs your approval in Agneta's own window. An app Agneta can't verify must show a code you compare | Defended |
+| **A program you didn't allow** (another app, a sandboxed app, a script) | It can't use Agneta without pairing, and pairing needs your approval in Agneta's own window. Before pairing it can learn which kinds of provider you've connected (a Claude plan, an OpenAI key), never which accounts, and ask Agneta to show its add-provider window. An app Agneta can't verify must show a code you compare | Defended |
 | **The model, or text it reads** (a prompt injection in a file, a web page an app fetched, a tool result) | The engine and its commands run sandboxed: only the policy's folders, no network for commands while the policy says none, nothing launched outside. Built-in tools beyond the policy are refused | Defended, with the limits below |
 | **A web page in your browser** | Agneta's ports refuse requests carrying an `Origin`, which browsers always send | Defended |
 | **Other users of this Mac** | Everything Agneta stores is owner-only; it listens on loopback only | Defended |

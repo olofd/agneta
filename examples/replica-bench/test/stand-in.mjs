@@ -71,9 +71,11 @@ export function agnetaLike({ grant, folders, providers } = {}) {
     calls.push(message);
     const params = message.params ?? {};
     if (message.method === 'agneta/pair') {
-      const unknown = Object.keys(params.scope ?? {}).filter((key) => !['tools', 'folders', 'sandbox'].includes(key));
+      // As Agneta: the scope's fields, with "any" (or no mode) giving the user's picker its developer start.
+      const unknown = Object.keys(params.scope ?? {}).filter((key) => !['tools', 'folders', 'sandbox', 'providers', 'engines'].includes(key));
       if (unknown.length) return refuse('scope', `unknown fields ${unknown.join(', ')}`);
-      granted = { tools: params.scope.tools, folders: params.scope.folders, sandbox: grant ?? params.scope.sandbox ?? 'developer' };
+      const asked = params.scope.sandbox === 'any' ? undefined : params.scope.sandbox;
+      granted = { tools: params.scope.tools, folders: params.scope.folders, sandbox: grant ?? asked ?? 'developer' };
       return { result: { token: `token-${calls.length}`, remembered: true, access: access(granted) } };
     }
     if (message.method === 'initialize') return { result: { protocolVersion: 1, _meta: { agneta: { access: access(granted) } } } };

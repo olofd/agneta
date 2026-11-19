@@ -51,12 +51,26 @@ import Testing
         let window = Window(), approvals = desk(window)
         async let answer = approvals.ask(Router.PairingRequest(app: "Early"), allowed: [], engines: ["goose", "opencode"])
         try await Task.sleep(for: .milliseconds(50))
-        approvals.providerAdded("b")
-        approvals.providerAdded("c")
+        approvals.providerAdded("b", kind: .claude)
+        approvals.providerAdded("c", kind: .chatGPT)
         #expect(approvals.current?.allowed == ["b"])
         approvals.answer(remember: false)
         let answered = await answer
         #expect(answered == Router.PairingAnswer(accounts: ["b"], engines: .all, remember: false))
+    }
+
+    /// One connected while an app waits for that kind is ticked, even with a choice made: it's what the app asked for.
+    @Test func aProviderOfTheAskedKindIsTicked() async throws {
+        let window = Window(), approvals = desk(window)
+        var pairing = Router.PairingRequest(app: "Narrow")
+        pairing.providers = [.chatGPT]
+        async let answer = approvals.ask(pairing, allowed: ["a"], engines: ["goose"])
+        try await Task.sleep(for: .milliseconds(50))
+        approvals.providerAdded("b", kind: .claude)
+        approvals.providerAdded("c", kind: .chatGPT)
+        #expect(approvals.current?.allowed == ["a", "c"])
+        approvals.answer(remember: nil)
+        _ = await answer
     }
 
     /// Reset refuses everything, shown or waiting, and closes the window.

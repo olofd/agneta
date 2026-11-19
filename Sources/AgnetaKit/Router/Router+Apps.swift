@@ -42,6 +42,37 @@ extension Router {
         await disconnect(id)
     }
 
+    /// What of a pairing ask the grant doesn't give, each with why: a provider kind not connected or not ticked, an
+    /// engine not allowed or not on this Mac, a mode the user lowered or an engine can't provide.
+    func unmet(_ asked: GrantScope.Request, grant: Grant) -> [JSONValue] {
+        var unmet: [JSONValue] = []
+        let given = Set(grant.accounts.compactMap { accounts[$0]?.kind })
+        for kind in asked.providers ?? [] where !given.contains(kind) {
+            let connected = accounts.values.contains { $0.kind == kind }
+            unmet.append(["provider": .string(kind.rawValue), "reason": .string(connected ? "the user didn't allow it" : "not connected in Agneta")])
+        }
+        for engine in asked.engines ?? [] {
+            if !grant.engines.allows(engine) {
+                unmet.append(["engine": .string(engine), "reason": "the user didn't allow it"])
+            } else if let reason = catalog.report(engine).reason {
+                unmet.append(["engine": .string(engine), "reason": .string(reason)])
+            }
+        }
+        if asked.sandbox == .developer, grant.ceiling == .contained {
+            unmet.append(["sandbox": "developer", "reason": "the user chose contained"])
+        }
+        if asked.sandbox == .contained {
+            for kind in given {
+                let engines = Access.engines(for: kind, allowed: grant.engines, catalog: catalog)
+                if !engines.contains(where: { ProviderEngines.sandboxLevels($0, for: kind).contains(.contained) }) {
+                    unmet.append(["provider": .string(kind.rawValue), "sandbox": "contained",
+                                  "reason": .string("none of its allowed engines can keep its tasks contained")])
+                }
+            }
+        }
+        return unmet
+    }
+
     func admits(_ app: UUID, size: Int) -> Bool { size <= concurrency.unpairedFrame || apps[app]?.grant != nil }
 
     func closeIfUnpaired(_ id: UUID) async {
@@ -97,11 +128,25 @@ extension Router {
 
     func appRequest(_ appID: UUID, port: Int?, serverPort: Int?, method: String, params: JSONValue?) async -> Result<JSONValue, RPCError> {
         guard !shutDown, var app = apps[appID] else { return .failure(Self.notPaired) }
+        // What Agneta offers, and help for the user to connect a provider: before pairing too, so an app can find out
+        // whether there's anything to ask for, and ask Agneta to set it up when there isn't.
+        if method == "agneta/catalog" { return .success(catalogReport()) }
+        if method == "agneta/setup" {
+            var kind: AccountKind?
+            if let raw = params?["kind"] {
+                guard let name = raw.stringValue, let parsed = AccountKind(rawValue: name) else {
+                    return .failure(PolicyRejection(field: "kind", reason: "expected one of: \(AccountKind.allCases.map(\.rawValue).joined(separator: ", "))").rpcError)
+                }
+                kind = parsed
+            }
+            onEvent(.setupRequested(app: params?["name"]?.stringValue ?? app.grant?.app ?? "An app", kind: kind))
+            return .success(["shown": true])
+        }
         if method == "agneta/pair" {
             let name = params?["name"]?.stringValue ?? "An app"
             // The scope is checked before the user sees anything: a folder Agneta would refuse is never offered.
-            let scope: (tools: SessionPolicy.Tools, folders: [URL], sandbox: Sandbox)
-            do { scope = try GrantScope.requested(params?["scope"], context: context) } catch let rejection as PolicyRejection {
+            let scope: GrantScope.Request
+            do { scope = try GrantScope.requested(params?["scope"], context: context, known: Set(catalog.entries.keys)) } catch let rejection as PolicyRejection {
                 return .failure(rejection.rpcError)
             } catch {
                 return .failure(RPCError(code: RPCError.invalidParams, message: "Invalid scope"))
@@ -118,7 +163,10 @@ extension Router {
                 try? await app.peer.notify("agneta/pairingCode", ["code": .string(code!), "name": .string(name)])
             }
             var request = PairingRequest(id: UUID(), app: name, peer: peer, code: code, tools: scope.tools, folders: scope.folders)
-            request.sandbox = scope.sandbox
+            request.sandbox = scope.sandbox ?? .default
+            request.sandboxAsked = scope.sandbox
+            request.providers = scope.providers
+            request.engines = scope.engines
             pairing[appID] = request.id
             let decision = await approve(request)
             pairing[appID] = nil
@@ -167,7 +215,8 @@ extension Router {
             }
             // `remembered`: keep the token (in the Keychain) to connect with next time; an Allow Once token ends with this
             // connection.
-            return .success(["token": .string(token), "remembered": .bool(answer.remember), "access": access(grant)])
+            return .success(["token": .string(token), "remembered": .bool(answer.remember), "access": access(grant),
+                             "unmet": .array(unmet(scope, grant: grant))])
         }
         if method == "initialize" {
             guard let token = params?["_meta"]?["agneta"]?["token"]?.stringValue, let grant = tokens[Self.hash(token)] else {
@@ -431,7 +480,7 @@ extension Router {
     public static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
 
     /// Agneta's additions to ACP, listed in `initialize` (docs/APP_PROTOCOL.md).
-    static let extensions = [SessionPolicy.key, "agneta/access", "agneta/task", "agneta/instructions", "agneta/steer", "agneta/usage",
+    static let extensions = [SessionPolicy.key, "agneta/access", "agneta/catalog", "agneta/setup", "agneta/task", "agneta/instructions", "agneta/steer", "agneta/usage",
                              "agneta/trace", "agneta/limit", "agneta/queue", "agneta/rateLimited", "agneta/fork"]
 
     static func newToken() -> String {

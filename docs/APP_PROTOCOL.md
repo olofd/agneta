@@ -15,17 +15,46 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
 - **Folders for sandboxed apps.** A folder inside an app container (`~/Library/Containers`, `~/Library/Group Containers`) can't be a session's folder: Agneta keeps apps' private storage out of reach. Ask in the pairing scope for folders the user chose (an open panel or a security-scoped bookmark gives the real path, outside the container), or let tasks work in the workspace Agneta makes for the app and hand results back through the app's MCP tools: the sandbox keeps the app itself out of that workspace.
 - **When Agneta isn't running,** the connection is refused. Ask the user whether to open it, and when they say yes, open `agneta://open` (`agneta-dev://open` for a development build), wait for its port, and connect. Never open it without asking: quitting Agneta is how the user stops all of it. Opening the URL only launches Agneta; nothing in the URL is acted on.
 
+## Before pairing: what Agneta offers
+
+Two calls work on a connection that hasn't paired, so an app can find out whether there's anything to ask for, and help the user set it up when there isn't.
+
+- **`agneta/catalog {}`** returns what this Agneta offers any app:
+  - each provider kind (`claude`, `chatgpt`, `anthropic-key`, `openai-key`), with its name, whether one is `connected`, and the engines it runs on, each with the modes it can provide (`sandboxLevels`) and `uncontained` where it can't be contained;
+  - the engines on this Mac (`id`, `name`, `state`, `reason`);
+  - `connected`: whether any provider is.
+
+  It never names the user's accounts (labels, addresses, how many): pairing guards those. An unpaired connection also gets `agneta/catalogChanged {"catalog"}` when a provider is connected or removed, or an engine changes.
+
+  ```json
+  {"providers": [{"kind": "claude", "name": "Claude plan", "connected": true,
+                  "engines": [{"id": "claude-code", "sandboxLevels": ["contained", "developer"]},
+                              {"id": "goose", "sandboxLevels": ["developer"], "uncontained": true}]}, …],
+   "engines": [{"id": "claude-code", "name": "Claude Code", "state": "ready"}, …],
+   "connected": true}
+  ```
+- **`agneta/setup {"name"?, "kind"?}`** asks Agneta to help the user connect a provider. Agneta comes forward with its add-provider window, naming your app, narrowed to `kind` when given. It answers `{"shown": true}` at once; wait for `agneta/catalogChanged`. Ask only when the user asked to connect, as with opening Agneta.
+
+**A smooth first run.** On Connect, call `agneta/catalog`. If no provider of a kind you need is connected, say so and offer to set it up (`agneta/setup`), then pair once one is. Or pair straight away: with nothing connected, the approval window lets the user connect a provider in place, and the request waits for it.
+
 ## Pairing, once per app
 
 1. Send `agneta/pair {"name": "Example App", "scope": {"tools": "workspace", "folders": ["/Users/me/Documents/Example Project"]}}`. Agneta opens its approval window, which shows what the scope asks for; the user ticks the providers the app may use (one is ticked to start with), then **Allow Once** or **Always Allow**. Every engine is allowed too, unless the user narrows them under **Advanced**: your app picks the provider and engine of each task, among what it may use ([Access](#access)).
    - **`scope`** is what the app will need: `tools`, the most built-in tools its sessions will use (`app-only`, `read` or `workspace`, as in the [policy](#agnetapolicy)), `folders`, the user's folders its sessions will work in (absolute paths, under the policy's folder rules), and `sandbox`, the most its tasks will need (`contained` or `developer`, see [Sandbox](#sandbox)), where the approval window's picker starts. Without a scope the app gets app-only tools and no folders of the user's. Either way it also gets a workspace of its own, made by Agneta. Ask for what the app's features need, and no more: the user sees it all before deciding.
-   - Allowed: `{"token": "…", "remembered": true, "access": {…}}` ([Access](#access)). Agneta stores only the token's hash.
+   - **Ask for exactly what you need.** The scope can also name the providers, engines and mode, and the approval window is narrowed to them:
+     - `providers`: `"all"` or a list of kinds (`["claude"]`). It shows only providers of those kinds, ticked (all of them for `"all"`, the first of each kind for a list). A kind not connected gets a **Connect** row: the request waits while the user connects it, and it's ticked once connected. Left out, the user picks among all providers, with one ticked to start.
+     - `engines`: `"all"` or a list of engine ids (`["claude-code"]`). The window names them. Left out, every engine.
+     - `sandbox`: `"contained"`, `"developer"` or `"any"`. With `"contained"`, the window shows it fixed: you asked for no more, so no more is offered. With `"developer"` or `"any"` (the same as leaving it out), the picker starts on Developer access, and the user may choose Contained.
+     - The user can still give less than you asked. A provider that can't be given as asked (contained, but none of its engines can keep it so) says why, and can't be ticked.
+
+     For example, the smallest grant for a task that needs a Claude plan on Claude Code, contained: `{"tools": "workspace", "providers": ["claude"], "engines": ["claude-code"], "sandbox": "contained"}`. Everything: `{"tools": "workspace", "providers": "all", "engines": "all", "sandbox": "any"}`.
+   - Allowed: `{"token": "…", "remembered": true, "access": {…}, "unmet": […]}` ([Access](#access)). Agneta stores only the token's hash. `unmet` lists what of your ask wasn't given, each with a `reason`: `{"provider": "chatgpt", "reason": "not connected in Agneta"}`, `{"engine": "codex", …}`, `{"sandbox": "developer", "reason": "the user chose contained"}`, or `{"provider": "claude", "sandbox": "contained", …}` when none of its engines can keep it contained. It's empty when you got everything you asked for.
    - **Always Allow** (`remembered: true`): keep the token in the app's Keychain and connect with it next time (`initialize`), without asking again. When `initialize` answers `-32001` (`needsPairing`), the user removed the app's access: forget the token, and pair again when the user asks to connect. Agneta also closes the app's open connections when its access is removed.
    - **Allow Once** (`remembered: false`) grants this connection only: the token stops working when it closes, and Agneta keeps nothing. Pair again next time.
    - **Pairing again** with Always Allow, for an app that has remembered access already, replaces that access instead of adding to it, and the old token stops working. The approval window says so.
      - A **verified** app (the same signing identity) keeps its grant: its workspace and tasks to resume, with what the user just allowed. Its other open connections get the new access at once, as `agneta/accessChanged`; their sessions outside it stop, with `agneta/sessionStopped`.
      - An app Agneta **can't verify** is known only by its name, which another program could give, so its new grant starts afresh: a new workspace, and none of the earlier tasks to resume. The earlier grant is removed, and connections still using it are closed.
-   - A scope Agneta can't accept (a folder it protects, an unknown field) is refused with `-32602` before the user is asked.
+   - A scope Agneta can't accept (a folder it protects, an unknown field, kind or engine) is refused with `-32602` before the user is asked; the reason lists what there is.
    - Don't Allow: error `-32002`. Closing the approval window, or leaving it unanswered for 5 minutes, is the same.
    - Several apps asking at once are shown one at a time. An app that disconnects while waiting withdraws its request.
 2. Agneta identifies the connecting process by its code signature (see [ARCHITECTURE.md](ARCHITECTURE.md#pairing)). An app signed with an Apple-issued certificate and a team ID is shown as verified, by its signing identifier (for example `com.example.app`).
@@ -72,6 +101,8 @@ What the user allows an app is two lists: the **providers** (each an account: a 
 | --- | --- |
 | `agneta/policy` | The session policy: tools, folders, network, approval, limits |
 | `agneta/access` | `agneta/access` and `agneta/accessChanged`: the providers and engines the app may use ([Access](#access)) |
+| `agneta/catalog` | `agneta/catalog` and `agneta/catalogChanged`: what Agneta offers, before pairing too ([Before pairing](#before-pairing-what-agneta-offers)) |
+| `agneta/setup` | `agneta/setup`: Agneta's add-provider window, for the user to connect one |
 | `agneta/task` | A title and a stop warning shown in Agneta's menu |
 | `agneta/instructions` | Instructions at start, and `agneta/instructions/set` between turns |
 | `agneta/steer` | `agneta/steer` during a turn |

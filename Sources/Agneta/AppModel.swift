@@ -386,6 +386,8 @@ final class AppModel {
             library.download(engine, reason: "task")
         case .settingsSeen(let account, let engine, let options):
             remember(options, account: account, engine: engine)
+        case .setupRequested(let app, let kind):
+            showSetup(app: app, kind: kind)
         }
     }
 
@@ -403,14 +405,29 @@ final class AppModel {
 
     // MARK: App access
 
-    /// One provider ticked to start with (the user adds more deliberately), and every engine: the app picks per task.
+    /// What the app asked for, ticked: every provider for "all", the first of each kind it named, or (when it named
+    /// none) one provider to start with, which the user adds to deliberately. The engines it named, or every one: the
+    /// app picks per task.
     private func askForApproval(_ pairing: Router.PairingRequest) async -> Router.PairingAnswer? {
         let verified = pairing.code == nil
         let replaces = grants.values.contains {
             Router.sameApp($0, app: pairing.app, identifier: verified ? pairing.peer?.identifier : nil, team: verified ? pairing.peer?.team : nil, verified: verified)
         }
-        return await approvals.ask(pairing, allowed: Set(accounts.first { !$0.paused }.map { [$0.id] } ?? []), engines: Set(library.catalog.entries.keys),
+        let usable = accounts.filter { !$0.paused }
+        let allowed: [AccountRecord]
+        if let kinds = pairing.providers {
+            allowed = kinds.count == AccountKind.allCases.count ? usable : kinds.compactMap { kind in usable.first { $0.kind == kind } }
+        } else {
+            allowed = Array(usable.prefix(1))
+        }
+        return await approvals.ask(pairing, allowed: Set(allowed.map(\.id)), engines: Set(pairing.engines ?? Array(library.catalog.entries.keys)),
                                    replaces: replaces)
+    }
+
+    /// An app asked Agneta to help the user connect a provider (`agneta/setup`).
+    private func showSetup(app: String, kind: AccountKind?) {
+        log.log("setup-requested", ["app": .string(app), "kind": kind.map { .string($0.rawValue) } ?? .null])
+        WindowPresenter.shared.showSetup(self, app: app, kind: kind)
     }
 
     /// Changes which providers and engines an app may use, and the most its tasks may do (Settings → Apps). Its sessions
@@ -499,7 +516,9 @@ final class AppModel {
     /// A new provider. An app asking for access while there was none to offer gets it ticked.
     private func added(_ record: AccountRecord) {
         accounts.append(record)
-        approvals.providerAdded(record.id)
+        approvals.providerAdded(record.id, kind: record.kind)
+        // An app asked Agneta to set up a provider: it's done.
+        WindowPresenter.shared.closeSetup()
     }
 
     func signOut(_ account: AccountRecord) {
@@ -760,12 +779,27 @@ final class AppModel {
         grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"])]
         let sample = UUID()
         // AGNETA_SHOWCASE_UNVERIFIED shows the busiest request: an app Agneta can't verify, asking for several folders.
-        let unverified = ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_UNVERIFIED"] != nil
+        // AGNETA_SHOWCASE_REQUEST shows a narrowed one: "narrow" (a Claude plan, Claude Code, contained), "missing" (a
+        // kind not connected, beside one that is) or "none" (no provider connected at all).
+        let environment = ProcessInfo.processInfo.environment
+        let unverified = environment["AGNETA_SHOWCASE_UNVERIFIED"] != nil
         let home = FileManager.default.homeDirectoryForCurrentUser
-        approvals.addSample(Approvals.Request(id: sample, app: "Example App", identifier: "com.example.app", verified: !unverified, code: "123456",
-                                              allowed: ["a", "c"], engines: Set(library.catalog.entries.keys), tools: .workspace,
-                                              folders: unverified ? ["Documents/Example Project", ".rustup", ".cargo/bin"].map { home.appending(path: $0) }
-                                                                  : [home.appending(path: "Documents/Example Project")]))
+        var request = Approvals.Request(id: sample, app: "Example App", identifier: "com.example.app", verified: !unverified, code: "123456",
+                                        allowed: ["a", "c"], engines: Set(library.catalog.entries.keys), tools: .workspace,
+                                        folders: unverified ? ["Documents/Example Project", ".rustup", ".cargo/bin"].map { home.appending(path: $0) }
+                                                            : [home.appending(path: "Documents/Example Project")])
+        switch environment["AGNETA_SHOWCASE_REQUEST"] {
+        case "narrow"?:
+            (request.kinds, request.allowed, request.engines, request.namedEngines) = ([.claude], ["a"], ["claude-code"], true)
+            (request.sandbox, request.sandboxFixed) = (.contained, true)
+        case "missing"?:
+            (request.kinds, request.allowed, request.engines, request.namedEngines) = ([.claude, .anthropicKey], ["a"], ["claude-code"], true)
+        case "none"?:
+            accounts = []
+            request.allowed = []
+        default: break
+        }
+        approvals.addSample(request)
         if let engine = library.engine(for: .chatGPT) {
             func option(_ id: String, _ category: String, _ current: String, _ values: [(String, String)]) -> JSONValue {
                 ["id": .string(id), "category": .string(category), "type": "select", "currentValue": .string(current),

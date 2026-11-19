@@ -9,13 +9,13 @@ import Testing
     var context: PolicyContext { PolicyContext(userHome: home, agnetaRoots: [home.appending(path: "Library/Application Support/Agneta")]) }
 
     @Test func aScopeIsParsedStrictly() throws {
-        let none = try GrantScope.requested(nil, context: context)
+        let none = try GrantScope.requested(nil, context: context, known: ["claude-code", "codex", "goose", "opencode"])
         #expect(none.tools == .appOnly && none.folders.isEmpty)
-        let asked = try GrantScope.requested(["tools": "workspace", "folders": ["/tmp/project"]], context: context)
+        let asked = try GrantScope.requested(["tools": "workspace", "folders": ["/tmp/project"]], context: context, known: [])
         #expect(asked.tools == .workspace && asked.folders.map { $0.path(percentEncoded: false).hasSuffix("/tmp/project/") } == [true])
         for bad: JSONValue in [["tools": "everything"], ["folders": "/tmp"], ["folders": [.string(home.path(percentEncoded: false))]],
                                ["folders": [.string(home.appending(path: ".ssh").path(percentEncoded: false))]], ["extra": true], "workspace"] {
-            #expect(throws: PolicyRejection.self, "\(bad)") { _ = try GrantScope.requested(bad, context: context) }
+            #expect(throws: PolicyRejection.self, "\(bad)") { _ = try GrantScope.requested(bad, context: context, known: []) }
         }
     }
 

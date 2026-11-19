@@ -73,9 +73,15 @@ final class WindowPresenter {
 
     func showWelcome(_ model: AppModel) { show("welcome", title: "Welcome to Agneta", size: NSSize(width: 460, height: 520)) { WelcomeView(model: model) } }
     func closeWelcome() { close("welcome") }
+    /// An app asked Agneta to help connect a provider: the add-provider window, naming it. A repeat brings it forward.
+    func showSetup(_ model: AppModel, app: String, kind: AccountKind?) {
+        show("setup", title: "Connect Your AI", size: NSSize(width: 460, height: kind == nil ? 500 : 440)) { SetupView(model: model, app: app, kind: kind) }
+    }
+    func closeSetup() { close("setup") }
     /// Closing the window cancels the sign-in it shows (one left running would hold its sign-in callback port).
     func showSignIn(_ model: AppModel, attempt: UUID) {
         closeWelcome()
+        closeSetup()
         show("signin", title: "Sign In", size: NSSize(width: 420, height: 340), onClose: { model.signIn.windowClosed(attempt) }) { SignInView(model: model) }
     }
     func closeSignIn() { close("signin") }
@@ -85,9 +91,12 @@ final class WindowPresenter {
         // three folders, an unverified app's code, the mode choice) at 750 points.
         let height: CGFloat = {
             guard let request = model.approvals.current else { return 750 }
-            let providers = CGFloat(model.accounts.isEmpty ? 3 : model.accounts.count) // no provider yet: about as tall as three
-            let rows = CGFloat(min(request.folders.count, 3) + (request.folders.count > 3 ? 1 : 0))
-            var height = 750 + 47 * (providers - 3) + 20 * (rows - 3)
+            let rows = model.accounts.filter { request.kinds?.contains($0.kind) ?? true }.count
+                + (request.kinds ?? []).filter { kind in !model.accounts.contains { $0.kind == kind } }.count
+            let providers = CGFloat(rows == 0 ? 3 : rows) // no provider yet: about as tall as three
+            let folders = CGFloat(min(request.folders.count, 3) + (request.folders.count > 3 ? 1 : 0))
+            var height = 750 + 47 * (providers - 3) + 20 * (folders - 3)
+            if request.namedEngines { height += 22 }
             if request.verified { height -= 55 }
             if request.tools != .workspace { height -= 85 }
             if request.replaces { height += 26 }
@@ -375,8 +384,8 @@ struct ApprovalView: View {
                 }
             } content: {
                 VStack(spacing: 14) {
-                    if model.accounts.isEmpty {
-                        NoProviderYet(model: model, app: approval.app)
+                    if shown(approval).isEmpty && missing(approval).isEmpty || model.accounts.isEmpty {
+                        NoProviderYet(model: model, app: approval.app, kinds: approval.kinds)
                     } else {
                         providers(approval)
                     }
@@ -414,10 +423,26 @@ struct ApprovalView: View {
 
 extension ApprovalView {
     /// The providers to allow, one row each.
+    /// The providers on offer: those of the kinds the app asked for, or all of them.
+    func shown(_ approval: Approvals.Request) -> [AccountRecord] {
+        model.accounts.filter { approval.kinds?.contains($0.kind) ?? true }
+    }
+
+    /// The kinds the app asked for that aren't connected: each gets a row to connect it here.
+    func missing(_ approval: Approvals.Request) -> [AccountKind] {
+        (approval.kinds ?? []).filter { kind in !model.accounts.contains { $0.kind == kind } }
+    }
+
+    /// Why a provider can't be given as asked (contained, but none of its engines here can keep it so), or nil.
+    func cantMeet(_ account: AccountRecord, _ approval: Approvals.Request) -> String? {
+        approval.sandboxFixed ? model.library.sandboxUnavailable(.contained, providers: [account], engines: approval.engines) : nil
+    }
+
     func providers(_ approval: Approvals.Request) -> some View {
         VStack(spacing: 2) {
-            ForEach(model.accounts) { account in
+            ForEach(shown(approval)) { account in
                 let on = approval.allowed.contains(account.id)
+                let reason = cantMeet(account, approval)
                 Button {
                     if on { model.approvals.current?.allowed.remove(account.id) } else { model.approvals.current?.allowed.insert(account.id) }
                 } label: {
@@ -426,7 +451,9 @@ extension ApprovalView {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(account.label).font(.system(size: 13, weight: .semibold))
                             // What it needs before it can run, where something's missing; its plan otherwise.
-                            if on, let reason = model.library.cantRun(account, engines: approval.engines) {
+                            if let reason {
+                                Text(reason).font(.system(size: 11.5)).foregroundStyle(Palette.attention).lineLimit(3)
+                            } else if on, let reason = model.library.cantRun(account, engines: approval.engines) {
                                 Text(reason).font(.system(size: 11.5)).foregroundStyle(Palette.attention).lineLimit(2)
                             } else {
                                 Text(account.kind.plan).font(.system(size: 11.5)).foregroundStyle(.secondary)
@@ -440,7 +467,25 @@ extension ApprovalView {
                     .padding(.horizontal, 10).padding(.vertical, 7)
                 }
                 .buttonStyle(RowButtonStyle())
+                .disabled(reason != nil && !on)
                 .accessibilityAddTraits(on ? .isSelected : [])
+            }
+            // A kind the app asked for that isn't connected: connect it here; it's ticked once it is.
+            ForEach(missing(approval), id: \.self) { kind in
+                HStack(spacing: 11) {
+                    ProviderIcon(kind: kind, size: 28).opacity(0.6)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(kind.offerName).font(.system(size: 13, weight: .semibold))
+                        Text("Not connected yet").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Connect") {
+                        WindowPresenter.shared.lowerApproval()
+                        if kind.subscription != nil { model.startSignIn(kind) } else { WindowPresenter.shared.showSettings(model, section: .providers) }
+                    }
+                    .glassButton().controlSize(.small)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 7)
             }
         }
         .padding(5)
@@ -457,8 +502,8 @@ extension ApprovalView {
                 // Which engines the app may pick from: all of them, unless someone who knows wants otherwise. A
                 // popover, so the dialog keeps its size.
                 if !model.accounts.isEmpty {
-                    Button(model.library.allowance(approval.engines) != .all
-                           ? (approval.engines.count == 1 ? "1 engine…" : "\(approval.engines.count) engines…") : "Engines…") { showsAdvanced = true }
+                    Button(approval.namedEngines || model.library.allowance(approval.engines) == .all
+                           ? "Engines…" : (approval.engines.count == 1 ? "1 engine…" : "\(approval.engines.count) engines…")) { showsAdvanced = true }
                         .buttonStyle(.link).foregroundStyle(Palette.accent).font(.system(size: 11.5))
                         .popover(isPresented: $showsAdvanced, arrowEdge: .bottom) {
                             EngineAccessList(model: model, allowed: approval.allowed,
@@ -469,10 +514,24 @@ extension ApprovalView {
                 }
             }
             ApprovalScope(app: approval.app, tools: approval.tools, folders: approval.folders)
+            // The engines, by name, when the app named them.
+            if approval.namedEngines {
+                Label(approval.engines.isEmpty ? "No engine" : model.library.all.filter { approval.engines.contains($0.id) }.map(\.name).joined(separator: ", "),
+                      systemImage: "cpu").font(.system(size: 12)).foregroundStyle(.secondary)
+            }
             if approval.tools == .workspace {
                 Divider().opacity(0.5)
-                SandboxPicker(model: model, accounts: approval.allowed, engines: approval.engines,
-                              sandbox: Binding(get: { model.approvals.current?.sandbox ?? .default }, set: { model.approvals.current?.sandbox = $0 }))
+                if approval.sandboxFixed {
+                    // The app asked for contained, and no more, so no more is offered.
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label("Tasks run contained", systemImage: "lock.shield").font(.system(size: 12.5, weight: .medium))
+                        Text("Only the folders above, and commands have no internet. \(approval.app) asked for no more.")
+                            .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    SandboxPicker(model: model, accounts: approval.allowed, engines: approval.engines,
+                                  sandbox: Binding(get: { model.approvals.current?.sandbox ?? .default }, set: { model.approvals.current?.sandbox = $0 }))
+                }
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
@@ -509,29 +568,77 @@ extension ApprovalView {
 struct NoProviderYet: View {
     var model: AppModel
     var app: String
+    /// The kinds the app asked for, or nil for any.
+    var kinds: [AccountKind]? = nil
+    /// Inside the approval window, which steps back while a sign-in or Settings is in front.
+    var inApproval = true
+    /// The line above the choices; the setup window says it in its own message instead.
+    var showsIntro = true
 
     var body: some View {
         VStack(spacing: 10) {
-            Text("Connect the AI you already pay for, and \(app) can use it.")
-                .font(.system(size: 12.5)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            if showsIntro {
+                Text(intro)
+                    .font(.system(size: 12.5)).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            }
             GlassGroup(spacing: 8) {
                 VStack(spacing: 8) {
-                    ProviderButton(kind: .chatGPT, title: "Continue with ChatGPT", detail: "Your ChatGPT plan, through Codex") { connect(.chatGPT) }
-                    ProviderButton(kind: .claude, title: "Continue with Claude", detail: "Your Claude plan, through Claude Code") { connect(.claude) }
+                    if wants(.chatGPT) {
+                        ProviderButton(kind: .chatGPT, title: "Continue with ChatGPT", detail: "Your ChatGPT plan, through Codex") { connect(.chatGPT) }
+                    }
+                    if wants(.claude) {
+                        ProviderButton(kind: .claude, title: "Continue with Claude", detail: "Your Claude plan, through Claude Code") { connect(.claude) }
+                    }
                 }
             }
-            Button("Use an API key instead") {
-                WindowPresenter.shared.lowerApproval()
-                WindowPresenter.shared.showSettings(model, section: .providers)
+            if wants(.anthropicKey) || wants(.openAIKey) {
+                Button(kinds?.allSatisfy { $0.subscription == nil } == true ? "Add an API key" : "Use an API key instead") { connect(.openAIKey) }
+                    .buttonStyle(.link).foregroundStyle(Palette.accent).font(.system(size: 12))
             }
-            .buttonStyle(.link).foregroundStyle(Palette.accent).font(.system(size: 12))
         }
         .padding(.horizontal, 30)
     }
 
+    private func wants(_ kind: AccountKind) -> Bool { kinds?.contains(kind) ?? true }
+
+    private var intro: String {
+        if let kinds, kinds.count == 1 { return "\(app) asks for your \(kinds[0].offerName). Connect it, and \(app) can use it." }
+        return "Connect the AI you already pay for, and \(app) can use it."
+    }
+
+    /// A plan signs in; an API key is entered in Settings → Providers.
     private func connect(_ kind: AccountKind) {
-        WindowPresenter.shared.lowerApproval()
-        model.startSignIn(kind)
+        if inApproval { WindowPresenter.shared.lowerApproval() }
+        if kind.subscription != nil { model.startSignIn(kind) } else { WindowPresenter.shared.showSettings(model, section: .providers) }
+    }
+}
+
+/// An app asked Agneta to help connect a provider (`agneta/setup`): the first-run window's choice, naming the app,
+/// narrowed to the kind it asked for. It closes when a provider is connected, which the app hears as `catalogChanged`.
+struct SetupView: View {
+    var model: AppModel
+    var app: String
+    var kind: AccountKind?
+
+    var body: some View {
+        DialogLayout(title: "Connect your AI for \(app)",
+                     message: kind.map { "\(app) asks for your \($0.offerName). Connect it, and \(app) can ask to use it through Agneta." }
+                        ?? "\(app) uses Agneta to work with the AI you already pay for. Connect a provider, and \(app) can ask to use it.") {
+            HStack(spacing: 14) {
+                AppIcon(name: app, identifier: nil, size: 56)
+                Image(systemName: "arrow.left.arrow.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(.tertiary)
+                MarkTile(size: 56)
+            }
+        } content: {
+            NoProviderYet(model: model, app: app, kinds: kind.map { [$0] }, inApproval: false, showsIntro: false)
+            if kind != nil {
+                Button("Other providers…") { WindowPresenter.shared.showSettings(model, section: .providers) }
+                    .buttonStyle(.link).foregroundStyle(Palette.accent).font(.system(size: 12)).padding(.top, 8)
+            }
+        } actions: {
+            Button { WindowPresenter.shared.closeSetup() } label: { Text("Not Now").frame(maxWidth: .infinity) }
+                .glassButton().keyboardShortcut(.cancelAction).controlSize(.large)
+        }
     }
 }
 

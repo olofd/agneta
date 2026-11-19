@@ -17,6 +17,16 @@ public enum AccountKind: String, Codable, Sendable, CaseIterable {
         }
     }
 
+    /// How Agneta names this kind of provider to an app that hasn't paired (`agneta/catalog`).
+    public var offerName: String {
+        switch self {
+        case .chatGPT: "ChatGPT plan"
+        case .claude: "Claude plan"
+        case .anthropicKey: "Anthropic API key"
+        case .openAIKey: "OpenAI API key"
+        }
+    }
+
     public var plan: String {
         switch self {
         case .chatGPT: "ChatGPT plan"
