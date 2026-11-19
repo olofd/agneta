@@ -427,6 +427,18 @@ h1, h2, h3 { text-wrap: balance; }
 .install-grid p { color: var(--text-2); font-size: 16px; }
 .install pre { background: var(--bg-card); }
 .home main > section.install { margin-bottom: 0; }
+/* The download an app named in the install page's fragment: first, and marked. */
+.download.suggested { border-color: color-mix(in srgb, var(--accent) 60%, var(--line-strong)); }
+.download .mine { margin-left: 10px; font-size: 12px; font-weight: 600; letter-spacing: 0; color: var(--accent); vertical-align: 2px; }
+
+/* The install page (/get/) */
+.get-page { padding-top: 72px; padding-bottom: 112px; }
+.get-page h1 { font-size: 44px; letter-spacing: -0.03em; }
+.get-page .lede { font-size: 19px; line-height: 1.5; color: var(--text-2); max-width: 40em; margin: 16px 0 10px; letter-spacing: -0.017em; }
+.get-page .release { font-size: 15px; color: var(--text-2); margin-bottom: 28px; }
+.get-page .install-grid h2 { font-size: 19px; margin: 0 0 12px; letter-spacing: -0.016em; }
+.get-page .install-grid h2:not(:first-child) { margin-top: 34px; }
+.get-page pre { background: var(--bg-card); }
 
 /* Code */
 
@@ -620,6 +632,8 @@ td code { overflow-wrap: anywhere; }
   .steps ol, .not ul { grid-template-columns: 1fr; }
   .facts { grid-template-columns: 1fr; gap: 28px; }
   .downloads { grid-template-columns: 1fr; }
+  .get-page { padding-top: 44px; padding-bottom: 72px; }
+  .get-page h1 { font-size: 36px; }
   .section-lede { font-size: 17px; }
   .callout { padding: 22px 20px; }
   .cards { grid-template-columns: 1fr; }

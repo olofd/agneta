@@ -1,0 +1,25 @@
+<main id="main" class="wrap get-page">
+  <img class="hero-icon" src="/assets/icon-256.png" width="72" height="72" alt="">
+  <h1>Get Agneta</h1>
+  <p class="lede">Agneta is a free, open-source menu bar app for macOS. Apps you allow run their AI tasks through it, on the ChatGPT or Claude plan, or API key, you connect once: on your Mac, in the sandbox you choose, with every task in view and a stop button. <a href="/">More about Agneta</a>.</p>
+  <p class="release">{{release_line}}. Signed with a Developer ID and notarized by Apple. Needs macOS 14 or later.</p>
+  <div class="downloads" data-downloads>{{downloads}}</div>
+  <p class="hint">Not sure which you have? Choose Apple menu → About This Mac: <strong>Chip: Apple M…</strong> means Apple silicon, <strong>Processor: … Intel</strong> means Intel.</p>
+  <div class="install-grid">
+    <div>
+      <h2>Then</h2>
+{{install_steps}}
+      <h2>Already installed?</h2>
+      <p><a class="button primary" href="agneta://open">Open Agneta</a></p>
+      <p>An app that sent you here goes on by itself once Agneta is in Applications. If it doesn’t, open Agneta, then go back to the app.</p>
+    </div>
+    <div>
+      <h2>Or with Homebrew</h2>
+      <pre data-copy><code>brew install olofd/tap/agneta</code></pre>
+      <h2>What it asks of you</h2>
+      <p>Agneta has no servers of its own and sends no telemetry. Apps must ask before using it, you choose which plans and keys each may use, and you can stop any task. <a href="/docs/privacy/">Privacy and threat model</a></p>
+      <h2>Or build it</h2>
+      <p>With Xcode 26 or later, from the source: <a href="https://github.com/olofd/agneta#build-and-run" rel="noopener">Build and run</a>.</p>
+    </div>
+  </div>
+</main>

@@ -13,6 +13,7 @@ xcuserdata/
 Engines/bin/
 .vscode/
 site/_build/
+__pycache__/
 
 # Working plans stay on the maintainer's Mac.
 docs/NEXT_STEP*.md
