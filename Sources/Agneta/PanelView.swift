@@ -116,21 +116,30 @@ struct PanelView: View {
     /// What an engine needs, downloading (with its progress) or failed (with Try Again), whatever started it.
     private func downloadCard(_ download: EngineDownload) -> some View {
         let failed = download.problem != nil
-        return HStack(spacing: 12) {
+        // A failure's title gets the card's width and Try Again sits under the message, as in a notification:
+        // beside the title, the button squeezed it onto three lines.
+        return HStack(alignment: failed ? .top : .center, spacing: 12) {
             Image(systemName: failed ? "exclamationmark.circle.fill" : "arrow.down.circle.fill").font(.system(size: 20))
                 .foregroundStyle(failed ? Palette.attention : Palette.accent)
             VStack(alignment: .leading, spacing: 3) {
                 Text(failed ? "\(download.title) couldn't be downloaded" : "Downloading \(download.title)").font(.system(size: 13, weight: .semibold))
+                    .fixedSize(horizontal: false, vertical: true)
                 if failed {
                     Text("Check your connection, then try again.").font(.system(size: 12)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Try Again") { model.library.download(download.engine, reason: "retry") }.glassButton(prominent: true).tint(Palette.fill).controlSize(.small)
+                        .padding(.top, 5)
                 } else {
-                    if let fraction = download.fraction { ProgressView(value: fraction).controlSize(.small) } else { ProgressView().progressViewStyle(.linear).controlSize(.small) }
+                    // The download's own colour, as its icon, not the system blue on a rose card.
+                    Group {
+                        if let fraction = download.fraction { ProgressView(value: fraction) } else { ProgressView().progressViewStyle(.linear) }
+                    }
+                    .controlSize(.small).tint(Palette.accent)
                     Text(download.amount).font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
                 }
             }
             Spacer(minLength: 6)
             if failed {
-                Button("Try Again") { model.library.download(download.engine, reason: "retry") }.glassButton(prominent: true).tint(Palette.fill).controlSize(.small)
                 Button { model.library.putAway(download.engine) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless).foregroundStyle(.secondary).help("Hide; it downloads again when it's needed")
                     .accessibilityLabel("Hide")

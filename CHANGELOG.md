@@ -14,6 +14,7 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 - **Reset stops downloads.** An engine download under way when you reset could finish afterwards and put its files back; it's now stopped before anything is deleted.
 - **Clearing history keeps trying.** A conversation in an account's shared Goose that couldn't be deleted at once (Goose not there, failing, or Agneta quitting) was lost track of. Agneta now keeps a list of them until Goose deletes each, asks again at launch and after each clear, and says when it couldn't, with **Try Again**.
 - **A changed model takes effect on the next task.** An account's shared Goose kept the model it started with, so clearing a custom model (or changing the model, key or defaults) didn't apply until Agneta restarted. Now its shared engines restart for the next task; one busy with a task finishes it first.
+- **The approval window highlights what Return does:** Allow Once for a verified app, and nothing for an app Agneta can't verify, so nothing draws the eye to letting it in. Always Allow is one click, as before.
 - **A tidier approval window:** one Access card with the app's tools, folders and mode, **Engines…** in its header, and an unverified app's code on one row. It shows only what the app asked for, with a **Connect** row for a provider you haven't connected yet.
 
 **Security**

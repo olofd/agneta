@@ -11,13 +11,43 @@ struct TaskDetailsView: View {
     var title: String
     @State private var summary: TraceSummary?
 
+    /// The account by its kind, as the approval window names providers: "Claude plan", "OpenAI API key"; a label the
+    /// user chose (or a second account's "Claude 2") is kept, with the kind after it.
+    static func provider(_ summary: TraceSummary) -> String {
+        guard let kind = summary.kind.flatMap(AccountKind.init(rawValue:)) else { return summary.account ?? "Unknown" }
+        // "Claude" and "OpenAI API" are the names Agneta gives a first account of a kind.
+        guard let label = summary.account, ![kind.provider, "\(kind.provider) API", kind.offerName].contains(label) else { return kind.offerName }
+        return "\(label) (\(kind.offerName))"
+    }
+
+    /// The policy's tools (as the trace records them: a case name), as the approval window words them.
+    static func tools(_ raw: String, app: String?) -> String {
+        switch raw {
+        case "app-only", "appOnly": "Only \(app ?? "the app")'s own tools"
+        case "read": "Read files"
+        case "workspace": "Read, change and run commands"
+        default: raw
+        }
+    }
+
+    /// What the task's commands could reach. Under developer access that's the internet whatever the app's policy
+    /// asked (APP_PROTOCOL.md); contained, it's the policy's hosts (`allow(["host"])`) or nothing. Nil when the
+    /// task ran no commands (the app's own tools only) or the trace predates the mode.
+    static func access(_ summary: TraceSummary) -> String? {
+        guard let sandbox = summary.sandbox, summary.tools != "appOnly", summary.tools != "app-only" else { return nil }
+        if sandbox == "developer" { return "Developer access: the internet and your home folder" }
+        let hosts = (summary.network ?? "none").replacing("allow([", with: "").replacing("])", with: "").replacing("\"", with: "")
+        return hosts.isEmpty || hosts == "none" ? "Contained, no internet" : "Contained, internet: \(hosts)"
+    }
+
     var body: some View {
         Form {
             if let summary {
                 Section {
                     LabeledContent("App", value: summary.app ?? "Unknown")
-                    LabeledContent("Provider", value: [summary.account, summary.billing.map { $0 == "subscription" ? "plan" : "API key" }].compactMap { $0 }.joined(separator: " · "))
-                    LabeledContent("Tools", value: [summary.tools, summary.network.map { $0 == "none" ? "no network" : $0 }].compactMap { $0 }.joined(separator: " · "))
+                    LabeledContent("Provider", value: Self.provider(summary))
+                    if let tools = summary.tools { LabeledContent("Tools", value: Self.tools(tools, app: summary.app)) }
+                    if let access = Self.access(summary) { LabeledContent("Access", value: access) }
                     if let cost = summary.cost {
                         LabeledContent("Cost", value: String(format: "about $%.2f", cost) + (summary.billing == "subscription" ? " at API prices" : ""))
                     }

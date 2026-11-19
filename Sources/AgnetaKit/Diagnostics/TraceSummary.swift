@@ -30,10 +30,14 @@ public struct TraceSummary: Sendable {
     public var app: String?
     public var account: String?
     public var billing: String?
+    /// The account's kind (`AccountKind`), when the account still existed.
+    public var kind: String?
     public var engine: String?
     public var dedicated: Bool
     public var tools: String?
     public var network: String?
+    /// The sandbox mode the task ran in ("contained" or "developer").
+    public var sandbox: String?
     public var turns: [Turn] = []
     /// By total time, longest first. Grouped by tool, not title: Goose's titles carry arguments.
     public var toolStats: [Tool] = []
@@ -62,10 +66,12 @@ public struct TraceSummary: Sendable {
         app = meta?["app"]?["name"]?.stringValue
         account = meta?["account"]?["label"]?.stringValue
         billing = meta?["account"]?["billing"]?.stringValue
+        kind = meta?["account"]?["kind"]?.stringValue
         engine = [meta?["engine"]?["info"]?["name"]?.stringValue, meta?["engine"]?["info"]?["version"]?.stringValue].compactMap { $0 }.joined(separator: " ")
         dedicated = meta?["engine"]?["dedicated"]?.boolValue == true
         tools = meta?["policy"]?["tools"]?.stringValue
         network = meta?["policy"]?["network"]?.stringValue
+        sandbox = meta?["policy"]?["sandbox"]?.stringValue
         turns = events("turn").map { turn in
             Turn(n: Int(turn["n"]?.intValue ?? 0), stopReason: turn["stopReason"]?.stringValue ?? "?", ms: number(turn["ms"]),
                  msToFirstToken: number(turn["msToFirstToken"]), modelCalls: Int(turn["modelCalls"]?.intValue ?? 0),
