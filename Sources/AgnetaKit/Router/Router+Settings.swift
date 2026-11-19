@@ -10,12 +10,17 @@ extension Router {
     /// on offer, so the model goes first.
     static let defaultCategories = ["model", "thought_level"]
 
-    /// Sets an account's defaults; nil (or empty) leaves that setting to the engine.
-    public func setDefaults(account: String, model: String?, effort: String?) {
+    /// Sets an account's defaults; nil (or empty) leaves that setting to the engine. Returns whether they changed.
+    /// An engine may keep a value set on an earlier session for the next, so a change (clearing one most of all)
+    /// takes effect on engines started after it: AgnetaRuntime's `setDefaults` renews the account's shared engines.
+    @discardableResult
+    public func setDefaults(account: String, model: String?, effort: String?) -> Bool {
         var wanted: [String: String] = [:]
         if let model, !model.isEmpty { wanted["model"] = model }
         if let effort, !effort.isEmpty { wanted["thought_level"] = effort }
+        let before = settingDefaults[account]
         settingDefaults[account] = wanted.isEmpty ? nil : wanted
+        return before != settingDefaults[account]
     }
 
     /// Every value an option offers, grouped or not.

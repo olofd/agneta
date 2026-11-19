@@ -42,8 +42,8 @@ public struct EngineCapabilities: Sendable, Equatable {
 }
 
 /// A provider, in Agneta's terms; each adapter maps it onto its engine's own configuration.
-public struct ProviderSetup: Sendable {
-    public enum Kind: String, Sendable {
+public struct ProviderSetup: Sendable, Equatable {
+    public enum Kind: String, Sendable, Equatable {
         case openAI = "openai", anthropic, chatGPT = "chatgpt", claudeCode = "claude-code"
     }
 

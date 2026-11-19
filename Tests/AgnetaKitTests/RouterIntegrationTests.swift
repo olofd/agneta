@@ -273,6 +273,9 @@ struct RouterIntegrationTests {
             while !holding().isEmpty, Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
             #expect(holding().isEmpty)
             #expect(stack.traces.meta(task: session) == nil)
+            // Deleted, so nothing is left queued to ask for again.
+            await stack.runtime.conversationsSettled()
+            #expect(await stack.runtime.pendingConversations.isEmpty)
             // Asking again finds nothing to delete, and says so rather than failing silently.
             let again = await stack.runtime.router.deleteConversations([conversation])
             #expect(again.deleted == 0 && !again.problems.isEmpty)

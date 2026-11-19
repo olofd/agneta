@@ -27,7 +27,7 @@ Engines are run with their own telemetry, update checks, analytics and feedback 
 | Downloaded components (Claude Code's adapter, OpenCode, Codex's runtime) | `Runtimes/` in Agneta's data folder | Until Reset; an update keeps them while their pin is unchanged |
 | Update settings, the last check's time, and an update downloaded but not yet installed | Agneta's preferences; `~/Library/Caches/com.objectivecoder.agneta/` | Until the update installs, or Reset |
 | API keys and the diagnostics token | Agneta's Keychain items | Until removed |
-| Plan sign-ins | Codex's and Claude Code's own entries in the login Keychain, one per account | Until signed out (Sign Out and Reset run each one's logout) |
+| Plan sign-ins | Codex's and Claude Code's own entries in the login Keychain, one per account | Until signed out (Sign Out and Reset run each one's logout; when one can't run or fails, Agneta says which entries may remain and how to delete them in Keychain Access) |
 | What tasks wrote | The workspace the app named, or the app's own workspace (`… Workspaces/<grant>`) | Until you delete it, or Reset for the app's own workspace |
 | Each app's build caches (developer access) | `… Workspaces/.build-caches/<grant>` | Until Reset |
 
@@ -40,9 +40,9 @@ Everything Agneta writes is readable only by your user account (folders `0700`, 
 | **Stop** (a task) | The task and its engine stop now. Its history and trace stay. |
 | **Pause** (an account) | Nothing new starts on the account; a running turn finishes. Nothing is removed. |
 | **Remove Access** (an app) | The app's token stops working, its tasks stop and its connections close; the grant is deleted. Its tasks' history, its own workspace and its build caches stay. |
-| **Sign Out** (an account) | Its key or sign-in is deleted (Claude Code signs out of its own entry), and so are the account's folder and its engines' homes. Its tasks' history and traces stay until they expire. |
-| **Clear History** | Every finished task's history row, trace and engine home is deleted, and so are Claude Code's transcripts and Codex's session files of those tasks. |
-| **Reset Agneta** | Everything above, and every account, grant, setting, log, cache, the apps' workspaces and build caches, Agneta's Keychain items and its login item. |
+| **Sign Out** (an account) | Its key or sign-in is deleted (Claude Code and Codex sign out of their own entries), and so are the account's folder and its engines' homes. Its tasks' history and traces stay until they expire. |
+| **Clear History** | Every finished task's history row, trace and engine home is deleted, and so are Claude Code's transcripts and Codex's session files of those tasks. A task that shared its account's Goose has its conversation deleted from Goose's storage; until Goose has done so, Agneta keeps a list of those conversations (account, engine and session id, nothing of their content) and asks again each time it starts and whenever history is cleared. If Goose can't delete one, Agneta says so. |
+| **Reset Agneta** | Everything above, and every account, grant, setting, log, cache, download, the apps' workspaces and build caches, Agneta's Keychain items and its login item. Downloads under way stop first. Plan sign-ins need Claude Code's or Codex's own logout: if one isn't installed or its logout fails, Reset finishes the rest and then names the Keychain entries that may remain. |
 
 ## The diagnostics token
 

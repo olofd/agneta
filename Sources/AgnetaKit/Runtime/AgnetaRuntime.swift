@@ -12,6 +12,11 @@ public actor AgnetaRuntime {
         case historyChanged
         /// A task's trace can't be written any more (the disk is full, the file went away).
         case traceProblem(task: String, reason: String)
+        /// After asking shared engines to delete conversations of tasks gone from history: how many are still queued,
+        /// and what went wrong, if anything (nil: nothing to tell the user). Queued ones are asked for again when their
+        /// provider is served, after the next forgetting, and on `retryForgetting`; a problem with none queued is one
+        /// asking again can't fix (the engine can't delete a session).
+        case conversationsLeft(count: Int, problem: String?)
     }
 
     public struct Configuration: Sendable {
@@ -49,6 +54,9 @@ public actor AgnetaRuntime {
     private var consumer: Task<Void, Never>?
     private var housekeeping: Task<Void, Never>?
     private let finish: @Sendable () -> Void
+    /// Deleting the queued conversations (`pendingConversations`), one pass at a time; `deleteAgain` asks for another.
+    private var deleting: Task<Void, Never>?
+    private var deleteAgain = false
 
     /// Opens Agneta's data (throwing `StoreError` when it can't), stops engines and marks tasks a crash left behind,
     /// applies retention, and starts the router with the saved grants. `approve` decides pairing requests.
@@ -131,6 +139,14 @@ public actor AgnetaRuntime {
         await supervisor.add(account: id, provider: provider)
         await router.add(account: id, label: label, runner: runner, kind: kind, billing: billing)
         await router.setPaused(id, paused)
+        // Its shared engines can delete what history left them to.
+        if pendingConversations.contains(where: { $0.account == id }) { deletePendingConversations() }
+    }
+
+    /// An account's default model and effort for new sessions (Router+Settings). When they change, its shared engines
+    /// are renewed (EngineSupervisor.renew): one already running could keep what an earlier session set.
+    public func setDefaults(account id: String, model: String?, effort: String?) async {
+        if await router.setDefaults(account: id, model: model, effort: effort) { await supervisor.renew(account: id) }
     }
 
     /// Stops serving an account: its tasks stop, its engines too, and their homes go.
@@ -138,6 +154,12 @@ public actor AgnetaRuntime {
         await router.remove(account: id)
         await supervisor.remove(account: id)
         EngineHomes.remove(account: id, root: store.root)
+        // Its engines' state, conversations and all, went with its folder.
+        let pending = pendingConversations
+        if pending.contains(where: { $0.account == id }) {
+            savePending(pending.filter { $0.account != id })
+            observer(.conversationsLeft(count: pendingConversations.count, problem: nil))
+        }
     }
 
     // MARK: Grants
@@ -227,19 +249,73 @@ public actor AgnetaRuntime {
     }
 
     /// A task leaves history: its conversation and its trace go too. Its engine home and files go here; a shared
-    /// engine is asked to delete it (Router+Forget), from what the trace said before it went.
+    /// engine is asked to delete it (Router+Forget), from what the trace said. That's queued in Agneta's records before
+    /// the trace goes, so a conversation the engine doesn't delete now (it failed, isn't here, Agneta quit) is asked
+    /// for again rather than left where nothing can find it.
     private func forget(tasks: [String]) {
         guard !tasks.isEmpty else { return }
         let shared = tasks.compactMap { traces.meta(task: $0).flatMap(Router.sharedConversation) }
-        EngineHomes.remove(tasks: tasks, traces: traces, root: store.root)
-        traces.delete(tasks: tasks)
-        guard !shared.isEmpty else { return }
-        _Concurrency.Task { [router, log] in
-            let outcome = await router.deleteConversations(shared)
-            log?.log("conversations-deleted", level: outcome.problems.isEmpty ? "info" : "error",
-                     ["asked": .int(Int64(shared.count)), "deleted": .int(Int64(outcome.deleted)),
-                      "problems": .array(outcome.problems.map(JSONValue.string))])
+        let queued = shared.isEmpty || savePending(Array(Set(pendingConversations + shared)))
+        // Not queued (the database refused the write): those tasks' traces stay, the only record left of where their
+        // conversations are.
+        let gone = queued ? tasks : tasks.filter { traces.meta(task: $0).flatMap(Router.sharedConversation) == nil }
+        EngineHomes.remove(tasks: gone, traces: traces, root: store.root)
+        traces.delete(tasks: gone)
+        if !queued {
+            observer(.conversationsLeft(count: shared.count, problem: "Agneta couldn't record which conversations to delete"))
+        } else if !shared.isEmpty {
+            deletePendingConversations()
         }
+    }
+
+    // MARK: Conversations still to delete
+
+    static let pendingKey = "pendingConversationDeletions"
+
+    /// Conversations in shared engines still to delete, kept in Agneta's records until an engine deletes them.
+    public var pendingConversations: [Router.SharedConversation] {
+        guard let text = Self.attempt(log, "read-pending-deletions", { try database.setting(Self.pendingKey) }) ?? nil,
+              let list = try? JSONDecoder().decode([Router.SharedConversation].self, from: Data(text.utf8)) else { return [] }
+        return list
+    }
+
+    @discardableResult
+    private func savePending(_ list: [Router.SharedConversation]) -> Bool {
+        let text = list.isEmpty ? nil : (try? JSONEncoder().encode(list)).map { String(decoding: $0, as: UTF8.self) }
+        return Self.attempt(log, "save-pending-deletions") { try database.set(text, for: Self.pendingKey) } != nil
+    }
+
+    /// Asks the shared engines again to delete what's queued (the user's Try Again).
+    public func retryForgetting() { deletePendingConversations() }
+
+    /// Waits for a pass under way (tests, and a host that wants to know the outcome).
+    public func conversationsSettled() async {
+        while let deleting { await deleting.value }
+    }
+
+    private func deletePendingConversations() {
+        guard deleting == nil else {
+            deleteAgain = true
+            return
+        }
+        deleting = Task { [weak self] in await self?.deletePendingPasses() }
+    }
+
+    private func deletePendingPasses() async {
+        repeat {
+            deleteAgain = false
+            let asked = pendingConversations
+            guard !asked.isEmpty else { break }
+            let outcome = await router.deleteConversations(asked)
+            // Others may have been queued meanwhile: only what this pass finished leaves the queue.
+            if !outcome.done.isEmpty { savePending(pendingConversations.filter { !outcome.done.contains($0) }) }
+            log?.log("conversations-deleted", level: outcome.problems.isEmpty ? "info" : "error",
+                     ["asked": .int(Int64(asked.count)), "deleted": .int(Int64(outcome.deleted)),
+                      "problems": .array(outcome.problems.map(JSONValue.string))])
+            observer(.conversationsLeft(count: pendingConversations.count,
+                                        problem: outcome.problems.isEmpty ? nil : outcome.problems.joined(separator: "; ")))
+        } while deleteAgain
+        deleting = nil
     }
 
     /// Engine homes nothing refers to any more (after a crash), after the retention period.
