@@ -868,7 +868,16 @@ final class AppModel {
                     AccountRecord(id: "c", kind: .openAIKey, label: "OpenAI API")]
         tasks = [Task(id: "1", app: "Example App", appIdentifier: nil, account: "a", title: "Summarizing meeting notes", started: Date().addingTimeInterval(-840), running: true, sandbox: .developer),
                  Task(id: "2", app: "Example App", appIdentifier: nil, account: "b", title: "Naming a project", started: Date(), running: true)]
-        grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"])]
+        grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"],
+                                    limits: AppLimits(spend: .init(max: 5, period: .day), atOnce: 2))]
+        if let grant = grants["h"] {
+            appStatus[grant.id] = AppLimitStatus(today: .init(cost: 1.2, turns: 9, tasks: 4), running: 1, spent: 1.2, spendResets: "at midnight")
+            // AGNETA_SHOWCASE_LIMIT shows the panel's card for an app that reached its limit.
+            if ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_LIMIT"] != nil {
+                limitReached[grant.id] = AppLimitNotice(grant: grant.id, app: grant.app, limit: "spend", summary: "$5 a day", used: "$5.04 today",
+                                                        resetsAt: Date().addingTimeInterval(3600), resets: "at midnight")
+            }
+        }
         let sample = UUID()
         // AGNETA_SHOWCASE_UNVERIFIED shows the busiest request: an app Agneta can't verify, asking for several folders.
         // AGNETA_SHOWCASE_REQUEST shows a narrowed one: "narrow" (a Claude plan, Claude Code, contained), "missing" (a

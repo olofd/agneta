@@ -759,6 +759,8 @@ struct AppAccess: View {
                 Text("Contained: this app doesn't edit files or run commands, so it can't have developer access.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).padding(.top, 4)
             }
+            Text("Limits").font(.system(size: 12, weight: .semibold)).padding(.top, 6)
+            AppLimitsEditor(model: model, grant: grant)
             DisclosureGroup("Engines") {
                 EngineAccessList(model: model, allowed: accounts,
                                  engines: Binding(get: { engines }, set: { model.setAccess(grant, accounts: accounts, engines: $0, sandbox: grant.sandbox) }),
@@ -1027,7 +1029,8 @@ struct SettingsView: View {
                     AppIcon(name: grant.app, identifier: grant.verified ? grant.identifier : nil, size: 32)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(grant.app).font(.system(size: 13, weight: .semibold))
-                        Text((grant.verified ? "Verified · " : "Not verified · ") + grant.accounts.map { model.label(ofAccount: $0) }.joined(separator: ", "))
+                        Text(([grant.verified ? "Verified" : "Not verified", grant.accounts.map { model.label(ofAccount: $0) }.joined(separator: ", ")]
+                              + grant.limits.parts).joined(separator: " · "))
                             .font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -1039,7 +1042,7 @@ struct SettingsView: View {
         } header: {
             Text("Apps that can use Agneta")
         } footer: {
-            Text("An app may use the providers ticked for it, and chooses an engine for each task from those under Engines.")
+            Text("An app may use the providers ticked for it, and chooses an engine for each task from those under Engines. Its limits are yours to set: it's told when one is reached.")
         }
     }
 

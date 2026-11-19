@@ -34,6 +34,16 @@ public struct AppLimitNotice: Sendable, Equatable {
     public var resetsAt: Date?
     /// In words: "at midnight".
     public var resets: String?
+
+    public init(grant: String, app: String, limit: String, summary: String, used: String, resetsAt: Date?, resets: String?) {
+        self.grant = grant
+        self.app = app
+        self.limit = limit
+        self.summary = summary
+        self.used = used
+        self.resetsAt = resetsAt
+        self.resets = resets
+    }
 }
 
 extension Router {
