@@ -235,7 +235,7 @@ actor FakeEngines: EngineSource {
 }
 
 /// Ports: 474xx belong to the integration and scenario suites (some computed, e.g. 47452 + 5 for OpenCode);
-/// contract tests added later take 476xx.
+/// contract tests added later take 476xx, the sandbox tests 477xx.
 @Suite(.serialized) struct RouterContractTests {
     struct Stack {
         let root: URL

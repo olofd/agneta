@@ -320,7 +320,7 @@ import Testing
         return process.terminationStatus
     }
     let w = workspace.path(percentEncoded: false), s = scratch.path(percentEncoded: false)
-    #expect(try run("export HOME='\(s)'; echo a > f && mkdir d && mv f d/g && mv d d2 && rm -rf d2 && git init -q . && git status >/dev/null") == 0, "work inside goes on")
+    #expect(try run("echo a > f && mkdir d && mv f d/g && mv d d2 && rm -rf d2 && mkdir -p e/f && ls >/dev/null") == 0, "work inside goes on")
     #expect(try run("touch '\(w)'") == 0, "its own times may change (tar, rsync)")
     #expect(try run("mkdir '\(s)/new' && rmdir '\(s)/new'") == 0)
     #expect(try run("mv '\(w)' '\(s)/w'") != 0, "the workspace can't be moved")

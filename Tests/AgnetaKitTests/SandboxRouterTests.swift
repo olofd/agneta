@@ -23,7 +23,7 @@ extension RouterContractTests {
 
     /// Full power by default; an app may ask for less; fewer tools than workspace stay contained.
     @Test func aGrantsDefaultIsFullPowerAndAnAppMayAskForLess() async throws {
-        let stack = try await Stack.start(port: 47452)
+        let stack = try await Stack.start(port: 47700)
         defer { stack.stop() }
         let app = AppClient(port: stack.port)
         defer { app.close() }
@@ -38,7 +38,7 @@ extension RouterContractTests {
 
     /// The user chose Contained for this app: its tasks get it, and asking for more is refused with why.
     @Test func anAppNeverGetsMoreThanItsGrant() async throws {
-        let stack = try await Stack.start(port: 47458, approve: { _ in Router.PairingAnswer(accounts: ["brokered", "native"], remember: true, sandbox: .contained) })
+        let stack = try await Stack.start(port: 47705, approve: { _ in Router.PairingAnswer(accounts: ["brokered", "native"], remember: true, sandbox: .contained) })
         defer { stack.stop() }
         let app = AppClient(port: stack.port)
         defer { app.close() }
@@ -52,7 +52,7 @@ extension RouterContractTests {
     /// Goose on a Claude plan can't contain its tools: it runs with full power when nobody asked for less, reported as
     /// such whatever the tools, and is refused, with why, when the app or the user asked for Contained.
     @Test func anEngineThatCantContainItsToolsIsHonestAboutIt() async throws {
-        let open = try await Stack.start(port: 47454)
+        let open = try await Stack.start(port: 47701)
         defer { open.stop() }
         let app = AppClient(port: open.port)
         defer { app.close() }
@@ -62,7 +62,7 @@ extension RouterContractTests {
         let asked = await Self.sandbox(open, app, account: "native", tools: "workspace", ask: "contained")
         #expect(asked.refused?.contains("Goose") == true && asked.refused?.contains("choose another engine") == true, "\(asked)")
 
-        let closed = try await Stack.start(port: 47455, approve: { _ in Router.PairingAnswer(accounts: ["brokered", "native"], remember: true, sandbox: .contained) })
+        let closed = try await Stack.start(port: 47702, approve: { _ in Router.PairingAnswer(accounts: ["brokered", "native"], remember: true, sandbox: .contained) })
         defer { closed.stop() }
         let contained = AppClient(port: closed.port)
         defer { contained.close() }
@@ -74,7 +74,7 @@ extension RouterContractTests {
     /// An app granted fewer tools than the workspace was never offered the choice (the dialog shows it only for
     /// workspace tools), so its tasks stay contained: an engine that can't contain them is refused, with why.
     @Test func anAppWithFewerToolsStaysContained() async throws {
-        let stack = try await Stack.start(port: 47459)
+        let stack = try await Stack.start(port: 47706)
         defer { stack.stop() }
         let app = AppClient(port: stack.port)
         defer { app.close() }
@@ -91,7 +91,7 @@ extension RouterContractTests {
 
     /// What an app sees: its grant's mode, and the levels each engine can provide on each provider.
     @Test func theAccessReportSaysWhatEachEngineCanProvide() async throws {
-        let stack = try await Stack.start(port: 47456)
+        let stack = try await Stack.start(port: 47703)
         defer { stack.stop() }
         let app = AppClient(port: stack.port)
         defer { app.close() }
@@ -108,7 +108,7 @@ extension RouterContractTests {
 
     /// Narrowing an app to Contained in Settings → Apps stops its tasks that run with more; the rest keep running.
     @Test func narrowingAGrantStopsWhatNoLongerFits() async throws {
-        let stack = try await Stack.start(port: 47457)
+        let stack = try await Stack.start(port: 47704)
         defer { stack.stop() }
         let app = AppClient(port: stack.port)
         defer { app.close() }
