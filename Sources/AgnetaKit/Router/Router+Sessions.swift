@@ -178,9 +178,9 @@ extension Router {
     }
 
     /// Shows an opened session in Agneta's UI. Only announced sessions are announced as ended.
-    func announce(_ id: String, grant: Grant, account: String, title: String, stopWarning: String?, resumed: Bool = false) {
+    func announce(_ id: String, grant: Grant, account: String, sandbox: Sandbox, title: String, stopWarning: String?, resumed: Bool = false) {
         let info = SessionInfo(id: id, app: grant.app, appIdentifier: grant.verified ? grant.identifier : nil, account: account, title: title,
-                               started: Date(), stopWarning: stopWarning, resumed: resumed)
+                               started: Date(), stopWarning: stopWarning, resumed: resumed, sandbox: sandbox)
         infos[id] = info
         onEvent(.sessionStarted(info))
     }
@@ -255,7 +255,7 @@ extension Router {
             openTrace(traces, task: id, grant: grant, accountID: plan.account, lease: lease, engineSession: engineSession,
                       policy: plan.policy, sandbox: plan.sandbox, request: params, result: result, instructions: plan.instructions)
         }
-        announce(id, grant: grant, account: plan.account, title: meta?["agneta/task"]?["title"]?.stringValue ?? "AI task",
+        announce(id, grant: grant, account: plan.account, sandbox: plan.sandbox, title: meta?["agneta/task"]?["title"]?.stringValue ?? "AI task",
                  stopWarning: meta?["agneta/task"]?["stopWarning"]?.stringValue)
         return .success(reply(result, id: id, plan: plan, lease: lease))
     }
@@ -312,7 +312,7 @@ extension Router {
             // Ended while the engine replayed it (the app went or lost access, or the user stopped it): end() has
             // already let it go, and nothing may announce it now.
             guard current(id, generation) else { return .failure(Self.endedWhileOpening) }
-            announce(id, grant: grant, account: plan.account, title: original?["_meta"]?["agneta/task"]?["title"]?.stringValue ?? "AI task",
+            announce(id, grant: grant, account: plan.account, sandbox: plan.sandbox, title: original?["_meta"]?["agneta/task"]?["title"]?.stringValue ?? "AI task",
                      stopWarning: original?["_meta"]?["agneta/task"]?["stopWarning"]?.stringValue, resumed: true)
             return .success(reply(result, id: nil, plan: plan, lease: lease, adding: ["resumed": true]))
         } catch {
@@ -401,7 +401,7 @@ extension Router {
             openTrace(traces, task: id, grant: grant, accountID: plan.account, lease: lease, engineSession: engineSession,
                       policy: plan.policy, sandbox: plan.sandbox, request: request, result: result, instructions: plan.instructions)
             traces.session(id)?.writer.record("lifecycle", ["event": "forked", "from": .string(source), "messages": imported["messageCount"] ?? .null])
-            announce(id, grant: grant, account: plan.account,
+            announce(id, grant: grant, account: plan.account, sandbox: plan.sandbox,
                      title: params?["_meta"]?["agneta/task"]?["title"]?.stringValue
                          ?? "Review of " + (original?["_meta"]?["agneta/task"]?["title"]?.stringValue ?? "a task"),
                      stopWarning: nil)

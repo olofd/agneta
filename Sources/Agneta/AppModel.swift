@@ -23,6 +23,8 @@ final class AppModel {
         var stopWarning: String?
         var cost: Double?
         var lastStopReason: String?
+        /// The mode it runs in (Developer access or Contained).
+        var sandbox: Sandbox = .contained
     }
 
     // MARK: State
@@ -356,7 +358,7 @@ final class AppModel {
             if grant.remembered { grants[hash] = grant }
         case .sessionStarted(let info):
             log.log("task-started", ["task": .string(info.id), "app": .string(info.app), "account": .string(info.account), "resumed": .bool(info.resumed)])
-            tasks.append(Task(id: info.id, app: info.app, appIdentifier: info.appIdentifier, account: info.account, title: info.title, started: info.started, running: false, stopWarning: info.stopWarning))
+            tasks.append(Task(id: info.id, app: info.app, appIdentifier: info.appIdentifier, account: info.account, title: info.title, started: info.started, running: false, stopWarning: info.stopWarning, sandbox: info.sandbox))
         case .turnStarted(let id):
             if let index = tasks.firstIndex(where: { $0.id == id }) { tasks[index].running = true }
         case .turnEnded(let id, let reason):
@@ -774,7 +776,7 @@ final class AppModel {
         accounts = [AccountRecord(id: "a", kind: .claude, label: "Claude", email: "work@example.com"),
                     AccountRecord(id: "b", kind: .chatGPT, label: "ChatGPT", email: "me@example.com"),
                     AccountRecord(id: "c", kind: .openAIKey, label: "OpenAI API")]
-        tasks = [Task(id: "1", app: "Example App", appIdentifier: nil, account: "a", title: "Summarizing meeting notes", started: Date().addingTimeInterval(-840), running: true),
+        tasks = [Task(id: "1", app: "Example App", appIdentifier: nil, account: "a", title: "Summarizing meeting notes", started: Date().addingTimeInterval(-840), running: true, sandbox: .developer),
                  Task(id: "2", app: "Example App", appIdentifier: nil, account: "b", title: "Naming a project", started: Date(), running: true)]
         grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"])]
         let sample = UUID()

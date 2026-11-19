@@ -729,8 +729,15 @@ struct AppAccess: View {
         }
     }
 
+    /// The user's folders it was granted, without its own workspace (which ApprovalScope names in words).
+    private var folders: [URL] {
+        grant.folders.map { URL(filePath: $0, directoryHint: .isDirectory) }.filter { $0.lastPathComponent != grant.id }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            // What it may do, as the approval window showed it.
+            ApprovalScope(app: grant.app, tools: grant.tools, folders: folders).padding(.bottom, 4)
             ForEach(model.accounts) { account in
                 Toggle(isOn: Binding(get: { accounts.contains(account.id) }, set: { on in
                     var changed = accounts
@@ -752,7 +759,7 @@ struct AppAccess: View {
                 Text("Contained: this app doesn't edit files or run commands, so it can't have developer access.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).padding(.top, 4)
             }
-            DisclosureGroup("Advanced") {
+            DisclosureGroup("Engines") {
                 EngineAccessList(model: model, allowed: accounts,
                                  engines: Binding(get: { engines }, set: { model.setAccess(grant, accounts: accounts, engines: $0, sandbox: grant.sandbox) }),
                                  sandbox: grant.ceiling)
@@ -1032,7 +1039,7 @@ struct SettingsView: View {
         } header: {
             Text("Apps that can use Agneta")
         } footer: {
-            Text("An app may use the providers ticked for it, and chooses an engine for each task from those under Advanced.")
+            Text("An app may use the providers ticked for it, and chooses an engine for each task from those under Engines.")
         }
     }
 
@@ -1044,7 +1051,7 @@ struct SettingsView: View {
                     AppIcon(name: task.app, identifier: task.appIdentifier, size: 32)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(task.title).font(.system(size: 13, weight: .semibold))
-                        Text("\(task.app) · \(model.label(ofAccount: task.account)) · \(task.started.elapsed)" + (task.cost.map { String(format: " · about $%.2f at API prices", $0) } ?? ""))
+                        Text("\(task.app) · \(model.label(ofAccount: task.account)) · \(task.sandbox.title) · \(task.started.elapsed)" + (task.cost.map { String(format: " · about $%.2f at API prices", $0) } ?? ""))
                             .font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                     Spacer()

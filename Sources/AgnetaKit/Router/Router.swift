@@ -66,6 +66,8 @@ public actor Router {
         public var stopWarning: String?
         /// Resumed with `session/load` rather than started.
         public var resumed = false
+        /// The mode it runs in, as the app was told (`_meta.agneta.sandbox`).
+        public var sandbox: Sandbox = .contained
     }
 
     /// How a session ended.
