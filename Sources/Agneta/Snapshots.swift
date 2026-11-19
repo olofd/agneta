@@ -17,8 +17,9 @@ enum Snapshots {
             NSApp.appearance = NSAppearance(named: mode == "dark" ? .darkAqua : .aqua)
         }
         model.loadSample()
-        // The terminal that launched the showcase keeps the focus, which would leave every window drawn as
-        // inactive: dimmed buttons, grey sidebars. Windows draw as in use instead, as the published screenshots should.
+        // The terminal that launched the showcase keeps the focus, which would leave every window drawn as inactive.
+        // SwiftUI's controls draw as in use instead, as the published screenshots should; AppKit's own (the window's
+        // close button, a sidebar's selection) still follow the real focus.
         drawsAsKey = true
         let presenter = WindowPresenter.shared
         showBackdrop()
@@ -176,8 +177,8 @@ extension WindowPresenter {
 /// A task's trace in miniature, for the details window's design review.
 private let sampleTrace: [JSONValue] = {
     var records: [JSONValue] = [
-        ["type": "meta", "app": ["name": "Example App"], "account": ["label": "Claude", "billing": "subscription"],
-         "engine": ["info": ["name": "goose", "version": "1.59.2"], "dedicated": true], "policy": ["tools": "workspace", "network": "none"]],
+        ["type": "meta", "app": ["name": "Example App"], "account": ["label": "Claude", "kind": "claude", "billing": "subscription"],
+         "engine": ["info": ["name": "goose", "version": "1.59.2"], "dedicated": true], "policy": ["tools": "workspace", "network": "none", "sandbox": "developer"]],
     ]
     for (n, calls) in [(1, 3), (2, 5), (3, 2)] {
         for c in 0..<calls {

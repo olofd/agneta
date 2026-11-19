@@ -11,27 +11,33 @@ struct TaskDetailsView: View {
     var title: String
     @State private var summary: TraceSummary?
 
-    /// "Claude plan", or "OpenAI API" (an API key account is named for it already).
+    /// The account by its kind, as the approval window names providers: "Claude plan", "OpenAI API key"; a label the
+    /// user chose (or a second account's "Claude 2") is kept, with the kind after it.
     static func provider(_ summary: TraceSummary) -> String {
-        guard let account = summary.account else { return summary.billing == "subscription" ? "A plan" : "An API key" }
-        return summary.billing == "subscription" && !account.hasSuffix(" plan") ? "\(account) plan" : account
+        guard let kind = summary.kind.flatMap(AccountKind.init(rawValue:)) else { return summary.account ?? "Unknown" }
+        // "Claude" and "OpenAI API" are the names Agneta gives a first account of a kind.
+        guard let label = summary.account, ![kind.provider, "\(kind.provider) API", kind.offerName].contains(label) else { return kind.offerName }
+        return "\(label) (\(kind.offerName))"
     }
 
-    /// The policy's network as the trace records it ("none", or `allow(["host"])`).
-    static func network(_ raw: String) -> String {
-        guard raw != "none" else { return "no internet" }
-        let hosts = raw.replacing("allow([", with: "").replacing("])", with: "").replacing("\"", with: "")
-        return hosts.isEmpty ? "no internet" : "internet: \(hosts)"
-    }
-
-    /// The policy's tools (as the trace records them), as the approval window words them.
-    static func tools(_ raw: String) -> String {
+    /// The policy's tools (as the trace records them: a case name), as the approval window words them.
+    static func tools(_ raw: String, app: String?) -> String {
         switch raw {
-        case "app-only", "appOnly": "The app's own tools"
+        case "app-only", "appOnly": "Only \(app ?? "the app")'s own tools"
         case "read": "Read files"
         case "workspace": "Read, change and run commands"
         default: raw
         }
+    }
+
+    /// What the task's commands could reach. Under developer access that's the internet whatever the app's policy
+    /// asked (APP_PROTOCOL.md); contained, it's the policy's hosts (`allow(["host"])`) or nothing. Nil when the
+    /// task ran no commands (the app's own tools only) or the trace predates the mode.
+    static func access(_ summary: TraceSummary) -> String? {
+        guard let sandbox = summary.sandbox, summary.tools != "appOnly", summary.tools != "app-only" else { return nil }
+        if sandbox == "developer" { return "Developer access: the internet and your home folder" }
+        let hosts = (summary.network ?? "none").replacing("allow([", with: "").replacing("])", with: "").replacing("\"", with: "")
+        return hosts.isEmpty || hosts == "none" ? "Contained, no internet" : "Contained, internet: \(hosts)"
     }
 
     var body: some View {
@@ -40,8 +46,8 @@ struct TaskDetailsView: View {
                 Section {
                     LabeledContent("App", value: summary.app ?? "Unknown")
                     LabeledContent("Provider", value: Self.provider(summary))
-                    LabeledContent("Tools", value: [summary.tools.map(Self.tools), summary.network.map(Self.network)]
-                        .compactMap { $0 }.joined(separator: ", "))
+                    if let tools = summary.tools { LabeledContent("Tools", value: Self.tools(tools, app: summary.app)) }
+                    if let access = Self.access(summary) { LabeledContent("Access", value: access) }
                     if let cost = summary.cost {
                         LabeledContent("Cost", value: String(format: "about $%.2f", cost) + (summary.billing == "subscription" ? " at API prices" : ""))
                     }

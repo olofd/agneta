@@ -126,6 +126,7 @@ struct PanelView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 if failed {
                     Text("Check your connection, then try again.").font(.system(size: 12)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Button("Try Again") { model.library.download(download.engine, reason: "retry") }.glassButton(prominent: true).tint(Palette.fill).controlSize(.small)
                         .padding(.top, 5)
                 } else {

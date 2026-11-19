@@ -409,7 +409,7 @@ struct ApprovalView: View {
                     // A provider that can't run yet (Codex not installed) may still be allowed: it runs once it can.
                     let nothing = approval.allowed.isEmpty
                     Button { model.approvals.answer(remember: false, for: approval.id) } label: { Text("Allow Once").frame(maxWidth: .infinity) }
-                        .glassButton(prominent: approval.verified).tint(approval.verified ? Palette.fill : nil)
+                        .glassButton(prominent: approval.verified)
                         .defaultAction(when: approval.verified)
                         .disabled(nothing)
                     Button { model.approvals.answer(remember: true, for: approval.id) } label: { Text("Always Allow").frame(maxWidth: .infinity) }
@@ -850,7 +850,7 @@ struct SettingsView: View {
                     .disabled(!model.updates.checksAutomatically)
                 Button("Check Now") { model.updates.check() }.disabled(!model.updates.canCheck)
             } else {
-                LabeledContent("Automatic updates") { Text(model.updates.unavailableReason).foregroundStyle(.secondary) }
+                LabeledContent("Status") { Text(model.updates.unavailableReason).foregroundStyle(.secondary) }
             }
         } header: {
             Text("Updates")
