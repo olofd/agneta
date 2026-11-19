@@ -404,14 +404,16 @@ struct ApprovalView: View {
                     Button { model.approvals.answer(remember: nil, for: approval.id) } label: { Text("Don't Allow").frame(maxWidth: .infinity) }
                         .glassButton().keyboardShortcut(.cancelAction)
                     // Once: for this connection only, nothing kept. Return chooses it, and only for a verified app.
+                    // The highlighted button is the one Return chooses, as macOS has it: Allow Once for a verified app,
+                    // none for one Agneta can't verify, so nothing draws the eye to letting it in.
                     // A provider that can't run yet (Codex not installed) may still be allowed: it runs once it can.
                     let nothing = approval.allowed.isEmpty
                     Button { model.approvals.answer(remember: false, for: approval.id) } label: { Text("Allow Once").frame(maxWidth: .infinity) }
-                        .glassButton()
+                        .glassButton(prominent: approval.verified).tint(approval.verified ? Palette.fill : nil)
                         .defaultAction(when: approval.verified)
                         .disabled(nothing)
                     Button { model.approvals.answer(remember: true, for: approval.id) } label: { Text("Always Allow").frame(maxWidth: .infinity) }
-                        .glassButton(prominent: true).tint(Palette.fill)
+                        .glassButton()
                         .disabled(nothing)
                 }
                 .controlSize(.large)
