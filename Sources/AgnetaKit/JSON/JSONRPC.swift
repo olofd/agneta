@@ -92,8 +92,14 @@ public enum RPCMessage: Sendable, Hashable {
         }
         guard let id = RPCID(fields["id"]) else { throw ParseFailure.malformed("response id") }
         if let error = RPCError(fields["error"]) { return .response(id: id, result: .failure(error)) }
-        guard let result = fields["result"] else { throw ParseFailure.malformed("response without result or error") }
-        return .response(id: id, result: .success(result))
+        let error = fields["error"].flatMap { $0 == .null ? nil : $0 }
+        if error == nil, let result = fields["result"] { return .response(id: id, result: .success(result)) }
+        // An error that isn't well formed (no message, a string code) is still an error: dropped as malformed, the
+        // request it answers would wait for ever.
+        guard let error = error ?? fields["error"] else { throw ParseFailure.malformed("response without result or error") }
+        let message = error["message"]?.stringValue ?? error.stringValue ?? "The other side answered with a malformed error"
+        // A usable code stays: -32000 (sign-in required) and -32601 (method not found) are acted on by code.
+        return .response(id: id, result: .failure(RPCError(code: error["code"]?.intValue ?? RPCError.internalError, message: message, data: error)))
     }
 
     public var json: JSONValue {

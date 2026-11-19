@@ -26,6 +26,37 @@ import Testing
         }
     }
 
+    /// An error that isn't a well-formed JSON-RPC error (no message, a string code) was dropped as malformed, so the
+    /// request it answered waited forever: a turn, or a permission request to an app, stuck until the connection
+    /// closed. It's an error all the same, and now ends the request as one.
+    @Test func aMalformedErrorStillEndsTheRequest() async throws {
+        // A usable integer code is kept (the router acts on -32000, sign-in required); otherwise an internal error.
+        for (error, code) in [(#"{"code":-32000}"#, -32000), (#"{"code":"E1","message":"failed"}"#, RPCError.internalError),
+                              (#""failed""#, RPCError.internalError), (#"null"#, RPCError.internalError)] {
+            let parsed = try RPCMessage.parse(Data(#"{"jsonrpc":"2.0","id":4,"error":\#(error)}"#.utf8))
+            guard case .response(.int(4), .failure(let failure)) = parsed else { Issue.record("\(error): \(parsed)"); continue }
+            #expect(failure.code == code, "\(error)")
+        }
+
+        let (lines, input) = AsyncThrowingStream<Data, Error>.makeStream()
+        let peer = RPCPeer { data in
+            guard let id = try? RPCMessage.parse(data), case .request(let rid, _, _) = id else { return }
+            input.yield(Data(#"{"jsonrpc":"2.0","id":\#(rid.description),"error":{"code":-32000}}"#.utf8))
+        }
+        Task { await peer.run(lines) }
+        let outcome = try await withThrowingTaskGroup(of: String.self) { group in
+            group.addTask {
+                do { _ = try await peer.request("session/prompt"); return "answered" } catch let error as RPCError { return "error \(error.code)" }
+            }
+            group.addTask { try await Task.sleep(for: .seconds(5)); return "hung" }
+            let first = try await group.next() ?? "none"
+            group.cancelAll()
+            return first
+        }
+        #expect(outcome == "error -32000")
+        input.finish()
+    }
+
     @Test func roundTripsUnknownFieldsLosslessly() throws {
         let raw = #"{"id":1,"jsonrpc":"2.0","method":"_goose/unstable/x","params":{"big":9007199254740993,"f":1.5,"n":null,"nested":[true,{"k":"v"}]}}"#
         let message = try RPCMessage.parse(Data(raw.utf8))
