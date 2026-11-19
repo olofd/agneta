@@ -41,11 +41,19 @@ final class OpenCodeLedgerReader: UsageLedger, @unchecked Sendable {
                     var usage: [[String: JSONValue]] = []
                     let rows = try Row.fetchAll(db, sql: "SELECT rowid AS agneta_row, * FROM session_message WHERE \(sessionColumn) = ? AND rowid > ? ORDER BY rowid",
                                                 arguments: [session, lastRow])
-                    for row in rows {
-                        lastRow = row["agneta_row"]
-                        guard let text = row["data"] as String?, let data = try? JSONCoding.decode(Data(text.utf8)) else { continue }
+                    for (index, row) in rows.enumerated() {
+                        guard let text = row["data"] as String?, let data = try? JSONCoding.decode(Data(text.utf8)) else {
+                            lastRow = row["agneta_row"]
+                            continue
+                        }
                         // Measured on 2.3.0: the role is the `type` column; times are in milliseconds.
                         let role = (row["type"] as String?) ?? data["role"]?.stringValue ?? "?"
+                        // A step's row is written when the step starts and filled in when it ends, after the tools it
+                        // called ran (its tokens, cost and `time.completed`; measured on 2.3.0). One still running is read
+                        // again at the next poll, not taken half-written: its usage would be lost. A later row means it
+                        // ended, completed or not.
+                        if role == "assistant", data["time"]?["completed"] == nil, index == rows.count - 1 { break }
+                        lastRow = row["agneta_row"]
                         let created = (row["time_created"] as Int64?).map { JSONValue.int($0 / 1000) } ?? data["time"]?["created"] ?? .null
                         messages.append(["row": .int(lastRow), "role": .string(role), "content": data["content"] ?? data["parts"] ?? .null,
                                          "meta": .null, "messageId": data["id"] ?? .null, "created": created])
