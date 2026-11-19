@@ -84,25 +84,41 @@ enum Snapshots {
 }
 
 /// An app may capture its own windows without Screen Recording permission.
-@available(macOS, deprecated: 14.0, message: "Design review only; ScreenCaptureKit needs a permission prompt")
 @MainActor private func capture(_ window: NSWindow, to file: URL) -> String {
-    guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution]) else {
-        return "window capture failed"
-    }
+    guard let image = (WindowList() as any WindowImages).image(of: window) else { return "window capture failed" }
     return write(image, to: file)
 }
 
 /// The window composited over whatever is below it on screen (the showcase backdrop), so
 /// the glass blur shows.
-@available(macOS, deprecated: 14.0, message: "Design review only")
 @MainActor private func captureOverBackdrop(_ window: NSWindow, to file: URL) -> String {
-    let screenHeight = NSScreen.screens.first?.frame.height ?? 0
-    let frame = window.frame.insetBy(dx: -24, dy: -24)
-    let rect = CGRect(x: frame.minX, y: screenHeight - frame.maxY, width: frame.width, height: frame.height)
-    guard let image = CGWindowListCreateImage(rect, [.optionOnScreenBelowWindow, .optionIncludingWindow], CGWindowID(window.windowNumber), [.bestResolution]) else {
+    guard let image = (WindowList() as any WindowImages).imageOverBackdrop(of: window) else {
         return "glass capture failed (needs Screen Recording for the launching app)"
     }
     return write(image, to: file)
+}
+
+/// The window list's capture is deprecated (ScreenCaptureKit needs a permission prompt), which is fine for design
+/// review only. Called through this protocol, its deprecation stays here rather than warning at every call, so the
+/// build keeps no warnings (CI treats them as errors).
+@MainActor private protocol WindowImages {
+    func image(of window: NSWindow) -> CGImage?
+    func imageOverBackdrop(of window: NSWindow) -> CGImage?
+}
+
+@MainActor private struct WindowList: WindowImages {
+    @available(macOS, deprecated: 14.0, message: "Design review only; ScreenCaptureKit needs a permission prompt")
+    func image(of window: NSWindow) -> CGImage? {
+        CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution])
+    }
+
+    @available(macOS, deprecated: 14.0, message: "Design review only")
+    func imageOverBackdrop(of window: NSWindow) -> CGImage? {
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        let frame = window.frame.insetBy(dx: -24, dy: -24)
+        let rect = CGRect(x: frame.minX, y: screenHeight - frame.maxY, width: frame.width, height: frame.height)
+        return CGWindowListCreateImage(rect, [.optionOnScreenBelowWindow, .optionIncludingWindow], CGWindowID(window.windowNumber), [.bestResolution])
+    }
 }
 
 private func write(_ image: CGImage, to file: URL) -> String {
