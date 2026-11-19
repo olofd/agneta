@@ -147,6 +147,30 @@ final class Calls: @unchecked Sendable {
     }
 }
 let calls = Calls()
+
+/// A command's output as it arrives, kept within `limit` bytes however much comes: its start and its end, with
+/// how much was cut between them. A command printing without end can't grow the shell's memory.
+struct Clip {
+    let limit: Int
+    private var head = Data(), tail = Data()
+    private(set) var total = 0
+    init(limit: Int) { self.limit = limit }
+
+    mutating func add(_ data: Data) {
+        total += data.count
+        let room = limit / 2 - head.count
+        if room > 0 { head.append(data.prefix(room)) }
+        let rest = data.dropFirst(max(room, 0))
+        guard !rest.isEmpty else { return }
+        tail.append(rest)
+        if tail.count > limit / 2 { tail = tail.suffix(limit / 2) }
+    }
+
+    var text: String {
+        let cut = total - head.count - tail.count
+        return String(decoding: head, as: UTF8.self) + (cut > 0 ? "\n… (\(cut) bytes cut) …\n" : "") + String(decoding: tail, as: UTF8.self)
+    }
+}
 func key(_ id: Any) -> String { "\(id)" }
 
 let tool: [String: Any] = [
@@ -189,18 +213,13 @@ while let line = readLine(strippingNewline: true) {
         let name = key(id), cwd = folder
         nonisolated(unsafe) let requestId = id
         Thread {
-            var out = Data(), err = Data()
+            var out = Clip(limit: outputLimit), err = Clip(limit: outputLimit)
             let status = runBrokered(command, cwd: cwd, onConnect: { calls.connected(name, $0) }) { stream, data in
-                if stream == "o" { out.append(data) } else { err.append(data) }
+                if stream == "o" { out.add(data) } else { err.add(data) }
             }
             guard !calls.finish(name) else { return }
-            func clipped(_ data: Data) -> String {
-                let text = String(decoding: data, as: UTF8.self)
-                guard text.count > outputLimit else { return text }
-                return String(text.prefix(outputLimit / 2)) + "\n… (\(text.count - outputLimit) characters cut) …\n" + String(text.suffix(outputLimit / 2))
-            }
-            var text = clipped(out)
-            if !err.isEmpty { text += (text.isEmpty ? "" : "\n") + "[stderr]\n" + clipped(err) }
+            var text = out.text
+            if err.total > 0 { text += (text.isEmpty ? "" : "\n") + "[stderr]\n" + err.text }
             text += "\n[exit \(status.map(String.init) ?? "closed")]"
             Wire.reply(requestId, ["content": [["type": "text", "text": text]], "isError": status != 0])
         }.start()

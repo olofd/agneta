@@ -328,3 +328,37 @@ import Testing
     #expect(try run("cat '\(w)/secret/inner/key.txt'") != 0)
     #expect(FileManager.default.fileExists(atPath: workspace.appending(path: "secret/inner/key.txt").path(percentEncoded: false)))
 }
+
+/// A folder whose name holds a quote or a backslash is pinned like any other (its rule escapes it; the check doesn't).
+@Test func oddFolderNamesArePinnedToo() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: "agneta-odd-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workspace = root.appending(path: "my \"work\\space", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: workspace.appending(path: "secret"), withIntermediateDirectories: true)
+    let profile = SandboxProfile(kind: .tool, writable: [workspace], denied: [workspace.appending(path: "secret", directoryHint: .isDirectory)])
+    let path = workspace.path(percentEncoded: false).trimmingSuffix("/")
+    #expect(profile.pinnedFolders() == [SandboxProfile.quoted(path)])
+    let process = Process()
+    process.executableURL = URL(filePath: "/usr/bin/sandbox-exec")
+    process.arguments = ["-p", profile.render(), "/bin/mv", path, root.appending(path: "moved").path(percentEncoded: false)]
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    process.waitUntilExit()
+    #expect(process.terminationStatus != 0, "the workspace can't be moved")
+}
+
+/// What a build tool would trust from an app's caches is cleared before each start, never through a planted link.
+@Test func trustedCacheFilesAreCleared() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: "agneta-cache-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
+    defer { try? FileManager.default.removeItem(at: root) }
+    let caches = root.appending(path: "caches", directoryHint: .isDirectory), victim = root.appending(path: "victim", directoryHint: .isDirectory)
+    for folder in [caches.appending(path: "cargo/registry"), victim] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+    try "[build]".write(to: caches.appending(path: "cargo/config.toml"), atomically: true, encoding: .utf8)
+    try "keep".write(to: caches.appending(path: "cargo/registry/index"), atomically: true, encoding: .utf8)
+    try "keep".write(to: victim.appending(path: "gradle.properties"), atomically: true, encoding: .utf8)
+    try FileManager.default.createSymbolicLink(at: caches.appending(path: "gradle"), withDestinationURL: victim)
+    DeveloperAccess.clearTrustedCacheFiles(caches)
+    #expect(!FileManager.default.fileExists(atPath: caches.appending(path: "cargo/config.toml").path(percentEncoded: false)))
+    #expect(FileManager.default.fileExists(atPath: caches.appending(path: "cargo/registry/index").path(percentEncoded: false)), "the cache itself stays")
+    #expect(FileManager.default.fileExists(atPath: victim.appending(path: "gradle.properties").path(percentEncoded: false)), "nothing through a link")
+}

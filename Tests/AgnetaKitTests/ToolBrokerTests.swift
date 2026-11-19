@@ -302,6 +302,7 @@ extension ToolBrokerTests {
         final class Replies: @unchecked Sendable {
             let lock = NSLock()
             var order: [Int] = []
+            var texts: [Int: String] = [:]
         }
         let replies = Replies()
         let output = server.stdout
@@ -315,7 +316,8 @@ extension ToolBrokerTests {
                     let line = buffer[buffer.startIndex..<newline]
                     buffer.removeSubrange(buffer.startIndex...newline)
                     if let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any], let id = message["id"] as? Int {
-                        replies.lock.withLock { replies.order.append(id) }
+                        let text = ((message["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String
+                        replies.lock.withLock { replies.order.append(id); replies.texts[id] = text }
                     }
                 }
             }
@@ -343,6 +345,11 @@ extension ToolBrokerTests {
         #expect(held.broker.runningCommands(token: "engine") == 0, "the cancelled command ended")
         try call(4, "echo four")
         try await waitFor(4)
+        // Output beyond the limit is cut as it streams: its start and end come back, with what was cut between.
+        try call(5, "head -c 3000000 /dev/zero | tr '\\0' x; echo; echo the-end")
+        try await waitFor(5)
+        let big = try #require(replies.lock.withLock { replies.texts[5] })
+        #expect(big.utf8.count < 110_000 && big.contains("bytes cut") && big.contains("the-end"), "\(big.utf8.count) bytes")
         #expect(!replies.lock.withLock { replies.order }.contains(3), "a cancelled call gets no reply")
     }
 }

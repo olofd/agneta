@@ -417,7 +417,8 @@ final class EngineLibrary {
         let received = tracked ? report : nil
         do {
             let program = try await download.installer.install(download.name, executable: download.executable, progress: progress, received: received)
-            if tracked { downloads[engine] = nil }
+            // Installed, whoever started the download: no progress or earlier failure is left on a card.
+            downloads[engine] = nil
             checked[engine] = .some(program)
             refresh()
             return program

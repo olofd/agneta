@@ -708,7 +708,7 @@ struct SandboxPicker: View {
             .pickerStyle(.segmented)
             Text(model.library.sandboxUnavailable(.contained, providers: model.accounts.filter { accounts.contains($0.id) }, engines: engines)
                  ?? (sandbox == .developer
-                     ? "Like Terminal: the internet, your home folder and your developer tools. Passwords, keys and other apps' data stay out."
+                     ? "Like Terminal: the internet, your home folder and your developer tools. Known password and key stores stay out."
                      : "Only the folders above, and commands have no internet."))
                 .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }

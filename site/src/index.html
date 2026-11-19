@@ -83,7 +83,7 @@
       <dl class="facts">
         <div><dt>Your sign-ins</dt><dd>Plans are signed in by your own Codex or Claude Code, which keep and refresh their credentials. Agneta never holds a plan’s tokens, and API keys stay in your Keychain.</dd></div>
         <div><dt>Loopback only</dt><dd>Agneta listens on 127.0.0.1 and refuses requests from web pages. Nothing listens beyond your Mac.</dd></div>
-        <div><dt>Sandboxed engines</dt><dd>Each engine runs under a macOS sandbox profile. Contained, it reaches the task’s workspace, the folders its policy names and what the engine itself needs, and nothing else in your home folder. With developer access it reaches what Terminal does, apart from your credentials, other apps’ data and Agneta’s own.</dd></div>
+        <div><dt>Sandboxed engines</dt><dd>Each engine runs under a macOS sandbox profile. Contained, it reaches the task’s workspace, the folders its policy names and what the engine itself needs, and nothing else in your home folder. With developer access it reaches what Terminal does, apart from known credential stores, sandboxed apps’ data and Agneta’s own.</dd></div>
         <div><dt>Every command through Agneta</dt><dd>Every engine’s shell commands go through Agneta, each one in the task’s trace. Contained, they stay in the workspace with no internet; with developer access they build with each app’s own caches, never yours.</dd></div>
         <div><dt>Traces you keep</dt><dd>Every task leaves a trace of its prompts, tool calls, model calls and decisions, readable only by you and kept 30 days by default.</dd></div>
         <div><dt>Updates, once you allow them</dt><dd>Release builds ask before they first check GitHub for updates. The check carries Agneta’s version and nothing of yours.</dd></div>

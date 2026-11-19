@@ -195,7 +195,11 @@ public actor EngineSupervisor: EngineSource {
         let engineHome = try own(dedicated ? EngineHomes.home(root: configuration.root, key: key) : accountHome)
         let scratch = try own(engineHome.appending(path: "scratch", directoryHint: .isDirectory))
         var policy = policy
-        if policy.sandbox == .developer { policy.buildCaches = try own(policy.caches(scratch: scratch)) }
+        if policy.sandbox == .developer {
+            let caches = try own(policy.caches(scratch: scratch))
+            DeveloperAccess.clearTrustedCacheFiles(caches)
+            policy.buildCaches = caches
+        }
 
         let token = Self.newToken()
         let userHome = configuration.userHome, agnetaRoots = configuration.agnetaRoots

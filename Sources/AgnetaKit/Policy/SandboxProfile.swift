@@ -93,8 +93,11 @@ public struct SandboxProfile: Sendable {
     /// is written with the root resolved and the rest literally, never through a link a session planted below it.
     public var literalRoots: [URL] = []
 
-    /// A path for a rule: verbatim when it was checked, else resolved (Agneta's own folders, system locations).
-    func quote(_ url: URL) -> String {
+    /// A path for a rule, quoted: verbatim when it was checked, else resolved (Agneta's own folders, system locations).
+    func quote(_ url: URL) -> String { Self.quoted(rulePath(url)) }
+
+    /// The path a rule names, unescaped, for comparing paths and checking the file system.
+    func rulePath(_ url: URL) -> String {
         let given = url.path(percentEncoded: false).trimmingSuffix("/")
         var literal = verbatim.contains(given) ? given : nil
         if literal == nil {
@@ -107,8 +110,7 @@ public struct SandboxProfile: Sendable {
                 if literal != nil { break }
             }
         }
-        let path = literal ?? url.realFileURL.path(percentEncoded: false).trimmingSuffix("/")
-        return Self.quoted(path)
+        return literal ?? url.realFileURL.path(percentEncoded: false).trimmingSuffix("/")
     }
 
     static func quoted(_ path: String) -> String {
@@ -128,10 +130,10 @@ public struct SandboxProfile: Sendable {
     /// refused). A folder that doesn't exist yet isn't pinned: it holds nothing yet, a session may make it, and a link
     /// made in its place grants nothing, since the profile names it as it is.
     func pinnedFolders() -> [String] {
-        func unquoted(_ text: String) -> String { String(text.dropFirst().dropLast()) }
-        let roots = (writable + outerExceptions + exceptions).map { unquoted(quote($0)) }
+        // Raw paths throughout (a folder's name may hold a quote or a backslash); escaped only in the rule.
+        let roots = (writable + outerExceptions + exceptions).map(rulePath)
         var pinned = Set(roots)
-        for protected in (denied + readOnly).map({ unquoted(quote($0)) }) {
+        for protected in (denied + readOnly).map(rulePath) {
             for root in roots where protected.hasPrefix(root + "/") {
                 var folder = (protected as NSString).deletingLastPathComponent
                 while folder.count > root.count {

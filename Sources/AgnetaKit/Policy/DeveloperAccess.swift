@@ -3,7 +3,9 @@
 // natively, as in a terminal, with the internet, the home folder readable, the user's own toolchains and loopback
 // servers. Writes still stay in the session's folders and the app's own build caches: never the user's, where a planted
 // entry would run later as the user, outside any sandbox (a `.pyc` in python's cache, a `build.rs` in cargo's
-// registry). Credentials, other apps' data and Agneta's own data stay out. A session gets it only with a grant that
+// registry). A list of known credential and private-data locations (secrets(home:)), sandboxed apps' containers and
+// all of Agneta's own data stay out: a list, so another app's own data under ~/Library that it doesn't name is readable,
+// as in a terminal. A session gets it only with a grant that
 // allows it.
 import Foundation
 
@@ -67,6 +69,20 @@ public enum DeveloperAccess {
                     ".nix-profile/bin", "go/bin"].map { home.appending(path: $0).path(percentEncoded: false) }
         let system = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"] + SandboxProfile.xcodeTools + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
         return (user + system).filter { FileManager.default.fileExists(atPath: $0) }.joined(separator: ":")
+    }
+
+    /// What build tools read from their cache folders as settings, or run: kept across an app's sessions, one session
+    /// could plant them for the next (a cargo build wrapper, a Gradle init script). Removed before each engine starts.
+    static let trustedCacheFiles = ["cargo/config.toml", "cargo/config", "cargo/credentials.toml", "cargo/credentials",
+                                    "gradle/gradle.properties", "gradle/init.gradle", "gradle/init.gradle.kts", "gradle/init.d"]
+
+    /// Clears `trustedCacheFiles` from an app's caches, never through a link a session planted in place of a folder.
+    public static func clearTrustedCacheFiles(_ caches: URL) {
+        for path in trustedCacheFiles {
+            let file = caches.appending(path: path)
+            guard (try? OwnFolder.ensure(file.deletingLastPathComponent(), under: caches)) != nil else { continue }
+            try? FileManager.default.removeItem(at: file)
+        }
     }
 
     /// What commands need to find the user's toolchains, and the app's own caches to build with.
