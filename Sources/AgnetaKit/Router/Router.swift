@@ -29,10 +29,17 @@ public actor Router {
         public var remembered: Bool
         /// The engines the app's tasks may run on, on any of its providers that supports them.
         public var engines: EngineAllowance
+        /// The most its tasks may do (Sandbox): the user's choice for this app, at pairing and in Settings → Apps.
+        /// The app may ask for less in a session, never more.
+        public var sandbox: Sandbox
+        /// What its sessions may reach: its sandbox, which the user chooses only for an app with workspace tools (the
+        /// dialog shows the choice then). An app granted fewer tools never had it offered, so its tasks stay contained.
+        public var ceiling: Sandbox { tools == .workspace ? sandbox : .contained }
 
         public init(id: String = UUID().uuidString, app: String, identifier: String? = nil, team: String? = nil, verified: Bool = false,
                     accounts: [String], engines: EngineAllowance = .all, created: Date = Date(), tools: SessionPolicy.Tools = .appOnly,
-                    folders: [String] = [], remembered: Bool = true) {
+                    folders: [String] = [], remembered: Bool = true, sandbox: Sandbox = .default) {
+            self.sandbox = sandbox
             self.id = id
             self.app = app
             self.identifier = identifier
@@ -115,6 +122,8 @@ public actor Router {
         public var tools: SessionPolicy.Tools = .appOnly
         /// The folders of the user's the app asks to work in (its own workspace comes on top).
         public var folders: [URL] = []
+        /// The most its tasks will need: less than the default if the app says so, which the dialog starts from.
+        public var sandbox: Sandbox = .default
 
         public init(id: UUID = UUID(), app: String, peer: PeerIdentity? = nil, code: String? = nil, tools: SessionPolicy.Tools = .appOnly, folders: [URL] = []) {
             self.id = id
@@ -134,7 +143,10 @@ public actor Router {
         public var engines: EngineAllowance
         /// "Always Allow": kept across launches. Otherwise only this connection may use it.
         public var remember: Bool
-        public init(accounts: [String], engines: EngineAllowance = .all, remember: Bool) {
+        /// The most the app's tasks may do, as the user left it.
+        public var sandbox: Sandbox
+        public init(accounts: [String], engines: EngineAllowance = .all, remember: Bool, sandbox: Sandbox = .default) {
+            self.sandbox = sandbox
             self.accounts = accounts
             self.engines = engines
             self.remember = remember
@@ -167,6 +179,10 @@ public actor Router {
         /// The MCP server of each tool call in progress, by the engine's call id, from its updates: a permission
         /// request may name only the call.
         var toolServers: [String: String] = [:]
+        /// Tool call id → a built-in's name, for judging its permission request by name, not only kind.
+        var toolNames: [String: String] = [:]
+        /// What the task can really do (SandboxResolution.Outcome.effective).
+        var sandbox: Sandbox = .contained
         /// The engine's id for the running turn, for steering.
         var activeRun: String?
         /// Live trace delivery, when the app asked for it.
@@ -292,11 +308,12 @@ public actor Router {
 
     /// Changes which providers and engines an app may use, for every connection holding the grant, and saves it.
     /// Sessions that no longer fit (on a provider or engine taken away) stop; the app hears `agneta/accessChanged`.
-    public func setAccess(grant id: String, accounts allowed: [String], engines: EngineAllowance) async throws {
+    public func setAccess(grant id: String, accounts allowed: [String], engines: EngineAllowance, sandbox: Sandbox) async throws {
         for (hash, grant) in tokens where grant.id == id {
             var changed = grant
             changed.accounts = allowed
             changed.engines = engines
+            changed.sandbox = sandbox
             if changed.remembered, let commit { try await commit(hash, changed, nil) }
             // Access removed while the change was saved stays removed (AgnetaRuntime.setAccess deletes the saved row again).
             guard tokens[hash]?.id == id else { continue }
@@ -311,15 +328,16 @@ public actor Router {
     func apply(_ grant: Grant) async {
         for (appID, app) in apps where app.grant?.id == grant.id { apps[appID]?.grant = grant }
         for (session, entry) in sessions where apps[entry.app]?.grant?.id == grant.id
-            && !Self.fits(account: entry.account, engine: entry.lease.engine.id, policy: entry.policy, grant: grant) {
+            && !Self.fits(account: entry.account, engine: entry.lease.engine.id, policy: entry.policy, sandbox: entry.sandbox, grant: grant) {
             await stop(session)
         }
         accessChanged(grant: grant.id)
     }
 
     /// Whether a session on this account and engine, with this policy, is within what `grant` allows.
-    static func fits(account: String, engine: String, policy: SessionPolicy, grant: Grant) -> Bool {
-        grant.accounts.contains(account) && grant.engines.allows(engine) && GrantScope.check(policy, against: grant) == nil
+    /// `sandbox`: what the task can really do; a grant narrowed below it (Settings → Apps) stops it.
+    static func fits(account: String, engine: String, policy: SessionPolicy, sandbox: Sandbox, grant: Grant) -> Bool {
+        grant.accounts.contains(account) && grant.engines.allows(engine) && GrantScope.check(policy, against: grant) == nil && sandbox <= grant.ceiling
     }
 
     /// What an app may use, as it sees it (AccessReport): each provider it may use, with the engines its tasks there
@@ -329,13 +347,14 @@ public actor Router {
             guard let account = accounts[id] else { return nil }
             let engines = Access.engines(for: account.kind, allowed: grant.engines, catalog: catalog)
             return AccessReport.Provider(id: id, label: account.label, kind: account.kind.rawValue, paused: paused.contains(id),
-                                         needsSignIn: needsSignIn.contains(id), engines: engines, defaultEngine: engines.first)
+                                         needsSignIn: needsSignIn.contains(id), engines: engines, defaultEngine: engines.first, uncontained: engines.filter(ProviderEngines.uncontained(by: account.kind).contains),
+                                         sandboxLevels: Dictionary(uniqueKeysWithValues: engines.map { ($0, ProviderEngines.sandboxLevels($0, for: account.kind).map(\.rawValue)) }))
         }
         let kinds = Set(grant.accounts.compactMap { accounts[$0]?.kind })
         let engines = catalog.entries.keys.filter { id in grant.engines.allows(id) && kinds.contains { ProviderEngines.supported(by: $0).contains(id) } }
             .sorted().map(catalog.report)
         return AccessReport(providers: providers, engines: engines, allowedEngines: grant.engines,
-                            scope: .init(tools: grant.tools.rawValue, folders: grant.folders),
+                            scope: .init(tools: grant.tools.rawValue, folders: grant.folders, sandbox: grant.ceiling.rawValue),
                             workspace: Self.workspace(of: grant, in: context)?.path(percentEncoded: false)).json
     }
 
@@ -352,7 +371,8 @@ public actor Router {
     /// what the grant allows (Access); a resumed or forked task's is the engine that saved it, which the grant must
     /// still allow. The engine must be ready: one still downloading is answered with how far along it is (`-32015`),
     /// and one that isn't here but can download starts downloading (`engineWanted`) and is answered the same way.
-    func taskEngine(account id: String, requested: String?, resuming: Bool, grant: Grant) -> Result<any EngineAdapter, RPCError> {
+    /// `sandbox`: the level the task will want, so a default engine is one that can provide it where the app may use one.
+    func taskEngine(account id: String, requested: String?, resuming: Bool, grant: Grant, sandbox: Sandbox) -> Result<any EngineAdapter, RPCError> {
         guard let account = accounts[id] else { return .failure(RPCError(code: RPCError.invalidParams, message: "This app isn't allowed to use that account")) }
         let engine: String
         if resuming {
@@ -360,7 +380,7 @@ public actor Router {
             guard grant.engines.allows(saved) else { return .failure(accessRefusal(.notAllowed(saved), account: id, grant: grant)) }
             engine = saved
         } else {
-            switch Access.engine(for: account.kind, requested: requested, allowed: grant.engines, catalog: catalog) {
+            switch Access.engine(for: account.kind, requested: requested, allowed: grant.engines, catalog: catalog, sandbox: sandbox) {
             case .success(let chosen): engine = chosen
             case .failure(let refusal): return .failure(accessRefusal(refusal, account: id, grant: grant))
             }
@@ -472,7 +492,7 @@ public actor Router {
     /// plan outside what the grant allows.
     func refusal(_ appID: UUID, _ grant: Grant, _ plan: Plan) -> RPCError? {
         guard !shutDown, let current = apps[appID]?.grant, current.id == grant.id else { return Self.appGone }
-        guard Self.fits(account: plan.account, engine: plan.engine.id, policy: plan.policy, grant: current) else {
+        guard Self.fits(account: plan.account, engine: plan.engine.id, policy: plan.policy, sandbox: plan.sandbox, grant: current) else {
             return RPCError(code: RPCError.invalidParams, message: "This app's access changed while the task started",
                             data: ["agneta": ["accessChanged": true]])
         }

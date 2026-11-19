@@ -16,7 +16,7 @@ The one-time setup a release needs ([RELEASING.md](RELEASING.md), part 0). Each 
 scripts/dev/release-secrets request
 ```
 
-This makes Agneta's own Developer ID key, so revoking it never affects Klang or Hemma. It also makes `agneta.certSigningRequest` and shows it in Finder.
+This makes Agneta's own Developer ID key, so revoking it never affects your other apps. It also makes `agneta.certSigningRequest` and shows it in Finder.
 
 ### 2. Get the certificate from Apple
 
@@ -70,6 +70,6 @@ Say it's done. Claude then starts the dry run (`gh workflow run release.yml -f v
 
 ## Notes
 
-- **Two certificates, one name.** The new certificate has the same name as Klang's (`Developer ID Application: <name> (<team>)`). On GitHub's runner it's the only one, so the name works. On this Mac, `codesign` needs the certificate's SHA-1 instead (`security find-identity -v -p codesigning` lists both).
+- **Two certificates, one name.** The new certificate has the same name as any other Developer ID certificate of yours (`Developer ID Application: <name> (<team>)`). On GitHub's runner it's the only one, so the name works. On this Mac, `codesign` needs the certificate's SHA-1 instead (`security find-identity -v -p codesigning` lists both).
 - **Your email on GitHub.** "Keep my email addresses private" is off in GitHub's [email settings](https://github.com/settings/emails), so commits GitHub makes for you (a repository's first commit, edits on the web) carry your personal address. Turning it on, together with "Block command line pushes that expose my email", makes GitHub use the noreply address instead.
 - **Redoing a step.** `release-secrets request` keeps a waiting request until `finish` succeeds. Delete `~/Library/Caches/agneta-build/release-request` to start over. Running `finish` again replaces the secrets and reuses Sparkle's key, so installed copies keep updating.

@@ -330,7 +330,7 @@ struct ApprovalScope: View {
         return switch tools {
         case .appOnly: "Only \(app)'s own tools, in \(reach)"
         case .read: "Read files in \(reach)"
-        case .workspace: "Read, change and run commands in \(reach), without network"
+        case .workspace: "Read, change and run commands in \(reach)"
         }
     }
 
@@ -399,7 +399,8 @@ struct ApprovalView: View {
                             .buttonStyle(.link).foregroundStyle(Palette.accent)
                             .popover(isPresented: $showsAdvanced, arrowEdge: .bottom) {
                                 EngineAccessList(model: model, allowed: approval.allowed,
-                                                 engines: Binding(get: { model.approvals.current?.engines ?? [] }, set: { model.approvals.current?.engines = $0 }))
+                                                 engines: Binding(get: { model.approvals.current?.engines ?? [] }, set: { model.approvals.current?.engines = $0 }),
+                                                 sandbox: approval.sandbox)
                                     .padding(16).frame(width: 320)
                             }
                         if model.library.allowance(approval.engines) != .all {
@@ -413,6 +414,11 @@ struct ApprovalView: View {
 
                     ApprovalScope(app: approval.app, tools: approval.tools, folders: approval.folders)
                         .padding(.horizontal, 32)
+                    if approval.tools == .workspace {
+                        SandboxPicker(model: model, accounts: approval.allowed, engines: approval.engines,
+                                      sandbox: Binding(get: { model.approvals.current?.sandbox ?? .default }, set: { model.approvals.current?.sandbox = $0 }))
+                            .padding(.horizontal, 32)
+                    }
                     if approval.replaces {
                         Label("Always Allow replaces the access \(approval.app) was given before", systemImage: "arrow.triangle.2.circlepath")
                             .font(.system(size: 11.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
@@ -492,6 +498,8 @@ struct EngineAccessList: View {
     /// The providers the app may use, for the warning.
     var allowed: Set<String>
     @Binding var engines: Set<String>
+    /// The app's mode: an engine that can't provide it on one of its providers says so.
+    var sandbox: Sandbox = .default
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -503,6 +511,9 @@ struct EngineAccessList: View {
                     HStack(spacing: 6) {
                         Text(engine.name).font(.system(size: 12.5))
                         if let note = Self.note(engine, model) { Text(note).font(.system(size: 11)).foregroundStyle(.tertiary) }
+                        if let note = model.library.sandboxNote(engine.id, level: .contained, providers: model.accounts.filter { allowed.contains($0.id) }), sandbox == .contained {
+                            Text(note).font(.system(size: 11)).foregroundStyle(.tertiary)
+                        }
                     }
                 }
                 .toggleStyle(.checkbox).tint(Palette.fill)
@@ -527,7 +538,34 @@ struct EngineAccessList: View {
     }
 }
 
-/// What one app may use, changed in place (Settings → Apps): its providers, and its engines under Advanced.
+/// How far an app's tasks may reach, the same two modes for every engine: full power to start with, Contained when the
+/// user wants it. A mode none of the app's providers and engines can provide is shown but not selectable, with why.
+struct SandboxPicker: View {
+    var model: AppModel
+    var accounts: Set<String>
+    var engines: Set<String>
+    @Binding var sandbox: Sandbox
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Picker("Tasks run with", selection: $sandbox) {
+                ForEach([Sandbox.developer, .contained], id: \.self) { level in
+                    Text(level.title).tag(level)
+                        .selectionDisabled(model.library.sandboxUnavailable(level, providers: model.accounts.filter { accounts.contains($0.id) }, engines: engines) != nil)
+                }
+            }
+            .pickerStyle(.segmented)
+            Text(model.library.sandboxUnavailable(.contained, providers: model.accounts.filter { accounts.contains($0.id) }, engines: engines)
+                 ?? (sandbox == .developer
+                     ? "Like Terminal: the internet, your home folder and your developer tools. Passwords, keys and other apps' data stay out."
+                     : "Only the folders above, and commands have no internet."))
+                .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// What one app may use, changed in place (Settings → Apps): its providers, its mode, and its engines under Advanced.
 struct AppAccess: View {
     var model: AppModel
     var grant: Router.Grant
@@ -546,7 +584,7 @@ struct AppAccess: View {
                 Toggle(isOn: Binding(get: { accounts.contains(account.id) }, set: { on in
                     var changed = accounts
                     if on { changed.insert(account.id) } else { changed.remove(account.id) }
-                    model.setAccess(grant, accounts: changed, engines: engines)
+                    model.setAccess(grant, accounts: changed, engines: engines, sandbox: grant.sandbox)
                 })) {
                     Text(account.label).font(.system(size: 12.5))
                 }
@@ -554,9 +592,19 @@ struct AppAccess: View {
                 // An app keeps at least one provider: Remove Access takes them all.
                 .disabled(accounts == [account.id])
             }
+            // The choice is only an app's with workspace tools; one with fewer is always contained, and says so.
+            if grant.tools == .workspace {
+                SandboxPicker(model: model, accounts: accounts, engines: engines,
+                              sandbox: Binding(get: { grant.sandbox }, set: { model.setAccess(grant, accounts: accounts, engines: engines, sandbox: $0) }))
+                    .padding(.top, 4)
+            } else {
+                Text("Contained: this app doesn't edit files or run commands, so it can't have developer access.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary).padding(.top, 4)
+            }
             DisclosureGroup("Advanced") {
                 EngineAccessList(model: model, allowed: accounts,
-                                 engines: Binding(get: { engines }, set: { model.setAccess(grant, accounts: accounts, engines: $0) }))
+                                 engines: Binding(get: { engines }, set: { model.setAccess(grant, accounts: accounts, engines: $0, sandbox: grant.sandbox) }),
+                                 sandbox: grant.ceiling)
                     .padding(.top, 4)
             }
             .font(.system(size: 12))
@@ -769,7 +817,7 @@ struct SettingsView: View {
         } header: {
             Text("Default engine for each provider")
         } footer: {
-            Text("Apps choose the engine for each task; these are used when they don't. A ChatGPT plan works only with Codex; a Claude plan with Claude Code, or Goose running that Claude Code.")
+            Text("Apps choose the engine for each task; these are used when they don't. A ChatGPT plan works only with Codex; a Claude plan with Claude Code, or Goose running that Claude Code. Through Goose, Claude Code uses all its own tools and your claude.ai connectors, as in Terminal: what an app's tasks may do isn't limited there, apart from the folders they can reach.")
         }
         Section {
             // Each engine as its source describes it (EngineSource.all), with the install it runs through, if any.

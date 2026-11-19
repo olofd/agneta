@@ -49,11 +49,12 @@ import Testing
             #expect(open.subtracting(["read", "glob", "grep", "edit", "shell", "app_*"]).isEmpty, "OpenCode opens only known tools: \(open)")
             return offered
         case "claude-code":
-            let exposed = Set(ClaudeCodeAdapter.builtIns).subtracting(ClaudeCodeAdapter.disallowed(policy))
+            // Claude Code offers exactly the `tools` it's given (measured on 2.1.325), less what's disallowed.
+            let exposed = Set(try #require(ClaudeCodeAdapter.tools(policy))).subtracting(ClaudeCodeAdapter.disallowed(policy))
             var offered: Set<BuiltinTools> = []
             if !exposed.isDisjoint(with: ["Read", "Glob", "Grep"]) { offered.insert(.read) }
             if !exposed.isDisjoint(with: ["Edit", "MultiEdit", "Write", "NotebookEdit"]) { offered.insert(.edit) }
-            if !exposed.isDisjoint(with: ["Bash", "BashOutput", "KillShell"]) { offered.insert(.shell) }
+            if !exposed.isDisjoint(with: ["Bash", "BashOutput", "KillShell", "PowerShell", "Monitor"]) { offered.insert(.shell) }
             if !exposed.isDisjoint(with: ["WebFetch", "WebSearch"]) { offered.insert(.web) }
             return refusedByAgneta(offered, policy)
         case "codex":
@@ -90,8 +91,55 @@ import Testing
         for kind in ["read", "search", "edit", "delete", "move", "execute", "fetch"] { #expect(!may(kind, .appOnly), "\(kind) under app-only") }
         #expect(may("read", .read) && may("search", .read) && !may("edit", .read) && !may("execute", .read))
         #expect(may("read", .workspace) && may("edit", .workspace) && may("move", .workspace) && !may("execute", .workspace) && !may("fetch", .workspace))
-        for kind in ["think", "switch_mode", "other"] { #expect(may(kind, .appOnly)) }
+        for kind in ["think", "switch_mode"] { #expect(may(kind, .appOnly)) }
         for kind in [nil, "", "shell", "network"] as [String?] { #expect(!may(kind, .workspace), "\(kind ?? "no kind") under workspace") }
+        // `other` proves nothing (claude-agent-acp reports Monitor, which runs commands, that way): it passes only
+        // for a tool known to run nothing, by name.
+        let workspace = all.first { $0.tools == .workspace }!
+        #expect(BuiltinTools.nativeRunnerMayUse(kind: "other", tool: "ToolSearch", policy: workspace))
+        for tool in ["Monitor", "Workflow", "SendMessage", "Unheard"] as [String?] + [nil] {
+            #expect(!BuiltinTools.nativeRunnerMayUse(kind: "other", tool: tool, policy: workspace), "other: \(tool ?? "no name")")
+        }
+    }
+
+    /// Developer access runs the engine's own tools, as in a terminal: every kind passes, Claude Code gets its own tool
+    /// set but for what reaches the claude.ai account, and Codex keeps a mode that asks before edits; files Codex trusts
+    /// at its next start stay read-only.
+    @Test func developerAccessRunsTheEnginesOwnTools() throws {
+        let cwd = FileManager.default.temporaryDirectory.path(percentEncoded: false)
+        var developer = try SessionPolicy.parse(["tools": "workspace"], cwd: cwd, context: context)
+        developer.sandbox = .developer
+        for kind in ["execute", "fetch", "other", "edit"] { #expect(BuiltinTools.nativeRunnerMayUse(kind: kind, tool: "Monitor", policy: developer)) }
+        #expect(ClaudeCodeAdapter.tools(developer) == nil)
+        #expect(ClaudeCodeAdapter.disallowed(developer).contains("Artifact") && !ClaudeCodeAdapter.disallowed(developer).contains("Bash"))
+        let home = FileManager.default.temporaryDirectory.appending(path: "agneta-contract-dev-\(UUID().uuidString.prefix(6))", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let adapter = CodexAdapter(node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: Self.cli)
+        let launch = try adapter.launch(EngineLaunchContext(home: home, provider: ProviderSetup(kind: .openAI, apiKey: "k"), shell: nil,
+                                                            session: EngineSessionSpec(policy: developer, servers: [], instructions: nil), loopbackPorts: []))
+        #expect(launch.environment["INITIAL_AGENT_MODE"] == "workspace-write")
+        let codexHome = home.appending(path: "codex", directoryHint: .isDirectory)
+        for file in ["config.toml", ".env", "AGENTS.md", "skills"] { #expect(launch.readOnly.map(\.realFileURL).contains(codexHome.appending(path: file).realFileURL), "\(file)") }
+    }
+
+    /// Claude Code gets the same options on every open, a resumed session included (given none, the adapter loads
+    /// the workspace's own settings), and every session is set to the mode that asks (it starts in `auto`).
+    @Test func claudeCodeKeepsItsOptionsOnResume() throws {
+        let adapter = ClaudeCodeAdapter(executable: URL(filePath: "/usr/bin/false"), cli: Self.cli)
+        let policy = try policies.first { $0.tools == .workspace }!
+        let cwd = URL(filePath: "/tmp/w")
+        let opened = adapter.newSession(cwd: cwd, servers: [], policy: policy, title: nil, instructions: "Be brief")
+        let loaded = adapter.loadSession("s1", cwd: cwd, servers: [], policy: policy, instructions: "Be brief")
+        #expect(opened["_meta"] == loaded["_meta"])
+        #expect(loaded["_meta"]?["claudeCode"]?["options"]?["settingSources"] == [])
+        #expect(loaded["_meta"]?["claudeCode"]?["options"]?["strictMcpConfig"] == true)
+        // Bash goes through the broker on the contained path; Monitor never.
+        #expect(loaded["_meta"]?["claudeCode"]?["options"]?["tools"]?.arrayValue?.contains("Bash") == true)
+        #expect(loaded["_meta"]?["claudeCode"]?["options"]?["tools"]?.arrayValue?.contains("Monitor") == false)
+        #expect(loaded["_meta"]?["claudeCode"]?["options"]?["disallowedTools"]?.arrayValue?.contains("Monitor") == true)
+        #expect(loaded["_meta"]?["systemPrompt"] == "Be brief")
+        let prepared = adapter.prepareSession("s1")
+        #expect(prepared.map(\.method) == ["session/set_mode"] && prepared.first?.params["modeId"] == "default")
     }
 
     /// An app's "always" covers one call: narrowed to "once", and declined when the engine offers no once-option

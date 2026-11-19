@@ -67,8 +67,12 @@ What Agneta protects: your AI accounts (credentials and spend), your files, and 
 
 ### Limits
 
+- **Goose on a Claude plan isn't held to the policy's tool rules.** Its Claude Code uses all its own tools and your claude.ai connectors, as in Terminal; only the folders it can reach are limited. Agneta offers it as a choice and says so where engines are chosen; Claude Code directly is held to the policy.
 - **An engine can reach any host on port 443.** macOS's sandbox filters by port, not host, and engines need HTTPS for their provider. A tool can't use that, but the engine process itself could ([CONTAINMENT.md](CONTAINMENT.md#known-limits)).
+- **Other programs' environments are readable,** to any process of yours, sandboxed or not (macOS doesn't let a sandbox hide them). A command can read what your own programs were started with, and the key of an engine on an API-key account. Plan sign-ins stay in the Keychain.
+- **On a ChatGPT plan, Codex's saved sessions are the account's,** readable to every task on it; Claude Code's other tasks are kept out.
 - **The app's own tools run in the app,** with the app's permissions: Agneta doesn't confine them.
-- **Claude Code and Codex run their own tools inside the engine's sandbox,** checked by Agneta from their permission requests rather than by the stricter command sandbox.
+- **Claude Code's and Codex's other built-in tools (reading, editing, fetching) run inside the engine's sandbox,** checked by Agneta from their permission requests; their commands go through the stricter command sandbox.
+- **Developer access is a terminal's reach,** the default for apps that edit files and run commands, unless you choose Contained: your home folder apart from credentials and Agneta's data, the internet, your toolchains and every local server. Something the agent reads could get it to send your files online, as with a command you approve in a terminal. A command can also detach from its process group and outlive its task, in either mode. Builds use each app's own caches, never yours. Choose Contained for an app that doesn't need more ([APP_PROTOCOL.md](APP_PROTOCOL.md#sandbox)).
 - **Development builds are signed ad hoc,** so an app built that way can't be verified; it pairs with a code.
 - **The sandbox relies on `sandbox-exec`,** which macOS marks deprecated ([CONTAINMENT.md](CONTAINMENT.md)).

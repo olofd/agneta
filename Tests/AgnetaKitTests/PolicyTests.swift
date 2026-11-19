@@ -106,7 +106,9 @@ import Testing
         let profile = SandboxProfile(kind: .tool, writable: [URL(filePath: "/w")], denied: [URL(filePath: "/w/held")]).render()
         #expect(profile.contains("(deny file-write* (require-not (require-any (subpath \"/w\")"))
         #expect(profile.contains("(deny file-read* file-write* (subpath \"/w/held\"))"))
-        #expect(profile.contains("(deny network-outbound (require-not (remote unix-socket"))
+        // No network at all, not even the resolver: a lookup could carry data out.
+        #expect(profile.contains("(deny network-outbound)\n"))
+        #expect(!profile.contains("mDNSResponder"))
         #expect(!profile.contains("(allow network-outbound"))
         #expect(profile.contains("com.apple.securityd"))
         // Reads are allow-listed: the session's folders and system locations, nothing else.

@@ -18,7 +18,7 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
 ## Pairing, once per app
 
 1. Send `agneta/pair {"name": "Example App", "scope": {"tools": "workspace", "folders": ["/Users/me/Documents/Example Project"]}}`. Agneta opens its approval window, which shows what the scope asks for; the user ticks the providers the app may use (one is ticked to start with), then **Allow Once** or **Always Allow**. Every engine is allowed too, unless the user narrows them under **Advanced**: your app picks the provider and engine of each task, among what it may use ([Access](#access)).
-   - **`scope`** is what the app will need: `tools`, the most built-in tools its sessions will use (`app-only`, `read` or `workspace`, as in the [policy](#agnetapolicy)), and `folders`, the user's folders its sessions will work in (absolute paths, under the policy's folder rules). Without a scope the app gets app-only tools and no folders of the user's. Either way it also gets a workspace of its own, made by Agneta. Ask for what the app's features need, and no more: the user sees it all before deciding.
+   - **`scope`** is what the app will need: `tools`, the most built-in tools its sessions will use (`app-only`, `read` or `workspace`, as in the [policy](#agnetapolicy)), `folders`, the user's folders its sessions will work in (absolute paths, under the policy's folder rules), and `sandbox`, the most its tasks will need (`contained` or `developer`, see [Sandbox](#sandbox)), where the approval window's picker starts. Without a scope the app gets app-only tools and no folders of the user's. Either way it also gets a workspace of its own, made by Agneta. Ask for what the app's features need, and no more: the user sees it all before deciding.
    - Allowed: `{"token": "…", "remembered": true, "access": {…}}` ([Access](#access)). Agneta stores only the token's hash.
    - **Always Allow** (`remembered: true`): keep the token in the app's Keychain and connect with it next time (`initialize`), without asking again. When `initialize` answers `-32001` (`needsPairing`), the user removed the app's access: forget the token, and pair again when the user asks to connect. Agneta also closes the app's open connections when its access is removed.
    - **Allow Once** (`remembered: false`) grants this connection only: the token stops working when it closes, and Agneta keeps nothing. Pair again next time.
@@ -30,7 +30,7 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
    - Several apps asking at once are shown one at a time. An app that disconnects while waiting withdraws its request.
 2. Agneta identifies the connecting process by its code signature (see [ARCHITECTURE.md](ARCHITECTURE.md#pairing)). An app signed with an Apple-issued certificate and a team ID is shown as verified, by its signing identifier (for example `com.example.app`).
 3. If Agneta can't verify the app (ad hoc or unsigned builds), it first sends `agneta/pairingCode {"code", "name"}` with six digits. Show the code prominently while the request waits. Agneta's approval window shows the same code, and the user allows the app only if the two match.
-4. **Every session must fit the grant.** No more built-in tools than granted, and every folder a session names (`cwd`, `readable`, `writable`, `readOnly`) inside a granted folder or the app's own workspace. Anything else is refused with `-32602`, `data.agneta.unenforceable` naming the field. To need more, pair again with a wider scope.
+4. **Every session must fit the grant.** No more built-in tools than granted, no more than the grant's [sandbox](#sandbox), and every folder a session names (`cwd`, `readable`, `writable`, `readOnly`) inside a granted folder or the app's own workspace. Anything else is refused with `-32602`, `data.agneta.unenforceable` naming the field. To need more, pair again with a wider scope.
 
 ## Every connection
 
@@ -57,12 +57,12 @@ What the user allows an app is two lists: the **providers** (each an account: a 
               {"id": "goose", "name": "Goose", "state": "ready", "capabilities": {…}},
               {"id": "opencode", "name": "OpenCode", "state": "downloadable", "size": 113000000}],
   "allowedEngines": "all",
-  "scope": {"tools": "workspace", "folders": ["/Users/me/Documents/Example Project"]},
+  "scope": {"tools": "workspace", "folders": ["/Users/me/Documents/Example Project"], "sandbox": "developer"},
   "workspace": "/Users/me/Library/Application Support/com.objectivecoder.agneta Workspaces/<grant>"
 }
 ```
 
-- **`providers`:** each provider the app may use. `engines` are those its tasks there may run on now or after a download, the default first (`defaultEngine`: the provider's default in Agneta's settings when allowed, else the first allowed). A paused provider starts nothing new (**Pause**, under [Turns](#turns)); one that `needsSignIn` waits for the user in Agneta.
+- **`providers`:** each provider the app may use. `engines` are those its tasks there may run on now or after a download, the default first (`defaultEngine`: the provider's default in Agneta's settings when allowed, else the first allowed). A paused provider starts nothing new (**Pause**, under [Turns](#turns)); one that `needsSignIn` waits for the user in Agneta. `uncontained` lists the engines here whose own tools Agneta's policy doesn't confine: Goose on a Claude plan runs Claude Code as its model, with all of Claude Code's own tools and the claude.ai account's connectors, as in a terminal. Agneta still keeps that engine to the session's folders, but not to the policy's tool, network or approval rules. Offer it as a choice, and say so to your users where they pick an engine.
 - **`engines`:** each engine the app may use, with its `state` on this Mac: `ready` (with its `capabilities`, as in [the session result](#the-result)), `downloading` (`received`, `total`), `downloadable` (`size`: it downloads when first needed), `failed` (`reason`; asking for it tries again) or `unavailable` (`reason`, such as "Install Codex 0.166 or later").
 - **`allowedEngines`:** `"all"` (including engines Agneta adds later) or the engine ids the user ticked.
 - **`scope`** and **`workspace`:** what the user allowed, and the app's own workspace within it.
@@ -121,10 +121,12 @@ What the user allows an app is two lists: the **providers** (each an account: a 
 | Field | Values |
 | --- | --- |
 | `tools` | `app-only`: only the app's MCP tools. `read`: plus the engine's read-only built-ins. `workspace` (the default): plus editing and a shell, confined to the workspace |
-| `network` | `none` (the default): shell commands reach nothing but the policy's `toolPorts` and `toolSockets`, and Claude Code's and Codex's commands and fetches are refused. The engine itself can reach any host on port 443, since it needs HTTPS for its provider and macOS's sandbox filters by port, not host name. A list of allowed hosts (`{"allow": [hosts]}`) isn't supported yet and is refused; `{"allow": []}` means `none` |
+| `network` | `none` (the default): shell commands reach nothing but the policy's `toolPorts` and `toolSockets` (not even a name lookup), and the engines' own fetch and web search are refused. It applies to `contained` sessions: under developer access commands reach the internet whatever it says ([Sandbox](#sandbox)). The engine itself can reach any host on port 443, since it needs HTTPS for its provider and macOS's sandbox filters by port, not host name. A list of allowed hosts (`{"allow": [hosts]}`) isn't supported yet and is refused; `{"allow": []}` means `none` |
+| `sandbox` | `contained` or `developer` ([Sandbox](#sandbox)): what this session should get, no more than the grant's. Without it, the grant's for `workspace` tools, `contained` for fewer. `developer` needs `workspace` tools. Asking for more than the grant is refused with `-32602`, `unenforceable: ["sandbox"]` and the reason |
 | `approval` | `ask-app` (the default): tool permission requests reach the app as `session/request_permission`. `never-ask`: the policy is the permission, and Agneta answers |
 | `readable`, `writable`, `readOnly`, `denied` | Absolute paths. `readOnly` stays read-only even inside the workspace; `denied` is neither readable nor writable, even inside allowed folders |
-| `toolPorts`, `toolSockets` | Loopback ports and Unix sockets that shell commands may reach (on engines whose shell runs through Agneta's broker: Goose and OpenCode) |
+| `toolEnvironment` | Variables for shell commands, which run through Agneta's broker on every engine: your toolchain's `PATH` (each entry an absolute path inside the session's folders, no empty entries; it goes ahead of everything else), `CARGO_HOME`, `PYTHONPATH`, your kit's settings. Your values win over the ones developer access sets. Refused: `HOME`, `TMPDIR`, `USER`, `LOGNAME`, `SHELL`, `BASH_ENV`, `ENV`, `ZDOTDIR`, `PROMPT_COMMAND`, `IFS`, and anything starting `DYLD_`, `LD_`, `AGNETA_`, `CLAUDE_CODE_`, `CODEX_`, `GOOSE_` or `OPENCODE_`. Commands also get the selected Xcode's own tools on `PATH` and `SDKROOT` |
+| `toolPorts`, `toolSockets` | Loopback ports and Unix sockets that shell commands may reach (every engine's commands run through Agneta's broker) |
 | `limits` | `maxTurns`: model calls within one prompt (default 200). `maxSeconds`: a prompt's wall time (default 4 hours). `maxCostUSD`: the task's known cost so far, across resumes (no default) |
 
 - **Nothing is weakened silently.** A policy Agneta can't enforce is refused with `-32602` and `data.agneta.unenforceable: ["<field>"]`. That covers:
@@ -132,7 +134,44 @@ What the user allows an app is two lists: the **providers** (each an account: a 
   - relative paths, and folders that contain the home folder, other apps' containers, Agneta's own data, `~/Library/LaunchAgents`, `~/Library/Keychains` or `~/.ssh`;
   - a writable folder inside a denied one, or a denied workspace;
   - `maxCostUSD` on an engine that doesn't report cost per call (Claude Code, Codex).
-- **Sending no policy** gives `workspace` tools in `cwd`, no network and `ask-app` approval.
+- **Sending no policy** gives `workspace` tools in `cwd`, the grant's sandbox and `ask-app` approval.
+
+### Sandbox
+
+How far an app's tasks reach is the user's choice for that app, its **grant**: they pick it in the approval window and can change it in Settings → Apps. Two modes, the same for every engine:
+
+- **`developer`** (Developer access, the default): full power, as in a terminal. Agneta restricts nothing the user didn't ask it to.
+- **`contained`**: the session's folders only, commands with no internet, every command through Agneta's broker.
+
+Three things decide what a task gets, in one place:
+
+1. **The grant's mode is the ceiling.** A session may ask for less (`"sandbox": "contained"` in its policy), never more: an app that asks for `developer` under a `contained` grant is refused, with the reason.
+2. **The engine must be able to provide it.** Each engine declares what it can provide on each provider (`sandboxLevels` in the [access report](#access)). Goose on a Claude plan can't contain its tools (its Claude Code uses all its own tools and the claude.ai connectors): it provides `developer` only, and a contained task on it is refused with why. A task that names no engine gets one that can provide its mode, where the app may use one.
+3. **Fewer tools stay contained.** Developer access is a terminal's commands, so it applies to `workspace` tools. The approval window offers the choice only to an app that asks for `workspace` tools: an app granted `read` or `app-only` tools stays contained, and an engine that can't contain them is refused. Under a developer grant, a session asking for fewer tools runs contained, except on an engine that can't be.
+
+The reply to `session/new`, `session/load` and `agneta/fork` says what the task really got, in `_meta.agneta.sandbox`. If the user narrows the grant to `contained`, its tasks running with more stop.
+
+Under each mode:
+
+
+| | `contained` | `developer` |
+| --- | --- | --- |
+| Commands | Through Agneta's broker: Goose's and OpenCode's shells, Claude Code's Bash (behind its shell prefix), and Codex's through Agneta's MCP shell (`mcp__agneta__shell`, its own shell off) | Through the broker too, with a command sandbox widened like a terminal's (your home as `HOME`, the internet), which keeps the engine's sign-in out. Commands started in the background live on until the engine ends |
+| Engine's own tools | The policy's tools only, each permission request checked | Claude Code's own tool set (web fetch and search, subagents, skills), apart from those that reach your claude.ai account or devices (artifacts, projects, designs, notifications, remote triggers) and Monitor and PowerShell, which would run commands outside Agneta's broker; Codex's, with web search. Both still ask before acting, in the `default` and `workspace-write` modes |
+| Internet | None for commands | Any host and port. The sites reached aren't listed yet |
+| Files read | The workspace and the policy's folders | Also the whole home folder, except credentials and private data (`~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`, `~/.git-credentials`, `~/.config/gh`, `~/.npmrc`, `~/.pypirc`, cargo credentials, `~/.claude*`, `~/.codex`, other agents' sign-ins such as Goose's and OpenCode's, shell histories, the Keychains folder, Cookies, Mail, Messages, Safari and other browsers' profiles, other apps' containers and group containers, `~/Library/LaunchAgents`) and all of Agneta's own data: every build's data, caches, logs and preferences, and other apps' workspaces |
+| Files written | The workspace and `writable` | The same, plus the app's own build caches: one folder per app, kept across its sessions so its builds stay warm. Cargo, pip, uv, npm, yarn, bun, go, gradle, deno and clang are pointed there; a tool that keeps its cache in `~/Library/Caches` or `~/.cache` with no variable to move it (SwiftPM, poetry, Playwright and the like) can't write it. Never the user's own caches, where a planted entry would later run as the user, outside any sandbox |
+| Toolchains | Only what the policy's folders hold | The user's own: `PATH` has `~/.cargo/bin`, `~/.local/bin`, `~/.volta/bin`, `/opt/homebrew/bin` and the like, with `RUSTUP_HOME` set (your `~/.cargo/config.toml` isn't read: the app's cargo folder is its own). The toolchains are read-only: a project that pins a toolchain you haven't installed can't install it |
+| Loopback | `toolPorts` only | Any port (every local server, as in a terminal), and commands may listen on loopback |
+| Still never | | Credentials, opening apps or Apple Events, the user's own Claude Code settings, skills, hooks and MCP servers, writes outside the session's folders and the app's caches |
+
+Something the agent reads could try to get it to send files online, exactly as with an approved command in a terminal: ask for `contained` where your app doesn't need more, and tell your users what developer access means. Every tool call is still in the task's trace.
+
+Known limits of developer access, each the same as in a terminal (the last also when contained):
+- **Loopback reaches every local server,** not only your app's.
+- **A command can leave the job list.** Agneta ends a command's process group with its engine; one that starts a session or group of its own (`setsid`, `set -m`, a detached child) can outlive it. This holds when contained too: the sandbox can't refuse it without breaking ordinary tools (measured: a refused `setsid` is still reached through `posix_spawn`).
+
+In both modes, **other processes' environments are readable.** macOS lets any process of the user's, sandboxed or not, read the environment of another one that isn't Apple's own (measured: no sandbox rule stops it). So a command can read what the user's own programs were started with, and the provider key of an engine on an API-key account. Plan sign-ins are in the Keychain, and Agneta's broker tokens are in files, so neither is exposed.
 - **Changing the engine's mode** (`session/set_mode`, or `session/set_config_option` with `configId: "mode"`) is refused where the mode would leave what Agneta set up: on Claude Code and Codex, a mode that stops the engine asking permission, since Agneta checks each tool call from those questions; on OpenCode, any agent but Agneta's, which carries the session's instructions.
 
 ### Instructions
@@ -249,7 +288,8 @@ The result:
 
 With `approval: "ask-app"`, the engine's `session/request_permission` requests reach the app with Agneta's session id. Agneta applies two rules:
 - **"Always" becomes "once".** An engine may keep an "always" answer beyond the session (OpenCode keeps it for the whole project), so Agneta answers with the matching "once" option. Where the engine offers no "once" option, the call is declined.
-- **Native runners are checked first.** Claude Code and Codex run their own tools, so Agneta answers each request for a built-in tool by its contract with every engine (`BuiltinTools`), before the app is asked: nothing built in under `app-only`; reading and searching (`read`, `search`) under `read`; also editing (`edit`, `delete`, `move`) under `workspace`; and never `execute` or `fetch` while the network is `none`. Kinds that run nothing of their own (`think`, `switch_mode`, `other`) pass; a request with no kind, or one ACP doesn't define, is refused, since Agneta can't tell what it would run.
+- **Native runners are checked first.** Claude Code and Codex run their own tools, so Agneta answers each request for a built-in tool by its contract with every engine (`BuiltinTools`), before the app is asked: nothing built in under `app-only`; reading and searching (`read`, `search`) under `read`; also editing (`edit`, `delete`, `move`) under `workspace`; and never `fetch` while the network is `none`, nor `execute` apart from Claude Code's Bash, whose commands run through Agneta's broker. Under developer access the request goes to the app (or the policy answers) whatever its kind. Kinds that run nothing of their own (`think`, `switch_mode`) pass. `other` passes only for a tool known by name to run nothing (finding deferred tools, a to-do list, a question, plan mode): adapters report every tool without a reporter of their own as `other`, Claude Code's Monitor (which runs commands) among them. A request with no kind, or one ACP doesn't define, is refused, since Agneta can't tell what it would run. Under developer access every request passes.
+- **Claude Code offers only the tools the policy names.** Agneta passes the exact built-in set (`tools`): none but tool search under `app-only`; `Read`, `Glob`, `Grep` under `read`; also `Edit`, `Write`, `NotebookEdit` under `workspace`; plus `Bash` (with `TaskStop` and `Agent`) whenever tools go beyond `app-only`, its commands run through Agneta's broker by Claude Code's shell prefix, never inside the engine's sandbox; Claude Code's own set under developer access, without the tools that reach the claude.ai account or devices. Every session, a resumed one included, is set to the `default` mode, which asks (the adapter starts in `auto`, which doesn't), and gets the same options on resume.
 - **The app's own tools are the app's.** A request for a tool of one of the app's MCP servers isn't refused by that contract (Codex asks for those as `execute`). Agneta trusts only what the engine's adapter vouches for: Codex's own MCP approval marker, Claude Code's tool names. A server can't take a name an engine uses for its own tools (Claude Code's `workspace` and `acp`, Codex's `codex_apps`): `session/new` refuses it with `-32602` and `unenforceable: ["mcpServers"]`.
 
 Every decision is in the trace's `permission` records: who decided (`asked-app`, `allowed-by-policy`, `refused-by-policy`), the answer, and how long it took.

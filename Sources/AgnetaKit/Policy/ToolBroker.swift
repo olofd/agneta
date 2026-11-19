@@ -32,14 +32,25 @@ public final class ToolBroker: @unchecked Sendable {
     /// Each command's outcome for the task trace: command, cwd, exit status or signal, timing, output sizes.
     private let report: @Sendable (_ token: String, _ fields: [String: JSONValue]) -> Void
     private let shell: String
+    /// `agneta-shell`, run as each command's group holder (`--hold`), so what a command starts in the background lives
+    /// on until its engine ends; without it, a command's group ends with the command.
+    private let holder: String?
     private var listener: Int32 = -1
+    /// Each token's commands still running, so they stop with their engine: an engine killed, retired or revoked
+    /// can leave its shells behind (Claude Code's are detached), and a command must never outlive its session.
+    private let registryLock = NSLock()
+    private var running: [String: [UUID: ChildProcess]] = [:]
+    private var revoked: Set<String> = []
+    /// Set once Agneta stops: every command has been ended and none starts again.
+    private var stopped = false
 
     /// - Parameter resolve: maps an engine's token and the command's working directory to the
     ///   session that may run it, or nil to refuse. Each engine process has its own token.
-    public init(socketPath: String, shell: String = "/bin/bash", resolve: @escaping @Sendable (_ token: String, _ cwd: URL) -> Grant?,
+    public init(socketPath: String, shell: String = "/bin/bash", holder: String? = nil, resolve: @escaping @Sendable (_ token: String, _ cwd: URL) -> Grant?,
                 report: @escaping @Sendable (_ token: String, _ fields: [String: JSONValue]) -> Void = { _, _ in }) {
         self.socketPath = socketPath
         self.shell = shell
+        self.holder = holder
         self.resolve = resolve
         self.report = report
     }
@@ -75,10 +86,32 @@ public final class ToolBroker: @unchecked Sendable {
         thread.start()
     }
 
+    /// Closes the socket and ends every command still running, background jobs included: none outlives Agneta.
     public func stop() {
         if listener >= 0 { close(listener); listener = -1 }
         unlink(socketPath)
+        let children = registryLock.withLock { () -> [ChildProcess] in
+            stopped = true
+            defer { running.removeAll() }
+            return running.values.flatMap(\.values)
+        }
+        for child in children { child.signalGroup(SIGKILL) }
     }
+
+    /// Stops every command a token's engine started and refuses any it starts later: its engine ended, was retired, or
+    /// lost its session. Returns how many were running.
+    @discardableResult
+    public func stopCommands(token: String) -> Int {
+        let children = registryLock.withLock { () -> [ChildProcess] in
+            revoked.insert(token)
+            return Array((running.removeValue(forKey: token) ?? [:]).values)
+        }
+        for child in children { child.signalGroup(SIGKILL) }
+        return children.count
+    }
+
+    /// How many commands a token's engine has running now.
+    public func runningCommands(token: String) -> Int { registryLock.withLock { running[token]?.count ?? 0 } }
 
     private func serve(_ client: Int32) {
         var noSigPipe: Int32 = 1
@@ -110,11 +143,24 @@ public final class ToolBroker: @unchecked Sendable {
             report(request.token, fields)
             return
         }
+        // An engine that ended starts nothing more, though its shell may live on.
+        if registryLock.withLock({ stopped || revoked.contains(request.token) }) {
+            _ = reply("e " + Data("agneta: this engine's session has ended\n".utf8).base64EncodedString())
+            _ = reply("x 126")
+            fields["refused"] = "engine ended"
+            report(request.token, fields)
+            return
+        }
+        // The command's group: its holder's when there is one (background jobs live on), else its own.
+        var holding: ChildProcess?
         let child: ChildProcess
         do {
+            holding = try holder.map { try ChildProcess(executable: $0, arguments: ["--hold"], environment: [:]) }
             child = try ChildProcess(executable: shell, arguments: ["-c", request.command], environment: grant.environment,
-                                     directory: cwd.path(percentEncoded: false), wrapper: ["/usr/bin/sandbox-exec", "-p", grant.profile])
+                                     directory: cwd.path(percentEncoded: false), wrapper: ["/usr/bin/sandbox-exec", "-p", grant.profile],
+                                     joining: holding?.pid)
         } catch {
+            holding?.signalGroup(SIGKILL)
             _ = reply("e " + Data("agneta: \(error)\n".utf8).base64EncodedString())
             _ = reply("x 127")
             fields["refused"] = .string("couldn't start: \(error)")
@@ -122,6 +168,27 @@ public final class ToolBroker: @unchecked Sendable {
             return
         }
         try? child.stdin.close()
+        // The holder waits for this before watching its group, and ends the group if the pipe closes: Agneta gone.
+        let keeper = holding
+        try? keeper?.stdin.write(contentsOf: Data("g".utf8))
+        let id = UUID()
+        // What ends the command and all it started: its holder's group, which stays listed until the holder leaves (the
+        // group is empty), so background jobs end with their engine; or the command's own group, listed while it runs.
+        let ender = keeper ?? child
+        let admitted = registryLock.withLock { () -> Bool in
+            guard !stopped, !revoked.contains(request.token) else { return false }
+            running[request.token, default: [:]][id] = ender
+            return true
+        }
+        if !admitted { ender.signalGroup(SIGKILL) }
+        defer { if keeper == nil { registryLock.withLock { _ = running[request.token]?.removeValue(forKey: id) } } }
+        if let keeper {
+            let token = request.token
+            Task { [weak self] in
+                _ = await keeper.waitForExit()
+                self?.registryLock.withLock { _ = self?.running[token]?.removeValue(forKey: id) }
+            }
+        }
         let lock = NSLock()
         let counts = OutputCounts()
         // If the client goes away (Goose timed out or the session stopped), stop the command and whatever it
@@ -129,7 +196,7 @@ public final class ToolBroker: @unchecked Sendable {
         let watcher = Thread {
             var byte: UInt8 = 0
             while read(client, &byte, 1) > 0 {}
-            lock.withLock { if !counts.finished { child.signalGroup(SIGKILL) } }
+            lock.withLock { if !counts.finished { ender.signalGroup(SIGKILL) } }
         }
         watcher.start()
         let group = DispatchGroup()

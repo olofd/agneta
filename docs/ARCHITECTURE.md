@@ -99,30 +99,32 @@ macOS's Seatbelt (`sandbox-exec`) confines each engine. Profiles are generated p
 | `readOnly`, `denied` | Never written; never read or written | Same |
 | Network out | TCP port 443 to any host (for the provider), the app's MCP ports on loopback, Agneta's tool broker socket, DNS. Any loopback port for a shared app-only engine and for OpenCode (its private server) | Only the policy's `toolPorts` and `toolSockets` on this Mac |
 | Listening | None (OpenCode: loopback only, for its private server) | None |
-| Other processes | Can't see or signal processes outside its sandbox, send Apple Events, have LaunchServices open anything, or run a program from a folder it can't read | Same, and no Keychain access |
+| Other processes | Can't signal processes outside its sandbox or read their state (though macOS lets it read their arguments and environment), send Apple Events, have LaunchServices open anything, or run a program from a folder it can't read | Same, and no Keychain access |
 
 What each part of a task can reach, in one place:
 
 | What runs | Confined by | Files | Network |
 | --- | --- | --- | --- |
 | The engine itself (talking to the model, its own bookkeeping) | Engine profile | As in the table above | HTTPS to any host; the app's MCP ports |
-| Shell commands on Goose and OpenCode | Tool profile, through the broker | The workspace (with `workspace` tools), or a scratch folder | None, beyond `toolPorts` and `toolSockets` |
-| Built-in tools of Claude Code and Codex, which run inside the engine | Engine profile, plus Agneta refusing their `execute` and `fetch` while `network` is `none`, and edits unless tools are `workspace` | The engine's | The engine's, which is why commands and fetches are refused |
+| Shell commands on every engine (Goose's and OpenCode's shells, Claude Code's Bash, Codex's through Agneta's MCP shell) | Tool profile, through the broker | The workspace (with `workspace` tools), or a scratch folder | None, beyond `toolPorts` and `toolSockets` |
+| Other built-in tools of Claude Code and Codex (reading, editing, fetching), which run inside the engine | Engine profile, plus Agneta refusing their `fetch` while `network` is `none`, and edits unless tools are `workspace` | The engine's | The engine's, which is why fetches are refused |
 | The app's own MCP tools | Not by Agneta: they run in the app, with the app's own permissions | The app's | The app's |
+
+These are the contained profiles. Under developer access both are widened as a terminal is: the home folder readable apart from credentials and Agneta's data, the internet, the user's toolchains ([APP_PROTOCOL.md](APP_PROTOCOL.md#sandbox)).
 
 Two consequences to be clear about:
 - **Seatbelt filters network by address and port, not by host name.** The engine needs HTTPS to reach its provider, so it can reach any HTTPS server. That's why a host allowlist for tools isn't offered: it couldn't be enforced the same way.
-- **macOS won't nest a sandbox inside another.** That's why shell commands go through the tool broker rather than running inside the engine, and why an engine that sandboxes its own commands (Codex) can't run them inside Agneta ([ENGINES.md](ENGINES.md#codex)).
+- **macOS won't nest a sandbox inside another.** That's why shell commands go through the tool broker rather than running inside the engine, and why Codex's own shell is off and its commands go through Agneta's MCP shell instead ([ENGINES.md](ENGINES.md#codex)).
 
 ### The tool broker
 
-Goose and OpenCode are given `agneta-shell` as their shell. It forwards each command over a Unix socket (owner-only) to Agneta's tool broker, with a per-engine token. The broker:
+Every engine's commands reach it through `agneta-shell`: Goose's and OpenCode's shell, Claude Code's shell prefix (`CLAUDE_CODE_SHELL_PREFIX`), and for Codex an MCP server (`agneta-shell --mcp`) whose `shell` tool replaces its own. It forwards each command over a Unix socket (owner-only) to Agneta's tool broker, with a per-engine token read from a file only that engine reads (an environment can be read by other processes). The broker:
 - refuses a command whose working directory is outside the session's workspace;
-- runs it with `/bin/bash -c` under the session's tool profile, in its own process group, with `HOME` and `TMPDIR` set to the scratch folder;
-- ends anything the command left running in the background when the command exits;
+- runs it with `/bin/bash -c` under the session's tool profile, in its holder's process group, with `HOME` and `TMPDIR` set to the scratch folder (`HOME` is the user's under developer access);
+- keeps what the command started in the background running, as in a terminal, in a process group led by a holder (`agneta-shell --hold`), and ends that group when the engine ends, its session is revoked, or Agneta quits (the holder ends it too if Agneta dies). A command that starts a session or group of its own leaves it, and can outlive its engine (a known limit);
 - records the command, exit status, timing and output sizes in the task's trace.
 
-Claude Code and Codex run their own tools. For them Agneta checks every permission request against the policy before anything runs, and refuses modes that would stop the engine asking ([APP_PROTOCOL.md](APP_PROTOCOL.md#permissions)).
+Claude Code and Codex run their other tools themselves. For them Agneta checks every permission request against the policy before anything runs, and refuses modes that would stop the engine asking ([APP_PROTOCOL.md](APP_PROTOCOL.md#permissions)).
 
 ### Credentials
 

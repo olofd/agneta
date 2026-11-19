@@ -15,7 +15,8 @@ extension Router {
 
     /// The app's own workspace, made when it paired.
     static func workspace(of grant: Grant, in context: PolicyContext) -> URL? {
-        context.appWorkspaces.map { $0.appending(path: grant.id, directoryHint: .isDirectory).realFileURL }
+        // Its last component never resolved: a session may have replaced the folder with a link (OwnFolder).
+        context.appWorkspaces.map { $0.realFileURL.appending(path: grant.id, directoryHint: .isDirectory) }
     }
 
     /// An app's tool servers must be Streamable HTTP on loopback: a stdio server would be a command the
@@ -55,6 +56,8 @@ extension Router {
         var policy: SessionPolicy
         var servers: [JSONValue]
         var instructions: String?
+        /// What the task can really do (SandboxResolution.Outcome.effective), reported to the app.
+        var sandbox: Sandbox = .contained
     }
 
     /// Every check a session passes before an engine starts: an account the app was granted, not paused; an engine
@@ -69,6 +72,8 @@ extension Router {
         }
         if let refusal = pausedRefusal(account) { return .failure(refusal) }
         guard let cwd else { return .failure(RPCError(code: RPCError.invalidParams, message: "cwd is required")) }
+        // The app's own workspace is Agneta's folder: whatever a session planted in its place is put right first.
+        if let root = context.appWorkspaces, let workspace = Self.workspace(of: grant, in: context) { _ = try? OwnFolder.ensure(workspace, under: root) }
         var policy: SessionPolicy
         do { policy = try SessionPolicy.parse(value, cwd: cwd, context: context) } catch let rejection as PolicyRejection {
             return .failure(rejection.rpcError)
@@ -81,7 +86,8 @@ extension Router {
         }
         if let refusal = Self.refuseServers(servers) { return .failure(refusal) }
         let engine: any EngineAdapter
-        switch taskEngine(account: account, requested: requested, resuming: resuming, grant: grant) {
+        let wanted = policy.requestedSandbox.map { min($0, grant.ceiling) } ?? (policy.tools == .workspace ? grant.ceiling : .contained)
+        switch taskEngine(account: account, requested: requested, resuming: resuming, grant: grant, sandbox: wanted) {
         case .success(let adapter): engine = adapter
         case .failure(let refusal): return .failure(refusal)
         }
@@ -89,10 +95,27 @@ extension Router {
             return .failure(RPCError(code: RPCError.invalidParams, message: "\(engine.displayName) uses the tool server name \(taken) for its own tools",
                                      data: ["agneta": ["unenforceable": ["mcpServers"], "reason": .string("reserved name \(taken)")]]))
         }
+        // The sandbox, decided in one place (SandboxResolution): the user's choice for the app (its grant's ceiling) is the most,
+        // the app may ask for less, and the engine must be able to provide what's asked.
+        guard let kind = accounts[account]?.kind else { return .failure(RPCError(code: RPCError.invalidParams, message: "Unknown account")) }
+        let effective: Sandbox
+        switch SandboxResolution.resolve(requested: policy.requestedSandbox, ceiling: grant.ceiling,
+                                         levels: ProviderEngines.sandboxLevels(engine.id, for: kind), tools: policy.tools,
+                                         provider: accounts[account]?.label ?? account, why: ProviderEngines.uncontainedReason(engine.id, for: kind)) {
+        case .success(let outcome):
+            policy.sandbox = outcome.profile
+            effective = outcome.effective
+        case .failure(let refusal): return .failure(refusal.rpcError)
+        }
         if policy.limits.maxCostUSD != nil, !engine.capabilities.reportsCost {
             return .failure(PolicyRejection(field: "limits", reason: "\(engine.displayName) doesn't report cost, so maxCostUSD can't be enforced").rpcError)
         }
-        return .success(Plan(account: account, engine: engine, policy: policy, servers: servers, instructions: instructions))
+        // Developer access builds with the app's own caches, warm across its sessions and apart from the user's.
+        if policy.sandbox == .developer {
+            let root = context.appWorkspaces ?? FileManager.default.temporaryDirectory.appending(path: "agneta-apps", directoryHint: .isDirectory)
+            policy.buildCaches = root.realFileURL.appending(path: ".build-caches/\(grant.id)", directoryHint: .isDirectory)
+        }
+        return .success(Plan(account: account, engine: engine, policy: policy, servers: servers, instructions: instructions, sandbox: effective))
     }
 
     /// The refusal for anything new on a paused account, or nil when it isn't paused.
@@ -128,8 +151,9 @@ extension Router {
 
     /// Makes a session reachable, by Agneta's id and by the engine's. Returns its generation.
     func register(_ id: String, app: UUID, plan: Plan, lease: EngineLease, engineSession: String) -> UUID {
-        let session = Session(app: app, account: plan.account, lease: lease, engineSession: engineSession, policy: plan.policy,
+        var session = Session(app: app, account: plan.account, lease: lease, engineSession: engineSession, policy: plan.policy,
                               appServers: Set(plan.servers.compactMap { $0["name"]?.stringValue }))
+        session.sandbox = plan.sandbox
         sessions[id] = session
         byEngine[key(lease.key, engineSession)] = id
         return session.generation
@@ -164,7 +188,7 @@ extension Router {
     /// The engine's result as the app gets it: Agneta's session id, and what Agneta adds in `_meta.agneta`.
     func reply(_ result: JSONValue, id: String?, plan: Plan, lease: EngineLease, adding extra: [String: JSONValue] = [:]) -> JSONValue {
         var agneta: [String: JSONValue] = ["account": .string(plan.account), "dedicatedEngine": .bool(lease.dedicated),
-                                           "capabilities": Self.capabilities(lease.engine)]
+                                           "capabilities": Self.capabilities(lease.engine), "sandbox": .string(plan.sandbox.rawValue)]
         agneta.merge(extra) { _, new in new }
         return (id.map { result.setting("sessionId", to: .string($0)) } ?? result).setting("_meta", to: ["agneta": .object(agneta)])
     }
@@ -282,7 +306,8 @@ extension Router {
         trace.writer.record("lifecycle", ["event": "resumed", "pid": .int(Int64(lease.pid)), "request": params ?? .null])
         do {
             let result = try await lease.peer.request("session/load", lease.engine.loadSession(engineSession, cwd: plan.policy.workspace,
-                                                                                                servers: plan.servers, policy: plan.policy))
+                                                                                                servers: plan.servers, policy: plan.policy,
+                                                                                                instructions: plan.instructions))
             try await prepare(lease, engineSession, instructions: plan.instructions)
             // Ended while the engine replayed it (the app went or lost access, or the user stopped it): end() has
             // already let it go, and nothing may announce it now.
@@ -366,7 +391,8 @@ extension Router {
         await deliverEarly(lease, engineSession)
         do {
             let result = try await lease.peer.request("session/load", lease.engine.loadSession(engineSession, cwd: plan.policy.workspace,
-                                                                                                servers: plan.servers, policy: plan.policy))
+                                                                                                servers: plan.servers, policy: plan.policy,
+                                                                                                instructions: plan.instructions))
             try await prepare(lease, engineSession, instructions: plan.instructions)
             // Ended while the engine loaded it: end() has let it go, and it gets no trace or announcement.
             guard current(id, generation) else { return .failure(Self.endedWhileOpening) }

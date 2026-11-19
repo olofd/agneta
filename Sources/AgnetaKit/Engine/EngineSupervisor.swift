@@ -46,9 +46,16 @@ public actor EngineSupervisor: EngineSource {
         /// How long a new engine has to answer `initialize`: one that hangs while starting is stopped, rather than
         /// holding the task (and its app) open for good.
         public var startDeadline: Duration
+        /// The user's home, which developer access reads (its secrets excepted).
+        public var userHome: URL
+        /// Agneta's own data roots, which developer access keeps out even though they're in the home folder.
+        public var agnetaRoots: [URL]
 
         public init(shellTool: URL, root: URL, engineLoopbackPorts: [Int] = [], confine: Bool = true,
-                    ledger: (any EngineLedger)? = nil, traces: Traces? = nil, startDeadline: Duration = .seconds(60)) {
+                    ledger: (any EngineLedger)? = nil, traces: Traces? = nil, startDeadline: Duration = .seconds(60),
+                    userHome: URL = FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [URL]? = nil) {
+            self.userHome = userHome
+            self.agnetaRoots = agnetaRoots ?? [root]
             self.startDeadline = startDeadline
             self.shellTool = shellTool
             self.root = root
@@ -68,6 +75,7 @@ public actor EngineSupervisor: EngineSource {
         var stateRoot: URL
         var engineInfo: JSONValue?
         var engine: any EngineAdapter
+        var temporary: [URL] = []
     }
 
     private let configuration: Configuration
@@ -94,9 +102,7 @@ public actor EngineSupervisor: EngineSource {
         accounts.removeValue(forKey: account)
         for (key, engine) in running where key.hasPrefix(account + "/") {
             running.removeValue(forKey: key)
-            grants.remove(token: engine.token)
-            await engine.peer.close("account removed")
-            await stop(engine.process)
+            await retire(engine, "account removed")
         }
     }
 
@@ -109,7 +115,8 @@ public actor EngineSupervisor: EngineSource {
         if let broker { return broker }
         let grants = self.grants
         let traces = configuration.traces
-        let service = ToolBroker(socketPath: socketPath, resolve: { token, cwd in grants.grant(token: token, cwd: cwd) },
+        let service = ToolBroker(socketPath: socketPath, holder: configuration.shellTool.path(percentEncoded: false),
+                                 resolve: { token, cwd in grants.grant(token: token, cwd: cwd) },
                                  report: { token, fields in
                                      if let traces, let lease = grants.lease(token: token) { traces.shell(lease: lease, fields) }
                                  })
@@ -166,27 +173,84 @@ public actor EngineSupervisor: EngineSource {
                        policy: SessionPolicy, mcpPorts: [Int], session: EngineSessionSpec?) async throws -> EngineLease {
         let accountHome = configuration.root.appending(path: "Accounts/\(account)", directoryHint: .isDirectory)
         // Each engine process gets its own state so concurrent processes don't share a session database.
-        let engineHome = dedicated ? EngineHomes.home(root: configuration.root, key: key) : accountHome
-        let scratch = engineHome.appending(path: "scratch", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // Agneta's own folders for this engine, each made a real folder at exactly its path and written into the
+        // profiles verbatim (OwnFolder): a session that replaced one with a symlink gets nothing from it.
+        var owned: Set<String> = []
+        // Agneta's roots, which no session writes: its data, the app workspaces, its temp folder, and the folder holding
+        // the account's own (an account reused from another Agneta's data, as agnetad does, lives there).
+        let trusted = [configuration.root] + configuration.agnetaRoots + [FileManager.default.temporaryDirectory]
+            + (provider.subscription.map { [$0.home.deletingLastPathComponent()] } ?? [])
+        func own(_ url: URL) throws -> URL {
+            let path = url.path(percentEncoded: false)
+            guard let root = trusted.filter({ path.hasPrefix($0.path(percentEncoded: false).trimmingSuffix("/") + "/")
+                                              || path.hasPrefix($0.realFileURL.path(percentEncoded: false).trimmingSuffix("/") + "/") })
+                .max(by: { $0.path(percentEncoded: false).count < $1.path(percentEncoded: false).count }) else {
+                // Every folder an engine writes is Agneta's; one elsewhere would be resolved through whatever it is now.
+                throw RPCError(code: RPCError.internalError, message: "An engine asked to write outside Agneta's folders: \(path)")
+            }
+            let made = try OwnFolder.ensure(url, under: root)
+            owned.insert(made.path(percentEncoded: false).trimmingSuffix("/"))
+            return made
+        }
+        let engineHome = try own(dedicated ? EngineHomes.home(root: configuration.root, key: key) : accountHome)
+        let scratch = try own(engineHome.appending(path: "scratch", directoryHint: .isDirectory))
+        var policy = policy
+        if policy.sandbox == .developer { policy.buildCaches = try own(policy.caches(scratch: scratch)) }
 
         let token = Self.newToken()
+        let userHome = configuration.userHome, agnetaRoots = configuration.agnetaRoots
+        let ports = configuration.engineLoopbackPorts + mcpPorts
+        var session = session
+        session?.policy = policy
+        var launch = try adapter.launch(EngineLaunchContext(home: engineHome, provider: provider, shell: dedicated ? configuration.shellTool : nil,
+                                                            session: session, loopbackPorts: ports))
+        launch.writable = try launch.writable.map(own)
+        launch.toolWritable = try launch.toolWritable.map(own)
+        // An engine's own part of a folder it's denied (Claude Code's transcript folder for this workspace) exists before
+        // the profile pins it, so the engine never has to create it.
+        launch.exceptions = try launch.exceptions.map(own)
         var grant: ToolBroker.Grant?
+        var tokenFile: URL?
         var brokerEnvironment: [String: String] = [:]
         if dedicated {
             let broker = try startBroker()
-            let toolProfile = policy.toolProfile(scratch: scratch).render()
-            grant = ToolBroker.Grant(profile: toolProfile, environment: [
-                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": scratch.path(percentEncoded: false),
-                "TMPDIR": scratch.path(percentEncoded: false), "LANG": "en_US.UTF-8",
-            ])
+            let developer = policy.sandbox == .developer
+            let caches = policy.caches(scratch: scratch)
+            var tools = policy.toolProfile(scratch: scratch, home: userHome, agnetaRoots: agnetaRoots)
+            tools.writable += launch.toolWritable
+            tools.verbatim.formUnion(owned)
+            tools.literalRoots = trusted
+            let toolProfile = tools.render()
+            var environment = [
+                "PATH": (SandboxProfile.xcodeTools + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]).joined(separator: ":"),
+                "HOME": scratch.path(percentEncoded: false), "TMPDIR": scratch.path(percentEncoded: false), "LANG": "en_US.UTF-8",
+            ]
+            if let sdk = SandboxProfile.sdkRoot { environment["SDKROOT"] = sdk }
+            // Developer access: commands see the user's home and toolchains, as in a terminal (writes stay confined).
+            if developer {
+                environment.merge(DeveloperAccess.environment(home: userHome, caches: caches)) { _, user in user }
+                environment["HOME"] = userHome.path(percentEncoded: false)
+                environment["USER"] = NSUserName()
+            }
+            // The app's own toolchain and settings win over both, its PATH ahead of everything else.
+            for (key, value) in policy.toolEnvironment {
+                environment[key] = key == "PATH" ? value + ":" + (environment["PATH"] ?? "") : value
+            }
+            grant = ToolBroker.Grant(profile: toolProfile, environment: environment)
             grants.set(token: token, grant: grant!, workspace: policy.workspace, lease: key)
-            brokerEnvironment = ["AGNETA_BROKER_SOCKET": broker.socketPath, "AGNETA_BROKER_TOKEN": token]
+            // The token in a file only this engine's profile reads, never in its environment: any process of the user's,
+            // sandboxed or not, can read another non-Apple process's environment (measured: no Seatbelt rule stops
+            // it), and the token runs commands as this session. A fresh file outside the engine's home, so nothing an
+            // earlier engine on this home left running can read it.
+            let tokens = try own(configuration.root.appending(path: "Tokens", directoryHint: .isDirectory))
+            tokenFile = tokens.appending(path: UUID().uuidString)
+            guard FileManager.default.createFile(atPath: tokenFile!.path(percentEncoded: false), contents: Data(token.utf8), attributes: [.posixPermissions: 0o600]) else {
+                throw RPCError(code: RPCError.internalError, message: "Agneta couldn't write the engine's token")
+            }
+            launch.readable.append(tokenFile!)
+            brokerEnvironment = ["AGNETA_BROKER_SOCKET": broker.socketPath, "AGNETA_BROKER_TOKEN_FILE": tokenFile!.path(percentEncoded: false)]
         }
 
-        let ports = configuration.engineLoopbackPorts + mcpPorts
-        var launch = try adapter.launch(EngineLaunchContext(home: engineHome, provider: provider, shell: dedicated ? configuration.shellTool : nil,
-                                                            session: session, loopbackPorts: ports))
         launch.environment.merge(brokerEnvironment) { _, broker in broker }
         var wrapper: [String] = []
         if configuration.confine {
@@ -197,15 +261,20 @@ public actor EngineSupervisor: EngineSource {
                                          readable: (dedicated ? [policy.workspace] + policy.readable + policy.readOnly : [])
                                             + [configuration.shellTool.deletingLastPathComponent()] + launch.readable,
                                          loopbackPorts: ports, remotePorts: [443])
-            profile.readOnly = policy.readOnly
-            profile.verbatim = policy.checkedPaths
+            profile.readOnly = policy.readOnly + launch.readOnly
+            profile.verbatim = policy.checkedPaths.union(owned)
+            profile.literalRoots = trusted
             profile.ownLoopbackServer = launch.ownLoopbackServer
             profile.exceptions = launch.exceptions
             if dedicated, let broker { profile.unixSockets = [URL(filePath: broker.socketPath)] }
             if !dedicated { profile.loopbackPorts = [] ; profile.allLoopback = true }
-            let file = engineHome.appending(path: "engine.sb")
-            try profile.render().write(to: file, atomically: true, encoding: .utf8)
-            wrapper = ["/usr/bin/sandbox-exec", "-f", file.path(percentEncoded: false)]
+            // Developer access: engines that run their own tools run them in this profile, so it gets the same reach.
+            if dedicated, policy.sandbox == .developer {
+                DeveloperAccess.widen(&profile, home: userHome, agnetaRoots: agnetaRoots, caches: policy.caches(scratch: scratch))
+            }
+            // Passed inline, never as a file in a folder the engine (or something it left running) could rewrite
+            // between Agneta writing it and the next engine starting under it.
+            wrapper = ["/usr/bin/sandbox-exec", "-p", profile.render()]
         }
         let spawned = ContinuousClock.now
         let process = try ChildProcess(executable: launch.executable.path(percentEncoded: false), arguments: launch.arguments,
@@ -228,10 +297,12 @@ public actor EngineSupervisor: EngineSource {
             }
         } catch {
             await stop(process)
+            grants.remove(token: token)
+            for folder in launch.temporary + (tokenFile.map { [$0] } ?? []) { try? FileManager.default.removeItem(at: folder) }
             throw RPCError(code: RPCError.internalError, message: "The engine didn't start: \(error)")
         }
         running[key] = Running(process: process, peer: peer, token: token, grant: grant, workspace: dedicated ? policy.workspace : nil,
-                               stateRoot: launch.stateRoot, engineInfo: initialized["agentInfo"], engine: adapter)
+                               stateRoot: launch.stateRoot, engineInfo: initialized["agentInfo"], engine: adapter, temporary: launch.temporary + (tokenFile.map { [$0] } ?? []))
         let elapsed = ContinuousClock.now - spawned
         return EngineLease(key: key, peer: peer, pid: process.pid, dedicated: dedicated, engine: adapter, stateRoot: launch.stateRoot,
                            startMs: Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15,
@@ -243,9 +314,7 @@ public actor EngineSupervisor: EngineSource {
     private func exited(key: String, pid: pid_t) async {
         guard let engine = running[key], engine.process.pid == pid else { return }
         running.removeValue(forKey: key)
-        grants.remove(token: engine.token)
-        await engine.peer.close("the engine exited")
-        await stop(engine.process)
+        await retire(engine, "the engine exited")
     }
 
     /// A dedicated engine stops when its last holder releases it (a fork's brief hold on a task's engine
@@ -258,11 +327,19 @@ public actor EngineSupervisor: EngineSource {
         guard holders[lease.key, default: 0] <= 0 else { return }
         holders[lease.key] = nil
         guard lease.dedicated, let engine = running.removeValue(forKey: lease.key) else { return }
-        grants.remove(token: engine.token)
         stopping.insert(lease.key)
         defer { stopping.remove(lease.key) }
-        await engine.peer.close("session ended")
+        await retire(engine, "session ended")
+    }
+
+    /// Ends an engine that's no longer listed: its commands can't run or start again, then it stops, then the
+    /// folders made for it go.
+    private func retire(_ engine: Running, _ reason: String) async {
+        grants.remove(token: engine.token)
+        broker?.stopCommands(token: engine.token)
+        await engine.peer.close(reason)
         await stop(engine.process)
+        for folder in engine.temporary { try? FileManager.default.removeItem(at: folder) }
     }
 
     private func stop(_ process: ChildProcess) async {
@@ -271,11 +348,9 @@ public actor EngineSupervisor: EngineSource {
     }
 
     public func stopAll() async {
-        for (_, engine) in running {
-            await engine.peer.close("Agneta is stopping")
-            await stop(engine.process)
-        }
+        let engines = running.values
         running.removeAll()
+        for engine in engines { await retire(engine, "Agneta is stopping") }
         broker?.stop()
     }
 
@@ -286,9 +361,11 @@ public actor EngineSupervisor: EngineSource {
     /// Engine stderr must be read, or a full pipe blocks the engine. It goes to an owner-only log in
     /// the engine's home, kept under 1 MB (the older half is dropped).
     static func drain(_ handle: FileHandle, into file: URL, lines: (@Sendable (String) -> Void)? = nil) {
-        FileManager.default.createFile(atPath: file.path(percentEncoded: false), contents: nil, attributes: [.posixPermissions: 0o600])
+        // Opened once, never through a link an engine planted in its home (it would append to wherever that points).
+        let fd = Darwin.open(file.path(percentEncoded: false), O_RDWR | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0o600)
         Thread {
-            guard let log = try? FileHandle(forWritingTo: file) else { return }
+            guard fd >= 0 else { while !handle.availableData.isEmpty {}; return }
+            let log = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
             _ = try? log.seekToEnd()
             var splitter = LineSplitter(limit: 1 << 16)
             while true {
@@ -305,7 +382,8 @@ public actor EngineSupervisor: EngineSource {
                     }
                 }
                 if let size = try? log.offset(), size > 1 << 20 {
-                    let kept = (try? Data(contentsOf: file))?.suffix(1 << 19) ?? Data()
+                    try? log.seek(toOffset: size - (1 << 19))
+                    let kept = (try? log.readToEnd()) ?? Data()
                     try? log.truncate(atOffset: 0)
                     try? log.write(contentsOf: kept)
                 }
@@ -329,7 +407,7 @@ final class GrantTable: @unchecked Sendable {
     /// The grant when the token is known and the command runs inside that session's workspace.
     func grant(token: String, cwd: URL) -> ToolBroker.Grant? {
         lock.withLock {
-            guard let entry = entries[token], cwd.isInside(entry.workspace.realFileURL) else { return nil }
+            guard let entry = entries[token], cwd.isInside(entry.workspace) else { return nil }
             return entry.grant
         }
     }

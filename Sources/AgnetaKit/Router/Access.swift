@@ -53,20 +53,28 @@ public enum Access {
     /// can run now or after a download. The default first.
     public static func engines(for kind: AccountKind, allowed: EngineAllowance, catalog: EngineCatalog) -> [String] {
         let usable = ProviderEngines.supported(by: kind).filter { allowed.allows($0) && catalog.usable($0) }
-        guard let first = defaultEngine(for: kind, allowed: allowed, catalog: catalog) else { return usable }
+        guard let first = defaultEngine(for: kind, allowed: allowed, catalog: catalog, sandbox: nil) else { return usable }
         return [first] + usable.filter { $0 != first }
     }
 
     /// The engine a task on a provider runs on when it doesn't ask: the provider's default when the app may use it,
-    /// else the most preferred one it may (EngineCatalog.pick: a failed download only when nothing else can run).
-    public static func defaultEngine(for kind: AccountKind, allowed: EngineAllowance, catalog: EngineCatalog) -> String? {
-        catalog.pick(ProviderEngines.supported(by: kind).filter(allowed.allows), preferring: catalog.defaults.selected[kind])
+    /// else the most preferred one it may (EngineCatalog.pick: a failed download only when nothing else can run). Given
+    /// the sandbox the task wants, among engines that can provide it, when the app may use any: a Claude plan whose
+    /// default is Goose runs a contained task on Claude Code rather than refusing it.
+    public static func defaultEngine(for kind: AccountKind, allowed: EngineAllowance, catalog: EngineCatalog, sandbox: Sandbox? = nil) -> String? {
+        let candidates = ProviderEngines.supported(by: kind).filter(allowed.allows)
+        let capable = sandbox.map { level in candidates.filter { ProviderEngines.sandboxLevels($0, for: kind).contains(level) } } ?? candidates
+        let preferred = catalog.defaults.selected[kind]
+        return catalog.pick(capable.isEmpty ? candidates : capable,
+                            preferring: preferred.flatMap { capable.isEmpty || capable.contains($0) ? $0 : nil })
+            ?? catalog.pick(candidates, preferring: preferred)
     }
 
     /// The engine a new task runs on: the one it asks for, checked, or the default.
-    public static func engine(for kind: AccountKind, requested: String?, allowed: EngineAllowance, catalog: EngineCatalog) -> Result<String, Refusal> {
+    public static func engine(for kind: AccountKind, requested: String?, allowed: EngineAllowance, catalog: EngineCatalog,
+                              sandbox: Sandbox? = nil) -> Result<String, Refusal> {
         guard let requested else {
-            guard let engine = defaultEngine(for: kind, allowed: allowed, catalog: catalog) else { return .failure(.noEngine) }
+            guard let engine = defaultEngine(for: kind, allowed: allowed, catalog: catalog, sandbox: sandbox) else { return .failure(.noEngine) }
             return .success(engine)
         }
         guard ProviderEngines.supported(by: kind).contains(requested) else { return .failure(.unsupported(requested)) }

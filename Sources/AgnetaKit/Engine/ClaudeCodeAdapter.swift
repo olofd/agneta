@@ -44,7 +44,7 @@ public struct ClaudeCodeAdapter: EngineAdapter {
         case .claudeCode:
             guard let subscription = context.provider.subscription else { throw RPCError(code: RPCError.internalError, message: "The account has no sign-in") }
             config = subscription.claudeConfig
-            try FileManager.default.createDirectory(at: subscription.claudeTemp, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try subscription.prepareFolders()
             environment["CLAUDE_CODE_TMPDIR"] = subscription.claudeTemp.path(percentEncoded: false)
             writable += [subscription.claudeConfig, subscription.claudeTemp]
             // A plan's sign-in is in the login Keychain, reached through $HOME/Library/Keychains.
@@ -59,7 +59,22 @@ public struct ClaudeCodeAdapter: EngineAdapter {
         }
         try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         environment["CLAUDE_CONFIG_DIR"] = ClaudeCodeSignIn.configPath(config)
+        var brokered: (temp: URL, dotfiles: [URL])?
+        if let shell = context.shell, let policy = context.session?.policy, Self.shellBrokered(policy) {
+            brokered = try Self.brokerShell(shell, home: home, environment: &environment)
+        }
+        // Developer access: Claude Code's other tools find the user's toolchains too (its commands get them from the broker).
+        if context.session?.policy.sandbox == .developer {
+            environment.merge(DeveloperAccess.environment(home: FileManager.default.homeDirectoryForCurrentUser,
+                                                         caches: context.session!.policy.caches(scratch: context.home.appending(path: "scratch", directoryHint: .isDirectory)))) { _, user in user }
+        }
+        if let brokered { writable.append(brokered.temp) }
         var launch = EngineLaunch(executable: executable, arguments: [], environment: environment, writable: writable, readable: readable, stateRoot: config)
+        if let brokered {
+            launch.toolWritable = [brokered.temp]
+            launch.temporary = [brokered.temp]
+            launch.readOnly = brokered.dotfiles
+        }
         // The account's transcripts of other tasks stay out of reach; this session's own folder,
         // named as Claude Code names it (every non-alphanumeric character of the cwd becomes "-"), stays open.
         if let workspace = context.session?.policy.workspace {
@@ -68,6 +83,11 @@ public struct ClaudeCodeAdapter: EngineAdapter {
                 .replacingOccurrences(of: "[^A-Za-z0-9]", with: "-", options: .regularExpression)
             launch.denied = [projects]
             launch.exceptions = [projects.appending(path: own, directoryHint: .isDirectory)]
+        }
+        // Settings Claude Code reads when Agneta runs it outside any sandbox (sign-in, its status, sign-out): a helper
+        // command or environment there would run as the user. Never written by its engines; cleared before those runs.
+        if context.provider.kind == .claudeCode {
+            launch.readOnly += ClaudeCodeSignIn.trustedSettings.map { config.appending(path: $0) }
         }
         return launch
     }
@@ -90,36 +110,106 @@ public struct ClaudeCodeAdapter: EngineAdapter {
         return binary.deletingLastPathComponent()
     }
 
-    /// Claude Code's built-in tools, by the policy's `tools`. The app's MCP tools are always available.
-    static let builtIns = ["Bash", "BashOutput", "KillShell", "Edit", "MultiEdit", "Write", "NotebookEdit", "Read", "Glob", "Grep",
-                           "WebFetch", "WebSearch", "Task", "TodoWrite", "SlashCommand", "Skill"]
-    static func disallowed(_ policy: SessionPolicy) -> [String] {
+    /// Whether the session's Bash runs through Agneta's broker: whenever it has workspace or read tools. Developer
+    /// access too: there the broker's profile is widened like a terminal's (the user's home as HOME, the internet),
+    /// but it keeps the engine's sign-in out, which the engine's own sandbox must read (measured: a developer command
+    /// listed ~/Library/Keychains when it ran in the engine's sandbox).
+    public static func shellBrokered(_ policy: SessionPolicy) -> Bool { policy.tools != .appOnly }
+
+    /// Bash through the broker. Claude Code wraps each whole command (snapshot sourcing, `eval`, and recording the
+    /// current folder) in `CLAUDE_CODE_SHELL_PREFIX`, split at its last ` -` into `'agneta-shell' -c '<command>'`,
+    /// agneta-shell's own usage (measured in 2.1.325), so the command runs under the session's tool profile, never in
+    /// the engine's sandbox. The outer shell is bash, which reads no startup files for `-c`; the engine home's
+    /// startup files (read by a login shell, which Claude Code falls back to without a snapshot) are kept unwritable.
+    /// Its temporary folder is the engine's own, short (it holds Unix sockets: sockaddr_un allows 104 bytes), and
+    /// writable by the commands too: they write the current-folder file and background output there.
+    static func brokerShell(_ shell: URL, home: URL, environment: inout [String: String]) throws -> (temp: URL, dotfiles: [URL]) {
+        let digest = home.path(percentEncoded: false).utf8.reduce(UInt64(1469598103934665603)) { ($0 ^ UInt64($1)) &* 1099511628211 }
+        let temp = try OwnFolder.ensure(FileManager.default.temporaryDirectory.appending(path: "agneta-e\(String(digest, radix: 36).prefix(8))", directoryHint: .isDirectory),
+                                        under: FileManager.default.temporaryDirectory)
+        environment["CLAUDE_CODE_SHELL_PREFIX"] = shell.path(percentEncoded: false) + " -c"
+        environment["CLAUDE_CODE_SHELL"] = "/bin/bash"
+        environment["CLAUDE_CODE_TMPDIR"] = temp.path(percentEncoded: false)
+        let dotfiles = [".bash_profile", ".bash_login", ".profile", ".bashrc", ".bash_logout", ".zshenv", ".zprofile", ".zshrc", ".zlogin", ".inputrc"]
+            .map { home.appending(path: $0) }
+        return (temp, dotfiles)
+    }
+
+    /// The built-in tools a policy offers, by Claude Code's own names, passed as the SDK's `tools`: Claude Code offers
+    /// exactly these, so a tool a later version adds stays off until it's named here (the app's MCP tools aren't
+    /// affected; measured on 2.1.325). Commands aren't among them: Claude Code runs the ones it judges read-only
+    /// without asking, inside the engine's sandbox, which reaches port 443 (measured), so Bash waits for the broker.
+    /// `ToolSearch` only loads deferred tools, the app's among them. Developer access gets Claude Code's own set.
+    static func tools(_ policy: SessionPolicy) -> [String]? {
+        if policy.sandbox == .developer { return nil }
+        // Bash (and stopping its background commands) only through the broker; Monitor never on this path.
+        let shell = shellBrokered(policy) ? ["Bash", "TaskStop", "Agent"] : []
         switch policy.tools {
-        case .appOnly: builtIns
-        case .read: builtIns.filter { !["Read", "Glob", "Grep"].contains($0) }
-        case .workspace: ["WebFetch", "WebSearch", "Task", "SlashCommand", "Skill"]
+        case .appOnly: return ["ToolSearch"]
+        case .read: return ["Read", "Glob", "Grep", "ToolSearch"] + shell
+        case .workspace: return ["Read", "Glob", "Grep", "Edit", "Write", "NotebookEdit", "ToolSearch"] + shell
         }
     }
 
-    public func newSession(cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?) -> JSONValue {
+    /// A second net under the allowlist: the built-ins that run commands or code, fetch, or act beyond the session
+    /// (2.1.325's names, with the old ones kept for older versions). Under developer access only what reaches the
+    /// user's claude.ai account or devices stays off.
+    static let neverByDefault = ["Bash", "PowerShell", "Monitor", "BashOutput", "KillShell", "TaskStop", "WebFetch", "WebSearch", "Agent",
+                                 "Task", "Skill", "SlashCommand", "Workflow", "LSP", "EnterWorktree", "ExitWorktree", "CronCreate", "CronDelete",
+                                 "CronList", "RemoteTrigger", "ScheduleWakeup", "SendMessage", "ListAgents", "Artifact", "SendUserFile",
+                                 "PushNotification", "Projects", "ClaudeDesign", "ReadNotifications", "SendUserMessage"]
+    static func disallowed(_ policy: SessionPolicy) -> [String] {
+        // Developer access: everything a terminal's Claude Code has, apart from what reaches the user's claude.ai account
+        // or devices rather than this machine (artifacts, projects, designs, notifications, remote agents): a session
+        // works for the app, and what it makes or sends goes back to the app.
+        // Monitor and PowerShell run commands natively inside the engine's profile, which on a plan reaches the sign-in's
+        // Keychain: off until they're shown to go through Agneta's broker as Bash does.
+        if policy.sandbox == .developer {
+            return ["RemoteTrigger", "Artifact", "Projects", "ClaudeDesign", "SendUserMessage", "SendUserFile", "PushNotification", "Monitor", "PowerShell"]
+        }
+        return shellBrokered(policy) ? neverByDefault.filter { !["Bash", "TaskStop", "KillShell", "BashOutput", "Agent", "Task"].contains($0) } : neverByDefault
+    }
+
+    /// The session options, the same on new, load and fork: a resumed session given none falls back to the
+    /// adapter's defaults, which load the workspace's own `.claude/settings.json` (hooks, env, permissions the agent
+    /// can write; measured on 0.107.2).
+    func meta(_ policy: SessionPolicy, instructions: String?) -> JSONValue {
+        var options: [String: JSONValue] = [
+            // Nothing from the user's own settings or MCP configuration; no extra model work for suggestions; MCP
+            // servers handed over at start rather than as command-line arguments (where other users could read bearers).
+            "settingSources": [], "strictMcpConfig": true, "promptSuggestions": false, "mcpServersDelivery": "initialize",
+            "disallowedTools": .array(Self.disallowed(policy).map(JSONValue.string)),
+        ]
+        if let tools = Self.tools(policy) { options["tools"] = .array(tools.map(JSONValue.string)) }
         var meta: [String: JSONValue] = [
             "claudeCode": [
-                "options": [
-                    // Nothing from the user's own settings; no extra model work for suggestions; MCP servers handed
-                    // over at start rather than as command-line arguments (where other users could read bearers).
-                    "settingSources": [], "promptSuggestions": false, "mcpServersDelivery": "initialize",
-                    "disallowedTools": .array(Self.disallowed(policy).map(JSONValue.string)),
-                ],
+                "options": .object(options),
                 // Each model call's usage, from the SDK's own messages.
                 "emitRawSDKMessages": [["type": "assistant"], ["type": "result"]],
             ],
         ]
         if let instructions { meta["systemPrompt"] = .string(instructions) }
-        return ["cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": .array(servers), "_meta": .object(meta)]
+        return .object(meta)
+    }
+
+    public func newSession(cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?) -> JSONValue {
+        ["cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": .array(servers), "_meta": meta(policy, instructions: instructions)]
     }
 
     public func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy) -> JSONValue {
-        ["sessionId": .string(engineSession), "cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": .array(servers)]
+        loadSession(engineSession, cwd: cwd, servers: servers, policy: policy, instructions: nil)
+    }
+
+    public func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy, instructions: String?) -> JSONValue {
+        ["sessionId": .string(engineSession), "cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": .array(servers),
+         "_meta": meta(policy, instructions: instructions)]
+    }
+
+    /// The adapter starts sessions in `auto`, where Claude Code decides its own permissions and asks nothing
+    /// (measured on 0.107.2: Bash and Monitor ran without a request), and `permissionMode` in the options is
+    /// ignored: every opened session is set to `default`, so each tool call is asked about.
+    public func prepareSession(_ engineSession: String) -> [EngineRequest] {
+        [EngineRequest("session/set_mode", ["sessionId": .string(engineSession), "modeId": "default"])]
     }
 
     public func setInstructions(_ engineSession: String, text: String, appendKey: String?) -> EngineRequest? { nil }
@@ -148,6 +238,8 @@ public struct ClaudeCodeAdapter: EngineAdapter {
     /// Claude Code's own sandboxed tools and claude-agent-acp's client-backed ones are MCP servers of theirs
     /// (`mcp__workspace__bash`, `mcp__acp__…`).
     public var reservedToolServers: Set<String> { ["workspace", "acp"] }
+
+    public func brokersShell(_ policy: SessionPolicy) -> Bool { Self.shellBrokered(policy) }
 
     public func exportSession(_ engineSession: String) -> EngineRequest? { nil }
     public func importSession(_ exported: JSONValue) -> EngineRequest? { nil }

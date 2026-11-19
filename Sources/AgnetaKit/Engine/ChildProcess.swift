@@ -9,6 +9,8 @@ public enum ChildProcessError: Error, Equatable {
 }
 
 public final class ChildProcess: @unchecked Sendable {
+    /// Whether it leads its own process group (the default) or joined a holder's.
+    public let ownsGroup: Bool
     public let pid: pid_t
     public let stdin: FileHandle
     public let stdout: FileHandle
@@ -27,7 +29,11 @@ public final class ChildProcess: @unchecked Sendable {
     ///   - executable: absolute path.
     ///   - environment: the complete environment; nothing is inherited.
     ///   - wrapper: optional launcher prefix, for example `sandbox-exec -f profile`.
-    public init(executable: String, arguments: [String], environment: [String: String], directory: String? = nil, wrapper: [String] = []) throws {
+    ///   - joining: an existing process group to start in, whose leader (a holder) keeps it, rather than a group of its
+    ///     own. Its exit then ends nothing else, and only it is signalled: the group is its holder's to end.
+    public init(executable: String, arguments: [String], environment: [String: String], directory: String? = nil, wrapper: [String] = [],
+                joining: pid_t? = nil) throws {
+        ownsGroup = joining == nil
         var inPipe: [Int32] = [0, 0], outPipe: [Int32] = [0, 0], errPipe: [Int32] = [0, 0]
         for index in 0..<3 {
             let result = index == 0 ? pipe(&inPipe) : index == 1 ? pipe(&outPipe) : pipe(&errPipe)
@@ -53,7 +59,7 @@ public final class ChildProcess: @unchecked Sendable {
         // Reset signal dispositions and the mask: a test runner or launcher that ignores
         // SIGTERM must not make the engine immune to Stop.
         posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK))
-        posix_spawnattr_setpgroup(&attributes, 0)
+        posix_spawnattr_setpgroup(&attributes, joining ?? 0)
         var allSignals = sigset_t(), noSignals = sigset_t()
         sigfillset(&allSignals)
         sigemptyset(&noSignals)
@@ -83,7 +89,7 @@ public final class ChildProcess: @unchecked Sendable {
         stdout = FileHandle(fileDescriptor: outPipe[0], closeOnDealloc: true)
         stderr = FileHandle(fileDescriptor: errPipe[0], closeOnDealloc: true)
 
-        let leader = child, group = self.group
+        let leader = child, group = self.group, owns = ownsGroup
         let reaper = Thread { [weak self] in
             // Seen exited but not yet reaped: the leader is a zombie that still holds its number, so the group can't be
             // anyone else's. Whatever it left running in its group ends now, and only then is it reaped.
@@ -91,7 +97,7 @@ public final class ChildProcess: @unchecked Sendable {
             // reports a stopped child over and over, spinning). If it can't tell, the group is left alone.
             let exited = ChildProcess.waitForExitUnreaped(leader)
             group.lock.withLock {
-                if exited { killpg(leader, SIGKILL) }
+                if exited, owns { killpg(leader, SIGKILL) }
                 group.reaped = true
             }
             var raw: Int32 = 0
@@ -150,7 +156,7 @@ public final class ChildProcess: @unchecked Sendable {
     /// Signals the process group, but only while its leader is unreaped: after that the number may belong to
     /// another program (the reaper has already ended what the group left behind).
     public func signalGroup(_ signal: Int32) {
-        group.lock.withLock { if !group.reaped { killpg(pid, signal) } }
+        group.lock.withLock { if !group.reaped { if ownsGroup { killpg(pid, signal) } else { kill(pid, signal) } } }
     }
 
     /// Signals the whole process group: TERM, then KILL after `grace`. Returns once the leader has exited.

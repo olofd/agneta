@@ -100,7 +100,7 @@ extension Router {
         if method == "agneta/pair" {
             let name = params?["name"]?.stringValue ?? "An app"
             // The scope is checked before the user sees anything: a folder Agneta would refuse is never offered.
-            let scope: (tools: SessionPolicy.Tools, folders: [URL])
+            let scope: (tools: SessionPolicy.Tools, folders: [URL], sandbox: Sandbox)
             do { scope = try GrantScope.requested(params?["scope"], context: context) } catch let rejection as PolicyRejection {
                 return .failure(rejection.rpcError)
             } catch {
@@ -117,7 +117,8 @@ extension Router {
                 code = String(format: "%06d", number % 1_000_000)
                 try? await app.peer.notify("agneta/pairingCode", ["code": .string(code!), "name": .string(name)])
             }
-            let request = PairingRequest(id: UUID(), app: name, peer: peer, code: code, tools: scope.tools, folders: scope.folders)
+            var request = PairingRequest(id: UUID(), app: name, peer: peer, code: code, tools: scope.tools, folders: scope.folders)
+            request.sandbox = scope.sandbox
             pairing[appID] = request.id
             let decision = await approve(request)
             pairing[appID] = nil
@@ -136,7 +137,7 @@ extension Router {
             let renewed = earlier.flatMap { $0.verified ? $0 : nil }
             var grant = Grant(id: renewed?.id ?? UUID().uuidString, app: name, identifier: identifier, team: team, verified: verified,
                               accounts: answer.accounts, engines: answer.engines, tools: scope.tools,
-                              folders: scope.folders.map { $0.path(percentEncoded: false) }, remembered: answer.remember)
+                              folders: scope.folders.map { $0.path(percentEncoded: false) }, remembered: answer.remember, sandbox: answer.sandbox)
             // The app's own workspace, inside its grant whatever else it asked for.
             if let root = context.appWorkspaces {
                 let workspace = root.appending(path: grant.id, directoryHint: .isDirectory)

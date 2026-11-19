@@ -263,19 +263,33 @@ public struct ClaudeCodeSignIn: Sendable {
     /// Claude Code keeps its credential in the user's login keychain, which macOS finds through
     /// $HOME/Library/Keychains (measured: with any other HOME, "A default keychain could not be
     /// found" and the login fails to save). A private home therefore links that one folder back.
+    /// Settings files in the account's config folder that Claude Code would act on outside any sandbox (an API key
+    /// helper, environment, hooks): Agneta never writes them, its engines may not, and they're cleared before Agneta
+    /// runs Claude Code itself.
+    public static let trustedSettings = ["settings.json", "settings.local.json", "managed-settings.json", "CLAUDE.md", "commands", "agents", "skills", "hooks"]
+
     public static func linkKeychains(into home: URL) throws {
-        let library = home.appending(path: "Library", directoryHint: .isDirectory)
+        // A real folder first: an engine may have replaced its home's Library with a link, and removing the old
+        // Keychains link through it would delete wherever that points.
+        let library = try OwnFolder.ensure(home.appending(path: "Library", directoryHint: .isDirectory), under: home.deletingLastPathComponent())
         let link = library.appending(path: "Keychains")
         let real = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Keychains", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         if (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path(percentEncoded: false))) == real.path(percentEncoded: false) { return }
         try? FileManager.default.removeItem(at: link)
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
     }
 
     /// Whether Claude Code is signed in for this account (`auth status`, JSON with `loggedIn`).
-    public func isSignedIn() async throws -> Bool {
+    /// The account's config folder made Agneta's own again before Claude Code runs on it outside any sandbox: never a
+    /// link an engine planted in its place.
+    func prepareFolders() throws {
+        try OwnFolder.ensure(configDirectory, under: configDirectory.deletingLastPathComponent().deletingLastPathComponent())
+        for name in Self.trustedSettings { try? FileManager.default.removeItem(at: configDirectory.appending(path: name)) }
         try Self.linkKeychains(into: configDirectory.deletingLastPathComponent())
+    }
+
+    public func isSignedIn() async throws -> Bool {
+        try prepareFolders()
         let child = try ChildProcess(executable: cli.path(percentEncoded: false), arguments: ["auth", "status", "--json"], environment: environment,
                                      directory: configDirectory.deletingLastPathComponent().path(percentEncoded: false))
         try? child.stdin.close()
@@ -290,7 +304,7 @@ public struct ClaudeCodeSignIn: Sendable {
     /// exited cleanly; at most `timeout`.
     @discardableResult
     public func signOut(timeout: Duration = .seconds(20)) async -> Bool {
-        guard (try? Self.linkKeychains(into: configDirectory.deletingLastPathComponent())) != nil,
+        guard (try? prepareFolders()) != nil,
               let child = try? ChildProcess(executable: cli.path(percentEncoded: false), arguments: ["auth", "logout"], environment: environment,
                                             directory: configDirectory.deletingLastPathComponent().path(percentEncoded: false)) else { return false }
         try? child.stdin.close()
@@ -306,8 +320,7 @@ public struct ClaudeCodeSignIn: Sendable {
     /// - Parameter code: supplies the code Claude's page shows after sign-in, which its login asks to have pasted.
     public func run(progress: @escaping SignInProgress, code: @escaping SignInCodeSource, timeout: Duration = .seconds(600),
                     output: (@Sendable (String) -> Void)? = nil) async throws {
-        try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try Self.linkKeychains(into: configDirectory.deletingLastPathComponent())
+        try prepareFolders()
         let terminal = try PTYProcess(executable: cli.path(percentEncoded: false), arguments: ["auth", "login", "--claudeai"],
                                       environment: environment, directory: configDirectory.path(percentEncoded: false))
         progress(.waiting("Starting Claude's sign-in…"))

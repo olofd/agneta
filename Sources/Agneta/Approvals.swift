@@ -23,6 +23,8 @@ final class Approvals {
         var folders: [URL] = []
         /// The app has remembered access already, which Always Allow replaces (Router.sameApp).
         var replaces = false
+        /// The most its tasks may do: where the app's own ask starts it (full power unless it asks for less).
+        var sandbox: Sandbox = .default
     }
 
     /// A request nobody answers is refused after this long: a window nobody saw shouldn't keep its app waiting.
@@ -48,7 +50,7 @@ final class Approvals {
         await withCheckedContinuation { continuation in
             let request = Request(id: pairing.id, app: pairing.app, identifier: pairing.peer?.identifier, verified: pairing.code == nil,
                                   code: pairing.code ?? "", allowed: allowed, engines: engines, tools: pairing.tools, folders: pairing.folders,
-                                  replaces: replaces)
+                                  replaces: replaces, sandbox: pairing.sandbox)
             if queue.add(id: pairing.id, request, answer: { continuation.resume(returning: $0) }) { present(pairing.id) }
             _Concurrency.Task { [weak self] in
                 try? await _Concurrency.Task.sleep(for: Self.timeout)
@@ -62,7 +64,9 @@ final class Approvals {
     func answer(remember: Bool?) {
         guard let pending = current else { return }
         let allowed = order().filter(pending.allowed.contains)
-        settle(pending.id, with: remember.map { Router.PairingAnswer(accounts: allowed, engines: allowance(pending.engines), remember: $0) })
+        settle(pending.id, with: remember.map {
+            Router.PairingAnswer(accounts: allowed, engines: allowance(pending.engines), remember: $0, sandbox: pending.sandbox)
+        })
     }
 
     /// Answers a request, shown or waiting; nil is Don't Allow. Answering one already answered does nothing.

@@ -126,6 +126,9 @@ public struct GooseAdapter: EngineAdapter {
     public func sessionsDeleted(stateRoot: URL) -> String? {
         let file = stateRoot.appending(path: "data/sessions/sessions.db").path(percentEncoded: false)
         guard FileManager.default.fileExists(atPath: file) else { return nil }
+        // Only Goose's own database, never another file a link in its folders, or in their place, points to (VACUUM
+        // rewrites it): the state root is Agneta's own path, written as it is.
+        guard URL(filePath: file).realFileURL.path(percentEncoded: false) == file else { return "its database isn't where Goose keeps it" }
         do {
             var configuration = Configuration()
             configuration.busyMode = .timeout(2)

@@ -97,6 +97,28 @@ private func temporaryFolder() throws -> URL {
 
     /// Before 1.0 there are no migrations: a database made with another schema (an earlier build's, a later one's) is
     /// refused and left exactly as it was, so the user resets.
+    /// Grants made before the sandbox existed were approved as contained, so they stay contained; a new one keeps
+    /// what the user chose.
+    @Test func grantsFromBeforeTheSandboxStayContained() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appending(path: "agneta.sqlite")
+        let database = try AgnetaDatabase(file: file)
+        try database.save(Router.Grant(app: "Old App", accounts: ["a1"], tools: .workspace, sandbox: .developer), tokenHash: "old")
+        try database.close()
+        // As the database was before the migration: no sandbox column, the migration not yet run.
+        let queue = try DatabaseQueue(path: file.path(percentEncoded: false))
+        try queue.write { db in
+            try db.execute(sql: "ALTER TABLE grants DROP COLUMN sandbox")
+            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = '2026-11-19-grant-sandbox'")
+        }
+        try queue.close()
+        let migrated = try AgnetaDatabase(file: file)
+        #expect(try migrated.grants()["old"]?.sandbox == .contained)
+        try migrated.save(Router.Grant(app: "New App", accounts: ["a1"], tools: .workspace, sandbox: .developer), tokenHash: "new")
+        #expect(try migrated.grants()["new"]?.sandbox == .developer)
+    }
+
     @Test func refusesADatabaseFromAnotherSchema() throws {
         let folder = try temporaryFolder()
         defer { try? FileManager.default.removeItem(at: folder) }

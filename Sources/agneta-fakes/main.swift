@@ -26,7 +26,7 @@ default:
 print("listening on 127.0.0.1:\(arguments[arguments.startIndex + 1])")
 fflush(stdout)
 signal(SIGTERM, SIG_IGN)
-let stop = DispatchSource.makeSignalSource(signal: SIGTERM)
+let stop = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 stop.setEventHandler { server.stop(); exit(0) }
 stop.resume()
 while true { try await Task.sleep(for: .seconds(3600)) }

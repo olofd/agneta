@@ -30,7 +30,7 @@ public struct CodexAdapter: EngineAdapter {
     public static func codexHome(account home: URL) -> URL { home.appending(path: "codex", directoryHint: .isDirectory) }
 
     /// Agneta's settings for a Codex home; written before sign-in and every launch.
-    public static func writeConfig(_ codexHome: URL) throws {
+    public static func writeConfig(_ codexHome: URL, shell: URL? = nil) throws {
         try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let toml = """
         # Written by Agneta for this account; changes are replaced at the next start.
@@ -71,7 +71,14 @@ public struct CodexAdapter: EngineAdapter {
         network_access = false
 
         """
-        try toml.write(to: codexHome.appending(path: "config.toml"), atomically: true, encoding: .utf8)
+        let file = codexHome.appending(path: "config.toml")
+        // Without a shell (sign-in), the one the last launch wrote stays: it's the account's, and the only way in.
+        var info = stat()
+        let regular = lstat(file.path(percentEncoded: false), &info) == 0 && info.st_mode & S_IFMT == S_IFREG
+        let kept = shell == nil && regular ? (try? String(contentsOf: file, encoding: .utf8)).flatMap { old in
+            old.range(of: shellServerHeader).map { String(old[$0.lowerBound...]) }
+        } : nil
+        try (toml + (shell.map(Self.shellServerConfig) ?? kept ?? "")).write(to: file, atomically: true, encoding: .utf8)
     }
 
     public func launch(_ context: EngineLaunchContext) throws -> EngineLaunch {
@@ -90,33 +97,61 @@ public struct CodexAdapter: EngineAdapter {
         switch context.provider.kind {
         case .chatGPT:
             guard let subscription = context.provider.subscription else { throw RPCError(code: RPCError.internalError, message: "The account has no sign-in") }
-            codexHome = Self.codexHome(account: subscription.home)
+            codexHome = try OwnFolder.ensure(Self.codexHome(account: subscription.home), under: subscription.home.deletingLastPathComponent())
             writable.append(codexHome) // Codex keeps its sessions there
             // The sign-in is in the login Keychain (keyring mode), reached through $HOME/Library/Keychains, as for Claude Code.
             try ClaudeCodeSignIn.linkKeychains(into: home)
             keychains = true
         case .openAI:
-            codexHome = home.appending(path: "codex", directoryHint: .isDirectory)
+            codexHome = try OwnFolder.ensure(home.appending(path: "codex", directoryHint: .isDirectory), under: home.deletingLastPathComponent())
             environment["OPENAI_API_KEY"] = context.provider.apiKey ?? ""
             environment["CODEX_API_KEY"] = context.provider.apiKey ?? ""
         case .anthropic, .claudeCode:
             throw RPCError(code: RPCError.invalidParams, message: "Codex serves ChatGPT and OpenAI accounts")
         }
-        try Self.writeConfig(codexHome)
+        Self.clearTrusted(codexHome)
+        try Self.writeConfig(codexHome, shell: context.shell)
         environment["CODEX_HOME"] = codexHome.path(percentEncoded: false)
         // Codex's own modes (never codex-acp's default, `agent`). Its inner sandbox can't nest inside Agneta's, which
         // does the confining: measured, Codex runs shell commands without asking, and they fail with "sandbox_apply:
         // Operation not permitted" without a tool call; edits ask first and work.
         environment["INITIAL_AGENT_MODE"] = context.session?.policy.tools == .workspace ? "workspace-write" : "read-only"
+        // Codex's own command tools off, Agneta's shell instead: the server in config.toml offers its tool to this
+        // process only (AGNETA_SHELL), running in the session's workspace through this engine's broker token.
+        if context.shell != nil, let policy = context.session?.policy, brokersShell(policy) {
+            // Web search runs on OpenAI's servers, which no sandbox reaches: on under developer access, as in Codex
+            // itself; off when contained (the account's config.toml has it off).
+            environment["CODEX_CONFIG"] = policy.sandbox == .developer
+                ? #"{"features":{"shell_tool":false,"unified_exec":false},"web_search":"live"}"#
+                : #"{"features":{"shell_tool":false,"unified_exec":false}}"#
+            environment["AGNETA_SHELL"] = "1"
+            environment["AGNETA_SHELL_CWD"] = policy.workspace.path(percentEncoded: false)
+        }
+        // Developer access: its commands run as in a terminal, through Agneta's shell in the widened profile, finding the
+        // user's toolchains. The mode stays one that asks before edits, so an app that answers permissions is asked.
+        if context.session?.policy.sandbox == .developer {
+            environment.merge(DeveloperAccess.environment(home: FileManager.default.homeDirectoryForCurrentUser,
+                                                         caches: context.session!.policy.caches(scratch: context.home.appending(path: "scratch", directoryHint: .isDirectory)))) { _, user in user }
+            environment["PATH"] = node.deletingLastPathComponent().path(percentEncoded: false) + ":" + (environment["PATH"] ?? "")
+        }
         var readable = [node.deletingLastPathComponent().deletingLastPathComponent(), script.deletingLastPathComponent().deletingLastPathComponent(),
                         cli.path.deletingLastPathComponent().deletingLastPathComponent()]
         if keychains { readable.append(FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Keychains", directoryHint: .isDirectory)) }
-        return EngineLaunch(executable: node, arguments: [script.path(percentEncoded: false)], environment: environment,
-                            writable: writable, readable: readable, stateRoot: codexHome)
+        var launch = EngineLaunch(executable: node, arguments: [script.path(percentEncoded: false)], environment: environment,
+                                  writable: writable, readable: readable, stateRoot: codexHome)
+        // What Codex trusts at its next start, though in the folder it writes: a session that could write them would
+        // give later sessions its instructions, skills, rules or tool servers.
+        launch.readOnly = Self.trustedFiles.map { codexHome.appending(path: $0) }
+        return launch
     }
+
+    /// Codex's own instructions describe its own shell, which is off on the contained path: without a word on it, the
+    /// model worked around commands rather than use Agneta's (measured in Replica Bench: builds and probes skipped).
+    static let shellNote = "In this session your shell is the `shell` tool of the `agneta` MCP server (mcp__agneta__shell): it runs a bash command in the workspace and returns its output and exit status. Codex's own command tools aren't available here, so run every command (builds, tests, scripts, git, inspecting files) with it."
 
     public func newSession(cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?) -> JSONValue {
         var params: JSONValue = ["cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": .array(servers)]
+        let instructions = brokersShell(policy) ? [instructions, Self.shellNote].compactMap { $0 }.joined(separator: "\n\n") : instructions
         // Measured: an object with `mode` ("append" or "override"). Appended: Codex's own base instructions say
         // how to use its tools, and replacing them would cripple it.
         if let instructions {
@@ -163,8 +198,54 @@ public struct CodexAdapter: EngineAdapter {
             ?? params?["toolCall"]?["toolCallId"]?.stringValue.flatMap { calls[$0] }
     }
 
-    /// The connectors server Codex can bring for ChatGPT accounts.
-    public var reservedToolServers: Set<String> { ["codex_apps"] }
+    /// The connectors server Codex can bring for ChatGPT accounts, and Agneta's own shell.
+    public var reservedToolServers: Set<String> { ["codex_apps", Self.shellServer] }
+
+    /// Agneta's shell as an MCP server (`agneta-shell --mcp`): Codex's own shell can't be pointed elsewhere and its
+    /// own sandbox can't nest in Agneta's, so on the contained path its shell tools are off and this one runs each
+    /// command through the broker, like Goose's.
+    static let shellServer = "agneta"
+    /// Under developer access too: there the broker's profile is widened like a terminal's but keeps the ChatGPT
+    /// sign-in out, which Codex's own sandbox must read (measured: a developer command listed ~/Library/Keychains).
+    public func brokersShell(_ policy: SessionPolicy) -> Bool { policy.tools != .appOnly }
+
+    /// Agneta's shell in the account's config.toml, the same for every session: codex-acp replaces the MCP servers in
+    /// CODEX_CONFIG with the session's own (measured: the shell vanished once an app passed a server), while config.toml's
+    /// stay beside them. Each Codex process hands it its own broker socket and token, which the server reads from its
+    /// environment (`env_vars`); a session without a shell gets no tool from it (AGNETA_SHELL unset). An hour per call
+    /// for long builds.
+    /// Files in CODEX_HOME that Codex trusts at its next start: never written by its engines.
+    static let trustedFiles = ["config.toml", ".env", "AGENTS.md", "AGENTS.override.md", "skills", "rules", "prompts", "hooks.json", "hooks"]
+
+    /// What Codex trusts at its start that Agneta never puts there goes before anything runs Codex on the folder,
+    /// in case an engine planted it by an earlier route.
+    public static func clearTrusted(_ codexHome: URL) {
+        for name in trustedFiles where name != "config.toml" { try? FileManager.default.removeItem(at: codexHome.appending(path: name)) }
+    }
+
+    /// A ChatGPT account's Codex home as Agneta's own folder, before sign-in, status or sign-out run Codex on it outside
+    /// any sandbox: a real folder (never a link an engine planted) with nothing Codex would trust planted in it.
+    public static func prepareAccountHome(_ codexHome: URL) throws -> URL {
+        let home = try OwnFolder.ensure(codexHome, under: codexHome.deletingLastPathComponent().deletingLastPathComponent())
+        clearTrusted(home)
+        return home
+    }
+
+    static var shellServerHeader: String { "[mcp_servers.\(shellServer)]" }
+
+    static func shellServerConfig(_ shell: URL) -> String {
+        let path = shell.path(percentEncoded: false).replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        return """
+
+        \(shellServerHeader)
+        command = "\(path)"
+        args = ["--mcp"]
+        env_vars = ["AGNETA_BROKER_SOCKET", "AGNETA_BROKER_TOKEN_FILE", "AGNETA_SHELL", "AGNETA_SHELL_CWD"]
+        startup_timeout_sec = 30
+        tool_timeout_sec = 3600
+
+        """
+    }
 
     public func exportSession(_ engineSession: String) -> EngineRequest? { nil }
     public func importSession(_ exported: JSONValue) -> EngineRequest? { nil }

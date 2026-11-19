@@ -4,7 +4,7 @@ How Agneta keeps an engine, and the commands it runs, inside what the user and t
 
 ## What Agneta relies on
 
-macOS's Seatbelt sandbox, through `/usr/bin/sandbox-exec`. Each engine process runs under a profile Agneta writes for it (`Policy/SandboxProfile.swift`), and shell commands on Goose and OpenCode run under a stricter one, through Agneta's tool broker. The profiles allow-list what may be read, written and run, and which network connections may be made; they deny Apple Events, LaunchServices, signals and process inspection outside the sandbox.
+macOS's Seatbelt sandbox, through `/usr/bin/sandbox-exec`. Each engine process runs under a profile Agneta writes for it (`Policy/SandboxProfile.swift`), and every engine's shell commands run under a stricter one, through Agneta's tool broker. The profiles allow-list what may be read, written and run, and which network connections may be made; they deny Apple Events, LaunchServices, signals and process inspection outside the sandbox.
 
 `sandbox-exec` is marked deprecated in its manual page, and the profile language isn't documented by Apple. It's still in macOS 26, and other agent tools rely on the same mechanism on macOS (Codex's and Claude Code's own sandboxes among them). The risks are that a macOS release:
 
@@ -63,5 +63,6 @@ None of these is built. The acceptance test is written against behaviour, not ag
 ## Known limits
 
 - **Engines reach any host on port 443.** Seatbelt filters connections by port, not host name, and engines need HTTPS for their provider. A per-host allowlist needs a network layer Agneta owns (a proxy, or the virtual machine route above).
-- **Claude Code and Codex run their own tools inside the engine's profile,** not the stricter shell profile. Agneta refuses what the policy forbids in their permission requests ([APP_PROTOCOL.md](APP_PROTOCOL.md#permissions)). The acceptance test hasn't yet run with their real programs; it needs signed-in accounts.
+- **Claude Code's and Codex's other built-in tools (reading, editing, fetching) run inside the engine's profile,** not the stricter shell profile; their commands go through the broker. Agneta refuses what the policy forbids in their permission requests ([APP_PROTOCOL.md](APP_PROTOCOL.md#permissions)). The acceptance test hasn't yet run with their real programs; it needs signed-in accounts.
+- **Other processes' environments are readable** to any process of the user's, sandboxed or not: no Seatbelt rule stops `KERN_PROCARGS2` without stopping every program (measured). Agneta keeps its broker tokens in files; an API-key account's key is still in its engine's environment.
 - **On a Claude or ChatGPT plan the engine reads `~/Library/Keychains`,** where Claude Code and Codex keep their sign-ins.

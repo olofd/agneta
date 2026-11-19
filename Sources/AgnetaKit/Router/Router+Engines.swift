@@ -52,8 +52,12 @@ extension Router {
             if let call = update["toolCallId"]?.stringValue {
                 if ["completed", "failed"].contains(update["status"]?.stringValue ?? "") {
                     sessions[id]?.toolServers[call] = nil
-                } else if let server = session.lease.engine.toolIdentity(in: update).server {
-                    sessions[id]?.toolServers[call] = server
+                    sessions[id]?.toolNames[call] = nil
+                } else {
+                    let identity = session.lease.engine.toolIdentity(in: update)
+                    if let server = identity.server { sessions[id]?.toolServers[call] = server }
+                    // A built-in's permission request carries only its title and kind: its name comes from here.
+                    else if let tool = identity.tool { sessions[id]?.toolNames[call] = tool }
                 }
             }
         }
@@ -87,8 +91,10 @@ extension Router {
             return (.failure(RPCError(code: RPCError.invalidParams, message: "Unknown session")), "unknown-session")
         }
         if method == "session/request_permission", runner(account: session.account, engine: session.lease.engine) == .native,
-           !Self.isAppTool(params, in: session),
-           !BuiltinTools.nativeRunnerMayUse(kind: params?["toolCall"]?["kind"]?.stringValue, policy: session.policy) {
+           !Self.isAppTool(params, in: session), !Self.isAgnetaShell(params, in: session),
+           !BuiltinTools.nativeRunnerMayUse(kind: params?["toolCall"]?["kind"]?.stringValue,
+                                            tool: params?["toolCall"]?["toolCallId"]?.stringValue.flatMap { session.toolNames[$0] },
+                                            policy: session.policy, brokered: session.lease.engine.brokersShell(session.policy)) {
             // Claude Code and Codex run their own tools inside the engine sandbox, which allows port 443:
             // refuse what the policy forbids before it runs.
             let options = params?["options"]?.arrayValue ?? []
@@ -155,6 +161,14 @@ extension Router {
     /// Whether a permission request is for one of the app's own MCP tools (Codex asks for those as `execute`).
     /// Only the servers the app named count: an engine's own MCP servers (claude-agent-acp's `mcp__acp__bash`)
     /// are built-ins.
+    /// A call to Agneta's own shell server (Codex's commands on the contained path), which runs each command through
+    /// the broker under the session's tool profile: the policy, not the engine's sandbox, confines it.
+    static func isAgnetaShell(_ params: JSONValue?, in session: Session) -> Bool {
+        guard session.lease.engine.brokersShell(session.policy),
+              let server = session.lease.engine.permissionServer(params, calls: session.toolServers) else { return false }
+        return server == CodexAdapter.shellServer && !session.appServers.contains(server)
+    }
+
     static func isAppTool(_ params: JSONValue?, in session: Session) -> Bool {
         guard let server = session.lease.engine.permissionServer(params, calls: session.toolServers) else { return false }
         return session.appServers.contains(server) && !session.lease.engine.reservedToolServers.contains(server)

@@ -13,3 +13,6 @@ xcuserdata/
 Engines/bin/
 .vscode/
 site/_build/
+
+# Working plans stay on the maintainer's Mac.
+docs/NEXT_STEP*.md

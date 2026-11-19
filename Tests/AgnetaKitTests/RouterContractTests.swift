@@ -279,10 +279,12 @@ actor FakeEngines: EngineSource {
             self.port = port
         }
 
+        /// `sandbox`: the app's ask, or nil for the grant's (full power by default).
         func session(_ app: AppClient, account: String, approval: String = "never-ask", tools: String = "app-only", network: String = "none",
-                     meta: [String: JSONValue] = [:]) async throws -> String {
-            var fullMeta: [String: JSONValue] = [SessionPolicy.key: ["tools": .string(tools), "network": .string(network), "approval": .string(approval)],
-                                                 "agneta": ["account": .string(account)]]
+                     sandbox: String? = nil, meta: [String: JSONValue] = [:]) async throws -> String {
+            var policy: JSONValue = ["tools": .string(tools), "network": .string(network), "approval": .string(approval)]
+            if let sandbox { policy = policy.setting("sandbox", to: .string(sandbox)) }
+            var fullMeta: [String: JSONValue] = [SessionPolicy.key: policy, "agneta": ["account": .string(account)]]
             fullMeta.merge(meta) { _, new in new }
             let result = try await app.request("session/new", ["cwd": .string(root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [], "_meta": .object(fullMeta)])
             return try #require(result["sessionId"]?.stringValue)
@@ -308,15 +310,18 @@ actor FakeEngines: EngineSource {
     }
 
     @Test func permissionDecisionsFollowThePolicyAndAreTraced() async throws {
-        let stack = try await Stack.start(port: 47441)
+        // A native runner on a provider whose engine can be contained (an Anthropic key here; Goose on a Claude plan
+        // can't be), so a contained session's built-in tools are judged by the policy.
+        let stack = try await Stack.start(port: 47441, approve: { _ in Router.PairingAnswer(accounts: ["brokered", "native", "nativeKey"], remember: true) })
         defer { stack.stop() }
+        await stack.router.add(account: "nativeKey", label: "Key", runner: Router.ToolRunner.native, kind: AccountKind.anthropicKey, billing: "api-key")
         let app = AppClient(port: stack.port)
         defer { app.close() }
         app.answerPermissions(with: "allow")
         try await app.pairAndInitialize("Contract")
 
-        // Claude Code runs its own tools: with no network, its shell is refused before it runs.
-        let native = try await stack.session(app, account: "native", tools: "workspace")
+        // A contained session's engine runs its own tools: with no network, its shell is refused before it runs.
+        let native = try await stack.session(app, account: "nativeKey", tools: "workspace", sandbox: "contained")
         _ = try await app.prompt(native, "permission execute")
         // The policy is the permission for everything else.
         _ = try await app.prompt(native, "permission edit")
@@ -415,7 +420,7 @@ actor FakeEngines: EngineSource {
         }
 
         // Narrowed to Goose: the OpenCode task stops, the app hears its access changed, and the grant is saved.
-        try await stack.router.setAccess(grant: grant.id, accounts: ["brokered"], engines: .only(["goose"]))
+        try await stack.router.setAccess(grant: grant.id, accounts: ["brokered"], engines: .only(["goose"]), sandbox: .default)
         #expect(await saved.last?.engines == .only(["goose"]))
         try await Task.sleep(for: .milliseconds(100))
         #expect(app.notifications("agneta/sessionStopped").contains { $0["sessionId"]?.stringValue == task })
@@ -430,7 +435,7 @@ actor FakeEngines: EngineSource {
 
         // Remove Access while the change is being saved: the grant stays removed.
         await saved.revoking(stack.router, grant.id)
-        try await stack.router.setAccess(grant: grant.id, accounts: ["brokered"], engines: .all)
+        try await stack.router.setAccess(grant: grant.id, accounts: ["brokered"], engines: .all, sandbox: .default)
         #expect(await !stack.router.hasGrant(grant.id))
     }
 

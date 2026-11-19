@@ -22,6 +22,7 @@ public struct CodexSignIn: Sendable {
     public func signOut() async { _ = await codex(["logout"]) }
 
     private func codex(_ arguments: [String]) async -> Int32? {
+        guard (try? CodexAdapter.prepareAccountHome(codexHome)) != nil else { return nil }
         try? CodexAdapter.writeConfig(codexHome)
         guard let child = try? ChildProcess(executable: cli.path(percentEncoded: false), arguments: arguments, environment: environment) else { return nil }
         try? child.stdin.close()
@@ -37,6 +38,7 @@ public struct CodexSignIn: Sendable {
     }
 
     public func run(progress: @escaping SignInProgress, timeout: Duration = .seconds(600)) async throws {
+        _ = try CodexAdapter.prepareAccountHome(codexHome)
         try CodexAdapter.writeConfig(codexHome)
         let child = try ChildProcess(executable: cli.path(percentEncoded: false), arguments: ["login"], environment: environment)
         try? child.stdin.close()

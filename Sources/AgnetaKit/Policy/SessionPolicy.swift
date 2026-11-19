@@ -56,6 +56,19 @@ public struct SessionPolicy: Sendable, Equatable {
     public var toolSockets: [URL] = []
     public var approval: Approval
     public var limits: Limits
+    /// The sandbox the session runs in, as resolved when it opens (SandboxResolution): what Agneta's profiles build.
+    public var sandbox: Sandbox = .contained
+    /// The sandbox the app asked for, or nil: it may only be more restrictive than the user's choice.
+    public var requestedSandbox: Sandbox?
+    /// Environment variables the app sets for shell commands run by Agneta's broker: its toolchain's PATH (entries
+    /// in the session's readable folders), CARGO_HOME, PYTHONPATH, a kit's settings. Never what confines or names the
+    /// command (HOME, TMPDIR, the loader's DYLD_ and LD_ variables, Agneta's and Claude Code's own).
+    public var toolEnvironment: [String: String] = [:]
+    /// Developer access: the app's own build caches (set by the router, one folder per app; never the user's own). Nil
+    /// gives the engine's scratch folder.
+    public var buildCaches: URL?
+    /// The build caches a developer session uses: the app's, or the engine's scratch.
+    public func caches(scratch: URL) -> URL { buildCaches ?? scratch.appending(path: "caches", directoryHint: .isDirectory) }
     /// The policy's folders as they were checked when it was parsed (resolved, refused if protected), recorded then:
     /// sandbox profiles write these without resolving them again. Empty for a policy built in code.
     public var checkedPaths: Set<String> = []
@@ -95,8 +108,10 @@ public struct PolicyContext: Sendable {
 }
 
 extension SessionPolicy {
-    /// The strict profile for this session's shell commands.
-    public func toolProfile(scratch: URL) -> SandboxProfile {
+    /// The strict profile for this session's shell commands, widened for developer access (with the user's home and
+    /// Agneta's own data roots, which stay out).
+    public func toolProfile(scratch: URL, home: URL? = nil, agnetaRoots: [URL] = []) -> SandboxProfile {
+        let caches = caches(scratch: scratch)
         var profile = SandboxProfile(kind: .tool,
                                      writable: tools == .workspace ? [workspace] + writable + [scratch] : [scratch],
                                      denied: denied,
@@ -105,6 +120,7 @@ extension SessionPolicy {
         profile.readOnly = readOnly
         profile.unixSockets = toolSockets
         profile.verbatim = checkedPaths
+        if sandbox == .developer, let home { DeveloperAccess.widen(&profile, home: home, agnetaRoots: agnetaRoots, caches: caches) }
         return profile
     }
 
@@ -157,6 +173,14 @@ extension SessionPolicy {
         // Seatbelt filters by address and port, not host name, so a host allowlist for tools can't be enforced.
         if case .allow(let hosts) = network, !hosts.isEmpty {
             throw PolicyRejection(field: "network", reason: "per-host network access for tools isn't supported yet")
+        }
+
+        var requestedSandbox: Sandbox?
+        if value["sandbox"] != nil {
+            let level = try name("sandbox", otherwise: "")
+            guard let parsed = Sandbox(rawValue: level) else { throw PolicyRejection(field: "sandbox", reason: "expected contained or developer") }
+            if parsed == .developer, tools != .workspace { throw PolicyRejection(field: "sandbox", reason: "developer access needs workspace tools") }
+            requestedSandbox = parsed
         }
 
         let approvalName = try name("approval", otherwise: Approval.askApp.rawValue)
@@ -218,10 +242,36 @@ extension SessionPolicy {
         policy.readOnly = readOnly
         policy.toolPorts = toolPorts
         policy.toolSockets = toolSockets
+        policy.requestedSandbox = requestedSandbox
+        if let raw = value["toolEnvironment"] {
+            guard let fields = raw.objectValue else { throw PolicyRejection(field: "toolEnvironment", reason: "must be an object of strings") }
+            for (key, item) in fields {
+                guard let text = item.stringValue else { throw PolicyRejection(field: "toolEnvironment", reason: "\(key) must be a string") }
+                guard key.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil,
+                      !Self.reservedEnvironment.contains(key),
+                      !Self.reservedPrefixes.contains(where: key.hasPrefix) else {
+                    throw PolicyRejection(field: "toolEnvironment", reason: "\(key) can't be set for commands")
+                }
+                if key == "PATH" {
+                    let reach = [workspace] + policy.readable + policy.readOnly + policy.writable + SandboxProfile.systemReadable
+                    // An empty entry (a leading, trailing or doubled colon) would look commands up in the current folder.
+                    for entry in text.split(separator: ":", omittingEmptySubsequences: false).map(String.init) {
+                        let url = URL(filePath: entry, directoryHint: .isDirectory).realFileURL
+                        guard entry.hasPrefix("/"), reach.contains(where: { url.isInside($0.realFileURL) }) else {
+                            throw PolicyRejection(field: "toolEnvironment", reason: "PATH entry \(entry) isn't in the session's folders")
+                        }
+                    }
+                }
+                policy.toolEnvironment[key] = text
+            }
+        }
         return policy.recordingChecked()
     }
 
-    static let knownFields: Set<String> = ["tools", "network", "approval", "limits", "readable", "writable", "readOnly", "denied", "toolPorts", "toolSockets"]
+    static let knownFields: Set<String> = ["tools", "network", "approval", "limits", "readable", "writable", "readOnly", "denied", "toolPorts", "toolSockets",
+                                           "sandbox", "toolEnvironment"]
+    static let reservedEnvironment: Set<String> = ["HOME", "TMPDIR", "USER", "LOGNAME", "SHELL", "BASH_ENV", "ENV", "ZDOTDIR", "PROMPT_COMMAND", "IFS"]
+    static let reservedPrefixes = ["DYLD_", "LD_", "AGNETA_", "CLAUDE_CODE_", "CODEX_", "GOOSE_", "OPENCODE_"]
 
     /// Resolves symlinks and refuses paths that would escape into protected places, or contain them: /Users or
     /// ~/Library would expose Agneta's data and other apps' containers.

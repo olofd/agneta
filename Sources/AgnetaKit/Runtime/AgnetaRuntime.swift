@@ -65,8 +65,11 @@ public actor AgnetaRuntime {
         if stopped.count + interrupted > 0 { log?.log("recovered", ["engines": .int(Int64(stopped.count)), "tasks": .int(Int64(interrupted))]) }
 
         let traces = Traces(folder: store.tracesFolder)
+        // Developer access keeps out all of Agneta's data and every app's workspace and caches but the session's own,
+        // wherever the data lives (an isolated instance's too, not only the default folders' names).
         let supervisor = EngineSupervisor(.init(shellTool: configuration.shellTool, root: store.root,
-                                                engineLoopbackPorts: configuration.engineLoopbackPorts, ledger: database, traces: traces))
+                                                engineLoopbackPorts: configuration.engineLoopbackPorts, ledger: database, traces: traces,
+                                                agnetaRoots: [store.root] + (configuration.appWorkspaces.map { [$0] } ?? [])))
         let router = Router(context: PolicyContext(userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [store.root],
                                                    appWorkspaces: configuration.appWorkspaces),
                             engines: supervisor, traces: traces, concurrency: configuration.concurrency,
@@ -115,9 +118,9 @@ public actor AgnetaRuntime {
     /// The host's snapshot of its engines and each provider's default, whenever either changes (EngineCatalog).
     public func setCatalog(_ catalog: EngineCatalog) async { await router.setCatalog(catalog) }
 
-    /// Changes which providers and engines an app may use, and saves it.
-    public func setAccess(grant: String, accounts: [String], engines: EngineAllowance) async throws {
-        try await router.setAccess(grant: grant, accounts: accounts, engines: engines)
+    /// Changes which providers and engines an app may use, and the most its tasks may do, and saves it.
+    public func setAccess(grant: String, accounts: [String], engines: EngineAllowance, sandbox: Sandbox) async throws {
+        try await router.setAccess(grant: grant, accounts: accounts, engines: engines, sandbox: sandbox)
         // Removed meanwhile (Remove Access while the change was saved): its row must not come back on the next launch.
         if await !router.hasGrant(grant) { try database.deleteGrant(id: grant) }
     }

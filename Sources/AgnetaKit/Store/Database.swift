@@ -151,6 +151,16 @@ public final class AgnetaDatabase: Sendable {
                 t.column("value", .text).notNull()
             }
         }
+        // An earlier development build's flag, since replaced by the grant's sandbox (below): the column is read by
+        // nothing, but the migration stays, so a database that ran it still opens.
+        migrator.registerMigration("2026-11-19-developer-access") { db in
+            try db.alter(table: "grants") { t in t.add(column: "developerAccess", .boolean).notNull().defaults(to: false) }
+        }
+        // The most each app's tasks may do (Router.Grant.sandbox). Grants made before it were approved as contained, so
+        // they stay contained; a new pairing writes what the user chose (developer access unless they choose less).
+        migrator.registerMigration("2026-11-19-grant-sandbox") { db in
+            try db.alter(table: "grants") { t in t.add(column: "sandbox", .text).notNull().defaults(to: Sandbox.contained.rawValue) }
+        }
         return migrator
     }
 
@@ -194,7 +204,8 @@ public final class AgnetaDatabase: Sendable {
                 let engines = (try? JSONDecoder().decode(EngineAllowance.self, from: Data((row["engines"] as String).utf8))) ?? .only([])
                 grants[row["tokenHash"]] = Router.Grant(id: row["id"], app: row["app"], identifier: row["identifier"], team: row["team"],
                                                         verified: row["verified"], accounts: accounts, engines: engines, created: row["created"],
-                                                        tools: SessionPolicy.Tools(rawValue: row["tools"]) ?? .appOnly, folders: folders)
+                                                        tools: SessionPolicy.Tools(rawValue: row["tools"]) ?? .appOnly, folders: folders,
+                                                        sandbox: Sandbox(rawValue: row["sandbox"] ?? "") ?? .contained)
             }
             return grants
         }
@@ -213,10 +224,10 @@ public final class AgnetaDatabase: Sendable {
         let folders = String(decoding: try JSONEncoder().encode(grant.folders), as: UTF8.self)
         let engines = String(decoding: try JSONCoding.encode(grant.engines), as: UTF8.self)
         try db.execute(sql: """
-            INSERT OR REPLACE INTO grants (tokenHash, id, app, identifier, team, verified, accounts, created, tools, folders, engines)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO grants (tokenHash, id, app, identifier, team, verified, accounts, created, tools, folders, engines, sandbox)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, arguments: [hash, grant.id, grant.app, grant.identifier, grant.team, grant.verified, accounts, grant.created,
-                             grant.tools.rawValue, folders, engines])
+                             grant.tools.rawValue, folders, engines, grant.sandbox.rawValue])
     }
 
     public func deleteGrant(id: String) throws {

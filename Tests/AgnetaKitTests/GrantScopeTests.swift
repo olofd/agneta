@@ -20,7 +20,8 @@ import Testing
     }
 
     @Test func aSessionMustFitItsGrant() throws {
-        let grant = Router.Grant(app: "App", accounts: ["a"], tools: .read, folders: ["/tmp/allowed"])
+        // As pairing stores it: resolved (/tmp is /private/tmp), and never resolved again.
+        let grant = Router.Grant(app: "App", accounts: ["a"], tools: .read, folders: ["/private/tmp/allowed"])
         func policy(_ tools: String, cwd: String, readable: [String] = []) throws -> SessionPolicy {
             try SessionPolicy.parse(["tools": .string(tools), "readable": .array(readable.map(JSONValue.string))], cwd: cwd, context: context)
         }

@@ -1,0 +1,20 @@
+{
+  "name": "agneta-replica-bench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "bench": "node bench.mjs",
+    "snapshot": "REPLICA_BENCH_SNAPSHOT=preview.png electron .",
+    "test": "node --test test/*.test.mjs",
+    "test:integration": "node --test test/agneta.integration.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "electron": "45.3.4"
+  }
+}

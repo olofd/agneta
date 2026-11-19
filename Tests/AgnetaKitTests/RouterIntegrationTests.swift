@@ -129,10 +129,13 @@ final class AppClient: @unchecked Sendable {
         _ = try await request("initialize", ["protocolVersion": 1, "clientCapabilities": [:], "_meta": ["agneta": ["token": .string(token)]]])
     }
 
-    func newSession(cwd: URL, tools: String, account: String = "dev") async throws -> String {
+    /// `sandbox`: the app's ask, or nil for the grant's (full power by default).
+    func newSession(cwd: URL, tools: String, account: String = "dev", sandbox: String? = nil) async throws -> String {
+        var policy: JSONValue = ["tools": .string(tools), "network": "none", "approval": "never-ask"]
+        if let sandbox { policy = policy.setting("sandbox", to: .string(sandbox)) }
         let result = try await request("session/new", [
             "cwd": .string(cwd.path(percentEncoded: false)), "mcpServers": [],
-            "_meta": [SessionPolicy.key: ["tools": .string(tools), "network": "none", "approval": "never-ask"], "agneta": ["account": .string(account)]],
+            "_meta": [SessionPolicy.key: policy, "agneta": ["account": .string(account)]],
         ])
         return try #require(result["sessionId"]?.stringValue)
     }
@@ -212,9 +215,10 @@ struct RouterIntegrationTests {
             try await a.pairAndInitialize("App A")
             try await b.pairAndInitialize("App B")
             let aChat = try await a.newSession(cwd: try stack.workspace("A"), tools: "app-only")
-            let aWork = try await a.newSession(cwd: try stack.workspace("A"), tools: "workspace")
+            // Contained, as the app asks: the grant's own default would be developer access.
+            let aWork = try await a.newSession(cwd: try stack.workspace("A"), tools: "workspace", sandbox: "contained")
             let bChat = try await b.newSession(cwd: try stack.workspace("B"), tools: "app-only")
-            let bWork = try await b.newSession(cwd: try stack.workspace("B"), tools: "workspace")
+            let bWork = try await b.newSession(cwd: try stack.workspace("B"), tools: "workspace", sandbox: "contained")
             // One shared engine for the chats, one dedicated engine per editing session.
             #expect(await stack.supervisor.processCount == 3)
 

@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>Replica Bench</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="renderer.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h1>Replica Bench</h1>
+      <nav class="tabs" role="tablist" aria-label="Views">
+        <button role="tab" class="tab" id="tab-run" aria-selected="true">Run</button>
+        <button role="tab" class="tab" id="tab-sandbox" aria-selected="false">Sandbox</button>
+        <button role="tab" class="tab" id="tab-results" aria-selected="false">Results</button>
+      </nav>
+    </div>
+    <div class="connection">
+      <label class="picker" id="provider-picker" hidden>Provider <select id="provider"></select></label>
+      <label class="picker" id="engine-picker" hidden>Engine <select id="engine"></select></label>
+      <div class="segmented" id="sandbox-picker" role="radiogroup" aria-label="Sandbox mode to ask for" hidden>
+        <button role="radio" id="sandbox-contained" data-sandbox="contained">Contained</button>
+        <button role="radio" id="sandbox-developer" data-sandbox="developer">Developer</button>
+      </div>
+      <span class="pill" id="grant-pill" hidden title="The most this app's tasks may get: the user sets it in Agneta"></span>
+      <label class="picker" id="agneta-picker" hidden>Use <select id="agneta"></select></label>
+      <button id="connection-button">Connect to Agneta</button>
+    </div>
+  </header>
+
+  <div class="notice" id="notice" hidden>
+    <span id="notice-text"></span>
+  </div>
+
+  <main id="run-view" class="run-layout">
+    <aside class="scenarios" aria-label="Scenarios">
+      <h2>Scenarios</h2>
+      <p class="hint" id="scenario-hint">Each runs in a fresh workspace and session.</p>
+      <ol id="scenario-list"></ol>
+    </aside>
+
+    <section class="conversation" aria-label="Run">
+      <div class="run-title">
+        <strong id="run-title">No run yet</strong>
+        <span id="run-outcome" class="pill" hidden></span>
+      </div>
+      <div class="thread" id="thread">
+        <div class="empty" id="empty">
+          <h2>Can the agent do it through Agneta?</h2>
+          <p>Pick a provider, engine and sandbox mode, then run a scenario. The bench judges each one from its own evidence: the tools it served, the gateway's calls, the files written and the score.</p>
+        </div>
+        <div id="messages" class="messages" aria-label="Transcript"></div>
+      </div>
+
+      <div class="composer">
+        <div class="pairing" id="pairing" hidden>
+          <strong id="pairing-code"></strong>
+          <span>Match this code in Agneta, then allow Replica Bench.</span>
+        </div>
+        <div class="composer-options">
+          <label class="picker" id="model-picker" hidden>Model <select id="model"></select></label>
+          <label class="picker" id="effort-picker" hidden>Effort <select id="effort"></select></label>
+          <span class="spacer"></span>
+          <button class="quiet small" id="new-run" hidden>New Run</button>
+        </div>
+        <form id="form">
+          <label class="sr-only" for="prompt">Prompt</label>
+          <textarea id="prompt" rows="2" maxlength="20000" placeholder="A prompt of your own, to the run on screen or a fresh one…"></textarea>
+          <button id="send" type="submit" disabled>Send</button>
+          <button id="stop" type="button" hidden>Stop</button>
+        </form>
+        <div class="composer-detail">
+          <span id="status" role="status">Connect to start.</span>
+          <span id="usage"></span>
+        </div>
+      </div>
+    </section>
+
+    <aside class="evidence" aria-label="Evidence">
+      <section>
+        <h3>Sandbox</h3>
+        <p id="run-sandbox"></p>
+        <p class="hint" id="run-sandbox-why"></p>
+      </section>
+      <section>
+        <h3>Workspace</h3>
+        <p class="path" id="workspace">None yet</p>
+        <button class="quiet small" id="show-workspace" disabled>Show in Finder</button>
+      </section>
+      <section>
+        <h3>Checks</h3>
+        <p class="hint" id="expected"></p>
+        <ul class="checks" id="checks"></ul>
+      </section>
+      <section>
+        <h3>Score</h3>
+        <ul class="list" id="scores"><li class="hint">No candidate scored.</li></ul>
+      </section>
+      <section>
+        <h3>Gateway <span class="count" id="gateway-count">0</span></h3>
+        <ul class="list" id="gateway"></ul>
+      </section>
+      <section>
+        <h3>App tools <span class="count" id="mcp-count">0</span></h3>
+        <ul class="list" id="mcp"></ul>
+      </section>
+      <section>
+        <h3>Commands <span class="count" id="command-count">0</span></h3>
+        <ul class="list" id="refusals"></ul>
+      </section>
+    </aside>
+  </main>
+
+  <main id="sandbox-view" class="sandbox-layout" hidden>
+    <section class="sandbox-main">
+      <h2>Sandbox modes</h2>
+      <p class="hint">How far an app's tasks reach. Agneta has two modes, the same for every engine, and three things decide what a task gets.</p>
+      <div class="grant-card" id="grant-card">
+        <div>
+          <span class="label">This app's grant</span>
+          <strong id="grant-mode">Not connected</strong>
+          <p id="grant-meaning"></p>
+          <p class="hint" id="grant-who"></p>
+        </div>
+        <button class="quiet small" id="pair-again" disabled title="Agneta's approval window lets the user pick this app's mode again">Pair Again</button>
+      </div>
+      <ol class="ladder">
+        <li id="ladder-contained"><strong>Contained</strong><p id="meaning-contained"></p><span class="pill" id="ladder-contained-state"></span></li>
+        <li id="ladder-developer"><strong>Developer access</strong><p id="meaning-developer"></p><span class="pill" id="ladder-developer-state"></span></li>
+      </ol>
+      <ol class="rules">
+        <li><strong>The grant is the ceiling.</strong> The user picks it for this app in Agneta's approval window, and can change it in Settings → Apps.</li>
+        <li><strong>The app may ask for less, never more.</strong> Each session asks for a mode in its policy; asking above the grant is refused, with Agneta's reason.</li>
+        <li><strong>The engine must be able to provide it.</strong> Each engine declares what it can provide on each provider; a mode it can't provide is refused, with why.</li>
+      </ol>
+      <h3>What each engine can provide here</h3>
+      <table class="engines">
+        <thead><tr><th>Provider</th><th>Engine</th><th>State</th><th>Contained</th><th>Developer</th></tr></thead>
+        <tbody id="engine-levels"></tbody>
+      </table>
+      <p class="hint" id="uncontained-note" hidden></p>
+    </section>
+    <section class="sandbox-check">
+      <h2>Check the modes</h2>
+      <p class="hint">Opens one session per provider × engine × mode and closes it again: no prompt, no model calls. Shows what each got, or Agneta's reason for refusing, against what Agneta declared.</p>
+      <div class="matrix-form">
+        <button id="modes-run" disabled>Check Modes</button>
+      </div>
+      <table class="engines" id="modes-table" hidden>
+        <thead><tr><th>Provider</th><th>Engine</th><th>Asked</th><th>Got</th><th>As declared</th></tr></thead>
+        <tbody id="modes-rows"></tbody>
+      </table>
+      <pre class="log" id="modes-log" hidden></pre>
+    </section>
+  </main>
+
+  <main id="results-view" class="results-layout" hidden>
+    <section class="matrix" aria-label="Run a matrix">
+      <h2>Run a matrix</h2>
+      <p class="hint">Every scenario × engine × sandbox mode in a fresh session and workspace, then a report in results/.</p>
+      <div class="matrix-form">
+        <label class="picker">Scenarios <select id="matrix-scenario"></select></label>
+        <label class="picker">Engines <select id="matrix-engines">
+          <option value="all">All of this provider's</option>
+          <option value="current">The one chosen above</option>
+        </select></label>
+        <label class="picker">Sandbox <select id="matrix-sandbox">
+          <option value="both">Contained and Developer</option>
+          <option value="current">The one chosen above</option>
+        </select></label>
+        <button id="matrix-run" disabled>Run Matrix</button>
+        <button class="quiet" id="matrix-stop" hidden>Stop</button>
+      </div>
+      <pre class="log" id="matrix-log" aria-live="polite"></pre>
+    </section>
+    <section class="reports" aria-label="Reports">
+      <div class="reports-head">
+        <h2>Reports</h2>
+        <button class="quiet small" id="show-results">Show in Finder</button>
+      </div>
+      <p class="hint" id="no-reports">No reports yet. Run a matrix here, or npm run bench.</p>
+      <ol class="report-list" id="report-list"></ol>
+      <div class="report" id="report" hidden>
+        <p id="report-summary"></p>
+        <div class="report-actions">
+          <button class="quiet small" id="open-report">Open report.md</button>
+          <button class="quiet small" id="show-report">Show in Finder</button>
+        </div>
+        <table>
+          <thead><tr><th>Scenario</th><th>Engine</th><th>Asked</th><th>Got</th><th>Outcome</th><th>Time</th><th>Model calls</th><th>Cost</th></tr></thead>
+          <tbody id="report-rows"></tbody>
+        </table>
+        <table class="engines" id="report-modes" hidden>
+          <thead><tr><th>Provider</th><th>Engine</th><th>Asked</th><th>Got</th><th>As declared</th></tr></thead>
+          <tbody id="report-modes-rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

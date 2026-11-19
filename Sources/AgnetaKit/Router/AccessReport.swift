@@ -15,6 +15,12 @@ public struct AccessReport: Codable, Sendable, Equatable {
         /// The engines the app's tasks here may run on now or after a download, the default first.
         public var engines: [String]
         public var defaultEngine: String?
+        /// Engines here whose own tools Agneta's policy doesn't confine (ProviderEngines.uncontained): a session on one
+        /// has the engine's full tool set whatever its policy says.
+        public var uncontained: [String]
+        /// The sandbox levels each engine here can provide (Sandbox): one that can't contain its tools provides
+        /// `developer` only.
+        public var sandboxLevels: [String: [String]]
     }
 
     /// An engine the app may use, as it is on this Mac.
@@ -37,6 +43,8 @@ public struct AccessReport: Codable, Sendable, Equatable {
     public struct Scope: Codable, Sendable, Equatable {
         public var tools: String
         public var folders: [String]
+        /// The most the app's tasks may do: `developer` (the default) or `contained`, as the user chose for it.
+        public var sandbox: String
     }
 
     public var providers: [Provider]

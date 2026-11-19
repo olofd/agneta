@@ -413,18 +413,20 @@ final class AppModel {
                                    replaces: replaces)
     }
 
-    /// Changes which providers and engines an app may use (Settings → Apps). Its sessions that no longer fit stop.
-    func setAccess(_ grant: Router.Grant, accounts allowed: Set<String>, engines: Set<String>) {
+    /// Changes which providers and engines an app may use, and the most its tasks may do (Settings → Apps). Its sessions
+    /// that no longer fit stop.
+    func setAccess(_ grant: Router.Grant, accounts allowed: Set<String>, engines: Set<String>, sandbox: Sandbox) {
         guard let runtime, !allowed.isEmpty else { return }
         let accountIDs = accounts.map(\.id).filter(allowed.contains), allowance = library.allowance(engines)
         // Shown at once; the router's grantChanged confirms it (or Remove Access wins meanwhile).
         for (hash, shown) in grants where shown.id == grant.id {
             grants[hash]?.accounts = accountIDs
             grants[hash]?.engines = allowance
+            grants[hash]?.sandbox = sandbox
         }
         let log = log
         _Concurrency.Task {
-            do { try await runtime.setAccess(grant: grant.id, accounts: accountIDs, engines: allowance) } catch {
+            do { try await runtime.setAccess(grant: grant.id, accounts: accountIDs, engines: allowance, sandbox: sandbox) } catch {
                 log.error("app-access-not-saved", ["grant": .string(grant.id), "reason": .string("\(error)")])
             }
         }

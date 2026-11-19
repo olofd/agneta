@@ -314,6 +314,25 @@ final class EngineLibrary {
         refresh()
     }
 
+    /// Why an app with these providers and engines can't get a sandbox level, or nil when it can: greyed in its picker
+    /// only when no provider it may use has an engine it may use that provides it.
+    func sandboxUnavailable(_ level: Sandbox, providers: [AccountRecord], engines: Set<String>) -> String? {
+        guard !providers.isEmpty else { return nil }
+        let reasons = providers.compactMap { account -> String? in
+            let usable = Access.engines(for: account.kind, allowed: allowance(engines), catalog: catalog)
+            guard !usable.isEmpty, !usable.contains(where: { ProviderEngines.sandboxLevels($0, for: account.kind).contains(level) }) else { return nil }
+            return usable.compactMap { ProviderEngines.uncontainedReason($0, for: account.kind) }.first
+        }
+        return reasons.count == providers.count ? reasons.first.map { $0 + ". Tick another engine under Advanced to keep this app's tasks contained." } : nil
+    }
+
+    /// The providers on which an engine can't provide a level, for its row under Advanced ("Developer access only on Claude").
+    func sandboxNote(_ engine: String, level: Sandbox, providers: [AccountRecord]) -> String? {
+        let labels = providers.filter { ProviderEngines.supported(by: $0.kind).contains(engine)
+            && !ProviderEngines.sandboxLevels(engine, for: $0.kind).contains(level) }.map(\.label)
+        return labels.isEmpty ? nil : "\(Sandbox.developer.title) only on \(labels.joined(separator: ", "))"
+    }
+
     /// The install of a program engines run through: the one chosen in Settings, else the newest; only ones new
     /// enough for Agneta.
     func program(_ key: String) -> InstalledCLI? {

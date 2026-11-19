@@ -119,6 +119,13 @@ public struct EngineLaunch: Sendable {
     /// Folders the engine may not read or write, and parts of them it may (a session's own share of an account folder).
     public var denied: [URL] = []
     public var exceptions: [URL] = []
+    /// Never written, though inside a writable folder: files a shell would read on start (an engine home's dotfiles).
+    public var readOnly: [URL] = []
+    /// Folders the session's shell commands, run by Agneta's broker, write besides the policy's: an engine's own
+    /// bookkeeping that its commands keep (Claude Code's current-folder file and background output).
+    public var toolWritable: [URL] = []
+    /// Folders made for this engine outside its home (a short temp folder), removed when it ends.
+    public var temporary: [URL] = []
 }
 
 /// One engine's per-call usage, read from its own records. Rows use these keys: `row`, `created`,
@@ -133,6 +140,9 @@ public protocol UsageLedger: Sendable {
 
 extension EngineAdapter {
     public func prepareSession(_ engineSession: String) -> [EngineRequest] { [] }
+    public func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy, instructions: String?) -> JSONValue {
+        loadSession(engineSession, cwd: cwd, servers: servers, policy: policy)
+    }
     public func modelCall(fromNotification method: String, params: JSONValue?) -> [String: JSONValue]? { nil }
     public func permitsMode(_ mode: String) -> Bool { true }
     public var stateFormat: String { "\(id)/1" }
@@ -140,6 +150,7 @@ extension EngineAdapter {
         toolIdentity(in: params?["toolCall"] ?? .null).server ?? params?["toolCall"]?["toolCallId"]?.stringValue.flatMap { calls[$0] }
     }
     public var reservedToolServers: Set<String> { [] }
+    public func brokersShell(_ policy: SessionPolicy) -> Bool { false }
     public func sessionsDeleted(stateRoot: URL) -> String? { nil }
 }
 
@@ -160,6 +171,8 @@ public protocol EngineAdapter: Sendable {
     func newSession(cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?) -> JSONValue
     /// `session/load` parameters, resuming `engineSession`.
     func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy) -> JSONValue
+    /// The same, with the session's instructions, for engines that take their options again on every load.
+    func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy, instructions: String?) -> JSONValue
 
     /// Sets a session's instructions (`appendKey` nil: replace them). Nil when the engine can't.
     func setInstructions(_ engineSession: String, text: String, appendKey: String?) -> EngineRequest?
@@ -195,6 +208,9 @@ public protocol EngineAdapter: Sendable {
     /// MCP server names the engine uses for its own tools. An app's server can't take one: its tools would pass for
     /// the app's.
     var reservedToolServers: Set<String> { get }
+    /// Whether this engine's own shell commands run through Agneta's broker under the policy, so a native runner's
+    /// `execute` request is for a brokered command (Claude Code's Bash behind its shell prefix).
+    func brokersShell(_ policy: SessionPolicy) -> Bool
     func permitsMode(_ mode: String) -> Bool
     /// A model call reported in the stream instead (a notification), as a usage row (keys as `UsageLedger`,
     /// plus `id` to recognize repeats), or nil.

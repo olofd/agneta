@@ -1,0 +1,12 @@
+[package]
+name = "candidate"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# No dependencies, so the crate builds offline. The referee refuses a candidate with dependencies or a build script.
+[dependencies]
+
+[[bin]]
+name = "candidate"
+path = "src/main.rs"

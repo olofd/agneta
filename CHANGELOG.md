@@ -9,6 +9,24 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 - **Deleting a task deletes all of its conversation:** a task that ran on an API key without built-in tools shares its account's Goose, which kept the conversation until you signed out. Now Agneta asks Goose to delete it, then rewrites Goose's database so no file still holds the words.
 - **Model and Effort… names the engine's own choice:** "Codex's default (its model)" rather than just "Codex's default", so leaving it to the engine says what that means.
 
+**Security**
+
+- **Claude Code asked about nothing.** The adapter starts every session in `auto`, where Claude Code decides its own permissions: measured, Bash and Monitor ran without a single permission request, so Agneta couldn't refuse commands while a task had no network. Every Claude Code session is now set to the mode that asks, on new and on resume.
+- **Resumed Claude Code tasks lost their settings.** A resumed or forked task was opened without Agneta's options, so the adapter fell back to its defaults and loaded the workspace's own `.claude/settings.json`, which the agent can write (hooks, environment, permissions). Measured: a planted hook ran and its environment reached commands. Resume and fork now send the same options as a new session, and Claude Code reads no MCP configuration of its own.
+- **Claude Code offers only the tools a policy names.** Agneta passes the exact built-in set, so a tool a new Claude Code adds (Monitor, which runs commands, was one) stays off until Agneta allows it. Read-only commands, which Claude Code ran without asking inside the engine's own sandbox, now go through Agneta's broker like every other.
+- **Permission requests are judged by tool name, not only kind.** A request of kind `other` passes only for a tool known to run nothing.
+- **Contained commands can't look names up.** A lookup of a made-up host name could carry data out; a contained command now reaches no resolver, only its loopback ports.
+- **No command outlives Agneta.** Commands still running, background jobs included, end when their engine ends, when Agneta quits, and when Agneta itself dies. One that starts a session or process group of its own can still outlive them (see the protocol's known limits).
+- **Folders swapped for links grant nothing.** A session can replace a folder it may write (its engine's home, its scratch folder, its app's workspace or caches) with a link elsewhere. Agneta now puts its own folders back before each start, never follows such a link, and checks granted folders without following their last link.
+- **Broker tokens aren't in environments.** Any process of yours can read another's environment, so each engine reads its token from a file of its own.
+
+**For apps**
+
+- **Claude Code and Codex run commands on the contained path.** Claude Code's Bash goes through Agneta's broker, as Goose's does, and so do Codex's commands, through Agneta's own `shell` tool in place of Codex's: under the session's command sandbox, with no network, every command in the trace. Monitor stays off.
+- **Background jobs live on, as in a terminal.** A command's background job keeps running after the command returns, and ends with its engine.
+- **`toolEnvironment`** sets variables for commands: your toolchain's `PATH` (inside the session's folders, ahead of everything else), `CARGO_HOME`, `PYTHONPATH`, winning over developer access's own. Commands also find the selected Xcode's own `cc`, `git` and `python3`, wherever Xcode is installed.
+- **Sandbox per app.** Each app's grant has a mode the user picks at pairing and in Settings → Apps: **Developer access** (the default: full power, as in a terminal, credentials and other apps' data excepted) or **Contained** (the session's folders, no internet for commands). A session may ask for less (`"sandbox": "contained"`), never more. Each engine says what it can provide (`sandboxLevels` in the access report): Goose on a Claude plan provides developer access only, and is refused, with why, for a contained task. The reply says what each task got (`_meta.agneta.sandbox`). Apps paired before this, and apps granted fewer than workspace tools (which the approval window offers no choice), stay contained. Under developer access each app builds with caches of its own, never yours. See [the protocol](docs/APP_PROTOCOL.md#sandbox).
+
 ## 0.4.0 (2026-11-18)
 
 A new look, a website, and a default model and effort for each provider.
