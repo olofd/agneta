@@ -20,6 +20,9 @@ import Testing
             "Claude Code's cost is known when a turn ends, so a turn on it can go over the limit.",
             "Codex reports no cost, so this app's tasks on an OpenAI API key can't use Codex while spending is limited.",
         ])
+        #expect(AppLimitsEditor.unpricedNote(AppLimitStatus(today: .init(turns: 3))).isEmpty)
+        #expect(AppLimitsEditor.unpricedNote(AppLimitStatus(today: .init(turns: 3, unpriced: 2)))
+            == ["2 turns today called a model its engine has no price for, so their cost isn't known or counted."])
         #expect(AppLimitsEditor.spendNotes(limits: .none, providers: [.chatGPT], engines: all)
             == ["This app uses only plans, which aren't charged per call: a spending limit wouldn't count its tasks."])
     }

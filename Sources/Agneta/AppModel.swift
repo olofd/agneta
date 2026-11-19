@@ -43,6 +43,8 @@ final class AppModel {
     private(set) var limitReached: [String: AppLimitNotice] = [:]
     /// Each app's usage and where it stands against its limits (Settings → Apps), by grant.
     private(set) var appStatus: [String: AppLimitStatus] = [:]
+    /// The most turns Agneta runs at once: the highest "at once" an app may have.
+    private(set) var maxAtOnce = Router.Concurrency().global
     /// Days of task history kept; 0 keeps none.
     private(set) var historyDays = 30
     /// Set while Reset Agneta runs, and the failed step if it stopped.
@@ -164,6 +166,7 @@ final class AppModel {
             return
         }
         self.runtime = runtime
+        maxAtOnce = runtime.router.maxAtOnce
         recovered = runtime.recovered
         let database = runtime.database
         let saved = try? database.accounts()

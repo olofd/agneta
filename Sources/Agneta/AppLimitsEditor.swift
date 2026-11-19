@@ -8,6 +8,8 @@ import SwiftUI
 struct AppLimitsEditor: View {
     var model: AppModel
     var grant: Router.Grant
+    /// Why the last number typed wasn't applied, until the next change.
+    @State private var problem: String?
 
     private var limits: AppLimits { grant.limits }
     private var status: AppLimitStatus? { model.appStatus[grant.id] }
@@ -19,10 +21,15 @@ struct AppLimitsEditor: View {
         }
     }
 
+    /// Plans aren't charged per call: an app that uses only plans isn't offered a spending limit.
+    private var usesKeys: Bool { providers.contains { $0.kind.subscription == nil } }
+
     private func set(_ change: (inout AppLimits) -> Void) {
         var changed = limits
         change(&changed)
-        guard changed != limits, changed.problem(global: Router.Concurrency().global) == nil else { return }
+        guard changed != limits else { return }
+        problem = changed.problem(global: model.maxAtOnce)
+        guard problem == nil else { return }
         model.setLimits(grant, changed)
     }
 
@@ -30,10 +37,12 @@ struct AppLimitsEditor: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(Self.usage(status)).font(.system(size: 11.5)).foregroundStyle(.secondary)
 
-            Toggle(isOn: Binding(get: { limits.spend != nil }, set: { on in set { $0.spend = on ? .init(max: 5, period: .day) : nil } })) {
-                Text("Limit spending on API keys").font(.system(size: 12.5))
+            if usesKeys || limits.spend != nil {
+                Toggle(isOn: Binding(get: { limits.spend != nil }, set: { on in set { $0.spend = on ? .init(max: 5, period: .day) : nil } })) {
+                    Text("Limit spending on API keys").font(.system(size: 12.5))
+                }
+                .toggleStyle(.checkbox).tint(Palette.fill)
             }
-            .toggleStyle(.checkbox).tint(Palette.fill)
             if let spend = limits.spend {
                 HStack(spacing: 6) {
                     Text("Up to $").font(.system(size: 12))
@@ -54,7 +63,7 @@ struct AppLimitsEditor: View {
                     Text(line).font(.system(size: 11.5)).foregroundStyle(.secondary).padding(.leading, 20)
                 }
             }
-            ForEach(Self.spendNotes(limits: limits, providers: providers.map(\.kind), engines: engines), id: \.self) { note in
+            ForEach(Self.spendNotes(limits: limits, providers: providers.map(\.kind), engines: engines) + Self.unpricedNote(status), id: \.self) { note in
                 Text(note).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.leading, 20)
             }
 
@@ -63,7 +72,7 @@ struct AppLimitsEditor: View {
             }
             .toggleStyle(.checkbox).tint(Palette.fill)
             if let atOnce = limits.atOnce {
-                Stepper(value: Binding(get: { atOnce }, set: { value in set { $0.atOnce = value } }), in: 1...Router.Concurrency().global) {
+                Stepper(value: Binding(get: { atOnce }, set: { value in set { $0.atOnce = value } }), in: 1...model.maxAtOnce) {
                     Text("\(atOnce) at once. More wait their turn.").font(.system(size: 12))
                 }
                 .padding(.leading, 20)
@@ -90,6 +99,9 @@ struct AppLimitsEditor: View {
                 }
                 .padding(.leading, 20)
             }
+            if let problem {
+                Text("\(problem); not changed.").font(.system(size: 11.5)).foregroundStyle(Palette.attention)
+            }
             Text("When a limit is reached, the app's tasks stop and it's told why. Resuming a task isn't a new one.")
                 .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
@@ -110,6 +122,12 @@ struct AppLimitsEditor: View {
     static func spent(_ status: AppLimitStatus?, _ spend: AppLimits.Spend) -> String? {
         guard let spent = status?.spent else { return nil }
         return "\(AppLimits.cents(spent)) of \(AppLimits.dollars(spend.max))" + (status?.spendResets.map { " · resets \($0)" } ?? "")
+    }
+
+    /// Turns today whose engine gave no price for the model they called: a spending limit couldn't count them.
+    static func unpricedNote(_ status: AppLimitStatus?) -> [String] {
+        guard let unpriced = status?.today.unpriced, unpriced > 0 else { return [] }
+        return ["\(unpriced == 1 ? "1 turn" : "\(unpriced) turns") today called a model its engine has no price for, so \(unpriced == 1 ? "its" : "their") cost isn't known or counted."]
     }
 
     /// What the user should know about a spending limit for this app: plans aren't counted, Claude Code counts at a

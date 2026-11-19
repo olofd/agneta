@@ -373,7 +373,7 @@ export interface AgnetaUsage {
   /** `engine-ledger` (per-call records) or `engine-turn-totals` (the engine's own totals). */
   basis: 'engine-ledger' | 'engine-turn-totals' | (string & {});
   /** Where the app stands against the spending limit the user set for it, when there is one. */
-  app?: { spent: number; max: number; period: 'day' | 'week' | 'month'; resetsAt: string | null };
+  app?: { spent: number; max: number; period: 'day' | 'week' | 'month'; resetsAt: string | null; unpriced?: boolean };
 }
 
 /** Which limit stopped a turn: the app's policy's, or the spending limit the user set for the app (`appSpend`). */
