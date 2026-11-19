@@ -4,15 +4,17 @@
 // Contents/Resources/app when it's there). macOS only. With AGNETA_PORT set now, the bundle keeps that port; without it,
 // the app offers the release and the development build, as `npm start` does.
 import { execFileSync } from 'node:child_process';
-import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const electron = join(root, 'node_modules/electron/dist/Electron.app');
 const out = join(root, 'build/Project Chat.app');
-// The app's own files: no node_modules, since it uses only Node's and Electron's modules.
-const files = ['acp.mjs', 'chat.mjs', 'main.mjs', 'preload.cjs', 'project-tools.mjs', 'renderer.js', 'index.html', 'styles.css', 'package.json'];
+// The app's own files, and its one dependency, @agneta/client (built: npm run build in packages/client). Electron and
+// Node provide everything else.
+const files = ['chat.mjs', 'main.mjs', 'preload.cjs', 'project-tools.mjs', 'renderer.js', 'index.html', 'styles.css', 'package.json'];
+const client = await realpath(join(root, 'node_modules/@agneta/client'));
 
 if (process.platform !== 'darwin') throw new Error('Project Chat.app is a macOS bundle.');
 await rm(out, { recursive: true, force: true });
@@ -22,6 +24,9 @@ execFileSync('/usr/bin/ditto', [electron, out]);
 const app = join(out, 'Contents/Resources/app');
 await mkdir(app);
 for (const file of files) await cp(join(root, file), join(app, file));
+const bundledClient = join(app, 'node_modules/@agneta/client');
+await mkdir(bundledClient, { recursive: true });
+for (const file of ['package.json', 'dist', 'LICENSE']) await cp(join(client, file), join(bundledClient, file), { recursive: true });
 if (process.env.AGNETA_PORT) await writeFile(join(app, 'port'), process.env.AGNETA_PORT);
 
 const plist = join(out, 'Contents/Info.plist');

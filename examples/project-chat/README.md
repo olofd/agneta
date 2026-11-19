@@ -6,9 +6,10 @@ Project Chat is a small Electron app that runs an agent through Agneta. The agen
 
 ## Run it
 
-Open a recent [Agneta build](../../README.md#build-and-run). For the tested setup, connect a provider (a plan or an API key) in Agneta. Project Chat offers the engines that provider can run on and picks its default; any of them works. See [which engines work with each provider](../../README.md#providers-and-engines). From the repository root, run the example with Node.js 24 or newer.
+Open a recent [Agneta build](../../README.md#build-and-run). For the tested setup, connect a provider (a plan or an API key) in Agneta. Project Chat offers the engines that provider can run on and picks its default; any of them works. See [which engines work with each provider](../../README.md#providers-and-engines). From the repository root, build the [client library](../../packages/client/README.md) Project Chat uses, then run the example with Node.js 24 or newer.
 
 ```sh
+(cd packages/client && npm ci && npm run build)
 cd examples/project-chat
 npm ci
 npm start
@@ -39,10 +40,10 @@ Renderer ── fixed IPC actions ──► Electron main ── ACP WebSocket �
                                         └───── MCP over loopback with bearer ────┘
 ```
 
-1. [**Pair, or connect with a kept token**](chat.mjs). With a token kept from an earlier **Always Allow**, Electron main passes it to `initialize` and connects without asking; at launch it does this by itself. Otherwise it calls `agneta/catalog` first: with nothing connected, it calls `agneta/setup` and waits for `agneta/catalogChanged`. Then it sends `agneta/pair` with an app-only scope, keeps the token when the answer says `remembered` ([encrypted with Electron's `safeStorage`](main.mjs), whose key is in the login Keychain, one file per Agneta), and initializes with it. When Agneta no longer accepts the token (access removed in Settings → Apps), it forgets it and says so; **Connect** then asks again. It reads what it may use and its workspace from Agneta's access report. The token never leaves the main process.
+1. [**Pair, or connect with a kept token**](chat.mjs). Project Chat talks to Agneta through [`@agneta/client`](../../packages/client/README.md), which does the protocol's work: `client.connect({ pair: quiet ? 'never' : 'if-needed', setup: true })`. With a token kept from an earlier **Always Allow**, it passes it to `initialize` and connects without asking; at launch Project Chat does this by itself. Otherwise it calls `agneta/catalog` first: with nothing connected, it calls `agneta/setup` and waits for `agneta/catalogChanged`. Then it sends `agneta/pair` with an app-only scope, keeps the token when the answer says `remembered` ([encrypted with Electron's `safeStorage`](main.mjs) by `safeStorageTokenStore`, whose key is in the login Keychain, one file per Agneta), and initializes with it. When Agneta no longer accepts the token (access removed in Settings → Apps), it forgets it and Project Chat says so; **Connect** then asks again. It reads what it may use and its workspace from Agneta's access report. The token never leaves the main process.
 2. [**Register app tools**](project-tools.mjs). On the first message, the app starts a stateless MCP server bound to `127.0.0.1` on an OS-assigned port. It registers that endpoint and a fresh bearer in `session/new`, alongside an app-only policy with per-turn limits. The server exposes only `read_project_brief` and `propose_note`. Saving is a UI action, outside the tool interface. The same pattern works for proposed document edits or generated artifacts.
-3. [**Prompt and close**](chat.mjs). The client sends `session/prompt`, renders `agent_message_chunk` updates, and shows usage reported by Agneta. It sends `session/cancel` to stop a turn and `session/close` when starting a new chat. The MCP listener closes with the session.
-4. [**Keep the renderer’s access narrow**](main.mjs). Agneta refuses browser WebSocket upgrades, so [ACP runs in the Node main process](acp.mjs). The [preload bridge](preload.cjs) exposes specific UI actions. Pairing and MCP credentials stay out of it.
+3. [**Prompt and close**](chat.mjs). `session.prompt(text)` sends `session/prompt`; Project Chat renders the reply as it streams (`turn.textStream()`, the `agent_message_chunk` text) and shows usage reported by Agneta. `session.cancel()` sends `session/cancel` to stop a turn and `session.close()` sends `session/close` when starting a new chat. The MCP listener closes with the session.
+4. [**Keep the renderer’s access narrow**](main.mjs). Agneta refuses browser WebSocket upgrades, so ACP runs in the Node main process. The [preload bridge](preload.cjs) exposes specific UI actions. Pairing and MCP credentials stay out of it.
 
 See [Agneta’s app protocol](../../docs/APP_PROTOCOL.md) for the complete wire contract. If the example cannot connect, check that Agneta is running and that the **Use** menu names the Agneta that's running. If Agneta asks you to sign in again or resume a paused account, do so there before retrying the message.
 
@@ -54,7 +55,9 @@ See [Agneta’s app protocol](../../docs/APP_PROTOCOL.md) for the complete wire 
 scripts/fetch-engines
 swift build --product agnetad
 swift build --product agneta-fakes
+(cd packages/client && npm ci && npm run build)
 cd examples/project-chat
+npm ci
 npm run test:integration
 ```
 

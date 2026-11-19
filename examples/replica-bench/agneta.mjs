@@ -1,5 +1,5 @@
 // The bench's side of Agneta's app protocol (docs/APP_PROTOCOL.md): connect, pair or initialize with a kept token,
-// read what the app may use, and open sessions. Adapted from Project Chat's chat.mjs, which proved it; shared by the
+// read what the app may use, and open sessions. Adapted from Project Chat's client before @agneta/client; shared by the
 // headless runner and the Electron window, so both measure exactly the same client.
 //
 // The bench asks for what a demanding app needs: workspace tools in its own data folder and its toolchain, and the

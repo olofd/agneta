@@ -1,9 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
 import { readFileSync } from 'node:fs';
-import { createConnection } from 'node:net';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isListening, safeStorageTokenStore } from '@agneta/client/node';
 import { ProjectChat } from './chat.mjs';
 
 // Which Agneta to use: the release (port 47321, opened by agneta://) or a development build (47331, agneta-dev://),
@@ -58,31 +58,11 @@ app.whenReady().then(() => {
  * one file per Agneta (port), so each keeps its own access. Nothing is kept where encryption isn't available.
  */
 function tokensFor(port) {
-  const file = () => join(app.getPath('userData'), `agneta-token-${port}`);
-  return {
-    async load() {
-      try { return safeStorage.decryptString(await readFile(file())); } catch { return null; }
-    },
-    async save(token) {
-      if (!safeStorage.isEncryptionAvailable()) return;
-      await mkdir(dirname(file()), { recursive: true });
-      await writeFile(file(), safeStorage.encryptString(token), { mode: 0o600 });
-    },
-    async clear() { await rm(file(), { force: true }); }
-  };
+  return safeStorageTokenStore(safeStorage, join(app.getPath('userData'), `agneta-token-${port}`));
 }
 
 /** The user's pick, kept between launches. */
 const choiceFile = () => join(app.getPath('userData'), 'agneta.json');
-
-/** Whether something answers on the port now. */
-function answers(port) {
-  return new Promise((resolve) => {
-    const probe = createConnection({ host: '127.0.0.1', port }, () => { probe.destroy(); resolve(true); });
-    probe.on('error', () => resolve(false));
-    probe.setTimeout(500, () => { probe.destroy(); resolve(false); });
-  });
-}
 
 /** The Agneta to start with: the one picked last, else the one running (the release when both or neither are). */
 async function initialAgneta() {
@@ -92,7 +72,7 @@ async function initialAgneta() {
     const picked = agnetas.find((choice) => choice.id === use);
     if (picked) return picked;
   } catch {}
-  const [release, dev] = await Promise.all(agnetas.map((choice) => answers(choice.port)));
+  const [release, dev] = await Promise.all(agnetas.map((choice) => isListening(choice.port)));
   return dev && !release ? agnetas[1] : agnetas[0];
 }
 

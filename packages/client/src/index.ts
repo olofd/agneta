@@ -1,0 +1,23 @@
+// @agneta/client: the official TypeScript client for Agneta's app protocol (docs/APP_PROTOCOL.md).
+export * from './acp.js';
+export * from './protocol.js';
+export * from './errors.js';
+export { Emitter, type Listener } from './emitter.js';
+export {
+  Connection, type ConnectionEvents, type Direction, type JsonRpcId, type JsonRpcMessage, type JsonRpcNotification,
+  type JsonRpcRequest, type JsonRpcResponse, type OpenOptions, type RequestHandler, type RequestOptions,
+  type WebSocketConstructor, type WebSocketLike
+} from './connection.js';
+export {
+  AgnetaClient, connect, type AgnetaClientOptions, type ClientEvents, type ClientState, type ConnectOptions,
+  type ReconnectOptions, type Timeouts
+} from './client.js';
+export {
+  Session, Turn, httpMcpServer, permissionResponse, promptBlocks, type ForkOptions, type LoadSessionOptions,
+  type NewSessionOptions, type PermissionAnswer, type PermissionHandler, type PermissionRequest, type PromptInput,
+  type SessionEnd, type SessionEvents, type SessionOptionsBase, type ToolCallState, type TraceRecordsOptions,
+  type TurnEvent, type TurnResult
+} from './session.js';
+export { configSetting, findConfigOption, type ConfigChoice, type ConfigSetting } from './config.js';
+export { memoryTokenStore, type TokenStore } from './tokens.js';
+export { chooseProvider, engineInfo, providerEngines, type EngineChoice, type ProviderEngine } from './access.js';

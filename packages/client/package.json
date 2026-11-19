@@ -1,0 +1,45 @@
+{
+  "name": "@agneta/client",
+  "version": "0.1.0",
+  "description": "The official TypeScript client for Agneta: run AI work on your users' own plans and API keys, over the Agent Client Protocol.",
+  "license": "Apache-2.0",
+  "author": "Olof Dahlbom",
+  "homepage": "https://github.com/olofd/agneta/tree/main/packages/client#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/olofd/agneta.git",
+    "directory": "packages/client"
+  },
+  "bugs": "https://github.com/olofd/agneta/issues",
+  "keywords": ["agneta", "acp", "agent-client-protocol", "ai", "agents", "macos", "claude", "codex", "goose", "opencode"],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "src", "README.md", "LICENSE", "CHANGELOG.md"],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p test/tsconfig.json",
+    "test": "node --test test/*.test.mjs",
+    "test:integration": "node --test test/agnetad.integration.mjs",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2"
+  }
+}
