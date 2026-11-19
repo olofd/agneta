@@ -576,9 +576,11 @@ final class AppModel {
 
     /// Lets diagnostic tools (Claude Code, scripts) read task traces over MCP with a new token.
     func allowDiagnostics() async {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        let token = "agd_" + Data(bytes).base64EncodedString().replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "=", with: "")
+        let random = Data(SecureRandom.bytes(32)).base64EncodedString()
+        let token =
+            "agd_"
+            + random.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "=", with: "")
         do { try keychain.set(token, for: Self.diagnosticsAccount) } catch {
             diagnosticsProblem = "Agneta couldn't store the token in the Keychain."
             return
