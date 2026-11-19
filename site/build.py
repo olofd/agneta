@@ -717,9 +717,8 @@ def landing(site):
     }, "index.html")
     head = ('<link rel="preload" as="image" href="/images/panel.png" media="(prefers-color-scheme: light)">'
             '<link rel="preload" as="image" href="/images/panel-dark.png" media="(prefers-color-scheme: dark)">')
-    return layout(site, title="Agneta", description="Agneta is an open-source macOS menu bar app that lets the "
-                  "apps you allow use your own ChatGPT or Claude plan, or API key, for agent tasks: on your Mac, "
-                  "sandboxed, with every task in view.", path="", body=body, page_class="home", head_extra=head)
+    return layout(site, title="Agneta", description="Agneta lets the Mac apps you allow use your ChatGPT or Claude plan, or API key, as an "
+                  "AI agent: sandboxed on your Mac, every task in view. Free and open source.", path="", body=body, page_class="home", head_extra=head)
 
 
 def build(out, release, commit):
