@@ -598,20 +598,53 @@ def get_page(site):
                   page_class="get")
 
 
-# What a page may load, and what the site's script may read: the install page is opened by apps, so it must send
-# nothing anywhere and read nothing of its address but the fragment (docs/APP_PROTOCOL.md, Getting Agneta).
-LOADS = re.compile(r'<(?:script|img|iframe|video|audio|source|embed|track)\b[^>]*?\s(?:src|srcset|poster)="([^"]*)"'
-                   r'|<link\b[^>]*?\shref="([^"]*)"|<object\b[^>]*?\sdata="([^"]*)"|url\(\s*["\']?(https?:|//)', re.I)
-READS = re.compile(r"location\.(?:search|href)|document\.(?:URL|referrer|cookie)|URLSearchParams|\bfetch\s*\(|"
-                   r"XMLHttpRequest|sendBeacon|WebSocket|EventSource|localStorage|sessionStorage|indexedDB")
+# What a page may load, and what the site's script may read: the install page is opened by apps, so no page loads
+# anything from elsewhere, and the script reads nothing of its address but the fragment and sends nothing
+# (docs/APP_PROTOCOL.md, Getting Agneta). These are checks of the site's own sources, not a sandbox: they catch the
+# ways this site could come to load or send something, and site/test_build.py shows each one caught.
+LOADING_TAG = re.compile(r"<(script|img|iframe|video|audio|source|embed|track|object|link|input|image|use)\b([^>]*)>", re.I)
+ATTRIBUTE = re.compile(r"""\s(src|srcset|poster|data|href|xlink:href)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""", re.I)
+CSS_LOAD = re.compile(r"""@import\s+(?:url\(\s*)?["']?([^"')\s;]+)|url\(\s*["']?([^"')\s]+)""", re.I)
+READS = re.compile(r"\blocation\b(?!\.hash\b)|document\.(?:URL|referrer|cookie|write)|URLSearchParams|\bfetch\s*\(|"
+                   r"XMLHttpRequest|sendBeacon|WebSocket|EventSource|localStorage|sessionStorage|indexedDB|\bimport\s*\(|"
+                   r"new\s+Image\b|\.src\s*=|\.srcset\s*=|setAttribute\(\s*[\"'](?:src|srcset|href)|\bwindow\.open\b|\.submit\s*\(")
+
+
+def off_site(url):
+    url = url.strip().strip("\"'")
+    return url.startswith(("http:", "https:", "//")) and not url.startswith(SITE + "/")
+
+
+def check_css(name, text):
+    for m in CSS_LOAD.finditer(text):
+        url = m.group(1) or m.group(2) or ""
+        if off_site(url) or (m.group(1) and not url.startswith("/")):
+            raise BuildError(f"{name}: loads {url} from elsewhere; the site serves everything itself")
 
 
 def check_loads(name, page):
-    """Fails on anything a page would load from elsewhere: every script, style, image and frame comes from the site."""
-    for m in LOADS.finditer(page):
-        url = next((g for g in m.groups() if g is not None), "")
-        if url.startswith(("http:", "https:", "//")) and not url.startswith(SITE + "/"):
-            raise BuildError(f"{name}: loads {url} from elsewhere; the site serves everything itself")
+    """Fails on anything a page would load from elsewhere: every script, style, image, frame and font comes from the
+    site, nothing refreshes to another address, and no script runs but the site's own file."""
+    for m in LOADING_TAG.finditer(page):
+        tag, attributes = m.group(1).lower(), m.group(2)
+        for a in ATTRIBUTE.finditer(attributes):
+            key, value = a.group(1).lower(), a.group(2).strip("\"'")
+            if key == "href" and tag not in ("link", "image", "use"):
+                continue
+            if key == "href" and tag == "link" and re.search(r"""rel\s*=\s*["']?canonical""", attributes, re.I):
+                continue
+            urls = [part.strip().split(" ")[0] for part in value.split(",")] if key == "srcset" else [value]
+            for url in urls:
+                if off_site(url):
+                    raise BuildError(f"{name}: loads {url} from elsewhere; the site serves everything itself")
+        if tag == "script" and not ATTRIBUTE.search(attributes):
+            raise BuildError(f"{name}: an inline script; the site runs only its own /site.js")
+    for style in re.findall(r"<style\b[^>]*>(.*?)</style>", page, re.I | re.S):
+        check_css(name, style)
+    for style in re.findall(r"""\sstyle\s*=\s*("[^"]*"|'[^']*')""", page, re.I):
+        check_css(name, style)
+    if re.search(r"""<meta\b[^>]*http-equiv\s*=\s*["']?refresh""", page, re.I):
+        raise BuildError(f"{name}: a meta refresh; no page sends the visitor anywhere by itself")
 
 
 def check_script(text):
@@ -718,6 +751,7 @@ def build(out, release, commit):
                 with open(os.path.join(root, name), encoding="utf-8") as f:
                     check_loads(os.path.relpath(os.path.join(root, name), out), f.read())
     check_script(read("site/src/site.js"))
+    check_css("style.css", read("site/src/style.css"))
 
     for name in ("style.css", "site.js"):
         shutil.copy(os.path.join(SRC, name), os.path.join(out, name))

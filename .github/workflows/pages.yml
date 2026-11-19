@@ -45,6 +45,9 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$RUNNER_TEMP/release.json" \
             || { echo "::warning::No published release: the page links the releases list"; : > "$RUNNER_TEMP/release.json"; }
 
+      - name: Test the build's checks
+        run: python3 site/test_build.py
+
       - name: Build
         run: python3 site/build.py --out "$RUNNER_TEMP/site" --release "$RUNNER_TEMP/release.json" --commit "$(git rev-parse HEAD)"
 
