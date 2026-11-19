@@ -7,7 +7,9 @@ import { EventEmitter } from 'node:events';
 import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { Agneta, describeError, listening, memoryTokens } from './agneta.mjs';
+import { NotRunningError } from '@agneta/client';
+import { waitForPort } from '@agneta/client/node';
+import { Agneta, describeError, memoryTokens } from './agneta.mjs';
 import { plan, resultsFolder, runMatrix, timestamp } from './bench.mjs';
 import { checkModes } from './modes.mjs';
 import { duration, gotText, writeReport } from './report.mjs';
@@ -120,7 +122,7 @@ export class BenchApp extends EventEmitter {
     } catch (error) {
       if (this.#agneta !== agneta) return;
       this.#agneta = undefined;
-      const notRunning = error.notRunning;
+      const notRunning = error instanceof NotRunningError;
       this.#update({ phase: 'disconnected', code: '', status: notRunning ? `${this.name} isn't running. Open it, then connect.` : describeError(error) });
       if (notRunning && this.#openAgneta && (!quiet || await this.#tokens.load())) await this.#offerToOpen(quiet);
     }
@@ -129,7 +131,7 @@ export class BenchApp extends EventEmitter {
   async #offerToOpen(quiet) {
     if (!await this.#openAgneta()) return;
     this.#update({ status: `Opening ${this.name}…` });
-    if (!await listening(this.port, 20)) {
+    if (!await waitForPort(this.port, 20_000)) {
       this.#update({ status: `${this.name} didn't start. Open it, then connect.` });
       return;
     }

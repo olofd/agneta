@@ -5,7 +5,7 @@ import { toolchainEnvironment, toolchainFolders } from './toolchain.mjs';
 import { EventEmitter } from 'node:events';
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describeError, settings, unenforceable } from './agneta.mjs';
+import { describeError, refusal, settings } from './agneta.mjs';
 import { modeText } from './sandbox.mjs';
 import { startGateway } from './gateway.mjs';
 import { findCargo, score } from './referee.mjs';
@@ -83,10 +83,10 @@ function outputOf(update) {
 
 export class BenchRun extends EventEmitter {
   #agneta;
+  /** The run's session (@agneta/client's Session) while it's open. */
+  #session = null;
   #tools;
   #gateway;
-  #listener;
-  #permissionListener;
   /** When the last live trace batch arrived: the trace trails the turn by a batch or two (every 100 ms). */
   #traceAt = 0;
   #transcriptTools = new Map();
@@ -175,60 +175,52 @@ export class BenchRun extends EventEmitter {
     const { account, engine } = this.choice;
     const evidence = this.evidence;
     const { run } = await this.prepare();
-
-    // Live trace records can arrive before session/new answers: kept until the session's id is known.
-    const early = [];
-    this.#listener = (method, params) => {
-      if (!this.session) {
-        if (method === 'agneta/trace') early.push(params);
-        return;
-      }
-      if (params?.sessionId === this.session) this.#notification(method, params);
-    };
-    this.#agneta.on('notification', this.#listener);
-    this.#permissionListener = () => { evidence.appPermissions += 1; };
-    this.#agneta.on('permission', this.#permissionListener);
-
-    const request = {
-      cwd: run.workspace,
-      mcpServers: [this.#tools.registration],
-      _meta: {
-        agneta: { account, engine: engine || undefined },
-        'agneta/policy': this.policy,
-        'agneta/instructions': { text: instructions },
-        'agneta/task': { title: `${this.scenario?.title ?? 'Free run'} · Replica Bench`, stopWarning: 'Replica Bench keeps the workspace and the scores so far.' },
-        'agneta/trace': { live: true }
-      }
-    };
     this.status = 'Opening the session…';
     this.#change();
-    let opened;
+    let session;
     try {
-      opened = await this.#agneta.newSession(request, {
-        progress: (downloading) => {
-          const share = downloading?.total ? ` ${Math.round(100 * downloading.received / downloading.total)}%` : '';
-          this.status = `Agneta is getting ${downloading?.engine ?? 'the engine'} ready…${share}`;
+      session = await this.#agneta.newSession({
+        cwd: run.workspace,
+        account,
+        engine: engine || undefined,
+        mcpServers: [this.#tools.registration],
+        policy: this.policy,
+        instructions,
+        task: { title: `${this.scenario?.title ?? 'Free run'} · Replica Bench`, stopWarning: 'Replica Bench keeps the workspace and the scores so far.' },
+        trace: true,
+        // Attached before the session is returned: live trace records can arrive before session/new answers.
+        on: {
+          update: (update) => this.#update(update),
+          trace: (records) => this.#trace(records),
+          queued: (position) => {
+            this.status = `Waiting for room · position ${position}`;
+            this.#change();
+          },
+          ended: (end) => this.#ended(end)
+        },
+        // Sessions use approval never-ask: a request that still arrives is declined, and counted.
+        permissions: () => {
+          evidence.appPermissions += 1;
+          return 'cancel';
+        },
+        onDownloadProgress: (downloading) => {
+          const share = downloading.total ? ` ${Math.round(100 * downloading.received / downloading.total)}%` : '';
+          this.status = `Agneta is getting ${downloading.engine ?? 'the engine'} ready…${share}`;
           this.#change();
         }
       });
     } catch (error) {
-      const fields = unenforceable(error);
-      if (error.code === -32602 || fields.length) this.refused = { code: error.code, fields, reason: error.data?.agneta?.reason ?? error.message };
-      else this.error = describeError(error);
-      this.status = this.refused ? `Agneta refused the session (${fields.join(', ') || 'session/new'}): ${this.refused.reason}` : this.error;
+      this.refused = refusal(error);
+      if (!this.refused) this.error = describeError(error);
+      this.status = this.refused ? `Agneta refused the session (${this.refused.fields.join(', ') || 'session/new'}): ${this.refused.reason}` : this.error;
       if (this.refused) this.transcript.push({ role: 'refusal', text: this.status });
       this.phase = 'ended';
       this.#log(this.status);
       await this.close();
       return false;
     }
-    if (typeof opened?.sessionId !== 'string') throw new Error('Agneta returned no session ID.');
-    this.session = opened.sessionId;
-    this.capabilities = opened._meta?.agneta?.capabilities ?? null;
-    // What the task really got, which may differ from what was asked only if Agneta and its access report disagree.
-    this.got = opened._meta?.agneta?.sandbox ?? null;
-    for (const params of early) if (params?.sessionId === this.session) this.#notification('agneta/trace', params);
-    this.config = settings(opened.configOptions);
+    this.attach(session);
+    this.config = settings(session.configOptions);
     const { model, effort } = this.choice;
     if (model || effort) await this.configure({ model, effort });
     this.phase = 'ready';
@@ -236,6 +228,16 @@ export class BenchRun extends EventEmitter {
     this.#log(`session ${this.session} on ${this.capabilities?.engine ?? engine ?? 'the default engine'}, ${modeText(this.record())}, in ${run.workspace}`);
     this.#change();
     return true;
+  }
+
+  /** Takes an open session as the run's (`start` does; tests give one of their own). */
+  attach(session) {
+    this.#session = session;
+    this.session = session.id;
+    this.capabilities = session.capabilities ?? null;
+    // What the task really got, which may differ from what was asked only if Agneta and its access report disagree.
+    this.got = session.sandbox ?? null;
+    this.phase = 'ready';
   }
 
   /** Sets the model or effort between turns, where the engine offers them (session/set_config_option). */
@@ -249,8 +251,7 @@ export class BenchRun extends EventEmitter {
         continue;
       }
       try {
-        const result = await this.#agneta.request('session/set_config_option', { sessionId: this.session, configId: id, value });
-        if (Array.isArray(result?.configOptions)) this.config = settings(result.configOptions); else this.config.view[key] = value;
+        this.config = settings(await this.#session.setConfigOption(id, value));
       } catch (error) {
         this.#log(`couldn't set the ${key}: ${describeError(error)}`);
       }
@@ -273,10 +274,11 @@ export class BenchRun extends EventEmitter {
       this.cancel();
     }, ms);
     try {
-      const result = await this.#agneta.request('session/prompt', { sessionId: this.session, prompt: [{ type: 'text', text }] }, ms + 180_000);
+      // The reply streams through the session's events (#update); the result says how the turn ended.
+      const result = await this.#session.prompt(text, { timeout: ms + 180_000 });
       turn.stopReason = result?.stopReason ?? null;
-      turn.usage = result?._meta?.['agneta/usage'] ?? null;
-      turn.limit = result?._meta?.['agneta/limit'] ?? null;
+      turn.usage = result?.usage ?? null;
+      turn.limit = result?.limit ?? null;
     } catch (error) {
       turn.error = describeError(error);
     } finally {
@@ -327,11 +329,9 @@ export class BenchRun extends EventEmitter {
 
   cancel() {
     if (this.phase !== 'running' || !this.session) return;
-    try {
-      this.#agneta.notify('session/cancel', { sessionId: this.session });
-      this.status = 'Stopping…';
-      this.#change();
-    } catch {}
+    this.#session?.cancel();
+    this.status = 'Stopping…';
+    this.#change();
   }
 
   /** Reads what the workspace holds now and judges the scenario (when the run has one). */
@@ -356,39 +356,39 @@ export class BenchRun extends EventEmitter {
     return this.verdict;
   }
 
-  #notification(method, params) {
+  /** The session ended in Agneta: the user's Stop, the engine exiting, or a limit Agneta enforced. */
+  #ended(end) {
+    if (end.reason !== 'stopped') return;
+    this.#log(`session stopped by ${end.stoppedBy}`);
+    this.lastSession = this.session;
+    this.session = null;
+    this.#session = null;
+    this.phase = 'ended';
+    this.status = end.stoppedBy === 'user' ? 'Stopped in Agneta.' : end.stoppedBy === 'limit' ? 'Stopped at its limit.' : 'The engine stopped.';
+    this.#change();
+  }
+
+  /** Live trace records: the commands the broker ran, the permission decisions, the model calls. */
+  #trace(records) {
     const evidence = this.evidence;
-    if (method === 'agneta/sessionStopped') {
-      this.#log(`session stopped by ${params.stoppedBy}`);
-      this.session = null;
-      this.phase = 'ended';
-      this.status = params.stoppedBy === 'user' ? 'Stopped in Agneta.' : params.stoppedBy === 'limit' ? 'Stopped at its limit.' : 'The engine stopped.';
-      this.#change();
-      return;
-    }
-    if (method === 'agneta/queued') {
-      this.status = `Waiting for room · position ${params.position}`;
-      this.#change();
-      return;
-    }
-    if (method === 'agneta/trace') {
-      this.#traceAt = Date.now();
-      for (const record of params.records ?? []) {
-        const at = Date.parse(record.t) || Date.now();
-        if (record.type === 'shell') {
-          evidence.commands.push({ command: record.command, exit: record.exit ?? null, signal: record.signal ?? null, refused: record.refused ?? null, at, output: record.stderrTail ?? '' });
-          if (record.refused) this.#log(`command refused: ${record.refused}`);
-        } else if (record.type === 'permission') {
-          evidence.permissions.push({ decision: record.decision, kind: record.toolKind, title: record.title, at });
-          if (record.decision === 'refused-by-policy') this.#log(`refused by policy: ${record.toolKind ?? ''} ${asText(record.title).slice(0, 80)}`);
-        } else if (record.type === 'event' && record.kind === 'model-call') {
-          evidence.modelCallRecords += 1;
-        }
+    this.#traceAt = Date.now();
+    for (const record of records) {
+      const at = Date.parse(record.t) || Date.now();
+      if (record.type === 'shell') {
+        evidence.commands.push({ command: record.command, exit: record.exit ?? null, signal: record.signal ?? null, refused: record.refused ?? null, at, output: record.stderrTail ?? '' });
+        if (record.refused) this.#log(`command refused: ${record.refused}`);
+      } else if (record.type === 'permission') {
+        evidence.permissions.push({ decision: record.decision, kind: record.toolKind, title: record.title, at });
+        if (record.decision === 'refused-by-policy') this.#log(`refused by policy: ${record.toolKind ?? ''} ${asText(record.title).slice(0, 80)}`);
+      } else if (record.type === 'event' && record.kind === 'model-call') {
+        evidence.modelCallRecords += 1;
       }
-      return;
     }
-    if (method !== 'session/update') return;
-    const update = params.update ?? {};
+  }
+
+  /** A session update: the reply as it streams, and each tool call as it goes. */
+  #update(update) {
+    const evidence = this.evidence;
     if (update.sessionUpdate === 'agent_message_chunk' && typeof update.content?.text === 'string') {
       evidence.reply += update.content.text;
       const last = this.transcript.at(-1);
@@ -489,10 +489,9 @@ export class BenchRun extends EventEmitter {
     if (session) {
       this.lastSession = session;
       this.session = null;
-      await this.#agneta.request('session/close', { sessionId: session }, 10_000).catch(() => {});
+      await this.#session?.close({ timeout: 10_000 }).catch(() => {});
+      this.#session = null;
     }
-    if (this.#listener) this.#agneta.off('notification', this.#listener);
-    if (this.#permissionListener) this.#agneta.off('permission', this.#permissionListener);
     this.#tools?.close();
     this.#gateway?.close();
     if (this.phase !== 'ended') {

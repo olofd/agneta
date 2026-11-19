@@ -19,7 +19,7 @@ export interface ProviderEngine {
 
 /** The engine's entry in the access report. */
 export function engineInfo(access: Access | null | undefined, id: EngineId): AccessEngine | undefined {
-  return access?.engines.find((engine) => engine.id === id);
+  return access?.engines?.find((engine) => engine.id === id);
 }
 
 /** A provider's engines, the default first, each with its state, modes and whether it's uncontained. */

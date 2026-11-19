@@ -143,8 +143,11 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   #remembered = false;
   #pairingCode: string | null = null;
   #sessions = new Map<string, Session>();
-  /** Updates for sessions not known yet: ones that arrive before `session/new` answers, and a load's replay. */
-  #early = new Map<string, SessionUpdate[]>();
+  /**
+   * Notifications for sessions not known yet: ones that arrive before `session/new` answers (updates, the first live
+   * trace records), and a load's replay. Given to the session when it opens.
+   */
+  #early = new Map<string, Array<{ method: string; params: any }>>();
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #connecting: Promise<Access> | null = null;
   #opening: Promise<Connection> | null = null;
@@ -506,14 +509,17 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     }
     const id = idOf(result);
     if (typeof id !== 'string' || !id) throw new ProtocolError(`Agneta returned no session id for ${method}.`, result);
-    const history = this.#early.get(id) ?? [];
+    const early = this.#early.get(id) ?? [];
     this.#early.delete(id);
-    const session = new Session(this.#host, id, { ...result, sessionId: id }, history, options.permissions);
+    const history = early.filter(({ method }) => method === 'session/update').map(({ params }) => params.update as SessionUpdate);
+    const session = new Session(this.#host, id, { ...result, sessionId: id }, history, options.permissions, options.on);
     if (this.#connection !== connection || !connection.isOpen) {
       session.end({ reason: 'disconnected', error: new ConnectionClosedError(undefined, 'closed while the session opened') });
       throw new ConnectionClosedError(undefined, 'closed while the session opened');
     }
     this.#sessions.set(id, session);
+    // The rest of what came early (live trace records, a queue place, a stop), to the listeners given in `on`.
+    for (const { method, params } of early) if (method !== 'session/update') session.receive(method, params);
     return session;
   }
 
@@ -581,19 +587,19 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     if (typeof id === 'string') {
       const session = this.#sessions.get(id);
       if (session) session.receive(method, params);
-      else if (method === 'session/update' && params?.update) this.#hold(id, params.update);
+      else if (method !== 'session/update' || params?.update) this.#hold(id, method, params);
     }
     this.emit('notification', method, params);
   }
 
-  /** Keeps an update for a session not registered yet: a few sessions' worth, bounded. */
-  #hold(id: string, update: SessionUpdate): void {
+  /** Keeps a notification for a session not registered yet: a few sessions' worth, bounded. */
+  #hold(id: string, method: string, params: unknown): void {
     let list = this.#early.get(id);
     if (!list) {
       if (this.#early.size >= 16) this.#early.delete(this.#early.keys().next().value!);
       this.#early.set(id, list = []);
     }
-    if (list.length < 10_000) list.push(update);
+    if (list.length < 10_000) list.push({ method, params });
   }
 
   #drop(connection: Connection): void {

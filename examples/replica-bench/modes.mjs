@@ -2,7 +2,7 @@
 // use it opens one session asking `contained` and one asking `developer`, with no prompt (opening a session starts
 // the engine but calls no model), records what each got (`_meta.agneta.sandbox`) or Agneta's refusal and reason, and
 // closes it. Each answer is compared with what Agneta declared: the grant's ceiling and the engine's sandboxLevels.
-import { describeError, unenforceable } from './agneta.mjs';
+import { describeError, refusal } from './agneta.mjs';
 import { policyFor } from './run.mjs';
 import { expectedMode, modes as ladder } from './sandbox.mjs';
 import { createRun } from './workspace.mjs';
@@ -31,21 +31,18 @@ export async function checkModes(agneta, home, { account = 'all', log = () => {}
         } else {
           const started = Date.now();
           try {
-            const opened = await agneta.newSession({
+            const session = await agneta.newSession({
               cwd: run.workspace,
-              mcpServers: [],
-              _meta: {
-                agneta: { account: provider.id, engine: engine.id },
-                'agneta/policy': policyFor(run, { sandbox }),
-                'agneta/task': { title: `Modes check · ${engine.name} · ${sandbox} · Replica Bench` }
-              }
+              account: provider.id,
+              engine: engine.id,
+              policy: policyFor(run, { sandbox }),
+              task: `Modes check · ${engine.name} · ${sandbox} · Replica Bench`
             });
-            row.got = opened?._meta?.agneta?.sandbox ?? null;
-            if (typeof opened?.sessionId === 'string') await agneta.request('session/close', { sessionId: opened.sessionId }, 10_000).catch(() => {});
+            row.got = session.sandbox ?? null;
+            await session.close({ timeout: 10_000 }).catch(() => {});
           } catch (error) {
-            const fields = unenforceable(error);
-            if (error.code === -32602 || fields.length) row.refused = { code: error.code, fields, reason: error.data?.agneta?.reason ?? error.message };
-            else row.error = describeError(error);
+            row.refused = refusal(error);
+            if (!row.refused) row.error = describeError(error);
           }
           row.ms = Date.now() - started;
         }

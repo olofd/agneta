@@ -287,6 +287,11 @@ export interface SessionOptionsBase {
   /** Answers this session's permission requests (else the client's handler, else they're declined). */
   permissions?: PermissionHandler;
   /**
+   * Listeners attached before the session is returned, so they also get what arrived while it opened: the first live
+   * trace records, say (`{ trace: (records) => … }`). Updates from then are in `history` too.
+   */
+  on?: { [Name in keyof SessionEvents]?: (...args: SessionEvents[Name]) => void };
+  /**
    * While the engine downloads (-32015), try again until it's ready: `true` (the default, up to 10 minutes), a number
    * of milliseconds, or `false` to fail at once with `EngineDownloadingError`.
    */
@@ -330,8 +335,13 @@ export class Session extends Emitter<SessionEvents> {
   #permissions: PermissionHandler | undefined;
 
   /** @internal */
-  constructor(host: SessionHost, id: string, raw: SessionResult, history: SessionUpdate[], permissions?: PermissionHandler) {
+  constructor(host: SessionHost, id: string, raw: SessionResult, history: SessionUpdate[], permissions?: PermissionHandler,
+    listeners?: SessionOptionsBase['on']) {
     super();
+    for (const [name, listener] of Object.entries(listeners ?? {})) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (listener) this.on(name as keyof SessionEvents, listener as (...args: any[]) => void);
+    }
     this.#host = host;
     this.id = id;
     this.raw = raw;

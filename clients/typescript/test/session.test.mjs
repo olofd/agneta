@@ -390,3 +390,21 @@ test('reading the access report: engines per provider, and a provider to run on'
   assert.equal(chooseProvider(access, { kind: 'claude', engine: 'goose' }).engine.id, 'goose');
   assert.equal(chooseProvider(access, { kind: 'chatgpt' }), null);
 });
+
+test('live trace records that arrive before session/new answers reach the listeners given in `on`', async (t) => {
+  const record = { v: 1, seq: 1, t: 'x', mono: 0, task: 's1', turn: 0, type: 'meta' };
+  const { client } = await setUp(t, {
+    handlers: {
+      'session/new': (message, peer) => {
+        peer.notify('agneta/trace', { sessionId: 's1', records: [record] });
+        peer.notify('session/update', update('s1', text('early')));
+        return undefined;
+      }
+    }
+  });
+  const traced = [], updates = [];
+  const session = await client.newSession({ trace: true, on: { trace: (records) => traced.push(...records), update: (value) => updates.push(value) } });
+  assert.deepEqual(traced, [record]);
+  assert.deepEqual(session.history.map(({ sessionUpdate }) => sessionUpdate), ['agent_message_chunk']);
+  assert.deepEqual(updates, [], 'early updates are the history, not events');
+});

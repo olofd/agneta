@@ -33,24 +33,26 @@ test('backgroundQuiet: not busy means no wait; busy waits until quiet, or until 
   assert.deepEqual(forever, { busy: true, quiet: false, waitedMs: 180_000 });
 });
 
-/** A run of the background-job scenario with a fake Agneta that answers each prompt and records it. */
+/** A run of the background-job scenario with a fake session that answers each prompt (as @agneta/client's turn) and records it. */
 async function fakeRun(t) {
   const workspace = await mkdtemp(join(tmpdir(), 'replica-bench-followup-'));
   t.after(() => rm(workspace, { recursive: true, force: true }));
   await mkdir(join(workspace, 'probes'));
   const prompts = [];
-  const agneta = {
-    request: async (method, params) => {
-      assert.equal(method, 'session/prompt');
-      prompts.push({ session: params.sessionId, text: params.prompt[0].text });
-      return { stopReason: 'end_turn', _meta: { 'agneta/usage': { modelCalls: 1 } } };
+  const session = {
+    id: 's1',
+    sandbox: 'contained',
+    capabilities: { engine: 'codex' },
+    prompt: async (text) => {
+      prompts.push({ session: 's1', text });
+      return { stopReason: 'end_turn', usage: { modelCalls: 1 }, limit: null };
     },
-    notify() {}
+    cancel() {},
+    close: async () => {}
   };
-  const run = new BenchRun(agneta, workspace, scenario('background-job'), { account: 'a', engine: 'codex', sandbox: 'contained' });
+  const run = new BenchRun({}, workspace, scenario('background-job'), { account: 'a', engine: 'codex', sandbox: 'contained' });
   run.workspace = workspace;
-  run.session = 's1';
-  run.phase = 'ready';
+  run.attach(session);
   return { run, prompts, workspace };
 }
 
