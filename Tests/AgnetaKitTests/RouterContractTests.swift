@@ -101,9 +101,11 @@ actor FakeEngines: EngineSource {
     func loading(takes delay: Duration) { loadDelay = delay }
     /// Every engine stops reading: Agneta's writes to it wait forever.
     func wedge() async { for gate in gates { await gate.close() } }
-    /// Slow turns waiting to be steered or cancelled, each also woken after 3 s.
-    private var steerWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
-    private var cancelled = false
+    /// Slow turns waiting to be steered or cancelled, by engine session, each also woken after 3 s.
+    private var steerWaiters: [UUID: (session: String, continuation: CheckedContinuation<Void, Never>)] = [:]
+    /// Engine sessions whose running turn was cancelled. Per session, as in a real engine: a cancel for one session
+    /// never ends another's turn.
+    private var cancelled: Set<String> = []
 
     /// The engine each open was for.
     private(set) var askedEngines: [String] = []
@@ -143,9 +145,11 @@ actor FakeEngines: EngineSource {
             guard let self else { return .failure(RPCError(code: RPCError.internalError, message: "gone")) }
             return await self.answer(engine, n: n, method: method, params: params)
         })
-        await engine.handle(notifications: { [weak self] method, _ in
+        await engine.handle(notifications: { [weak self] method, params in
             await self?.noted(method)
-            if method == "session/cancel" { await self?.cancel() }
+            if method == "session/cancel", let session = params?["sessionId"]?.stringValue {
+                await self?.cancel(session)
+            }
         })
         // Speaks Goose's dialect, so Goose's adapter describes it.
         // App-only sessions get the shared key, as the real supervisor gives them.
@@ -185,11 +189,11 @@ actor FakeEngines: EngineSource {
             return .success([:])
         case "_goose/unstable/session/steer":
             steers.append(params ?? .null)
-            wakeAll()
+            if let session = params?["sessionId"]?.stringValue { wakeAll(session) }
             return .success(["runId": params?["expectedRunId"] ?? .null])
         case "session/prompt":
             let text = params?["prompt"]?.arrayValue?.first?["text"]?.stringValue ?? ""
-            cancelled = false // a cancel belongs to the turn it arrived in
+            cancelled.remove(session.stringValue ?? "") // a cancel belongs to the turn it arrived in
             if text.hasPrefix("permission ") {
                 let kind = String(text.dropFirst("permission ".count))
                 await update([
@@ -243,12 +247,13 @@ actor FakeEngines: EngineSource {
                         code: RPCError.internalError, message: RateLimitTests.goose, data: ["reason": "turn_failed"]))
             } else if text == "slow" {
                 await update(["sessionUpdate": "session_info_update", "_meta": ["goose": ["activeRunId": "run-7"]]])
-                await waitForSteer(upTo: .seconds(3))
+                await waitForSteer(session.stringValue ?? "", upTo: .seconds(3))
             } else {
                 await update(["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "hi"]])
             }
             return .success([
-                "stopReason": cancelled ? "cancelled" : "end_turn", "usage": ["inputTokens": 5, "outputTokens": 1]
+                "stopReason": cancelled.contains(session.stringValue ?? "") ? "cancelled" : "end_turn",
+                "usage": ["inputTokens": 5, "outputTokens": 1]
             ])
         case "session/set_config_option":
             if let id = params?["configId"]?.stringValue, let value = params?["value"]?.stringValue {
@@ -276,17 +281,17 @@ actor FakeEngines: EngineSource {
 
     private func noted(_ method: String) { notifications.append(method) }
 
-    private func cancel() {
-        cancelled = true
-        wakeAll()
+    private func cancel(_ session: String) {
+        cancelled.insert(session)
+        wakeAll(session)
     }
 
-    /// Waits until steered or cancelled, or `upTo` has passed, whichever comes first. (A task group would wait for the
-    /// steer it can't cancel.)
-    private func waitForSteer(upTo limit: Duration) async {
+    /// Waits until this session's turn is steered or cancelled, or `upTo` has passed, whichever comes first. (A task
+    /// group would wait for the steer it can't cancel.)
+    private func waitForSteer(_ session: String, upTo limit: Duration) async {
         let id = UUID()
         await withCheckedContinuation { continuation in
-            steerWaiters[id] = continuation
+            steerWaiters[id] = (session, continuation)
             Task { [weak self] in
                 try? await Task.sleep(for: limit)
                 await self?.wake(id)
@@ -294,12 +299,14 @@ actor FakeEngines: EngineSource {
         }
     }
 
-    private func wake(_ id: UUID) { steerWaiters.removeValue(forKey: id)?.resume() }
+    private func wake(_ id: UUID) { steerWaiters.removeValue(forKey: id)?.continuation.resume() }
 
-    private func wakeAll() {
-        let waiting = steerWaiters
-        steerWaiters = [:]
-        waiting.values.forEach { $0.resume() }
+    /// Wakes the session's waiting turns, and no other session's.
+    private func wakeAll(_ session: String) {
+        for (id, waiter) in steerWaiters where waiter.session == session {
+            steerWaiters[id] = nil
+            waiter.continuation.resume()
+        }
     }
 }
 
