@@ -15,9 +15,12 @@ Each job:
 3. builds, then runs the whole test suite with `AGNETA_REQUIRE_ENGINES=1`. That makes the real-engine suites mandatory: Goose and OpenCode against the fake model and tool server (`RouterIntegrationTests`, `AppScenarioTests`, `GooseIntegrationTests`) and the sandbox acceptance test (`ContainmentTests`, [CONTAINMENT.md](CONTAINMENT.md)). Without the variable, those suites skip when an engine is missing, which suits a first local build but not CI. The fakes (`AgnetaFakes`) are served from the test process: Python servers on GitHub's runners often never accept a loopback connection (measured 2026-11-18);
 4. if a test fails, uploads every test's folder (the fakes' request logs, engine logs and traces; `AGNETA_KEEP_TEST_FILES=1` keeps them) as the artifact `test-folders-<runner>`;
 5. builds the app bundle with `scripts/dev/build-app`, which also fetches Codex's adapter and checks the bundle's signature;
-6. uses the bundled Node to [test Project Chat](../examples/project-chat/README.md#check-it-without-an-account), including a session against Goose and the fake model (`agneta-fakes`).
+6. builds the [TypeScript client](../packages/client/README.md) and runs its unit tests and its integration test against `agnetad`, Goose and the fake model (`agneta-fakes`);
+7. uses the bundled Node to [test Project Chat](../examples/project-chat/README.md#check-it-without-an-account), which runs on the client, including a session against Goose and the fake model.
 
-The only actions used are GitHub's own `actions/checkout` and `actions/upload-artifact`, each pinned to a commit. Nothing else is downloaded except the pinned engines and the npm lockfile's packages.
+`.github/workflows/client.yml` builds, type-checks and unit-tests the client on Linux with Node 22 and 24 for every change to `packages/client`, and `client-release.yml` publishes it to npm from a `client-v*` tag ([its README](../packages/client/README.md#releasing)).
+
+The only actions used are GitHub's own (`actions/checkout`, `actions/setup-node`, `actions/upload-artifact`, and in the release workflows `actions/download-artifact` and `actions/attest-build-provenance`), each pinned to a commit. Nothing else is downloaded except the pinned engines and the npm lockfiles' packages.
 
 ## Not covered yet
 
@@ -32,7 +35,10 @@ scripts/fetch-engines --engine all
 swift build
 AGNETA_REQUIRE_ENGINES=1 swift test
 scripts/dev/build-app
-cd examples/project-chat
+cd packages/client
+npm ci && npm run build && npm test && npm run test:integration
+cd ../../examples/project-chat
+npm ci --ignore-scripts
 npm test
 npm run test:integration
 ```

@@ -147,7 +147,7 @@ python3 site/build.py && python3 -m http.server 8642 --bind 127.0.0.1 --director
 
 ## For app developers
 
-**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app pairs with Agneta, keeps its access and reconnects by itself, offers to open Agneta when it isn't running, lets you choose Agneta or Agneta Dev, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review. **[Replica Bench](examples/replica-bench/README.md)** shows the sandbox modes: it runs a demanding workload on every engine in both modes, and shows what each task got and how a refusal looks.
+**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app, built on [`@agneta/client`](packages/client/README.md), pairs with Agneta, keeps its access and reconnects by itself, offers to open Agneta when it isn't running, lets you choose Agneta or Agneta Dev, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review. **[Replica Bench](examples/replica-bench/README.md)** shows the sandbox modes: it runs a demanding workload on every engine in both modes, and shows what each task got and how a refusal looks.
 
 Your app is an ACP **client** and Agneta is the ACP **agent**. If your app already speaks ACP, most of what follows is familiar. What Agneta adds is how you reach it, how the user lets your app in, and the rules a task runs under.
 
@@ -159,7 +159,18 @@ Your app is an ACP **client** and Agneta is the ACP **agent**. If your app alrea
 | What the agent may touch | Whatever the agent process can reach | A policy you send with each session (tools, folders, sandbox mode, network, approval, limits), within the mode the user chose for your app, enforced by sandboxes, or refused |
 | Afterwards | Nothing standard | Usage in every prompt result, and the task's full trace, live or later |
 
-No SDK is needed. Any WebSocket and JSON-RPC 2.0 code will do, including in a sandboxed Mac App Store app. That needs `com.apple.security.network.client` to connect, plus `com.apple.security.network.server` if the app serves its own MCP tools; its folders come from the user (an open panel or a security-scoped bookmark), since Agneta keeps app containers out of reach ([details](docs/APP_PROTOCOL.md#connecting)). To see the whole exchange in Swift, read [`Sources/agneta-testclient/main.swift`](Sources/agneta-testclient/main.swift), the maintainers' test client: it pairs, opens a session with a policy and an MCP server, prompts and prints the stream in about 220 lines. It's a demonstration, not a client library: a real app keeps its token in the Keychain and reconnects with it, as Project Chat does.
+**In TypeScript or JavaScript (Node 22+ or Electron's main process), use [`@agneta/client`](packages/client/README.md),** the official client. It does everything below for you, typed, and keeps a raw layer for anything else:
+
+```js
+import { AgnetaClient } from '@agneta/client';
+
+const client = new AgnetaClient({ name: 'Example App', tokens });   // tokens: where Always Allow's token is kept
+await client.connect();                                             // pairs the first time, then reuses the token
+const session = await client.newSession({ policy: { tools: 'app-only', approval: 'never-ask' } });
+for await (const text of session.prompt('Sort these notes by topic.').textStream()) process.stdout.write(text);
+```
+
+Otherwise no SDK is needed. Any WebSocket and JSON-RPC 2.0 code will do, including in a sandboxed Mac App Store app. That needs `com.apple.security.network.client` to connect, plus `com.apple.security.network.server` if the app serves its own MCP tools; its folders come from the user (an open panel or a security-scoped bookmark), since Agneta keeps app containers out of reach ([details](docs/APP_PROTOCOL.md#connecting)). To see the whole exchange in Swift, read [`Sources/agneta-testclient/main.swift`](Sources/agneta-testclient/main.swift), the maintainers' test client: it pairs, opens a session with a policy and an MCP server, prompts and prints the stream in about 220 lines. It's a demonstration, not a client library: a real app keeps its token in the Keychain and reconnects with it, as Project Chat does.
 
 ### The conversation, step by step
 

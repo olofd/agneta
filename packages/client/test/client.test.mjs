@@ -276,3 +276,44 @@ test('the raw layer: any request, notification listeners and the message tap', a
   assert.deepEqual(queued, [4]);
   assert.deepEqual(seen.slice(0, 4), ['out engine/own', 'in result', 'out agneta/access', 'in result']);
 });
+
+test('pair: "always" pairs again on a client that is already connected', async (t) => {
+  const { agneta } = await setUp(t);
+  const client = await connect({ name: 'Example', port: agneta.port, tokens: memoryTokenStore('kept-token') });
+  t.after(() => client.close());
+  assert.equal(agneta.calls('agneta/pair').length, 0);
+  await client.connect({ pair: 'always', scope: { tools: 'workspace' } });
+  assert.equal(agneta.calls('agneta/pair').length, 1);
+  assert.equal(client.state, 'connected');
+});
+
+test('two connects at once share one connection and one pairing', async (t) => {
+  const { agneta } = await setUp(t);
+  const client = new AgnetaClient({ name: 'Example', port: agneta.port });
+  t.after(() => client.close());
+  const [first, second] = await Promise.all([client.connect(), client.connect()]);
+  assert.equal(first, second);
+  assert.equal(agneta.calls('agneta/pair').length, 1);
+  assert.equal(agneta.peers.length, 1);
+});
+
+test('pair() and initialize() on their own leave the state right', async (t) => {
+  let refuse = true;
+  const { agneta } = await setUp(t, { handlers: { 'agneta/pair': () => (refuse ? { error: { code: -32002, message: 'no' } } : undefined) } });
+  const client = new AgnetaClient({ name: 'Example', port: agneta.port });
+  t.after(() => client.close());
+  await client.catalog();
+  assert.equal(client.state, 'connecting', 'open, not paired');
+  await assert.rejects(client.pair(), NotAllowedError);
+  assert.equal(client.state, 'connecting', 'still open: the app may ask again');
+  refuse = false;
+  await client.pair();
+  assert.equal(client.state, 'connected');
+});
+
+test('waitForProvider: a timeout ends the wait', async (t) => {
+  const { agneta } = await setUp(t, { handlers: { 'agneta/catalog': () => ({ result: catalogReport(false) }) } });
+  const client = new AgnetaClient({ name: 'Example', port: agneta.port });
+  t.after(() => client.close());
+  await assert.rejects(client.waitForProvider('claude', { timeout: 30 }), (error) => error.kind === 'aborted');
+});

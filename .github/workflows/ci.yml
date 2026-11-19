@@ -76,8 +76,24 @@ jobs:
       - name: Build the app bundle
         run: scripts/dev/build-app
 
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      # The TypeScript client (packages/client) against agnetad with Goose and the fake model, built above. Its unit
+      # tests and type checks also run on Linux (client.yml); this is the part that needs a Mac.
+      - name: Test the client library
+        working-directory: packages/client
+        run: |
+          npm ci
+          npm run build
+          npm test
+          npm run test:integration
+
+      # Project Chat runs on the client library. --ignore-scripts: its tests need no Electron binary.
       - name: Test Project Chat
         working-directory: examples/project-chat
         run: |
+          npm ci --ignore-scripts
           node="$GITHUB_WORKSPACE/build/Agneta Dev.app/Contents/MacOS/node"
           "$node" --test test/*.test.mjs test/agneta.smoke.mjs

@@ -2,7 +2,7 @@
 
 How a Mac app runs AI work through Agneta. Agneta speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP, JSON-RPC 2.0) and adds a few namespaced extensions, each listed in `initialize`. An app that ignores them still gets plain ACP.
 
-[Project Chat](../examples/project-chat/README.md) is a runnable Electron example with pairing, streamed replies, and app-owned MCP tools.
+**In TypeScript or JavaScript, use [`@agneta/client`](../packages/client/README.md),** the official client: it implements everything on this page (connecting and opening Agneta, pairing and the token, access, sessions, streaming, permissions, traces and every error, typed) and keeps a raw layer for anything else. [Project Chat](../examples/project-chat/README.md) is a runnable Electron example on it, with pairing, streamed replies, and app-owned MCP tools.
 
 Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/AppScenarioTests.swift` runs it against a real engine, and `RouterContractTests.swift` pins each decision. How Agneta works inside is in [ARCHITECTURE.md](ARCHITECTURE.md); what each engine can do is in [ENGINES.md](ENGINES.md).
 

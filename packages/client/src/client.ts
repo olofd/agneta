@@ -72,7 +72,10 @@ export interface AgnetaClientOptions {
   WebSocket?: WebSocketConstructor;
 }
 
-/** `disconnected` → `connecting` → (`pairing`) → `connected`; `reconnecting` while waiting to reconnect. */
+/**
+ * `disconnected` → `connecting` (opening, or open and not paired yet) → `pairing` (the approval window is up) →
+ * `connected` (initialized); `reconnecting` while waiting to reconnect.
+ */
 export type ClientState = 'disconnected' | 'connecting' | 'pairing' | 'connected' | 'reconnecting';
 
 export type ClientEvents = {
@@ -143,6 +146,8 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   /** Updates for sessions not known yet: ones that arrive before `session/new` answers, and a load's replay. */
   #early = new Map<string, SessionUpdate[]>();
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  #connecting: Promise<Access> | null = null;
+  #opening: Promise<Connection> | null = null;
   #closing = false;
   /** Reconnecting: never ask `launch` (Agneta quit; it comes back when the user opens it). */
   #quiet = false;
@@ -172,7 +177,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   get initializeResult(): InitializeResult | null { return this.#initialized; }
   /** Agneta's extensions, from `initialize`. */
   get extensions(): readonly string[] { return this.#initialized?._meta?.agneta?.extensions ?? []; }
-  /** Whether this connection's access is remembered (Always Allow). */
+  /** Whether this connection's access is remembered (Always Allow); still so in `disconnected` listeners. */
   get remembered(): boolean { return this.#remembered; }
   /** The pairing code while pairing waits, for an app Agneta can't verify. */
   get pairingCode(): string | null { return this.#pairingCode; }
@@ -187,18 +192,28 @@ export class AgnetaClient extends Emitter<ClientEvents> {
    * approval window). A kept token Agneta no longer accepts is forgotten (`accessRemoved`). When Agneta isn't running,
    * `launch` is asked; without it, this rejects with `NotRunningError`.
    */
-  async connect(options: ConnectOptions = {}): Promise<Access> {
-    if (this.#state === 'connected' && this.#connection?.isOpen && options.pair !== 'always') return this.#access!;
+  connect(options: ConnectOptions = {}): Promise<Access> {
+    if (this.#state === 'connected' && this.#connection?.isOpen && this.#access && options.pair !== 'always') return Promise.resolve(this.#access);
+    // One connect at a time: a second call while one runs gets the same outcome.
+    if (this.#connecting) return this.#connecting;
+    const connecting = this.#connect(options).finally(() => { if (this.#connecting === connecting) this.#connecting = null; });
+    this.#connecting = connecting;
+    return connecting;
+  }
+
+  async #connect(options: ConnectOptions): Promise<Access> {
     this.#closing = false;
     this.#cancelReconnect();
     const connection = await this.open({ signal: options.signal });
     try {
       const pair = options.pair ?? 'if-needed';
       const kept = pair === 'always' ? null : await this.tokens.load();
+      let initialized = false;
       if (kept) {
         try {
           await this.initialize(kept, { signal: options.signal });
           this.#remembered = true;
+          initialized = true;
         } catch (error) {
           if (!(error instanceof NeedsPairingError)) throw error;
           await this.tokens.clear();
@@ -206,7 +221,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
           if (pair === 'never') throw error;
         }
       }
-      if (!this.#initialized || this.#connection !== connection) {
+      if (!initialized) {
         if (pair === 'never') throw new NeedsPairingError({ code: -32001, message: 'Pair with Agneta first', data: { agneta: { needsPairing: true } } }, 'initialize');
         if (options.setup) await this.#setUpProvider(options.setup === true ? undefined : options.setup, options.signal);
         await this.pair(options.scope ?? this.options.scope, { signal: options.signal });
@@ -223,8 +238,15 @@ export class AgnetaClient extends Emitter<ClientEvents> {
    * Opens the WebSocket only (for `agneta/catalog` and `agneta/setup` before pairing). Asks `launch` when Agneta isn't
    * running. Resolves with the raw connection; reuses an open one.
    */
-  async open(options: { signal?: AbortSignal } = {}): Promise<Connection> {
-    if (this.#connection?.isOpen) return this.#connection;
+  open(options: { signal?: AbortSignal } = {}): Promise<Connection> {
+    if (this.#connection?.isOpen) return Promise.resolve(this.#connection);
+    if (this.#opening) return this.#opening;
+    const opening = this.#openSocket(options).finally(() => { if (this.#opening === opening) this.#opening = null; });
+    this.#opening = opening;
+    return opening;
+  }
+
+  async #openSocket(options: { signal?: AbortSignal }): Promise<Connection> {
     if (!this.options.WebSocket && typeof (globalThis as { document?: unknown }).document !== 'undefined') {
       throw new UnsupportedEnvironmentError('Agneta refuses connections from web pages (anything sending an Origin header). Connect from Node or Electron\'s main process.');
     }
@@ -272,16 +294,22 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     const has = (catalog: Catalog) => kind ? catalog.providers.some((provider) => provider.kind === kind && provider.connected) : catalog.connected;
     const signals = [options.signal, options.timeout ? AbortSignal.timeout(options.timeout) : undefined].filter((signal): signal is AbortSignal => !!signal);
     const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
-    // Listen first, so a change between the catalog's answer and the wait isn't missed.
-    const changed = this.next('catalogChanged', { filter: (catalog) => has(catalog), ...(signal ? { signal } : {}) });
-    changed.catch(() => {});
-    const closed = this.next('disconnected');
-    closed.catch(() => {});
-    const now = await this.catalog(signal ? { signal } : {});
-    if (has(now)) return now;
-    const outcome = await Promise.race([changed.then(([catalog]) => catalog), closed.then(([error]) => { throw error; })])
-      .catch((error) => { throw signal?.aborted ? new AbortedError('waitForProvider', { cause: signal.reason }) : error; });
-    return outcome;
+    // Ends both waits below when this returns, so no listener is left behind.
+    const done = new AbortController();
+    const listening = signal ? AbortSignal.any([signal, done.signal]) : done.signal;
+    try {
+      // Listen first, so a change between the catalog's answer and the wait isn't missed.
+      const changed = this.next('catalogChanged', { filter: (catalog) => has(catalog), signal: listening });
+      changed.catch(() => {});
+      const closed = this.next('disconnected', { signal: listening });
+      closed.catch(() => {});
+      const now = await this.catalog(signal ? { signal } : {});
+      if (has(now)) return now;
+      return await Promise.race([changed.then(([catalog]) => catalog), closed.then(([error]) => { throw error; })])
+        .catch((error) => { throw signal?.aborted ? new AbortedError('waitForProvider', { cause: signal.reason }) : error; });
+    } finally {
+      done.abort();
+    }
   }
 
   /**
@@ -294,6 +322,10 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     let result: PairResult;
     try {
       result = await connection.request('agneta/pair', { name: this.options.name, ...(scope ? { scope } : {}) }, { timeout: this.timeouts.pair, ...options });
+    } catch (error) {
+      // Still open and not paired (or paired before): the app may ask again.
+      if (this.#connection === connection && connection.isOpen) this.#setState(this.#initialized ? 'connected' : 'connecting');
+      throw error;
     } finally {
       this.#pairingCode = null;
     }
@@ -320,6 +352,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     this.#token = token;
     this.#initialized = result;
     this.#access = access;
+    this.#setState('connected');
     return result;
   }
 
@@ -580,6 +613,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     this.#sessions.clear();
     this.#setState('disconnected');
     this.emit('disconnected', error);
+    this.#remembered = false;
     if (hadToken && this.options.reconnect && !this.#closing) this.#scheduleReconnect(1);
   }
 

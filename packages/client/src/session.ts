@@ -404,7 +404,7 @@ export class Session extends Emitter<SessionEvents> {
 
   /** Ends the running turn (`session/cancel`); it finishes as `cancelled`. A turn waiting in the queue is taken out. */
   cancel(): void {
-    if (this.#ended && this.#ended.reason !== 'stopped') return;
+    if (this.#ended) return;
     try { this.#host.connection.notify('session/cancel', { sessionId: this.id }); } catch {}
   }
 

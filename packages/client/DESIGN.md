@@ -49,6 +49,6 @@ Every app that talks to Agneta used to write the same hundred careful lines: ope
 
 ## Known gaps
 
-- **No tool-server helper.** An app's MCP tools still need a Streamable HTTP server of their own (Project Chat's `project-tools.mjs` is about 120 lines). `httpServer()` builds the registration, bearer and all; serving is the app's.
+- **No tool-server helper.** An app's MCP tools still need a Streamable HTTP server of their own (Project Chat's `project-tools.mjs` is about 120 lines). `httpMcpServer()` builds the registration, bearer and all; serving is the app's.
 - **Browsers can't be supported** while Agneta refuses any `Origin`, which is deliberate.
 - **Sessions don't survive a reconnect.** That's Agneta's rule (a session belongs to its connection); the library makes the reload one call but doesn't do it unasked.
