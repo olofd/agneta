@@ -83,9 +83,13 @@ function render(state) {
 
   const calls = state.usage?.modelCalls;
   const tokens = state.usage?.outputTokens;
+  // With a spending limit set for this app in Agneta, where it stands.
+  const app = state.usage?.app;
+  const period = { day: 'today', week: 'this week', month: 'this month' }[app?.period] ?? '';
   element('usage').textContent = [
     Number.isInteger(calls) && calls > 0 ? `${calls} model ${calls === 1 ? 'call' : 'calls'}` : null,
-    Number.isInteger(tokens) && tokens > 0 ? `${tokens} output tokens` : null
+    Number.isInteger(tokens) && tokens > 0 ? `${tokens} output tokens` : null,
+    app ? `${dollars(app.spent)} of ${dollars(app.max)} ${period}` : null
   ].filter(Boolean).join(' · ');
 }
 
@@ -106,6 +110,11 @@ function showGuide(guide) {
   element('guide-cancel').textContent = question?.cancel ?? 'Cancel';
   element('guide-reopen').hidden = !['installing', 'onDiskImage'].includes(guide.step);
   element('guide-wait').hidden = !guide.keepWaiting;
+}
+
+/** $5, $2.50, $0.04. */
+function dollars(amount) {
+  return Number.isInteger(amount) ? `$${amount}` : `$${amount.toFixed(2)}`;
 }
 
 /** Sets a select's options ([value, label] pairs) and choice, touching the DOM only when they changed. */

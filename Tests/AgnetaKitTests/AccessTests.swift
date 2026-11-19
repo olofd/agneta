@@ -78,6 +78,8 @@ import Testing
                                              ClaudeCodeAdapter(executable: none, cli: InstalledCLI(path: none, version: "2.1.0", source: "path")),
                                              CodexAdapter(node: none, script: none, cli: InstalledCLI(path: none, version: "0.166.0", source: "path"))]
         #expect(Set(adapters.map(\.id)) == Set(AccountKind.allCases.flatMap(ProviderEngines.supported(by:))))
+        // What the table says of each engine's cost before it's on this Mac is what its adapter declares.
+        for adapter in adapters { #expect(adapter.capabilities.cost == ProviderEngines.cost(adapter.id), "\(adapter.id)") }
         for kind in AccountKind.allCases {
             let home = root.appending(path: kind.rawValue, directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)

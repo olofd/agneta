@@ -16,6 +16,16 @@ public struct EngineRequest: Sendable, Equatable {
     }
 }
 
+/// When an engine's turn cost becomes known to Agneta, which decides how a spending limit can hold it (AppLimits).
+public enum CostReporting: String, Sendable, Equatable {
+    /// Per model call (or step), from the engine's records, while the turn runs.
+    case live
+    /// Only when the turn ends, in the engine's totals for it.
+    case turnEnd = "turn-end"
+    /// Never: the engine reports tokens, not cost.
+    case none
+}
+
 public struct EngineCapabilities: Sendable, Equatable {
     /// Steering adds input to a running turn.
     public var steer: Bool
@@ -25,18 +35,20 @@ public struct EngineCapabilities: Sendable, Equatable {
     public var instructionsBetweenTurns: Bool
     /// The engine's configuration is per process, so every session gets its own, configured at launch.
     public var processPerSession: Bool
-    /// Each model call's cost is known, so a cost limit can be enforced.
-    public var reportsCost: Bool
+    /// When a turn's cost is known (CostReporting): as it runs, at its end, or never.
+    public var cost: CostReporting
+    /// Each model call's cost is known while the turn runs, so a cost limit can be enforced (`maxCostUSD`).
+    public var reportsCost: Bool { cost == .live }
     /// The engine runs its built-in tools itself, inside its sandbox, rather than through Agneta's broker: Agneta
     /// checks each call from its permission requests instead (Router.runner).
     public var runsOwnTools: Bool
 
-    public init(steer: Bool, fork: Bool, instructionsBetweenTurns: Bool, processPerSession: Bool, reportsCost: Bool = true, runsOwnTools: Bool = false) {
+    public init(steer: Bool, fork: Bool, instructionsBetweenTurns: Bool, processPerSession: Bool, cost: CostReporting = .live, runsOwnTools: Bool = false) {
         self.steer = steer
         self.fork = fork
         self.instructionsBetweenTurns = instructionsBetweenTurns
         self.processPerSession = processPerSession
-        self.reportsCost = reportsCost
+        self.cost = cost
         self.runsOwnTools = runsOwnTools
     }
 }

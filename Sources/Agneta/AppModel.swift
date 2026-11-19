@@ -39,6 +39,12 @@ final class AppModel {
     private(set) var limited: [String: Date?] = [:]
     /// The plan's own usage per account, when its engine reports it (Codex), e.g. "57% of this week's limit".
     private(set) var planUsage: [String: String] = [:]
+    /// Apps a limit the user set stopped, by grant, until the limit resets or the user opens it.
+    private(set) var limitReached: [String: AppLimitNotice] = [:]
+    /// Each app's usage and where it stands against its limits (Settings → Apps), by grant.
+    private(set) var appStatus: [String: AppLimitStatus] = [:]
+    /// The most turns Agneta runs at once: the highest "at once" an app may have.
+    private(set) var maxAtOnce = Router.Concurrency().global
     /// Days of task history kept; 0 keeps none.
     private(set) var historyDays = 30
     /// Set while Reset Agneta runs, and the failed step if it stopped.
@@ -160,6 +166,7 @@ final class AppModel {
             return
         }
         self.runtime = runtime
+        maxAtOnce = runtime.router.maxAtOnce
         recovered = runtime.recovered
         let database = runtime.database
         let saved = try? database.accounts()
@@ -171,6 +178,7 @@ final class AppModel {
         await library.start(runtime)
         await runtime.observe { [weak self] event in _Concurrency.Task { @MainActor in self?.handle(event) } }
         reloadHistory()
+        for grant in grants.values { refreshStatus(grant.id) }
         for account in accounts { await configure(account) }
 
         if let portProblem {
@@ -391,6 +399,15 @@ final class AppModel {
             log.log("rate-limited", ["account": .string(account), "resetsAt": resetsAt.map { .string(TraceWriter.timestamp($0)) } ?? .null])
         case .usage(let id, _, let cost):
             if let index = tasks.firstIndex(where: { $0.id == id }), let cost { tasks[index].cost = cost }
+        case .appUsage(let grant, _, _):
+            refreshStatus(grant)
+        case .appLimitReached(let notice):
+            if limitReached[notice.grant] == nil {
+                log.log("app-limit-reached", ["grant": .string(notice.grant), "limit": .string(notice.limit),
+                                              "resetsAt": notice.resetsAt.map { .string(TraceWriter.timestamp($0)) } ?? .null])
+            }
+            limitReached[notice.grant] = notice
+            refreshStatus(notice.grant)
         case .engineWanted(let engine):
             // A task asked for an engine that downloads first: it's told to try again shortly while this runs.
             library.download(engine, reason: "task")
@@ -457,6 +474,34 @@ final class AppModel {
                 log.error("app-access-not-saved", ["grant": .string(grant.id), "reason": .string("\(error)")])
             }
         }
+    }
+
+    /// Sets the limits the user chose for an app (Settings → Apps), shown at once and saved.
+    func setLimits(_ grant: Router.Grant, _ limits: AppLimits) {
+        guard let runtime else { return }
+        for (hash, shown) in grants where shown.id == grant.id { grants[hash]?.limits = limits }
+        // A limit raised or removed lets the app go on: the notice goes.
+        limitReached[grant.id] = nil
+        log.log("app-limits-changed", ["grant": .string(grant.id), "spend": .bool(limits.spend != nil), "atOnce": .bool(limits.atOnce != nil),
+                                       "newTasks": .bool(limits.newTasks != nil)])
+        let log = log
+        _Concurrency.Task {
+            do { try await runtime.setLimits(grant: grant.id, limits: limits) } catch {
+                log.error("app-limits-not-saved", ["grant": .string(grant.id), "reason": .string("\(error)")])
+            }
+            refreshStatus(grant.id)
+        }
+    }
+
+    /// Reads an app's usage and limits again, for Settings.
+    func refreshStatus(_ grant: String) {
+        guard let runtime else { return }
+        _Concurrency.Task { appStatus[grant] = await runtime.appStatus(grant: grant) }
+    }
+
+    /// The app limits still in force: one past its reset is gone.
+    var reachedLimits: [AppLimitNotice] {
+        limitReached.values.filter { ($0.resetsAt ?? .distantFuture) > Date() }.sorted { $0.app < $1.app }
     }
 
     /// Remove Access: the app is cut off at once. If its saved access can't be deleted, it stays listed (it would work
@@ -758,7 +803,7 @@ final class AppModel {
 
     var needsAttention: Bool {
         serverProblem != nil || !needsSignIn.isEmpty || resetProblem != nil || storeProblem != nil || !leftoverSignIns.isEmpty
-            || conversationsLeft != nil
+            || conversationsLeft != nil || !reachedLimits.isEmpty
     }
 
     /// The one thing that needs the user, as a title, a sentence and one action.
@@ -793,6 +838,12 @@ final class AppModel {
                     + "each time it starts and whenever history is cleared.",
                     "Try Again", { self.retryForgetting() })
         }
+        if let notice = reachedLimits.first {
+            return (Self.limitTitle(notice), Self.limitDetail(notice), "Change Limit…", {
+                self.limitReached[notice.grant] = nil
+                WindowPresenter.shared.showSettings(self, section: .apps)
+            })
+        }
         if let account = accounts.first(where: { needsSignIn.contains($0.id) }) {
             let kind = account.kind
             // The engine's own sign-in when the account runs on Codex; Agneta's otherwise.
@@ -800,6 +851,14 @@ final class AppModel {
             return ("Sign in to \(account.label) again", "Its sign-in expired. Tasks on it wait until you sign in.", "Sign In", action)
         }
         return nil
+    }
+
+    /// The attention card for an app a limit stopped: "Example App reached its limit".
+    static func limitTitle(_ notice: AppLimitNotice) -> String { "\(notice.app) reached its limit" }
+
+    /// "$5.04 today, of $5 a day · resets at midnight"; for new tasks, "10 in the last hour, of 10 new tasks an hour".
+    static func limitDetail(_ notice: AppLimitNotice) -> String {
+        "\(notice.used), of \(notice.summary)" + (notice.resets.map { " · \(notice.limit == "newTasks" && notice.summary.hasSuffix("an hour") ? "frees up" : "resets") \($0)" } ?? "")
     }
 
     // MARK: Developer
@@ -812,7 +871,16 @@ final class AppModel {
                     AccountRecord(id: "c", kind: .openAIKey, label: "OpenAI API")]
         tasks = [Task(id: "1", app: "Example App", appIdentifier: nil, account: "a", title: "Summarizing meeting notes", started: Date().addingTimeInterval(-840), running: true, sandbox: .developer),
                  Task(id: "2", app: "Example App", appIdentifier: nil, account: "b", title: "Naming a project", started: Date(), running: true)]
-        grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"])]
+        grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"],
+                                    limits: AppLimits(spend: .init(max: 5, period: .day), atOnce: 2))]
+        if let grant = grants["h"] {
+            appStatus[grant.id] = AppLimitStatus(today: .init(cost: 1.2, turns: 9, tasks: 4), running: 1, spent: 1.2, spendResets: "at midnight")
+            // AGNETA_SHOWCASE_LIMIT shows the panel's card for an app that reached its limit.
+            if ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_LIMIT"] != nil {
+                limitReached[grant.id] = AppLimitNotice(grant: grant.id, app: grant.app, limit: "spend", summary: "$5 a day", used: "$5.04 today",
+                                                        resetsAt: Date().addingTimeInterval(3600), resets: "at midnight")
+            }
+        }
         let sample = UUID()
         // AGNETA_SHOWCASE_UNVERIFIED shows the busiest request: an app Agneta can't verify, asking for several folders.
         // AGNETA_SHOWCASE_REQUEST shows a narrowed one: "narrow" (a Claude plan, Claude Code, contained), "missing" (a

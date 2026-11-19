@@ -82,7 +82,14 @@ public actor AgnetaRuntime {
                                                    appWorkspaces: configuration.appWorkspaces),
                             engines: supervisor, traces: traces, concurrency: configuration.concurrency,
                             commit: { hash, grant, replacing in try database.save(grant, tokenHash: hash, replacing: replacing) }, approve: approve)
-        await router.restore(Self.attempt(log, "read-grants") { try database.grants() } ?? [:])
+        // A grant whose limits can't be read isn't restored rather than left unlimited: its app pairs again. Said in the log.
+        for id in Self.attempt(log, "read-limits") { try database.unreadableLimits() } ?? [] {
+            log?.error("app-limits-unreadable", ["grant": .string(id)])
+        }
+        // Each app's usage goes on from where it was, for the limits the user set for it.
+        Self.attempt(log, "prune-app-usage") { try database.pruneUsage(before: Date().addingTimeInterval(-Self.usageDays * 86_400)) }
+        await router.restore(Self.attempt(log, "read-grants") { try database.grants() } ?? [:],
+                             usage: Self.attempt(log, "read-app-usage") { try database.usage(since: Date().addingTimeInterval(-Self.usageDays * 86_400)) } ?? [:])
         // Events are recorded one at a time, in the order the router sent them.
         let (events, sink) = AsyncStream<Router.Event>.makeStream()
         await router.observe { sink.yield($0) }
@@ -164,6 +171,18 @@ public actor AgnetaRuntime {
 
     // MARK: Grants
 
+    /// Sets the limits the user chose for an app (AppLimits), and saves them.
+    public func setLimits(grant: String, limits: AppLimits) async throws {
+        try await router.setLimits(grant: grant, limits: limits)
+        if await !router.hasGrant(grant) { try database.deleteGrant(id: grant) }
+    }
+
+    /// An app's usage and where it stands against its limits, for Settings.
+    public func appStatus(grant: String) async -> AppLimitStatus { await router.appStatus(grant: grant) }
+
+    /// How long each app's usage by hour is kept: the longest limit period (a month) and some.
+    static let usageDays = 35.0
+
     /// Removes an app's access: forgotten first, so it can't come back at the next launch, then cut off now.
     /// The token stops working now, whatever happens to the saved row; a row that couldn't be deleted throws, so the
     /// app can say so (it would work again at the next launch).
@@ -197,6 +216,8 @@ public actor AgnetaRuntime {
             write("turn-ended") { try database.turnEnded(task: id, stopReason: reason) }
         case .usage(let id, let used, let cost):
             write("usage") { try database.usage(task: id, usedTokens: used, cost: cost) }
+        case .appUsage(let grant, let hour, let usage):
+            write("app-usage") { try database.addUsage(grant: grant, hour: hour, usage) }
         case .sessionEnded(let id, let ending):
             let lastTurn = running.removeValue(forKey: id) ?? nil
             let outcome: TaskOutcome = switch ending {
@@ -350,6 +371,9 @@ public actor AgnetaRuntime {
 
     private func trim() async {
         prune(olderThan: historyDays)
+        let usageCutoff = Date().addingTimeInterval(-Self.usageDays * 86_400)
+        write("prune-app-usage") { try database.pruneUsage(before: usageCutoff) }
+        await router.pruneUsage(before: usageCutoff)
         await sweepEngineHomes()
         observer(.historyChanged)
     }

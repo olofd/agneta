@@ -22,6 +22,7 @@ export const ErrorCodes = {
   paused: -32013,
   unsupportedByEngine: -32014,
   engineDownloading: -32015,
+  appLimit: -32016,
   methodNotFound: -32601,
   invalidParams: -32602,
   internal: -32603
@@ -297,6 +298,32 @@ export class EngineDownloadingError extends AgnetaRpcError {
   }
 }
 
+/** What a limit the user set for the app in Agneta says, in `data.agneta.appLimit`. */
+export interface AppLimitDetails {
+  /** `spend` (on API keys, in USD) or `newTasks`. */
+  limit: 'spend' | 'newTasks' | (string & {});
+  max: number;
+  used: number;
+  period: 'hour' | 'day' | 'week' | 'month' | (string & {});
+  /** UTC; null when not known. */
+  resetsAt: string | null;
+  whenReached: 'stop' | (string & {});
+}
+
+/** -32016: the limit the user set for this app in Agneta is reached. The user's choice, not a failure: say when it resets. */
+export class AppLimitError extends AgnetaRpcError {
+  readonly kind = 'appLimit' as const;
+  readonly limit: AppLimitDetails | null;
+  constructor(error: RpcErrorObject, method?: string) {
+    super(error, 'Tell the user the limit they set for this app in Agneta is reached, and when it resets; they can change it in Agneta\'s settings.', method);
+    const raw = this.details.appLimit as Record<string, unknown> | undefined;
+    this.limit = raw && typeof raw.limit === 'string'
+      ? { limit: raw.limit, max: numberOr(raw.max, 0), used: numberOr(raw.used, 0), period: stringOrNull(raw.period) ?? 'day',
+          resetsAt: stringOrNull(raw.resetsAt), whenReached: stringOrNull(raw.whenReached) ?? 'stop' }
+      : null;
+  }
+}
+
 /** -32601: not a method Agneta offers. Engines' own methods aren't reachable. */
 export class MethodNotFoundError extends AgnetaRpcError {
   readonly kind = 'methodNotFound' as const;
@@ -413,7 +440,7 @@ export type AnyAgnetaError =
   | ConnectionRefusedError | ConnectionClosedError | TimeoutError | AbortedError
   | UnsupportedEnvironmentError | ProtocolError
   | NeedsPairingError | NotAllowedError | NoTurnRunningError | TurnBusyError | QueueFullError | PausedError
-  | UnsupportedByEngineError | EngineDownloadingError | MethodNotFoundError | UnenforceableError | EngineRefusedError
+  | UnsupportedByEngineError | EngineDownloadingError | AppLimitError | MethodNotFoundError | UnenforceableError | EngineRefusedError
   | AccessChangedError | StateChangedError | InvalidParamsError | InternalError | NeedsSignInError | RateLimitedError
   | UnknownRpcError;
 
@@ -436,6 +463,7 @@ export function fromRpcError(error: RpcErrorObject, method?: string): AgnetaRpcE
     case ErrorCodes.paused: return new PausedError(error, method);
     case ErrorCodes.unsupportedByEngine: return new UnsupportedByEngineError(error, method);
     case ErrorCodes.engineDownloading: return new EngineDownloadingError(error, method);
+    case ErrorCodes.appLimit: return new AppLimitError(error, method);
     case ErrorCodes.methodNotFound: return new MethodNotFoundError(error, method);
     case ErrorCodes.internal: return new InternalError(error, method);
     case ErrorCodes.invalidParams:

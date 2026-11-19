@@ -19,6 +19,8 @@ function describeError(error) {
     case 'notAllowed': return 'Pairing was declined or expired. Select Connect to try again.';
     case 'paused': return 'This account is paused. Resume it in Agneta, then try again.';
     case 'rateLimited': return 'The provider rate-limited this account. Try again later.';
+    // A limit the user set for this app in Agneta: their choice, said with when it resets (Agneta's message has it).
+    case 'appLimit': return `${error.message} You can change it in Agneta's settings.`;
   }
   if (error?.code === -32000) return 'Sign in to this account in Agneta, then try again.';
   return error?.message ?? String(error);
@@ -342,8 +344,9 @@ export class ProjectChat extends EventEmitter {
       return;
     }
     this.#session = session;
-    session.on('queued', (position) => {
-      if (this.#session === session && this.view.phase === 'running') this.#update({ status: `Queued · position ${position}` });
+    session.on('queued', (position, waitingFor) => {
+      if (this.#session !== session || this.view.phase !== 'running') return;
+      this.#update({ status: waitingFor === 'app' ? 'Waiting: your limit of tasks at once in Agneta' : `Queued · position ${position}` });
     });
     session.on('ended', (end) => {
       if (this.#session !== session || end.reason !== 'stopped') return;
@@ -391,7 +394,8 @@ export class ProjectChat extends EventEmitter {
       }
       const result = await turn;
       if (this.#attempt !== attempt || this.#session !== session) return;
-      const status = result.limit ? `Stopped at the ${result.limit.limit} limit.`
+      const status = result.limit?.limit === 'appSpend' ? 'Stopped: the spending limit you set in Agneta is reached.'
+        : result.limit ? `Stopped at the ${result.limit.limit} limit.`
         : result.cancelled ? 'Turn stopped.'
         : result.stopReason === 'end_turn' ? 'Ready'
         : `Turn ended (${result.stopReason}).`;

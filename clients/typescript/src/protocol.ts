@@ -142,6 +142,8 @@ export interface AccessProvider {
   uncontained: EngineId[];
   /** For each engine, the modes it can provide here. */
   sandboxLevels: Record<string, SandboxLevel[]>;
+  /** Engines the app may use here that can't run while its spending limit counts this provider: they report no cost (Codex on an OpenAI key). */
+  uncounted?: EngineId[];
 }
 
 interface AccessEngineBase {
@@ -173,6 +175,32 @@ export interface Access {
   scope: AccessScope;
   /** The app's own workspace, made by Agneta. */
   workspace?: string;
+  /** The limits the user set for the app in Agneta, and where it stands; absent when there are none. */
+  limits?: AppLimits;
+}
+
+/** The limits the user set for the app (APP_PROTOCOL.md, Limits the user sets). Each is absent when not set. */
+export interface AppLimits {
+  /** Spending on API keys (never a plan's), at the engines' prices. */
+  spend?: {
+    max: number;
+    currency: 'USD';
+    period: 'day' | 'week' | 'month';
+    whenReached: 'stop' | (string & {});
+    /** Spent in this period, running turns included. */
+    used: number;
+    resetsAt?: string;
+    /** It counts tasks on accounts with this billing. */
+    billing: 'api-key';
+    /** The engines it counts, by when their cost is known. */
+    counted: Record<string, 'live' | 'turn-end'>;
+    /** Engines it can't count, which the app's tasks on API keys can't use while it's set. */
+    uncounted: EngineId[];
+  };
+  /** Turns running at once; more wait (`agneta/queued` with `waitingFor: "app"`). */
+  atOnce?: { max: number; running: number };
+  /** New tasks (`session/new`, `agneta/fork`) in a rolling hour or a day. */
+  newTasks?: { max: number; period: 'hour' | 'day'; whenReached: 'stop' | (string & {}); used: number; resetsAt?: string };
 }
 
 // MARK: initialize
@@ -188,6 +216,7 @@ export interface InitializeParams {
 export type AgnetaExtension =
   | 'agneta/policy' | 'agneta/access' | 'agneta/catalog' | 'agneta/setup' | 'agneta/task' | 'agneta/instructions'
   | 'agneta/steer' | 'agneta/usage' | 'agneta/limit' | 'agneta/queue' | 'agneta/fork' | 'agneta/rateLimited' | 'agneta/trace'
+  | 'agneta/appLimits'
   | (string & {});
 
 export interface InitializeResult {
@@ -343,12 +372,19 @@ export interface AgnetaUsage {
   msToFirstToken: number | null;
   /** `engine-ledger` (per-call records) or `engine-turn-totals` (the engine's own totals). */
   basis: 'engine-ledger' | 'engine-turn-totals' | (string & {});
+  /** Where the app stands against the spending limit the user set for it, when there is one. */
+  app?: { spent: number; max: number; period: 'day' | 'week' | 'month'; resetsAt: string | null; unpriced?: boolean };
 }
 
-/** Which policy limit stopped a turn. */
+/** Which limit stopped a turn: the app's policy's, or the spending limit the user set for the app (`appSpend`). */
 export interface LimitHit {
-  limit: 'maxTurns' | 'maxSeconds' | 'maxCostUSD';
+  limit: 'maxTurns' | 'maxSeconds' | 'maxCostUSD' | 'appSpend';
   value: number;
+  /** `app` for the policy's limits, `user` for the limit the user set in Agneta. */
+  setBy?: 'app' | 'user';
+  /** For `appSpend`: its period and when it resets. */
+  period?: 'day' | 'week' | 'month';
+  resetsAt?: string | null;
   /** The engine didn't stop in time, so Agneta ended the session: load it again to go on. */
   sessionEnded?: boolean;
 }
@@ -408,6 +444,8 @@ export interface QueuedParams {
   sessionId: string;
   /** Place in the queue, from 1. */
   position: number;
+  /** What it waits for: the app's own "at once" limit, room on the account, or room in Agneta. */
+  waitingFor?: 'app' | 'account' | 'agneta';
 }
 
 /** Who ended a session: the user (Stop in Agneta's menu), the engine (it exited), or a policy limit Agneta enforced. */
@@ -416,6 +454,8 @@ export type StoppedBy = 'user' | 'engine' | 'limit';
 export interface SessionStoppedParams {
   sessionId: string;
   stoppedBy: StoppedBy;
+  /** For `limit` when the user's spending limit for the app stopped it (Codex on an API key can't be counted): which, and why. */
+  limit?: LimitHit & { reason?: string };
 }
 
 export interface RateLimitDetails {
