@@ -254,6 +254,9 @@ public actor Router {
     var runningTurns: [String: String] = [:] // session → account
     /// Each running prompt's request to its engine, so a limit the engine ignores can abandon it.
     var inFlight: [String: Task<JSONValue, Error>] = [:]
+    /// Sessions whose running prompt was cut off by their end (Stop, a removed account, narrowed access): the prompt
+    /// is answered as cancelled, not left waiting on an engine that may never answer.
+    var cutOff: Set<String> = []
     /// Limits Agneta enforced by ending the session, for the prompt they cut short to report.
     var enforcedLimits: [String: (limit: String, value: JSONValue)] = [:]
     struct Waiter {

@@ -57,18 +57,23 @@ final class Approvals {
                                   code: pairing.code ?? "", allowed: allowed, engines: engines, tools: pairing.tools, folders: pairing.folders,
                                   replaces: replaces, sandbox: pairing.sandbox, kinds: pairing.providers, namedEngines: pairing.engines != nil,
                                   sandboxFixed: pairing.sandboxAsked == .contained)
-            if queue.add(id: pairing.id, request, answer: { continuation.resume(returning: $0) }) { present(pairing.id) }
-            _Concurrency.Task { [weak self] in
-                try? await _Concurrency.Task.sleep(for: Self.timeout)
-                self?.settle(pairing.id, with: nil)
-            }
+            if queue.add(id: pairing.id, request, answer: { continuation.resume(returning: $0) }) { show(pairing.id) }
+        }
+    }
+
+    /// Shows a request, and gives it its five minutes from now: one waiting behind another isn't refused unseen.
+    private func show(_ id: UUID) {
+        present(id)
+        _Concurrency.Task { [weak self] in
+            try? await _Concurrency.Task.sleep(for: Self.timeout)
+            self?.settle(id, with: nil)
         }
     }
 
     /// The user's answer to the request on screen: nil for Don't Allow, else Allow Once (`remember` false) or Always
-    /// Allow.
-    func answer(remember: Bool?) {
-        guard let pending = current else { return }
+    /// Allow. `id` is the request the window showed: a click landing just as another took its place answers nothing.
+    func answer(remember: Bool?, for id: UUID? = nil) {
+        guard let pending = current, id == nil || pending.id == id else { return }
         let allowed = order().filter(pending.allowed.contains)
         settle(pending.id, with: remember.map {
             Router.PairingAnswer(accounts: allowed, engines: allowance(pending.engines), remember: $0, sandbox: pending.sandbox)
@@ -80,7 +85,7 @@ final class Approvals {
         guard queue.answer(id, with: answer) else { return }
         dismiss()
         if let next = current?.id {
-            DispatchQueue.main.async { self.present(next) }
+            DispatchQueue.main.async { self.show(next) }
         }
     }
 

@@ -35,5 +35,14 @@ import Testing
     @Test func ignoresOtherErrors() {
         #expect(RateLimit.detect("The engine stopped") == nil)
         #expect(RateLimit.detect("Invalid API key provided") == nil)
+        // Not limits, though they say "429", "limit reached" or "limit exceeded".
+        for text in ["Your messages resulted in 134290 tokens, over the model's maximum", "context window limit exceeded",
+                     "Tool output limit reached", "Error on line 429 of config"] {
+            #expect(RateLimit.detect(text) == nil, "\(text)")
+        }
+        // A provider's limits, in the words they use.
+        for text in ["HTTP 429: slow down", "status: 429", "insufficient_quota", "Claude usage limit reached", "weekly limit reached ∙ resets Mon"] {
+            #expect(RateLimit.detect(text) != nil, "\(text)")
+        }
     }
 }

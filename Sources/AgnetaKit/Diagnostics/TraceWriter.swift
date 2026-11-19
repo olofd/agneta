@@ -73,6 +73,12 @@ public final class TraceWriter: @unchecked Sendable {
         }
         handle = try? FileHandle(forWritingTo: file)
         if let handle { bytes = Int((try? handle.seekToEnd()) ?? 0) } else { failure = "the trace file couldn't be opened" }
+        // A crash mid-write leaves a partial last line: the next record starts on a line of its own, not glued to it.
+        if bytes > 0, let reader = try? FileHandle(forReadingFrom: file) {
+            try? reader.seek(toOffset: UInt64(bytes - 1))
+            if reader.readData(ofLength: 1) != Data([0x0A]), (try? handle?.write(contentsOf: Data([0x0A]))) != nil { bytes += 1 }
+            try? reader.close()
+        }
         // A resumed task continues its trace: numbering and turns go on from the last line.
         if bytes > 0, let last = Self.lastRecord(of: file) {
             seq = last["seq"]?.intValue ?? 0

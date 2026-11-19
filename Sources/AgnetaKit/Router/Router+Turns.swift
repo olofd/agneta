@@ -105,6 +105,8 @@ extension Router {
             traces?.session(id)?.writer.record("lifecycle", ["event": "limit-enforced", "limit": .string(hit.limit)])
             enforcedLimits[id] = hit
             await Self.closeOnEngine(still)
+            // The wait may have let the turn finish, or the session close and reopen under its id: nothing to end then.
+            guard sessions[id]?.generation == generation else { return }
             if let app = apps[still.app] {
                 let peer = app.peer
                 Task { try? await peer.notify("agneta/sessionStopped", ["sessionId": .string(id), "stoppedBy": "limit"]) }

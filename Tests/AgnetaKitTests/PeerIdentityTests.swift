@@ -26,9 +26,9 @@ import Testing
         let clientPort = Int(UInt16(bigEndian: local.sin_port))
 
         let serverPort = Int(UInt16(bigEndian: address.sin_port))
-        #expect(PeerIdentity.owner(ofLoopbackPort: clientPort, serverPort: serverPort) == getpid())
+        #expect(PeerIdentity.owners(ofLoopbackPort: clientPort, serverPort: serverPort) == [getpid()])
         // Both ends must match: the same client port towards another server isn't this connection.
-        #expect(PeerIdentity.owner(ofLoopbackPort: clientPort, serverPort: serverPort == 1 ? 2 : 1) == nil)
+        #expect(PeerIdentity.owners(ofLoopbackPort: clientPort, serverPort: serverPort == 1 ? 2 : 1).isEmpty)
         let identity = PeerIdentity.of(pid: getpid())
         #expect(identity.path?.isEmpty == false)
         // The test runner is signed ad hoc: valid, but nothing proves who made it.

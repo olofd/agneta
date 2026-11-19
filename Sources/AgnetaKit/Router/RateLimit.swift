@@ -11,13 +11,19 @@ public struct RateLimit: Sendable, Equatable {
     /// When the provider said the limit resets, if it did.
     public var resetsAt: Date?
 
-    static let markers = ["rate limit", "rate_limit", "ratelimit", "usage limit", "too many requests", "429", "limit reached",
-                          "quota", "hit your limit", "limit exceeded"]
+    /// What only a provider's limit says. Not a bare "429" or "limit reached": a context window, a tool's output or a
+    /// token count ("134290 tokens") says those too, and an app would wait and retry for nothing.
+    static let markers = [
+        #"\brate[ _-]?limit"#, #"\busage limit"#, #"\btoo many requests\b"#, #"\bhit your (?:usage )?limit"#,
+        #"\b(?:insufficient_quota|quota exceeded|exceeded your (?:current )?quota)\b"#,
+        #"\b(?:\d+-hour|hourly|daily|weekly|monthly|plan|session|usage) limit (?:reached|exceeded)"#,
+        #"(?:\b(?:http|status|error|code)\W{0,3}429\b|^429\b|\b429 too many)"#,
+    ]
 
     /// - Parameter now: the time the message arrived; relative times count from it.
     public static func detect(_ text: String, now: Date = Date(), calendar: Calendar = .current) -> RateLimit? {
         let lower = text.lowercased()
-        guard markers.contains(where: lower.contains) else { return nil }
+        guard markers.contains(where: { lower.range(of: $0, options: .regularExpression) != nil }) else { return nil }
         let message = text.replacingOccurrences(of: "Ran into this error: ", with: "")
             .components(separatedBy: "\n\nPlease retry")[0].trimmingCharacters(in: .whitespacesAndNewlines)
         return RateLimit(message: message, resetsAt: relative(lower, now: now) ?? clock(lower, now: now, calendar: calendar))

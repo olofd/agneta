@@ -67,6 +67,25 @@ extension RouterContractTests {
         #expect(paired["access"]?["providers"]?.arrayValue?.count == 1)
     }
 
+    /// A prompt running when its task is stopped is answered as cancelled, even when the engine never answers it.
+    @Test func aStoppedTasksPromptIsAnsweredAsCancelled() async throws {
+        let stack = try await Stack.start(port: 47713)
+        defer { stack.stop() }
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Stopper")
+        let session = try await stack.session(app, account: "brokered")
+        await stack.engines.wedge()
+        let prompt = Task { try await app.prompt(session, "hello") }
+        try await Task.sleep(for: .milliseconds(300))
+        await stack.router.stop(session)
+        let answered = Task { try await prompt.value }
+        let deadline = Task { try await Task.sleep(for: .seconds(10)); answered.cancel() }
+        let result = try await answered.value
+        deadline.cancel()
+        #expect(result["stopReason"] == "cancelled", "\(result)")
+    }
+
     /// "all" asks for everything; unknown names are refused, with the ones there are.
     @Test func aScopeNamesKnownProvidersAndEnginesOrAll() throws {
         let context = PolicyContext(userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [])

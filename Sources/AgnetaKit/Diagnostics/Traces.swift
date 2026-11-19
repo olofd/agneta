@@ -104,7 +104,10 @@ public final class Traces: @unchecked Sendable {
             }
         }
         lock.withLock { pageEnds[task] = (last, lastOffset) }
-        let complete = !stoppedEarly && TraceWriter.lastRecord(of: url)?["type"]?.stringValue == "end"
+        // Complete only when the last record is the one this page read up to: the writer may have added records (a
+        // task's last turn, its end) after the scan reached the end of the file.
+        let final = TraceWriter.lastRecord(of: url)
+        let complete = !stoppedEarly && final?["type"]?.stringValue == "end" && final?["seq"]?.intValue == last
         return (records, complete ? nil : last, complete)
     }
 

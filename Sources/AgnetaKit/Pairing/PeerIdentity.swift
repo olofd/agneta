@@ -21,18 +21,18 @@ public struct PeerIdentity: Sendable, Equatable {
     /// with any app's identifier).
     public var trusted: Bool = false
 
-    /// Finds the local process holding the established TCP connection from `port` to Agneta's `serverPort`
-    /// (both ends must match: the local port alone could pick an unrelated socket).
-    public static func owner(ofLoopbackPort port: Int, serverPort: Int, excluding: pid_t = getpid()) -> pid_t? {
+    /// Every local process holding the established TCP connection from `port` to Agneta's `serverPort` (both ends
+    /// must match: the local port alone could pick an unrelated socket). Usually one; more when the socket was
+    /// passed on, to a child that inherited it or by descriptor passing.
+    public static func owners(ofLoopbackPort port: Int, serverPort: Int, excluding: pid_t = getpid()) -> [pid_t] {
         let capacity = proc_listallpids(nil, 0)
-        guard capacity > 0 else { return nil }
+        guard capacity > 0 else { return [] }
         var pids = [pid_t](repeating: 0, count: Int(capacity) + 64)
         let count = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
-        for pid in pids.prefix(Int(max(count, 0))) where pid > 0 && pid != excluding {
-            if owns(pid: pid, port: port, serverPort: serverPort) { return pid }
-        }
+        let holders = pids.prefix(Int(max(count, 0))).filter { $0 > 0 && $0 != excluding && owns(pid: $0, port: port, serverPort: serverPort) }
         // The test process connects to itself; accept it when nothing else matches.
-        return owns(pid: excluding, port: port, serverPort: serverPort) ? excluding : nil
+        if holders.isEmpty, owns(pid: excluding, port: port, serverPort: serverPort) { return [excluding] }
+        return holders
     }
 
     static func owns(pid: pid_t, port: Int, serverPort: Int) -> Bool {
@@ -80,7 +80,12 @@ public struct PeerIdentity: Sendable, Equatable {
     }
 
     /// The identity of whoever owns `port`, if it can be found.
+    /// Who is on the other end. Verified only when every process holding the connection is the same signed app:
+    /// a program could otherwise pass its socket to a signed app it launches and be shown as that app.
     public static func forLoopbackPort(_ port: Int, serverPort: Int) -> PeerIdentity? {
-        owner(ofLoopbackPort: port, serverPort: serverPort).map(of(pid:))
+        let identities = owners(ofLoopbackPort: port, serverPort: serverPort).map(of(pid:))
+        guard var first = identities.first else { return nil }
+        if identities.contains(where: { !$0.trusted || $0.identifier != first.identifier || $0.team != first.team }) { first.trusted = false }
+        return first
     }
 }

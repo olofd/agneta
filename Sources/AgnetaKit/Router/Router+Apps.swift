@@ -40,6 +40,7 @@ extension Router {
         await peer.run(messages)
         relay.cancel()
         await disconnect(id)
+        connection.close() // whatever ended it, the connection itself goes too
     }
 
     /// What of a pairing ask the grant doesn't give, each with why: a provider kind not connected or not ticked, an
@@ -105,6 +106,12 @@ extension Router {
             traces.close(task: id)
         }
         if announced { onEvent(.sessionEnded(id, ending)) }
+        // Its running prompt ends now, whatever the engine does: a shared engine stays up, and one stuck in a tool may
+        // never answer it.
+        if let call = inFlight.removeValue(forKey: id) {
+            cutOff.insert(id)
+            call.cancel()
+        }
         // Live records still owed to the app go out, but an app that stopped reading can't hold up the engine's release.
         if let forwarder = session.forwarder { await Self.bounded(seconds: 2) { await forwarder.finish() } }
         await engines.release(session.lease)
@@ -265,6 +272,11 @@ extension Router {
         }
         if method == "session/prompt" {
             if let refusal = pausedRefusal(session.account) { return .failure(refusal) }
+            // Over its cost limit already (a resumed task, or one the last turn took past it): nothing more is spent.
+            if let max = session.policy.limits.maxCostUSD, let cost = traces?.session(id)?.progress.taskCost, cost > max {
+                return .success(["sessionId": .string(id), "stopReason": "cancelled",
+                                 "_meta": ["agneta/limit": ["limit": "maxCostUSD", "value": .double(max)]]])
+            }
             do {
                 guard try await admit(id, account: session.account) else { return .success(["stopReason": "cancelled"]) }
             } catch let error as RPCError {
@@ -319,7 +331,9 @@ extension Router {
             var result = try await withTaskCancellationHandler { try await call.value } onCancel: { call.cancel() }
             if method == "session/prompt" {
                 watchdog?.cancel()
+                let wasCutOff = cutOff.remove(id) != nil
                 if let hit = enforcedLimits.removeValue(forKey: id) { return .success(Self.enforced(hit, session: id)) }
+                if wasCutOff { return .success(["sessionId": .string(id), "stopReason": "cancelled"]) }
                 // The session may have ended (or been reopened) while the engine worked: the result goes back, but
                 // the router's state and the record of turns belong to the session as it is now.
                 guard current(id, generation) else { return .success(result.setting("sessionId", to: .string(id))) }
@@ -349,7 +363,9 @@ extension Router {
             return .success(result["sessionId"] == nil ? result : result.setting("sessionId", to: .string(id)))
         } catch let error as RPCError {
             var error = error
+            let wasCutOff = method == "session/prompt" && cutOff.remove(id) != nil
             if method == "session/prompt", let hit = enforcedLimits.removeValue(forKey: id) { return .success(Self.enforced(hit, session: id)) }
+            if wasCutOff { return .success(["sessionId": .string(id), "stopReason": "cancelled"]) }
             if method == "session/prompt", current(id, generation) {
                 sessions[id]?.activeRun = nil
                 sessions[id]?.limitHit = nil // a stale flag would mislabel the next turn
@@ -364,7 +380,10 @@ extension Router {
             record(method, params: params, result: .failure(error), in: trace)
             return .failure(error)
         } catch {
+            let wasCutOff = method == "session/prompt" && cutOff.remove(id) != nil
             if method == "session/prompt", let hit = enforcedLimits.removeValue(forKey: id) { return .success(Self.enforced(hit, session: id)) }
+            // Stopped by the user (or its account removed, or access narrowed): cancelled, as the protocol says.
+            if wasCutOff { return .success(["sessionId": .string(id), "stopReason": "cancelled"]) }
             if method == "session/prompt", current(id, generation) {
                 sessions[id]?.activeRun = nil
                 sessions[id]?.limitHit = nil

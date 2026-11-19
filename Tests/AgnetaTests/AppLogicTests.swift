@@ -59,6 +59,18 @@ import Testing
         #expect(answered == Router.PairingAnswer(accounts: ["b"], engines: .all, remember: false))
     }
 
+    /// An answer meant for a request no longer on screen answers nothing: the next one waits for its own click.
+    @Test func anAnswerForAnotherRequestIsIgnored() async throws {
+        let window = Window(), approvals = desk(window)
+        async let answer = approvals.ask(Router.PairingRequest(app: "Shown"), allowed: ["a"], engines: ["goose"])
+        try await Task.sleep(for: .milliseconds(50))
+        let shown = try #require(approvals.current?.id)
+        approvals.answer(remember: true, for: UUID())
+        #expect(approvals.current?.id == shown, "a stale click answered nothing")
+        approvals.answer(remember: nil, for: shown)
+        #expect(await answer == nil)
+    }
+
     /// One connected while an app waits for that kind is ticked, even with a choice made: it's what the app asked for.
     @Test func aProviderOfTheAskedKindIsTicked() async throws {
         let window = Window(), approvals = desk(window)

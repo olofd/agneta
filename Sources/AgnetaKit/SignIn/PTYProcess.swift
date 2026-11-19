@@ -52,7 +52,9 @@ public final class PTYProcess: @unchecked Sendable {
             }
             var raw: Int32 = 0
             while waitpid(leader, &raw, 0) < 0 && errno == EINTR {}
-            self?.lock.withLock { self?.exitStatus = raw }
+            // The terminal is this thread's to close, once nothing more can come: closed elsewhere while it still read,
+            // its number could be reused, and this read would land on someone else's file.
+            if let self { self.lock.withLock { self.exitStatus = raw; close(fd) } } else { close(fd) }
             sink.finish()
         }
         reader.start()
@@ -61,12 +63,17 @@ public final class PTYProcess: @unchecked Sendable {
     /// Types text into the terminal, e.g. a code the user pasted into Agneta.
     public func send(_ text: String) {
         let data = Array(text.utf8)
-        _ = data.withUnsafeBytes { write(master, $0.baseAddress, $0.count) }
+        lock.withLock {
+            guard exitStatus == nil else { return } // the terminal is closed once the login has ended
+            _ = data.withUnsafeBytes { write(master, $0.baseAddress, $0.count) }
+        }
     }
 
     public var status: Int32? { lock.withLock { exitStatus } }
 
     public func stop() {
+        // Ended already (reaped, its number free for another process): nothing to stop.
+        guard status == nil else { return }
         // The login runs in its own session (setsid), so its process group is its own.
         killpg(pid, SIGTERM)
         kill(pid, SIGTERM)
@@ -79,7 +86,6 @@ public final class PTYProcess: @unchecked Sendable {
         }
     }
 
-    deinit { close(master) }
 }
 
 extension String {

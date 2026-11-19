@@ -20,6 +20,9 @@ public actor RPCPeer {
     private var onNotification: NotificationHandler = { _, _ in }
     private var onClose: (@Sendable (String) -> Void)?
     private var tap: Tap?
+    /// The last message queued to send: each waits for the one before, so messages leave in the order they were
+    /// sent (a cancel right after a prompt never reaches the engine first).
+    private var lastSend: Task<Void, Error>?
 
     public enum FrameDirection: Sendable { case received, sent }
     /// Sees every frame exactly as received or sent (task traces).
@@ -59,8 +62,20 @@ public actor RPCPeer {
     }
 
     private func transmit(_ data: Data) async throws {
-        tap?(.sent, data)
-        try await send(data)
+        try await enqueue(data).value
+    }
+
+    /// Queues `data` behind what's already queued, at once (synchronously, in the actor): the order of calls is the
+    /// order on the wire, whatever the tasks awaiting them do.
+    private func enqueue(_ data: Data) -> Task<Void, Error> {
+        let previous = lastSend, send = send, tap = tap
+        let task = Task {
+            _ = await previous?.result
+            tap?(.sent, data)
+            try await send(data)
+        }
+        lastSend = task
+        return task
     }
 
     /// Consumes incoming lines until the stream ends, then fails pending requests.
@@ -83,7 +98,8 @@ public actor RPCPeer {
             try await withCheckedThrowingContinuation { continuation in
                 guard !Task.isCancelled else { return continuation.resume(throwing: CancellationError()) }
                 pending[id] = continuation
-                Task { await self.write(data, failing: id) }
+                let sending = enqueue(data)
+                Task { await self.wrote(sending, failing: id) }
             }
         } onCancel: {
             Task { await self.abandon(id) }
@@ -111,8 +127,8 @@ public actor RPCPeer {
 
     public var isClosed: Bool { closedReason != nil }
 
-    private func write(_ data: Data, failing id: Int64) async {
-        do { try await transmit(data) } catch {
+    private func wrote(_ sending: Task<Void, Error>, failing id: Int64) async {
+        do { try await sending.value } catch {
             pending.removeValue(forKey: id)?.resume(throwing: error)
         }
     }

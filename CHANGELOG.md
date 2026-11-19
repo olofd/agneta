@@ -13,6 +13,7 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 **Security**
 
+- **An app that passes its connection on can't borrow another app's identity.** Agneta verifies a connecting app by its code signature; a connection held by more than one process (passed to a signed app the program launched) now counts as unverified, with a code to compare.
 - **Claude Code asked about nothing.** The adapter starts every session in `auto`, where Claude Code decides its own permissions: measured, Bash and Monitor ran without a single permission request, so Agneta couldn't refuse commands while a task had no network. Every Claude Code session is now set to the mode that asks, on new and on resume.
 - **Resumed Claude Code tasks lost their settings.** A resumed or forked task was opened without Agneta's options, so the adapter fell back to its defaults and loaded the workspace's own `.claude/settings.json`, which the agent can write (hooks, environment, permissions). Measured: a planted hook ran and its environment reached commands. Resume and fork now send the same options as a new session, and Claude Code reads no MCP configuration of its own.
 - **Claude Code offers only the tools a policy names.** Agneta passes the exact built-in set, so a tool a new Claude Code adds (Monitor, which runs commands, was one) stays off until Agneta allows it. Read-only commands, which Claude Code ran without asking inside the engine's own sandbox, now go through Agneta's broker like every other.
@@ -28,6 +29,10 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 **For apps**
 
+- **A task stopped mid-turn answers its prompt as cancelled,** as the protocol says, even when the engine never answers it (Stop, a removed provider, narrowed access). Before, the prompt could wait on a shared engine indefinitely, or fail as "The engine stopped".
+- **`maxCostUSD` is checked before a prompt is sent:** a task already over its limit spends nothing more.
+- **Fewer false rate limits:** an error that merely says "429" or "limit reached" (a token count, a context window, a tool's output) is no longer reported as `agneta/rateLimited`.
+- **`agneta/trace/read` no longer reports `complete` before a task's last records are written.**
 - **A new pairing with `workspace` tools now defaults to developer access.** A session that doesn't send `"sandbox"` runs with the grant's mode, and under developer access `network: "none"` doesn't apply: commands reach the internet and read the home folder. Send `"sandbox": "contained"` to keep the old behaviour. Grants made before this stay contained.
 - **Codex reserves the tool server name `agneta`** (its shell): a server of yours with that name is refused on Codex.
 - **New fields:** the pairing reply's `unmet`, each provider's `sandboxLevels` and `scope.sandbox` in the access report, and `_meta.agneta.sandbox` in each session's reply.

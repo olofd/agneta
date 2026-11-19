@@ -401,16 +401,16 @@ struct ApprovalView: View {
             } actions: {
                 HStack(spacing: 8) {
                     // The labels fill the width so the glass bezels do too.
-                    Button { model.approvals.answer(remember: nil) } label: { Text("Don't Allow").frame(maxWidth: .infinity) }
+                    Button { model.approvals.answer(remember: nil, for: approval.id) } label: { Text("Don't Allow").frame(maxWidth: .infinity) }
                         .glassButton().keyboardShortcut(.cancelAction)
                     // Once: for this connection only, nothing kept. Return chooses it, and only for a verified app.
                     // A provider that can't run yet (Codex not installed) may still be allowed: it runs once it can.
                     let nothing = approval.allowed.isEmpty
-                    Button { model.approvals.answer(remember: false) } label: { Text("Allow Once").frame(maxWidth: .infinity) }
+                    Button { model.approvals.answer(remember: false, for: approval.id) } label: { Text("Allow Once").frame(maxWidth: .infinity) }
                         .glassButton()
                         .defaultAction(when: approval.verified)
                         .disabled(nothing)
-                    Button { model.approvals.answer(remember: true) } label: { Text("Always Allow").frame(maxWidth: .infinity) }
+                    Button { model.approvals.answer(remember: true, for: approval.id) } label: { Text("Always Allow").frame(maxWidth: .infinity) }
                         .glassButton(prominent: true).tint(Palette.fill)
                         .disabled(nothing)
                 }

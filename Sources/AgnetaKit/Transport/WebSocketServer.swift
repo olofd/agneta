@@ -38,8 +38,10 @@ public final class WebSocketServer: @unchecked Sendable {
             connection.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .failed(let error):
+                    // A failed connection keeps its resources until it's cancelled (an app killed mid-connection).
                     self?.lock.withLock { self?.closed = true }
                     self?.input.finish(throwing: error)
+                    self?.connection.cancel()
                 case .cancelled:
                     self?.lock.withLock { self?.closed = true }
                     self?.input.finish()
@@ -52,12 +54,12 @@ public final class WebSocketServer: @unchecked Sendable {
         private func receive() {
             connection.receiveMessage { [weak self] content, context, _, error in
                 guard let self else { return }
-                if let error { self.input.finish(throwing: error); return }
+                if let error { self.input.finish(throwing: error); self.connection.cancel(); return }
                 let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata
                 switch metadata?.opcode {
                 case .text?, .binary?: if let content { self.input.yield(content) }
                 case .close?: self.input.finish(); self.connection.cancel(); return
-                case nil where content == nil: self.input.finish(); return
+                case nil where content == nil: self.input.finish(); self.connection.cancel(); return
                 default: break
                 }
                 self.receive()
