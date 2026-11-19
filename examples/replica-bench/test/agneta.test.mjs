@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import test from 'node:test';
-import { Agneta, memoryTokens, pairingScope, providersOf } from '../agneta.mjs';
+import { Agneta, memoryTokens, pairingScope, providersOf, whatIsMissing } from '../agneta.mjs';
 import { toolchainFolders } from '../toolchain.mjs';
 import { agnetaLike, standIn } from './stand-in.mjs';
 
@@ -89,4 +89,17 @@ test('a kept token is used while its grant covers the bench folder, and replaced
   assert.equal(pairs.length, 2);
   assert.deepEqual(pairs[1].params.scope.folders, ['/private/var', ...toolchainFolders()]);
   moved.close();
+});
+
+test('the headless runner says what is missing, for either build, without opening anything', () => {
+  const release = { agnetaName: 'Agneta', installURL: 'https://agneta.dahlbom.io/get/', homebrew: 'brew install olofd/tap/agneta' };
+  const dev = { agnetaName: 'Agneta Dev', installURL: 'https://github.com/olofd/agneta#build-and-run', homebrew: null };
+  const found = (releaseState, devState) => [{ agneta: release, presence: { state: releaseState } }, { agneta: dev, presence: { state: devState } }];
+  assert.equal(whatIsMissing(found('notInstalled', 'notInstalled'), 'arm64'),
+    'Agneta isn\'t installed. Get it from https://agneta.dahlbom.io/get/#arm64, or install it with: brew install olofd/tap/agneta. Then open it and run this again.');
+  // Only Agneta Dev on this Mac: open it, rather than "not installed".
+  assert.match(whatIsMissing(found('notInstalled', 'notRunning')), /^Agneta Dev isn't running\. Open it/);
+  assert.match(whatIsMissing(found('notRunning', 'notRunning')), /^Agneta isn't running/);
+  assert.match(whatIsMissing(found('onDiskImage', 'notInstalled')), /^Agneta is on its disk image: drag it into Applications/);
+  assert.match(whatIsMissing(found('unknown', 'unknown')), /Neither Agneta/);
 });

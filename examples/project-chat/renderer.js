@@ -20,7 +20,8 @@ function render(state) {
     briefLoaded = true;
   }
   phase = state.phase;
-  const connected = !['disconnected', 'connecting', 'pairing'].includes(phase);
+  const connected = !['disconnected', 'connecting', 'guide', 'pairing'].includes(phase);
+  showGuide(state.guide);
   const canSend = phase === 'ready';
   // The provider and engine of the next chat: only pairs Agneta says this app may use.
   const provider = state.providers.find((entry) => entry.id === state.account);
@@ -88,6 +89,25 @@ function render(state) {
   ].filter(Boolean).join(' · ');
 }
 
+/**
+ * Getting Agneta: the panel shows the step, the question when there is one (its own buttons), Homebrew's command with
+ * Copy, Open the page again while the user installs, and Keep Waiting when Agneta is slow to open.
+ */
+function showGuide(guide) {
+  element('guide').hidden = !guide;
+  if (!guide) return;
+  element('guide-title').textContent = guide.title;
+  element('guide-detail').textContent = guide.detail;
+  element('guide-homebrew').hidden = !guide.homebrew;
+  element('guide-homebrew-command').textContent = guide.homebrew ?? '';
+  const question = guide.question;
+  element('guide-confirm').hidden = !question;
+  element('guide-confirm').textContent = question?.confirm ?? '';
+  element('guide-cancel').textContent = question?.cancel ?? 'Cancel';
+  element('guide-reopen').hidden = !['installing', 'onDiskImage'].includes(guide.step);
+  element('guide-wait').hidden = !guide.keepWaiting;
+}
+
 /** Sets a select's options ([value, label] pairs) and choice, touching the DOM only when they changed. */
 function fill(select, options, value) {
   const key = JSON.stringify(options);
@@ -104,6 +124,12 @@ function run(action) {
 
 connectionButton.addEventListener('click', () => run(phase === 'disconnected' ? chat.connect() : chat.disconnect()));
 element('new-chat').addEventListener('click', () => run(chat.newChat()));
+element('guide-confirm').addEventListener('click', () => run(chat.answer('yes')));
+// Cancel answers no to a question, or ends the wait for Agneta.
+element('guide-cancel').addEventListener('click', () => run(phase === 'guide' && !element('guide-confirm').hidden ? chat.answer('no') : chat.disconnect()));
+element('guide-wait').addEventListener('click', () => run(chat.answer('wait')));
+element('guide-reopen').addEventListener('click', () => run(chat.openInstallPage()));
+element('guide-copy').addEventListener('click', () => run(chat.copyHomebrew().then(() => { element('guide-copy').textContent = 'Copied'; })));
 element('agneta').addEventListener('change', (event) => run(chat.use(event.target.value).then(loadAgnetas)));
 element('provider').addEventListener('change', (event) => run(chat.choose({ account: event.target.value })));
 element('engine').addEventListener('change', (event) => run(chat.choose({ account: element('provider').value, engine: event.target.value })));

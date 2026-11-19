@@ -6,7 +6,7 @@ The work it gives agents has the shape of a demanding app's, whose agents Agneta
 
 ## Run it
 
-You need Node.js 24 or newer, and a running Agneta with a provider connected (a plan or an API key). Rust (`rustup`) is needed for the referee to score candidates; Python 3 is needed for the agent's probes. The bench talks to Agneta through the [TypeScript client](../../clients/typescript/README.md), `@agneta/client`: build it first. From the repository root:
+You need Node.js 24 or newer, and Agneta with a provider connected (a plan or an API key); the window helps you get Agneta, open it and connect a provider. Rust (`rustup`) is needed for the referee to score candidates; Python 3 is needed for the agent's probes. The bench talks to Agneta through the [TypeScript client](../../clients/typescript/README.md), `@agneta/client`: build it first. From the repository root:
 
 ```sh
 (cd clients/typescript && npm ci && npm run build)
@@ -16,7 +16,7 @@ npm start                      # the window
 npm run bench -- --list        # what this app may use
 ```
 
-**Which Agneta.** The window offers the release (**Agneta**, port `47321`) and a development build (**Agneta Dev**, port `47331`) next to Connect, and remembers your choice. The runner uses `--port`, else `AGNETA_PORT`, else whichever of the two is running (the release first). For an [isolated dev instance](../../README.md#build-and-run), give its port: `AGNETA_PORT=47341 npm start`.
+**Which Agneta.** The window offers the release (**Agneta**, port `47321`) and a development build (**Agneta Dev**, port `47331`) next to Connect, and remembers your choice. The runner uses `--port`, else `AGNETA_PORT`, else whichever of the two is running (the release first); when neither is, it says what's missing (where to get Agneta and the Homebrew command, or to open it) and exits, opening nothing. For an [isolated dev instance](../../README.md#build-and-run), give its port: `AGNETA_PORT=47341 npm start`.
 
 **Where runs live.** Each run gets a fresh folder under `~/Documents/Replica Bench`, or under `REPLICA_BENCH_HOME` when it's set. The folder must be outside `~/Library`, since Agneta keeps `~/Library` out of every task. The first run in `~/Documents` may make macOS ask whether Node, Electron or Agneta may use that folder. Those prompts are part of what the bench measures.
 
@@ -29,7 +29,7 @@ Replica Bench/
 
 ## The window
 
-1. **Connect.** Compare the pairing code if one appears. In Agneta, tick a provider, pick the app's sandbox mode, and choose **Always Allow** (the token is kept in the Keychain through Electron's `safeStorage`) or **Allow Once**. The pairing asks for workspace tools in the bench's folder, every provider and engine, and any mode, so the mode picker starts at developer ([Pairing and policy](#pairing-and-policy)). The header shows the mode the user granted (**Grant: contained** or **Grant: developer**).
+1. **Connect.** When Agneta isn't installed or running, a panel above the prompt asks and shows each step, as in Project Chat: **Get Agneta** (the install page and Homebrew, waiting while you install), **Open Agneta**, connecting a provider; at launch it only offers to open Agneta when access is kept ([Getting Agneta](../../clients/typescript/README.md#getting-agneta)). Compare the pairing code if one appears. In Agneta, tick a provider, pick the app's sandbox mode, and choose **Always Allow** (the token is kept in the Keychain through Electron's `safeStorage`) or **Allow Once**. The pairing asks for workspace tools in the bench's folder, every provider and engine, and any mode, so the mode picker starts at developer ([Pairing and policy](#pairing-and-policy)). The header shows the mode the user granted (**Grant: contained** or **Grant: developer**).
 2. **Choose** the provider, the engine and **Contained** or **Developer** in the header. An engine Agneta can't confine is marked "uncontained" in the picker. If Agneta will refuse what you picked (developer above a contained grant, or contained on an uncontained engine), a bar says so and why before you run. The next run's session opens straight away, so the engine's **Model** and **Effort** choices appear before you run anything (as in Project Chat).
 3. **Run** a scenario from the list on the left. Each runs in a fresh workspace and session. The transcript shows the agent's replies and every tool call with its status. The right-hand panel shows what the app saw:
    - **Sandbox:** the mode the run asked for and the mode the task got (`_meta.agneta.sandbox`), or "refused by Agneta" with Agneta's own reason, which the transcript also shows;

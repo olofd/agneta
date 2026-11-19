@@ -5,7 +5,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AgnetaClient, isAgnetaError } from '@agneta/client';
-import { fileTokenStore, openAgneta } from '@agneta/client/node';
+import { fileTokenStore, nodeEnvironment } from '@agneta/client/node';
 
 const dev = process.argv.includes('--dev');
 const prompt = process.argv.slice(2).find((arg) => !arg.startsWith('--')) ?? 'Say hello in five words.';
@@ -15,14 +15,15 @@ const client = new AgnetaClient({
   build: dev ? 'dev' : 'release',
   ...(process.env.AGNETA_PORT ? { port: Number(process.env.AGNETA_PORT) } : {}),
   tokens: fileTokenStore(join(homedir(), `.agneta-quickstart-token${dev ? '-dev' : ''}`)),
-  // Agneta isn't running: a real app asks the user first. Here, running the script is the yes. (An isolated instance
-  // has no URL to open it by.)
-  ...(process.env.AGNETA_PORT ? {} : { launch: () => openAgneta(dev ? 'dev' : 'release') })
+  // How to find and open Agneta on this Mac (an isolated instance has no URL to open it by, so it's never opened).
+  environment: nodeEnvironment()
 });
 client.on('pairingCode', (code) => console.log(`Agneta shows a code: check it's ${code}, then allow the app.`));
 
 try {
-  const access = await client.connect();
+  // Agneta isn't running: a real app asks the user first. Here, running the script is the yes to opening it; getting
+  // it, if it isn't installed, is left to the user (the error says where).
+  const access = await client.connect({ guide: (question) => question.kind === 'open' });
   console.log(`Connected. Providers: ${access.providers.map((provider) => `${provider.label} (${provider.engines.join(', ')})`).join('; ')}`);
 
   // App-only tools and no approvals: the agent can only answer. Nothing on this Mac is touched.
@@ -36,7 +37,8 @@ try {
   await session.close();
 } catch (error) {
   if (!isAgnetaError(error)) throw error;
-  console.error(`${error.message}\n${error.advice}`);
+  if (error.kind === 'declined' && error.question === 'install') console.error(`${client.agnetaName} isn't installed. Get it at ${client.installURL}${client.homebrew ? `, or: ${client.homebrew}` : ''}`);
+  else console.error(`${error.message}\n${error.advice}`);
   process.exitCode = 1;
 } finally {
   client.close();

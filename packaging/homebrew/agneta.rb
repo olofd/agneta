@@ -10,7 +10,7 @@ cask "agneta" do
   url "https://github.com/olofd/agneta/releases/download/v#{version}/Agneta-#{version}-#{arch}.dmg"
   name "Agneta"
   desc "Give Mac apps an AI agent you control"
-  homepage "https://github.com/olofd/agneta"
+  homepage "https://agneta.dahlbom.io"
 
   livecheck do
     url :url
@@ -32,4 +32,8 @@ cask "agneta" do
     "~/Library/Logs/Agneta",
     "~/Library/Preferences/com.objectivecoder.agneta.plist",
   ]
+
+  caveats <<~EOS
+    Open Agneta from Applications. It lives in the menu bar (the linked rings beside the clock), not in the Dock.
+  EOS
 end

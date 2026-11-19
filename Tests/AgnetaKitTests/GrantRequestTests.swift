@@ -7,7 +7,7 @@ import Testing
 
 extension RouterContractTests {
     /// Before pairing, an app sees Agneta's offer: every provider kind, whether one is connected, each kind's engines
-    /// and the modes they can provide, and the engines here. Never the user's accounts themselves.
+    /// and the modes they can provide, the engines here, and Agneta's version. Never the user's accounts themselves.
     @Test func anUnpairedAppSeesWhatAgnetaOffers() async throws {
         let stack = try await Stack.start(port: 47710)
         defer { stack.stop() }
@@ -23,6 +23,8 @@ extension RouterContractTests {
         #expect(goose["sandboxLevels"] == ["developer"] && goose["uncontained"] == true)
         #expect(providers.first { $0["kind"] == "chatgpt" }?["connected"] == false)
         #expect(catalog["engines"]?.arrayValue?.contains { $0["id"] == "goose" && $0["state"] == "ready" } == true)
+        // Agneta's version, for an app that needs a newer one to say so before pairing.
+        #expect(catalog["version"] == .string(Router.version) && !Router.version.isEmpty)
         // Nothing that names the user's accounts.
         let text = String(decoding: try JSONEncoder().encode(catalog), as: UTF8.self)
         #expect(!text.contains("\"label\"") && !text.contains("brokered") && !text.contains("native"), "\(text)")

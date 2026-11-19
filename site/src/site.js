@@ -1,6 +1,29 @@
-// agneta.dahlbom.io: the screenshots' light and dark switch, copy buttons, and the current section in a page's
-// contents. Every page reads and works without it.
+// agneta.dahlbom.io: the screenshots' light and dark switch, copy buttons, the current section in a page's contents,
+// and the install page's order of downloads. Every page reads and works without it. It reads nothing of the address
+// but the fragment, and sends nothing anywhere (site/build.py checks).
 (() => {
+  // The install page (/get/): an app that sent the user here names the Mac's architecture in the fragment (#arm64 or
+  // #x86_64), which the browser never sends anywhere. That download goes first, marked; without one, both stay as they are.
+  const downloads = document.querySelector("[data-downloads]");
+  if (downloads) {
+    const order = () => {
+      const arch = location.hash.slice(1);
+      const mine = arch === "arm64" || arch === "x86_64" ? downloads.querySelector(`[data-arch="${arch}"]`) : null;
+      for (const link of downloads.querySelectorAll("[data-arch]")) {
+        link.classList.toggle("suggested", link === mine);
+        link.querySelector(".mine")?.remove();
+      }
+      if (!mine) return;
+      downloads.prepend(mine);
+      const badge = document.createElement("span");
+      badge.className = "mine";
+      badge.textContent = "This Mac";
+      mine.querySelector(".arch").append(badge);
+    };
+    order();
+    addEventListener("hashchange", order);
+  }
+
   const shots = document.querySelector("[data-shots]");
   const control = document.querySelector(".appearance");
   if (shots && control) {

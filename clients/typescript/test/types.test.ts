@@ -1,8 +1,9 @@
 // Compile-time checks (`npm run typecheck`): the unions narrow, the method map types requests, and mistakes don't compile.
 import {
-  AgnetaClient, Connection, isAgnetaError, type Access, type AccessEngine, type SessionUpdate, type TraceRecord, type TurnEvent
+  AgnetaClient, Connection, isAgnetaError, type Access, type AccessEngine, type AgnetaPresence, type ConnectProgress,
+  type GuideQuestion, type SessionUpdate, type TraceRecord, type TurnEvent
 } from '../src/index.js';
-import { fileTokenStore, safeStorageTokenStore } from '../src/node.js';
+import { electronEnvironment, fileTokenStore, nodeEnvironment, safeStorageTokenStore } from '../src/node.js';
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 const expect = <T extends true>(): T => true as T;
@@ -77,6 +78,43 @@ async function narrowing(client: AgnetaClient, connection: Connection) {
   // @ts-expect-error: not an event
   client.on('nope', () => {});
 }
+
+async function guided(client: AgnetaClient) {
+  await client.connect({
+    guide: (question: GuideQuestion) => {
+      switch (question.kind) {
+        case 'install': { const page: string = question.installURL; const brew: string | null = question.homebrew; void page; void brew; return true; }
+        case 'update': { const needed: string = question.needed; const running: boolean = question.running; void needed; void running; return true; }
+        case 'setup': { const kinds = question.kinds; void kinds; return true; }
+        case 'open': { const title: string = question.title; void title; return true; }
+      }
+    },
+    onProgress: (progress: ConnectProgress) => {
+      if (progress.step === 'pairing') { const code: string | null = progress.code; void code; }
+      if (progress.step === 'slow') { const keep: boolean = progress.keepWaiting; void keep; }
+      if (progress.step === 'outdated') { const version: string | null = progress.version; void version; }
+      // @ts-expect-error: only the pairing step has a code
+      if (progress.step === 'connected') void progress.code;
+    }
+  });
+  const presence: AgnetaPresence = await client.presence();
+  if (presence.state === 'notRunning') { const where: 'applications' | 'elsewhere' = presence.location; void where; }
+  // @ts-expect-error: not a step
+  client.on('progress', (progress) => { if (progress.step === 'nope') return; });
+  try { await client.connect(); } catch (error) {
+    if (isAgnetaError(error)) {
+      if (error.kind === 'notInstalled') { const url: string | null = error.installURL; void url; }
+      if (error.kind === 'outdated') { const needed: string = error.needed; void needed; }
+      if (error.kind === 'declined') { const question: 'install' | 'open' | 'update' | 'setup' = error.question; void question; }
+    }
+  }
+}
+
+const environments = [nodeEnvironment(), electronEnvironment({
+  app: { getApplicationInfoForProtocol: async () => ({ name: 'Agneta', path: '/Applications/Agneta.app' }) },
+  shell: { openExternal: async () => {}, openPath: async () => '' }
+})];
+void guided; void environments;
 
 const store = fileTokenStore('/tmp/token');
 const electron = safeStorageTokenStore({ isEncryptionAvailable: () => true, encryptString: (text) => Buffer.from(text), decryptString: (data) => data.toString() }, '/tmp/t');

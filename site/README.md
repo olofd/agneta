@@ -12,10 +12,13 @@
 | The documentation index | README.md's Documentation table |
 | On the start page: How it works, Providers and engines, What it is not, the status note, the pairing example | The README sections of those names |
 | The install steps | packaging/release-page.md |
+| The install page, `/get/`, which apps open to help their users get Agneta: both downloads, the steps, Homebrew and **Open Agneta** | `src/get.html`, with the install steps and the latest release's DMGs as above. An app may add the Mac's architecture as the fragment (`#arm64`, `#x86_64`) to put that download first |
 | The version, its date and each DMG's link and size | The latest published release, read from GitHub when the site is built |
 | Screenshots | docs/images/ and examples/project-chat/preview.png; on the start page they sit on a copy of the showcase backdrop they were captured over (Sources/Agneta/Snapshots.swift) |
 
 The start page's own prose is in `src/index.html`; everything it says is taken from the README and docs/PRIVACY.md, so change it when they change. The rest of `src/` is the layout, the stylesheet, a small script (the screenshots' light and dark switch, copy buttons, the current section in a page's contents) and the icons, made from packaging/AppIcon.png by `site/icons` (run it after the app icon changes, then `site/social/render` for the social preview).
+
+**`/get/` is a promise.** Apps send their users to `https://agneta.dahlbom.io/get/` ([APP_PROTOCOL.md](../docs/APP_PROTOCOL.md#getting-agneta)), so the address stays, and the build fails without it. Like every page, it loads nothing from elsewhere, and the script reads nothing of its address but the fragment and sends nothing. The build checks the site's own sources for it and fails otherwise: scripts, styles, images, media, frames and fonts (any quoting, every `srcset` entry, `<style>`, `style` attributes and style.css) must come from the site; no inline script or meta refresh; and site.js may use `location` only for its `hash`, and no `fetch`, beacon, socket, storage, `import()`, image or `src` assignment. `python3 site/test_build.py` shows each check catching what it guards, and runs before every build in the Website workflow. The start page's and the header's Download buttons go there too.
 
 Links between documents become links between pages, and links to anything else go to the file on GitHub. The build fails on a link to a file or heading that doesn't exist, and on Markdown it doesn't render (raw HTML, images), so it can't publish something broken.
 
@@ -28,7 +31,7 @@ python3 site/build.py --release /tmp/release.json         # as published: the ve
 python3 -m http.server 8642 --bind 127.0.0.1 --directory site/_build
 ```
 
-Then open http://127.0.0.1:8642. Pages are served at `/<path>/`, as on GitHub Pages.
+Then open http://127.0.0.1:8642. Pages are served at `/<path>/`, as on GitHub Pages; http://127.0.0.1:8642/get/#x86_64 shows the install page as an app on an Intel Mac opens it.
 
 ## Publishing
 

@@ -6,6 +6,9 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 **For you**
 
+- **Agneta moves itself to Applications.** Started from its disk image (or from a download macOS runs from a temporary place), Agneta offers to move to Applications and open again from there (a download it was started from goes to the Trash). When the same or a newer Agneta is already there, it offers to open that one instead, and never replaces it. A copy run from the disk image ended when the image was ejected, and apps that open Agneta found it gone.
+- **One window on first run.** When an app asks you to connect your AI, or asks for access, while Agneta's welcome window is up, the welcome window closes: the app's window does the same job and says who asked.
+- **Homebrew points to the website,** and after installing says to open Agneta from Applications and find it in the menu bar.
 - **Clearing history removes a Codex task completely:** Codex deletes its own session, including its copies in Codex's databases, not only its session file.
 - **Deleting a task deletes all of its conversation:** a task that ran on an API key without built-in tools shares its account's Goose, which kept the conversation until you signed out. Now Agneta asks Goose to delete it, then rewrites Goose's database so no file still holds the words.
 - **Model and Effort… names the engine's own choice:** "Codex's default (its model)" rather than just "Codex's default", so leaving it to the engine says what that means.
@@ -35,7 +38,8 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 **For apps**
 
-- **`@agneta/client`, the official TypeScript client** ([clients/typescript](clients/typescript/README.md)): the whole app protocol, typed, in Node 22+ and Electron's main process, with no dependencies. It connects and offers to open Agneta, pairs and keeps the token, follows access changes, opens, loads and forks sessions, streams turns, answers permission requests, reads traces, and maps every error code to a typed error; a raw layer sends anything else. Project Chat and Replica Bench now run on it. Published to npm separately, from `client-typescript-v*` tags.
+- **Getting Agneta** ([APP_PROTOCOL.md](docs/APP_PROTOCOL.md#getting-agneta)): how an app tells whether Agneta is installed, running or neither, and takes its user from nothing installed to a working connection, through a stable install page, [agneta.dahlbom.io/get](https://agneta.dahlbom.io/get/).
+- **`@agneta/client`, the official TypeScript client** ([clients/typescript](clients/typescript/README.md)): the whole app protocol, typed, in Node 22+ and Electron's main process, with no dependencies. It connects, helps the user get and open Agneta, pairs and keeps the token, follows access changes, opens, loads and forks sessions, streams turns, answers permission requests, reads traces, and maps every error code to a typed error; a raw layer sends anything else. Project Chat and Replica Bench now run on it. Published to npm separately, from `client-typescript-v*` tags.
 - **A task stopped mid-turn answers its prompt as cancelled,** as the protocol says, even when the engine never answers it (Stop, a removed provider, narrowed access). Before, the prompt could wait on a shared engine indefinitely, or fail as "The engine stopped".
 - **`maxCostUSD` is checked before a prompt is sent:** a task already over its limit spends nothing more.
 - **Fewer false rate limits:** an error that merely says "429" or "limit reached" (a token count, a context window, a tool's output) is no longer reported as `agneta/rateLimited`.
@@ -44,7 +48,7 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 - **Codex reserves the tool server name `agneta`** (its shell): a server of yours with that name is refused on Codex.
 - **New fields:** the pairing reply's `unmet`, each provider's `sandboxLevels` and `scope.sandbox` in the access report, and `_meta.agneta.sandbox` in each session's reply.
 - **Ask for exactly what you need.** A pairing scope can name the `providers` (kinds, or `"all"`), the `engines` and the `sandbox` (`contained`, `developer` or `any`), and the approval window is narrowed to them. The reply's `unmet` says what wasn't given, and why.
-- **Before pairing:** `agneta/catalog` says what Agneta offers (each provider kind, whether one is connected, its engines and their modes), and `agneta/setup` asks Agneta to help the user connect a provider. With nothing connected, the approval window lets the user connect one in place.
+- **Before pairing:** `agneta/catalog` says what Agneta offers (each provider kind, whether one is connected, its engines and their modes) and its `version`, and `agneta/setup` asks Agneta to help the user connect a provider. With nothing connected, the approval window lets the user connect one in place.
 - **Claude Code and Codex run commands on the contained path.** Claude Code's Bash goes through Agneta's broker, as Goose's does, and so do Codex's commands, through Agneta's own `shell` tool in place of Codex's: under the session's command sandbox, with no network, every command in the trace. Monitor stays off.
 - **Background jobs live on, as in a terminal.** A command's background job keeps running after the command returns, and ends with its engine.
 - **`toolEnvironment`** sets variables for commands: your toolchain's `PATH` (inside the session's folders, ahead of everything else), `CARGO_HOME`, `PYTHONPATH`, winning over developer access's own. Empty `PATH` entries are refused. Commands also find the selected Xcode's own `cc`, `git` and `python3`, wherever Xcode is installed.

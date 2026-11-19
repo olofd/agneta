@@ -556,6 +556,112 @@ def docs_index(site):
                   "inside, and what stays private on your Mac.", path="docs", body=body, page_class="index")
 
 
+def install_steps(site):
+    """The numbered install steps of packaging/release-page.md, rendered."""
+    lines, _ = section(read("packaging/release-page.md"), "Install")
+    steps = [l for l in lines if re.match(r"^\d+\. ", l)]
+    return Markdown(site, "packaging/release-page.md", "").render("\n".join(steps))
+
+
+def downloads(site):
+    """Both DMGs, linked directly from the latest release (or the releases page without one). `data-arch` lets the
+    install page put the one the app named in its fragment first."""
+    out = []
+    for arch, label, hint in (("arm64", "Apple silicon", "M1 or later"), ("x86_64", "Intel", "Intel processor")):
+        a = site.asset(arch)
+        url = a["browser_download_url"] if a else f"{REPO}/releases/latest"
+        size = f" · {megabytes(a['size'])}" if a else ""
+        file = f'<span class="file">{esc(a["name"])}</span>' if a else ""
+        out.append(f'<a class="download" data-arch="{arch}" href="{esc(url)}"><img src="/assets/icon-64.png" width="44" height="44" alt="">'
+                   f'<span class="arch">{label}</span><span class="detail">{hint}{size}</span>{file}</a>')
+    return "".join(out)
+
+
+def release_line(site):
+    version = site.version()
+    if not version:
+        return f'<a href="{REPO}/releases/latest">Latest release</a>'
+    published = site.release.get("published_at") or ""
+    when = f", {long_date(published)}" if published else ""
+    return f'<a href="{REPO}/releases/tag/v{esc(version)}">Version {esc(version)}</a>{when}'
+
+
+def get_page(site):
+    """/get/: the install page apps open (docs/APP_PROTOCOL.md, Getting Agneta). Its address is a promise: it stays."""
+    body = fill(read("site/src/get.html"), {
+        "release_line": release_line(site),
+        "downloads": downloads(site),
+        "install_steps": install_steps(site),
+    }, "get.html")
+    return layout(site, title="Get Agneta", description="Download Agneta for your Mac, Apple silicon or Intel, or "
+                  "install it with Homebrew. Free and open source; signed and notarized.", path="get", body=body,
+                  page_class="get")
+
+
+# What a page may load, and what the site's script may read: the install page is opened by apps, so no page loads
+# anything from elsewhere, and the script reads nothing of its address but the fragment and sends nothing
+# (docs/APP_PROTOCOL.md, Getting Agneta). These are checks of the site's own sources, not a sandbox: they catch the
+# ways this site could come to load or send something, and site/test_build.py shows each one caught.
+LOADING_TAG = re.compile(r"<(script|img|iframe|video|audio|source|embed|track|object|link|input|image|use)\b([^>]*)>", re.I)
+ATTRIBUTE = re.compile(r"""\s(src|srcset|poster|data|href|xlink:href)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""", re.I)
+CSS_LOAD = re.compile(r"""@import\s+(?:url\(\s*)?["']?([^"')\s;]+)|url\(\s*["']?([^"')\s]+)""", re.I)
+READS = re.compile(r"\blocation\b(?!\.hash\b)|document\.(?:URL|referrer|cookie|write)|URLSearchParams|\bfetch\s*\(|"
+                   r"XMLHttpRequest|sendBeacon|WebSocket|EventSource|localStorage|sessionStorage|indexedDB|\bimport\s*\(|"
+                   r"new\s+Image\b|\.src\s*=|\.srcset\s*=|setAttribute\(\s*[\"'](?:src|srcset|href)|\bwindow\.open\b|\.submit\s*\(")
+
+
+def off_site(url):
+    url = url.strip().strip("\"'")
+    return url.startswith(("http:", "https:", "//")) and not url.startswith(SITE + "/")
+
+
+def check_css(name, text):
+    for m in CSS_LOAD.finditer(text):
+        url = m.group(1) or m.group(2) or ""
+        if off_site(url) or (m.group(1) and not url.startswith("/")):
+            raise BuildError(f"{name}: loads {url} from elsewhere; the site serves everything itself")
+
+
+def check_loads(name, page):
+    """Fails on anything a page would load from elsewhere: every script, style, image, frame and font comes from the
+    site, nothing refreshes to another address, and no script runs but the site's own file."""
+    for m in LOADING_TAG.finditer(page):
+        tag, attributes = m.group(1).lower(), m.group(2)
+        for a in ATTRIBUTE.finditer(attributes):
+            key, value = a.group(1).lower(), a.group(2).strip("\"'")
+            if key == "href" and tag not in ("link", "image", "use"):
+                continue
+            if key == "href" and tag == "link" and re.search(r"""rel\s*=\s*["']?canonical""", attributes, re.I):
+                continue
+            urls = [part.strip().split(" ")[0] for part in value.split(",")] if key == "srcset" else [value]
+            for url in urls:
+                if off_site(url):
+                    raise BuildError(f"{name}: loads {url} from elsewhere; the site serves everything itself")
+        if tag == "script" and not ATTRIBUTE.search(attributes):
+            raise BuildError(f"{name}: an inline script; the site runs only its own /site.js")
+    for style in re.findall(r"<style\b[^>]*>(.*?)</style>", page, re.I | re.S):
+        check_css(name, style)
+    for style in re.findall(r"""\sstyle\s*=\s*("[^"]*"|'[^']*')""", page, re.I):
+        check_css(name, style)
+    if re.search(r"""<meta\b[^>]*http-equiv\s*=\s*["']?refresh""", page, re.I):
+        raise BuildError(f"{name}: a meta refresh; no page sends the visitor anywhere by itself")
+
+
+def check_script(text):
+    found = READS.search(text)
+    if found:
+        raise BuildError(f"site.js: uses {found.group()}; the site's script reads nothing of the address but its "
+                         f"fragment and sends nothing anywhere")
+
+
+def check_get(page):
+    """The install page has what an app promises its user: both downloads, Homebrew, and Open Agneta."""
+    for needed in ('data-arch="arm64"', 'data-arch="x86_64"', 'href="agneta://open"', "brew install olofd/tap/agneta",
+                   "data-downloads", 'src="/site.js"'):
+        if needed not in page:
+            raise BuildError(f"get/: the install page lacks {needed}")
+
+
 def landing(site):
     readme = site.readme
 
@@ -588,28 +694,6 @@ def landing(site):
         end = next(i for i in range(start + 1, len(lines)) if l_is_fence(lines[i]))
         return Markdown(site, "README.md", "").render("\n".join(lines[start:end + 1]))
 
-    def install_steps():
-        page = read("packaging/release-page.md")
-        lines, _ = section(page, "Install")
-        steps = [l for l in lines if re.match(r"^\d+\. ", l)]
-        return Markdown(site, "packaging/release-page.md", "").render("\n".join(steps))
-
-    version = site.version()
-    downloads = []
-    for arch, label, hint in (("arm64", "Apple silicon", "M1 or later"), ("x86_64", "Intel", "Intel processor")):
-        a = site.asset(arch)
-        url = a["browser_download_url"] if a else f"{REPO}/releases/latest"
-        size = f" · {megabytes(a['size'])}" if a else ""
-        file = f'<span class="file">{esc(a["name"])}</span>' if a else ""
-        downloads.append(f'<a class="download" href="{esc(url)}"><img src="/assets/icon-64.png" width="44" height="44" alt="">'
-                         f'<span class="arch">{label}</span><span class="detail">{hint}{size}</span>{file}</a>')
-    if version:
-        published = site.release.get("published_at") or ""
-        when = f", {long_date(published)}" if published else ""
-        release_line = (f'<a href="{REPO}/releases/tag/v{esc(version)}">Version {esc(version)}</a>{when}')
-    else:
-        release_line = f'<a href="{REPO}/releases/latest">Latest release</a>'
-
     # The demo video, once there is one: its own section under the screenshots, which stay.
     demo = ""
     if os.path.exists(os.path.join(ROOT, DEMO)):
@@ -621,15 +705,15 @@ def landing(site):
 
     body = fill(read("site/src/index.html"), {
         "demo": demo,
-        "release_line": release_line,
-        "downloads": "".join(downloads),
+        "release_line": release_line(site),
+        "downloads": downloads(site),
         "how_steps": part("How it works", "list"),
         "providers_table": part("Providers and engines", "table"),
         "without_native": part("Providers and engines", "paragraph", "**Without Claude Code or Codex,**"),
         "not_list": part("What it is not", "list"),
         "status_quote": status_quote(),
         "dev_snippet": dev_snippet(),
-        "install_steps": install_steps(),
+        "install_steps": install_steps(site),
     }, "index.html")
     head = ('<link rel="preload" as="image" href="/images/panel.png" media="(prefers-color-scheme: light)">'
             '<link rel="preload" as="image" href="/images/panel-dark.png" media="(prefers-color-scheme: dark)">')
@@ -655,9 +739,19 @@ def build(out, release, commit):
         write(f"{path}/index.html", text)
     write("docs/index.html", docs_index(site))
     write("index.html", landing(site))
+    get = get_page(site)
+    check_get(get)
+    write("get/index.html", get)
     write("404.html", layout(site, title="Not found", description="This page doesn't exist.", path="404",
                              body=read("site/src/404.html"), page_class="missing"))
     site.check_links()
+    for root, _, files in os.walk(out):
+        for name in files:
+            if name.endswith(".html"):
+                with open(os.path.join(root, name), encoding="utf-8") as f:
+                    check_loads(os.path.relpath(os.path.join(root, name), out), f.read())
+    check_script(read("site/src/site.js"))
+    check_css("style.css", read("site/src/style.css"))
 
     for name in ("style.css", "site.js"):
         shutil.copy(os.path.join(SRC, name), os.path.join(out, name))
@@ -671,7 +765,7 @@ def build(out, release, commit):
             shutil.copy(os.path.join(ROOT, optional), os.path.join(out, "images", os.path.basename(optional)))
     shutil.copy(os.path.join(ROOT, "examples", "project-chat", "preview.png"),
                 os.path.join(out, "images", "project-chat.png"))
-    urls = [""] + ["docs"] + [p for _, _, p, _ in PAGES]
+    urls = [""] + ["get", "docs"] + [p for _, _, p, _ in PAGES]
     write("sitemap.xml", '<?xml version="1.0" encoding="UTF-8"?>\n'
           '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
           + "".join(f"  <url><loc>{SITE}/{u + '/' if u else ''}</loc></url>\n" for u in urls) + "</urlset>\n")
