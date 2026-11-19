@@ -71,11 +71,13 @@ extension Router {
 
     /// Every check a session passes before an engine starts: an account the app was granted, not paused; an engine
     /// the grant allows that the account's provider supports and that's here (`taskEngine`); a policy that parses and
-    /// fits the grant; tool servers Agneta can confine; and a cost limit only where the engine reports cost (on
+    /// fits the grant, a contained one reaching only its app's own sockets and ports or sockets in its folders
+    /// (ToolReach); tool servers Agneta can confine; and a cost limit only where the engine reports cost (on
     /// another it would silently never trip). `sent`: the policy came from the app (or the task
     /// it resumes), so it's held to the grant as it is; one Agneta supplies gets no more tools than granted.
     func authorize(
-        grant: Grant, account: String?, engine requested: String? = nil, resuming: Bool = false, cwd: String?,
+        app appID: UUID, grant: Grant, account: String?, engine requested: String? = nil, resuming: Bool = false,
+        cwd: String?,
         policy value: JSONValue?, sent: Bool,
         servers: [JSONValue], instructions: String?
     ) -> Result<Plan, RPCError> {
@@ -134,6 +136,15 @@ extension Router {
             effective = outcome.effective
         case .failure(let refusal): return .failure(refusal.rpcError)
         }
+        // A contained task's sockets and ports: within its folders, or the app's own (ToolReach). Looked up only for
+        // what the folders don't cover.
+        if effective == .contained {
+            policy.servedByApp = ToolReach.served(
+                ToolReach.unresolved(policy, grant: grant), by: reachingApp(appID, grant: grant), lookup: reach)
+        }
+        if let refusal = GrantScope.reach(policy, against: grant, sandbox: effective) {
+            return .failure(refusal.rpcError)
+        }
         if policy.limits.maxCostUSD != nil, !engine.capabilities.reportsCost {
             return .failure(
                 PolicyRejection(
@@ -153,6 +164,13 @@ extension Router {
             Plan(
                 account: account, engine: engine, policy: policy, servers: servers, instructions: instructions,
                 sandbox: effective))
+    }
+
+    /// Who counts as the app for what it serves: a verified grant's team, or the processes holding its connection now.
+    func reachingApp(_ appID: UUID, grant: Grant) -> ToolReach.App {
+        if grant.verified, let team = grant.team { return ToolReach.App(team: team, pids: []) }
+        let pids = apps[appID]?.ports.map { reach.connection($0.client, $0.server) } ?? []
+        return ToolReach.App(team: nil, pids: pids)
     }
 
     /// The refusal for anything new on a paused account, or nil when it isn't paused.
@@ -281,7 +299,7 @@ extension Router {
         let plan: Plan, lease: EngineLease
         // Without an account named: the first one the app may use that's here.
         switch authorize(
-            grant: grant, account: requested ?? grant.accounts.first { accounts[$0] != nil },
+            app: appID, grant: grant, account: requested ?? grant.accounts.first { accounts[$0] != nil },
             engine: params?["_meta"]?["agneta"]?["engine"]?.stringValue, cwd: params?["cwd"]?.stringValue,
             policy: meta?[SessionPolicy.key], sent: meta?[SessionPolicy.key] != nil,
             servers: params?["mcpServers"]?.arrayValue ?? [], instructions: instructions)
@@ -383,7 +401,8 @@ extension Router {
         let policyValue = params?["_meta"]?[SessionPolicy.key] ?? original?["_meta"]?[SessionPolicy.key]
         let plan: Plan, lease: EngineLease
         switch authorize(
-            grant: grant, account: meta["account"]?["id"]?.stringValue, engine: meta["engine"]?["id"]?.stringValue,
+            app: appID, grant: grant, account: meta["account"]?["id"]?.stringValue,
+            engine: meta["engine"]?["id"]?.stringValue,
             resuming: true,
             cwd: params?["cwd"]?.stringValue ?? original?["cwd"]?.stringValue,
             policy: policyValue, sent: policyValue != nil, servers: params?["mcpServers"]?.arrayValue ?? [],
@@ -467,7 +486,8 @@ extension Router {
         let cwd = params?["cwd"]?.stringValue ?? original?["cwd"]?.stringValue
         let plan: Plan, lease: EngineLease
         switch authorize(
-            grant: grant, account: meta["account"]?["id"]?.stringValue, engine: meta["engine"]?["id"]?.stringValue,
+            app: appID, grant: grant, account: meta["account"]?["id"]?.stringValue,
+            engine: meta["engine"]?["id"]?.stringValue,
             resuming: true, cwd: cwd,
             policy: policyValue, sent: true,
             servers: params?["mcpServers"]?.arrayValue ?? [],

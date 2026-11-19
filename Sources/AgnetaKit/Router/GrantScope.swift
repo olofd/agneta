@@ -131,6 +131,41 @@ public enum GrantScope {
         return nil
     }
 
+    /// Whether `url` (a real path) is inside one of the folders `grant` allows, its own workspace included.
+    static func inGrantedFolder(_ url: URL, _ grant: Router.Grant) -> Bool {
+        grant.folders.contains { url.isInside(URL(filePath: $0, directoryHint: .isDirectory)) }
+    }
+
+    /// Why a session's `toolSockets` and `toolPorts` reach past its app, or nil when they don't. Under Contained a
+    /// socket must be inside a granted folder or served by the app itself, and a port served by the app itself, as
+    /// found when the session opened (`servedByApp`, ToolReach). `sandbox` is what the task can really do: developer
+    /// access reaches every local server, as a terminal does, and is never narrowed here.
+    public static func reach(_ policy: SessionPolicy, against grant: Router.Grant, sandbox: Sandbox) -> PolicyRejection?
+    {
+        guard sandbox == .contained else { return nil }
+        let who =
+            grant.verified && grant.team != nil
+            ? "\(grant.app) (a process signed by its developer)" : "\(grant.app)'s own process or one it started"
+        let limit = "; developer access allows it"
+        for socket in policy.toolSockets where !inGrantedFolder(socket, grant) {
+            let path = socket.path(percentEncoded: false)
+            guard !policy.servedByApp.contains(.socket(path)) else { continue }
+            return PolicyRejection(
+                field: "toolSockets",
+                reason:
+                    "\(path) is outside the folders \(grant.app) was allowed, and isn't served by \(who): a contained "
+                    + "task reaches only its app's own sockets and those in its folders" + limit)
+        }
+        for port in policy.toolPorts where !policy.servedByApp.contains(.port(port)) {
+            return PolicyRejection(
+                field: "toolPorts",
+                reason:
+                    "loopback port \(port) isn't served by \(who): a contained task reaches only its app's own "
+                    + "ports" + limit)
+        }
+        return nil
+    }
+
     /// Whether the app connecting with a verified grant's token is still that app: same signing identifier and
     /// team, with a checkable signature. A token alone (copied to another program) isn't enough. Grants made
     /// without a verified identity have nothing to compare, and pass.

@@ -192,6 +192,8 @@ public actor Router {
     struct App {
         var peer: RPCPeer
         var grant: Grant?
+        /// The connection's ports (the app's, Agneta's), to find the processes holding it (ToolReach).
+        var ports: (client: Int, server: Int)?
         /// Closes the connection itself, not only the peer: a closed peer on a live socket would leave
         /// the app connected.
         var close: @Sendable () -> Void = {}
@@ -246,6 +248,8 @@ public actor Router {
     let approve: Approve
     let context: PolicyContext
     let traces: Traces?
+    /// How the processes serving a contained session's sockets and ports are found (ToolReach): the system's, or a test's.
+    let reach: ToolReach.Lookup
 
     /// How many turns may run at once. Further prompts wait in order.
     public struct Concurrency: Sendable {
@@ -329,8 +333,9 @@ public actor Router {
         context: PolicyContext, engines: EngineSource, traces: Traces? = nil, concurrency: Concurrency = .init(),
         commit: Commit? = nil,
         now: @escaping @Sendable () -> Date = { Date() }, calendar: Calendar = .autoupdatingCurrent,
-        approve: @escaping Approve
+        reach: ToolReach.Lookup = .system, approve: @escaping Approve
     ) {
+        self.reach = reach
         self.now = now
         self.calendar = calendar
         self.commit = commit
@@ -429,6 +434,7 @@ public actor Router {
     static func fits(account: String, engine: String, policy: SessionPolicy, sandbox: Sandbox, grant: Grant) -> Bool {
         grant.accounts.contains(account) && grant.engines.allows(engine)
             && GrantScope.check(policy, against: grant) == nil && sandbox <= grant.ceiling
+            && GrantScope.reach(policy, against: grant, sandbox: sandbox) == nil
     }
 
     /// What an app may use, as it sees it (AccessReport): each provider it may use, with the engines its tasks there

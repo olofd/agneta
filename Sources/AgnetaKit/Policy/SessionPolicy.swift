@@ -54,6 +54,9 @@ public struct SessionPolicy: Sendable, Equatable {
     /// Loopback ports and Unix sockets shell commands may reach even under `network: none`.
     public var toolPorts: [Int] = []
     public var toolSockets: [URL] = []
+    /// Of `toolPorts` and `toolSockets`, those found served by the app itself when the session opened (ToolReach): what
+    /// a contained session may reach beyond its granted folders (GrantScope.reach). Set by the router, never by the app.
+    public var servedByApp: Set<ToolReach.Endpoint> = []
     public var approval: Approval
     public var limits: Limits
     /// The sandbox the session runs in, as resolved when it opens (SandboxResolution): what Agneta's profiles build.
