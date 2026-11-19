@@ -6,10 +6,12 @@
 # formatter's own output is the reference and only its edits that overlap lines changed since the base count: a
 # changed line inside a statement the formatter would rewrap fails, an old line next to it doesn't.
 #
-#   swift-format-changed [--base REF] [--fix] [--report]
+#   swift-format-changed [--base REF | --all] [--fix] [--report]
 #
 # --base   what the change is measured against (default: the merge base with origin/main, or main). Uncommitted and
 #          untracked files count as changed.
+# --all    every line of every Swift file counts as changed: the check after the reformat, and with --fix the
+#          reformat itself.
 # --fix    applies the formatter's edits to the changed lines only, in place.
 # --report also prints the whole tree's lint findings by rule, for information; they never fail the check.
 import argparse
@@ -127,12 +129,17 @@ def report():
 def main():
     parser = argparse.ArgumentParser(prog="swift-format-changed")
     parser.add_argument("--base")
+    parser.add_argument("--all", action="store_true")
     parser.add_argument("--fix", action="store_true")
     parser.add_argument("--report", action="store_true")
     args = parser.parse_args()
-    base = merge_base(args.base)
-    short = git("rev-parse", "--short", base).strip()
-    changed = changed_lines(base)
+    if args.all:
+        changed = {name: None for name in git("ls-files", "--", *TREE).split() if name.endswith(".swift")}
+        short = "the start (every line)"
+    else:
+        base = merge_base(args.base)
+        short = git("rev-parse", "--short", base).strip()
+        changed = changed_lines(base)
     edits, findings = [], []
     for name, lines in sorted(changed.items()):
         file_edits, file_findings = check_file(name, lines, args.fix)

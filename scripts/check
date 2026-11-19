@@ -60,6 +60,7 @@ check_whitespace() {
 
 check_swift() {
   xcrun --find swift-format > /dev/null 2>&1 || { missing swift-format "it comes with Xcode 26"; return; }
+  # After the one-shot reformat (CONTRIBUTING.md, Formatting), --all here makes every line count.
   local args=(--report)
   [[ -n "${AGNETA_CHECK_BASE:-}" ]] && args+=(--base "$AGNETA_CHECK_BASE")
   $fix && args+=(--fix)
