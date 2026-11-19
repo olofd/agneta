@@ -99,6 +99,7 @@ extension Router {
         // Only a session whose start was announced has an end to announce (a load or fork cut short has none).
         let announced = infos.removeValue(forKey: id) != nil
         _ = cancelWaiting(id)
+        let turn = runningTurns[id], trace = traces?.session(id)
         finishTurn(id)
         byEngine.removeValue(forKey: key(session.lease.key, session.engineSession))
         if let traces {
@@ -106,6 +107,13 @@ extension Router {
             traces.close(task: id)
         }
         if announced { onEvent(.sessionEnded(id, ending)) }
+        // A turn cut off here still counts what it spent: the engine's records, read once more. (Claude Code's cost for
+        // a turn it never finished never arrives.)
+        if let turn, turn.began, turn.counted, let trace {
+            let before = trace.progress.taskCost
+            await trace.pollLedger()
+            addUsage(meter: turn.meter, AppMeter.Usage(cost: max(0, trace.progress.taskCost - before)))
+        }
         // Its running prompt ends now, whatever the engine does: a shared engine stays up, and one stuck in a tool may
         // never answer it.
         if let call = inFlight.removeValue(forKey: id) {
@@ -119,9 +127,9 @@ extension Router {
 
     /// The answer to a prompt whose limit Agneta enforced by ending the session: stopped by that limit, as when the
     /// engine stops in time, and marked so the app knows the session is gone.
-    static func enforced(_ hit: (limit: String, value: JSONValue), session id: String) -> JSONValue {
+    static func enforced(_ hit: LimitHit, session id: String) -> JSONValue {
         ["sessionId": .string(id), "stopReason": hit.limit == "maxTurns" ? "max_turn_requests" : "cancelled",
-         "_meta": ["agneta/limit": ["limit": .string(hit.limit), "value": hit.value, "sessionEnded": true]]]
+         "_meta": ["agneta/limit": hit.report.setting("sessionEnded", to: true)]]
     }
 
     static let notPaired = RPCError(code: -32001, message: "Pair with Agneta first", data: ["agneta": ["needsPairing": true]])
@@ -189,11 +197,16 @@ extension Router {
             // token stops working. A verified app keeps its grant (its workspace, and its tasks to resume) with what was
             // just allowed. An unverified app is only a name, which another program could give: its new grant starts
             // afresh, and the earlier one is removed. "Allow Once" leaves remembered access alone.
-            let earlier = answer.remember ? tokens.values.first { $0.remembered && Self.sameApp($0, app: name, identifier: identifier, team: team, verified: verified) } : nil
+            let remembered = tokens.values.first { $0.remembered && Self.sameApp($0, app: name, identifier: identifier, team: team, verified: verified) }
+            let earlier = answer.remember ? remembered : nil
             let renewed = earlier.flatMap { $0.verified ? $0 : nil }
+            // The limits the user set for the app stay with it, whichever way it pairs again: a new grant isn't a fresh
+            // budget. Allow Once counts against the remembered grant's usage.
             var grant = Grant(id: renewed?.id ?? UUID().uuidString, app: name, identifier: identifier, team: team, verified: verified,
                               accounts: answer.accounts, engines: answer.engines, tools: scope.tools,
-                              folders: scope.folders.map { $0.path(percentEncoded: false) }, remembered: answer.remember, sandbox: answer.sandbox)
+                              folders: scope.folders.map { $0.path(percentEncoded: false) }, remembered: answer.remember, sandbox: answer.sandbox,
+                              limits: remembered?.limits ?? .none)
+            if !answer.remember, let remembered { grant.countsAs = remembered.meter }
             // The app's own workspace, inside its grant whatever else it asked for.
             if let root = context.appWorkspaces {
                 let workspace = root.appending(path: grant.id, directoryHint: .isDirectory)
@@ -210,8 +223,12 @@ extension Router {
                 }
                 guard !shutDown, apps[appID] != nil else { return .failure(RPCError(code: RPCError.internalError, message: "The app disconnected")) }
             }
-            // The earlier grant's tokens stop working (its saved row was replaced or removed with this one's saving).
-            if let earlier { tokens = tokens.filter { $0.value.id != earlier.id } }
+            // The earlier grant's tokens stop working (its saved row was replaced or removed with this one's saving), and
+            // its usage goes on under the new one.
+            if let earlier {
+                tokens = tokens.filter { $0.value.id != earlier.id }
+                if earlier.id != grant.id, let usage = meters.removeValue(forKey: earlier.id) { meters[grant.id] = usage }
+            }
             tokens[hash] = grant
             if !answer.remember { onceTokens[appID] = hash }
             apps[appID]?.grant = grant // the live entry, not a copy from before the approval
@@ -275,15 +292,24 @@ extension Router {
             // Over its cost limit already (a resumed task, or one the last turn took past it): nothing more is spent.
             if let max = session.policy.limits.maxCostUSD, let cost = traces?.session(id)?.progress.taskCost, cost > max {
                 return .success(["sessionId": .string(id), "stopReason": "cancelled",
-                                 "_meta": ["agneta/limit": ["limit": "maxCostUSD", "value": .double(max)]]])
+                                 "_meta": ["agneta/limit": LimitHit(limit: "maxCostUSD", value: .double(max)).report]])
             }
+            // Over a limit the user set for the app: refused, as the user's choice (-32016).
+            if let refusal = appLimitRefusal(grant, account: session.account, newTask: .none) { return .failure(refusal) }
             do {
-                guard try await admit(id, account: session.account) else { return .success(["stopReason": "cancelled"]) }
+                guard try await admit(id, account: session.account, meter: session.meter) else { return .success(["stopReason": "cancelled"]) }
             } catch let error as RPCError {
                 return .failure(error)
             } catch {
                 return .failure(RPCError(code: RPCError.internalError, message: "\(error)"))
             }
+            // It may have waited while the app spent its budget, or the user lowered it.
+            if current(id, generation), let now = apps[appID]?.grant, let refusal = appLimitRefusal(now, account: session.account, newTask: .none) {
+                runningTurns[id] = nil
+                admitWaiting()
+                return .failure(refusal)
+            }
+            runningTurns[id]?.began = true
             onEvent(.turnStarted(id))
             trace?.turnStarted(prompt: params?["prompt"])
         }
@@ -340,13 +366,14 @@ extension Router {
                 if let hit = sessions[id]?.limitHit {
                     // ACP has a stop reason for too many model turns; time and cost stop as cancelled, with the reason beside it.
                     if hit.limit == "maxTurns" { result = result.setting("stopReason", to: "max_turn_requests") }
-                    result = result.setting("_meta", to: (result["_meta"] ?? [:]).setting("agneta/limit", to: ["limit": .string(hit.limit), "value": hit.value]))
+                    result = result.setting("_meta", to: (result["_meta"] ?? [:]).setting("agneta/limit", to: hit.report))
                     sessions[id]?.limitHit = nil
                 }
                 let reason = result["stopReason"]?.stringValue ?? "end_turn"
                 sessions[id]?.activeRun = nil
                 if let summary = await trace?.turnEnded(stopReason: reason, usage: result["usage"]) {
-                    result = result.setting("_meta", to: (result["_meta"] ?? [:]).setting("agneta/usage", to: usage(summary, account: session.account)))
+                    noteTokens(id, summary)
+                    result = result.setting("_meta", to: (result["_meta"] ?? [:]).setting("agneta/usage", to: usage(summary, account: session.account, meter: session.meter)))
                 }
                 if current(id, generation) { onEvent(.turnEnded(id, stopReason: reason)) }
             }
@@ -374,7 +401,7 @@ extension Router {
                 } else if Self.isAuthRequired(error) {
                     error = signInNeeded(error, account: session.account)
                 }
-                await trace?.turnEnded(stopReason: "error", usage: nil, error: error.message)
+                if let summary = await trace?.turnEnded(stopReason: "error", usage: nil, error: error.message) { noteTokens(id, summary) }
                 if current(id, generation) { onEvent(.turnEnded(id, stopReason: "error")) }
             }
             record(method, params: params, result: .failure(error), in: trace)
@@ -387,11 +414,17 @@ extension Router {
             if method == "session/prompt", current(id, generation) {
                 sessions[id]?.activeRun = nil
                 sessions[id]?.limitHit = nil
-                await trace?.turnEnded(stopReason: "error", usage: nil, error: "The engine stopped")
+                if let summary = await trace?.turnEnded(stopReason: "error", usage: nil, error: "The engine stopped") { noteTokens(id, summary) }
                 if current(id, generation) { onEvent(.turnEnded(id, stopReason: "error")) }
             }
             return .failure(RPCError(code: RPCError.internalError, message: "The engine stopped"))
         }
+    }
+
+    /// The turn's tokens, from its summary, for its app's meter when the turn leaves the room.
+    func noteTokens(_ id: String, _ summary: [String: JSONValue]) {
+        let ledger = summary["ledger"]
+        runningTurns[id]?.tokens = (Int(ledger?["input"]?.intValue ?? 0), Int(ledger?["output"]?.intValue ?? 0))
     }
 
     /// Settings and steering from the app, in the trace.
@@ -501,7 +534,7 @@ extension Router {
 
     /// Agneta's additions to ACP, listed in `initialize` (docs/APP_PROTOCOL.md).
     static let extensions = [SessionPolicy.key, "agneta/access", "agneta/catalog", "agneta/setup", "agneta/task", "agneta/instructions", "agneta/steer", "agneta/usage",
-                             "agneta/trace", "agneta/limit", "agneta/queue", "agneta/rateLimited", "agneta/fork"]
+                             "agneta/trace", "agneta/limit", "agneta/queue", "agneta/rateLimited", "agneta/fork", "agneta/appLimits"]
 
     static func newToken() -> String {
         var bytes = [UInt8](repeating: 0, count: 32)

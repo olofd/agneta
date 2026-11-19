@@ -26,6 +26,16 @@ public struct ProviderEngines: Sendable, Equatable {
         kind == .claude ? ["goose"] : []
     }
 
+    /// When each engine's cost is known (its adapter's `capabilities.cost`), for choosing engines before one is on this
+    /// Mac: a spending limit can't count an engine that never reports cost. `AccessTests` checks the adapters agree.
+    public static func cost(_ engine: String) -> CostReporting {
+        switch engine {
+        case "claude-code": .turnEnd
+        case "codex": .none
+        default: .live
+        }
+    }
+
     /// The engine the user selected for a kind of provider, where they selected one. Which engine runs is
     /// EngineCatalog's to decide (`defaultEngine`), from this and what's on this Mac.
     public var selected: [AccountKind: String]

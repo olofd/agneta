@@ -47,6 +47,8 @@ public enum Access {
         case unavailable(String)
         /// The provider has no engine the app may use here.
         case noEngine
+        /// The engine reports no cost, so the spending limit the user set for the app can't count it there.
+        case uncounted(String)
     }
 
     /// The engines an app's tasks on a provider may run on: those the provider supports, the grant allows and this Mac

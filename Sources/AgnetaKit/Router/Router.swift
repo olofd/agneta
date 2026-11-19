@@ -35,11 +35,19 @@ public actor Router {
         /// What its sessions may reach: its sandbox, which the user chooses only for an app with workspace tools (the
         /// dialog shows the choice then). An app granted fewer tools never had it offered, so its tasks stay contained.
         public var ceiling: Sandbox { tools == .workspace ? sandbox : .contained }
+        /// The limits the user set for the app (AppLimits), kept with its grant: none unless they set some.
+        public var limits: AppLimits = .none
+        /// The remembered grant whose limits and usage this one counts against: an Allow Once grant for an app the user
+        /// already allowed shares that grant's, so allowing it once more doesn't give it a fresh budget. Kept in memory.
+        public var countsAs: String?
+        /// Whose usage this grant's tasks count toward (AppMeter).
+        public var meter: String { countsAs ?? id }
 
         public init(id: String = UUID().uuidString, app: String, identifier: String? = nil, team: String? = nil, verified: Bool = false,
                     accounts: [String], engines: EngineAllowance = .all, created: Date = Date(), tools: SessionPolicy.Tools = .appOnly,
-                    folders: [String] = [], remembered: Bool = true, sandbox: Sandbox = .default) {
+                    folders: [String] = [], remembered: Bool = true, sandbox: Sandbox = .default, limits: AppLimits = .none) {
             self.sandbox = sandbox
+            self.limits = limits
             self.id = id
             self.app = app
             self.identifier = identifier
@@ -84,8 +92,12 @@ public actor Router {
         /// A new grant, saved by then when remembered; the token itself is never stored. `replaced` is the app's
         /// earlier grant when that one is gone (an unverified app paired again: its new grant starts afresh).
         case paired(tokenHash: String, grant: Grant, replaced: String?)
-        /// A grant's providers or engines changed (Settings → Apps), already saved.
+        /// A grant's providers, engines, sandbox or limits changed (Settings → Apps), already saved.
         case grantChanged(tokenHash: String, grant: Grant)
+        /// What an app used, to add to its saved usage (AppMeter): a task it started, or a turn's cost and tokens.
+        case appUsage(grant: String, hour: Date, usage: AppMeter.Usage)
+        /// A limit the user set for an app stopped its work: refused, or its running turns stopped.
+        case appLimitReached(AppLimitNotice)
         case sessionStarted(SessionInfo)
         case turnStarted(String)
         case turnEnded(String, stopReason: String)
@@ -197,8 +209,10 @@ public actor Router {
         var activeRun: String?
         /// Live trace delivery, when the app asked for it.
         var forwarder: TraceForwarder?
-        /// The policy limit that stopped the current turn, if one did.
-        var limitHit: (limit: String, value: JSONValue)?
+        /// The limit that stopped the current turn, if one did: the app's policy's, or one the user set for the app.
+        var limitHit: LimitHit?
+        /// Whose usage its turns count toward (Grant.meter).
+        var meter = ""
         /// New every time a session is registered. Work that waited (a load, a fork, a prompt) checks it before
         /// touching the session again: meanwhile the session may have ended, or been reopened under the same id.
         let generation = UUID()
@@ -251,17 +265,37 @@ public actor Router {
     }
 
     let concurrency: Concurrency
-    var runningTurns: [String: String] = [:] // session → account
+    /// A turn holding a place in the queue's room: from its admission until it ends.
+    struct RunningTurn {
+        var account: String
+        /// Whose usage it counts toward (Grant.meter).
+        var meter: String
+        /// On an account that's charged per call (not a plan): its cost counts toward the app's spending limit.
+        var counted: Bool
+        /// Its task's known cost when it was admitted; what it adds is its cost.
+        var costAtStart: Double
+        /// Sent to the engine (admitted and not refused afterwards): only those count as turns.
+        var began = false
+        var tokens = (input: 0, output: 0)
+    }
+    var runningTurns: [String: RunningTurn] = [:] // session → its turn
+    /// Each app's usage, by the grant its tasks count toward (Grant.meter).
+    var meters: [String: AppMeter] = [:]
+    /// The clock and calendar limits are counted by (tests cross a midnight).
+    let now: @Sendable () -> Date
+    let calendar: Calendar
     /// Each running prompt's request to its engine, so a limit the engine ignores can abandon it.
     var inFlight: [String: Task<JSONValue, Error>] = [:]
     /// Sessions whose running prompt was cut off by their end (Stop, a removed account, narrowed access): the prompt
     /// is answered as cancelled, not left waiting on an engine that may never answer.
     var cutOff: Set<String> = []
     /// Limits Agneta enforced by ending the session, for the prompt they cut short to report.
-    var enforcedLimits: [String: (limit: String, value: JSONValue)] = [:]
+    var enforcedLimits: [String: LimitHit] = [:]
     struct Waiter {
         var session: String
         var account: String
+        /// Whose limits it's held to (Grant.meter).
+        var meter: String
         var resume: CheckedContinuation<Admission, Never>
     }
     /// How a turn's wait for room ended.
@@ -281,7 +315,9 @@ public actor Router {
     let commit: Commit?
 
     public init(context: PolicyContext, engines: EngineSource, traces: Traces? = nil, concurrency: Concurrency = .init(), commit: Commit? = nil,
-                approve: @escaping Approve) {
+                now: @escaping @Sendable () -> Date = { Date() }, calendar: Calendar = .autoupdatingCurrent, approve: @escaping Approve) {
+        self.now = now
+        self.calendar = calendar
         self.commit = commit
         self.context = context
         self.engines = engines
@@ -358,17 +394,20 @@ public actor Router {
     func access(_ grant: Grant) -> JSONValue {
         let providers: [AccessReport.Provider] = grant.accounts.compactMap { id in
             guard let account = accounts[id] else { return nil }
-            let engines = Access.engines(for: account.kind, allowed: grant.engines, catalog: catalog)
+            // Engines a spending limit can't count leave the list while it's set, and are named apart.
+            let engines = Access.engines(for: account.kind, allowed: allowance(grant, account: id), catalog: catalog)
+            let uncounted = uncounted(grant, account: id).filter(catalog.usable).sorted()
             return AccessReport.Provider(id: id, label: account.label, kind: account.kind.rawValue, paused: paused.contains(id),
                                          needsSignIn: needsSignIn.contains(id), engines: engines, defaultEngine: engines.first, uncontained: engines.filter(ProviderEngines.uncontained(by: account.kind).contains),
-                                         sandboxLevels: Dictionary(uniqueKeysWithValues: engines.map { ($0, ProviderEngines.sandboxLevels($0, for: account.kind).map(\.rawValue)) }))
+                                         sandboxLevels: Dictionary(uniqueKeysWithValues: engines.map { ($0, ProviderEngines.sandboxLevels($0, for: account.kind).map(\.rawValue)) }),
+                                         uncounted: uncounted.isEmpty ? nil : uncounted)
         }
         let kinds = Set(grant.accounts.compactMap { accounts[$0]?.kind })
         let engines = catalog.entries.keys.filter { id in grant.engines.allows(id) && kinds.contains { ProviderEngines.supported(by: $0).contains(id) } }
             .sorted().map(catalog.report)
         return AccessReport(providers: providers, engines: engines, allowedEngines: grant.engines,
                             scope: .init(tools: grant.tools.rawValue, folders: grant.folders, sandbox: grant.ceiling.rawValue),
-                            workspace: Self.workspace(of: grant, in: context)?.path(percentEncoded: false)).json
+                            workspace: Self.workspace(of: grant, in: context)?.path(percentEncoded: false), limits: limitsReport(grant)).json
     }
 
     /// What Agneta offers any app, paired or not (`agneta/catalog`): each provider kind, whether one is connected, the
@@ -421,13 +460,18 @@ public actor Router {
     func taskEngine(account id: String, requested: String?, resuming: Bool, grant: Grant, sandbox: Sandbox) -> Result<any EngineAdapter, RPCError> {
         guard let account = accounts[id] else { return .failure(RPCError(code: RPCError.invalidParams, message: "This app isn't allowed to use that account")) }
         let engine: String
+        // Under a spending limit that counts this account, an engine that reports no cost can't run: asked for, it's
+        // refused with why; a default is never one.
+        let uncounted = uncounted(grant, account: id)
+        if let requested, uncounted.contains(requested) { return .failure(accessRefusal(.uncounted(requested), account: id, grant: grant)) }
         if resuming {
             guard let saved = requested else { return .failure(RPCError(code: RPCError.invalidParams, message: "This session can't be resumed")) }
             guard grant.engines.allows(saved) else { return .failure(accessRefusal(.notAllowed(saved), account: id, grant: grant)) }
             engine = saved
         } else {
-            switch Access.engine(for: account.kind, requested: requested, allowed: grant.engines, catalog: catalog, sandbox: sandbox) {
+            switch Access.engine(for: account.kind, requested: requested, allowed: allowance(grant, account: id), catalog: catalog, sandbox: sandbox) {
             case .success(let chosen): engine = chosen
+            case .failure(.noEngine) where !uncounted.isEmpty: return .failure(accessRefusal(.uncounted(uncounted.sorted()[0]), account: id, grant: grant))
             case .failure(let refusal): return .failure(accessRefusal(refusal, account: id, grant: grant))
             }
         }
@@ -463,6 +507,7 @@ public actor Router {
             return "\(name(engine)) isn't on this Mac"
         }()
         case .noEngine: "\(label) has no engine this app may use on this Mac"
+        case .uncounted(let engine): "\(name(engine)) reports no cost, so it can't run under the spending limit you set for this app in Agneta"
         }
         return RPCError(code: RPCError.invalidParams, message: message, data: ["agneta": ["access": access(grant)]])
     }
@@ -499,13 +544,18 @@ public actor Router {
 
     public func observe(_ handler: @escaping @Sendable (Event) -> Void) { onEvent = handler }
 
-    /// Grants from earlier launches, keyed by token hash.
-    public func restore(_ grants: [String: Grant]) { tokens = grants }
+    /// Grants from earlier launches, keyed by token hash, and their apps' usage by hour (AppMeter).
+    public func restore(_ grants: [String: Grant], usage: [String: [Date: AppMeter.Usage]] = [:]) {
+        tokens = grants
+        meters = usage.mapValues { AppMeter(restoring: $0) }
+    }
 
     /// Removes an app's access: its token stops working, its live connections lose the grant at once
     /// (before anything can suspend), its sessions stop, and its connections close.
     public func revoke(grant id: String) async {
         tokens = tokens.filter { $0.value.id != id }
+        // Its usage goes with it, unless an Allow Once grant still counts against it.
+        if !tokens.values.contains(where: { $0.meter == id }) { meters[id] = nil }
         let affected = apps.filter { $0.value.grant?.id == id }.map(\.key)
         for appID in affected { apps[appID]?.grant = nil }
         for appID in affected {
@@ -536,13 +586,16 @@ public actor Router {
     /// Why a session planned under `grant` can't be registered now, or nil: checked after every wait, since meanwhile
     /// the app may have gone, the user removed its access, or a change of access (Settings, or pairing again) left the
     /// plan outside what the grant allows.
-    func refusal(_ appID: UUID, _ grant: Grant, _ plan: Plan) -> RPCError? {
+    /// `counted`: a new task the app's meter already counts (`reserveTask`).
+    func refusal(_ appID: UUID, _ grant: Grant, _ plan: Plan, counted: Bool = false) -> RPCError? {
         guard !shutDown, let current = apps[appID]?.grant, current.id == grant.id else { return Self.appGone }
         guard Self.fits(account: plan.account, engine: plan.engine.id, policy: plan.policy, sandbox: plan.sandbox, grant: current) else {
             return RPCError(code: RPCError.invalidParams, message: "This app's access changed while the task started",
                             data: ["agneta": ["accessChanged": true]])
         }
-        return nil
+        // The user may have set or lowered the app's limits meanwhile.
+        if let refusal = uncountedRefusal(plan.engine.id, account: plan.account, grant: current) { return refusal }
+        return appLimitRefusal(current, account: plan.account, newTask: counted ? .counted : .none)
     }
 
     /// Stops a session from Agneta's UI. The app sees the turn end as cancelled by the user.

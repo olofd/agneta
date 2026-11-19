@@ -150,10 +150,11 @@ extension Router {
     }
 
     /// Makes a session reachable, by Agneta's id and by the engine's. Returns its generation.
-    func register(_ id: String, app: UUID, plan: Plan, lease: EngineLease, engineSession: String) -> UUID {
+    func register(_ id: String, app: UUID, meter: String, plan: Plan, lease: EngineLease, engineSession: String) -> UUID {
         var session = Session(app: app, account: plan.account, lease: lease, engineSession: engineSession, policy: plan.policy,
                               appServers: Set(plan.servers.compactMap { $0["name"]?.stringValue }))
         session.sandbox = plan.sandbox
+        session.meter = meter
         sessions[id] = session
         byEngine[key(lease.key, engineSession)] = id
         return session.generation
@@ -216,6 +217,12 @@ extension Router {
         case .success(let authorized): plan = authorized
         case .failure(let refusal): return .failure(refusal)
         }
+        // The app's limits, checked and the task counted before anything waits, so a burst can't all pass; a task
+        // that doesn't start after all is taken off the count.
+        if let refusal = appLimitRefusal(grant, account: plan.account, newTask: .beforeCounting) { return .failure(refusal) }
+        let counted = reserveTask(meter: grant.meter)
+        var opened = false
+        defer { if opened { taskCommitted(meter: grant.meter, at: counted) } else { refundTask(meter: grant.meter, at: counted) } }
         switch await launch(plan, key: nil) {
         case .success(let started): lease = started
         case .failure(let error): return .failure(error)
@@ -237,12 +244,12 @@ extension Router {
         // The provider's default model and effort, where the app hasn't chosen yet (Router+Settings).
         result = await withDefaults(result, account: plan.account, lease: lease, engineSession: engineSession)
         // The app may have gone or lost access while the engine started: nothing to hand the session to.
-        if let refusal = refusal(appID, grant, plan) {
+        if let refusal = refusal(appID, grant, plan, counted: true) {
             await engines.release(lease)
             return .failure(refusal)
         }
         let id = "s_" + UUID().uuidString.lowercased()
-        let generation = register(id, app: appID, plan: plan, lease: lease, engineSession: engineSession)
+        let generation = register(id, app: appID, meter: grant.meter, plan: plan, lease: lease, engineSession: engineSession)
         await deliverEarly(lease, engineSession)
         do {
             try await prepare(lease, engineSession, instructions: plan.instructions)
@@ -257,6 +264,7 @@ extension Router {
         }
         announce(id, grant: grant, account: plan.account, sandbox: plan.sandbox, title: meta?["agneta/task"]?["title"]?.stringValue ?? "AI task",
                  stopWarning: meta?["agneta/task"]?["stopWarning"]?.stringValue)
+        opened = true
         return .success(reply(result, id: id, plan: plan, lease: lease))
     }
 
@@ -288,6 +296,8 @@ extension Router {
         }
         // A task that ran on the shared engine (no built-in tools) resumes there: built-ins would run unconfined
         // by the broker.
+        // Resuming isn't a new task, but what it spends is the app's.
+        if let refusal = appLimitRefusal(grant, account: plan.account, newTask: .none) { return .failure(refusal) }
         if EngineKeys.isShared(engineKey), plan.policy.tools != .appOnly {
             return .failure(PolicyRejection(field: "tools", reason: "this task ran without built-in tools; resume it the same way").rpcError)
         }
@@ -301,7 +311,7 @@ extension Router {
             return .failure(refusal)
         }
         // Registered before loading, so the replayed history reaches the app under Agneta's id.
-        let generation = register(id, app: appID, plan: plan, lease: lease, engineSession: engineSession)
+        let generation = register(id, app: appID, meter: grant.meter, plan: plan, lease: lease, engineSession: engineSession)
         let trace = startTrace(traces, task: id, accountID: plan.account, lease: lease, engineSession: engineSession, request: params, resumed: true)
         trace.writer.record("lifecycle", ["event": "resumed", "pid": .int(Int64(lease.pid)), "request": params ?? .null])
         do {
@@ -349,6 +359,11 @@ extension Router {
         }
         // The copy is made, and imported, by the engine that saved the task.
         if let refusal = savedStateRefusal(meta, engine: plan.engine) { return .failure(refusal) }
+        // A fork is a new task: counted as `session/new` is.
+        if let refusal = appLimitRefusal(grant, account: plan.account, newTask: .beforeCounting) { return .failure(refusal) }
+        let counted = reserveTask(meter: grant.meter)
+        var opened = false
+        defer { if opened { taskCommitted(meter: grant.meter, at: counted) } else { refundTask(meter: grant.meter, at: counted) } }
 
         // 1. The conversation, from the engine that holds it.
         let exported: JSONValue
@@ -382,12 +397,12 @@ extension Router {
             await engines.release(lease)
             return .failure(engineFailure(error, account: plan.account, otherwise: "The engine couldn't fork the session"))
         }
-        if let refusal = refusal(appID, grant, plan) {
+        if let refusal = refusal(appID, grant, plan, counted: true) {
             await engines.release(lease)
             return .failure(refusal)
         }
         let id = "s_" + UUID().uuidString.lowercased()
-        let generation = register(id, app: appID, plan: plan, lease: lease, engineSession: engineSession)
+        let generation = register(id, app: appID, meter: grant.meter, plan: plan, lease: lease, engineSession: engineSession)
         await deliverEarly(lease, engineSession)
         do {
             let result = try await lease.peer.request("session/load", lease.engine.loadSession(engineSession, cwd: plan.policy.workspace,
@@ -405,6 +420,7 @@ extension Router {
                      title: params?["_meta"]?["agneta/task"]?["title"]?.stringValue
                          ?? "Review of " + (original?["_meta"]?["agneta/task"]?["title"]?.stringValue ?? "a task"),
                      stopWarning: nil)
+            opened = true
             return .success(reply(result, id: id, plan: plan, lease: lease, adding: ["forkOf": .string(source)]))
         } catch {
             await abandon(id, generation: generation, lease: lease)

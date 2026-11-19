@@ -1,5 +1,5 @@
-// Agneta's records in one SQLite file: accounts, app grants, task
-// history, the engines it started, and settings. GRDB with a single writer.
+// Agneta's records in one SQLite file: accounts, app grants and each app's
+// usage by hour, task history, the engines it started, and settings. GRDB with a single writer.
 // Before 1.0 there's no compatibility promise: the schema may change in place
 // under a new id, and a database made with another id is left untouched and
 // refused, so the user resets (docs/ARCHITECTURE.md). Small forward migrations
@@ -162,6 +162,21 @@ public final class AgnetaDatabase: Sendable {
         migrator.registerMigration("2026-11-19-grant-sandbox") { db in
             try db.alter(table: "grants") { t in t.add(column: "sandbox", .text).notNull().defaults(to: Sandbox.contained.rawValue) }
         }
+        // The limits the user sets for each app (AppLimits), as JSON so further kinds need no migration; grants made
+        // before have none. And each app's usage by hour (AppMeter), kept 35 days whatever task history keeps.
+        migrator.registerMigration("2026-11-20-app-limits") { db in
+            try db.alter(table: "grants") { t in t.add(column: "limits", .jsonText).notNull().defaults(to: "{}") }
+            try db.create(table: "app_usage") { t in
+                t.column("grantID", .text).notNull()
+                t.column("hour", .datetime).notNull()
+                t.column("cost", .double).notNull().defaults(to: 0)
+                t.column("inputTokens", .integer).notNull().defaults(to: 0)
+                t.column("outputTokens", .integer).notNull().defaults(to: 0)
+                t.column("turns", .integer).notNull().defaults(to: 0)
+                t.column("tasks", .integer).notNull().defaults(to: 0)
+                t.primaryKey(["grantID", "hour"])
+            }
+        }
         return migrator
     }
 
@@ -203,19 +218,25 @@ public final class AgnetaDatabase: Sendable {
                 let accounts = (try? JSONDecoder().decode([String].self, from: Data((row["accounts"] as String).utf8))) ?? []
                 let folders = (try? JSONDecoder().decode([String].self, from: Data((row["folders"] as String).utf8))) ?? []
                 let engines = (try? JSONDecoder().decode(EngineAllowance.self, from: Data((row["engines"] as String).utf8))) ?? .only([])
+                // Limits that can't be read would leave the app unlimited: the grant isn't restored rather than that.
+                guard let limits = try? JSONDecoder().decode(AppLimits.self, from: Data(((row["limits"] as String?) ?? "{}").utf8)) else { continue }
                 grants[row["tokenHash"]] = Router.Grant(id: row["id"], app: row["app"], identifier: row["identifier"], team: row["team"],
                                                         verified: row["verified"], accounts: accounts, engines: engines, created: row["created"],
                                                         tools: SessionPolicy.Tools(rawValue: row["tools"]) ?? .appOnly, folders: folders,
-                                                        sandbox: Sandbox(rawValue: row["sandbox"] ?? "") ?? .contained)
+                                                        sandbox: Sandbox(rawValue: row["sandbox"] ?? "") ?? .contained, limits: limits)
             }
             return grants
         }
     }
 
-    /// Saves a grant, in the same transaction removing the grant `replacing` names (an app's earlier one).
+    /// Saves a grant, in the same transaction removing the grant `replacing` names (an app's earlier one), whose usage
+    /// goes on under this one: pairing again doesn't reset what an app has spent.
     public func save(_ grant: Router.Grant, tokenHash: String, replacing: String? = nil) throws {
         try queue.write { db in
-            if let replacing { try db.execute(sql: "DELETE FROM grants WHERE id = ?", arguments: [replacing]) }
+            if let replacing {
+                try db.execute(sql: "DELETE FROM grants WHERE id = ?", arguments: [replacing])
+                try db.execute(sql: "UPDATE app_usage SET grantID = ? WHERE grantID = ?", arguments: [grant.id, replacing])
+            }
             try Self.insert(grant, hash: tokenHash, db)
         }
     }
@@ -224,15 +245,50 @@ public final class AgnetaDatabase: Sendable {
         let accounts = String(decoding: try JSONEncoder().encode(grant.accounts), as: UTF8.self)
         let folders = String(decoding: try JSONEncoder().encode(grant.folders), as: UTF8.self)
         let engines = String(decoding: try JSONCoding.encode(grant.engines), as: UTF8.self)
+        let limits = String(decoding: try JSONEncoder().encode(grant.limits), as: UTF8.self)
         try db.execute(sql: """
-            INSERT OR REPLACE INTO grants (tokenHash, id, app, identifier, team, verified, accounts, created, tools, folders, engines, sandbox)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO grants (tokenHash, id, app, identifier, team, verified, accounts, created, tools, folders, engines, sandbox, limits)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, arguments: [hash, grant.id, grant.app, grant.identifier, grant.team, grant.verified, accounts, grant.created,
-                             grant.tools.rawValue, folders, engines, grant.sandbox.rawValue])
+                             grant.tools.rawValue, folders, engines, grant.sandbox.rawValue, limits])
     }
 
+    /// Removes a grant (Remove Access), and its app's usage with it.
     public func deleteGrant(id: String) throws {
-        try queue.write { db in try db.execute(sql: "DELETE FROM grants WHERE id = ?", arguments: [id]) }
+        try queue.write { db in
+            try db.execute(sql: "DELETE FROM grants WHERE id = ?", arguments: [id])
+            try db.execute(sql: "DELETE FROM app_usage WHERE grantID = ?", arguments: [id])
+        }
+    }
+
+    // MARK: App usage
+
+    /// Adds to an app's usage in the hour `hour` starts (AppMeter.hour).
+    public func addUsage(grant: String, hour: Date, _ usage: AppMeter.Usage) throws {
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO app_usage (grantID, hour, cost, inputTokens, outputTokens, turns, tasks) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(grantID, hour) DO UPDATE SET cost = cost + excluded.cost, inputTokens = inputTokens + excluded.inputTokens,
+                    outputTokens = outputTokens + excluded.outputTokens, turns = turns + excluded.turns, tasks = tasks + excluded.tasks
+                """, arguments: [grant, hour, usage.cost, usage.inputTokens, usage.outputTokens, usage.turns, usage.tasks])
+        }
+    }
+
+    /// Each app's usage by hour, from `since` on.
+    public func usage(since: Date) throws -> [String: [Date: AppMeter.Usage]] {
+        try queue.read { db in
+            var usage: [String: [Date: AppMeter.Usage]] = [:]
+            for row in try Row.fetchAll(db, sql: "SELECT * FROM app_usage WHERE hour >= ?", arguments: [since]) {
+                usage[row["grantID"], default: [:]][row["hour"]] = AppMeter.Usage(cost: row["cost"], inputTokens: row["inputTokens"],
+                                                                                 outputTokens: row["outputTokens"], turns: row["turns"], tasks: row["tasks"])
+            }
+            return usage
+        }
+    }
+
+    /// Forgets app usage older than `date`.
+    public func pruneUsage(before date: Date) throws {
+        try queue.write { db in try db.execute(sql: "DELETE FROM app_usage WHERE hour < ?", arguments: [date]) }
     }
 
     // MARK: Task history

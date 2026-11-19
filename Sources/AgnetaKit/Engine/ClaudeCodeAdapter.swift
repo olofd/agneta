@@ -22,7 +22,7 @@ public struct ClaudeCodeAdapter: EngineAdapter {
     public var displayName: String { "Claude Code" }
     public var capabilities: EngineCapabilities {
         // Instructions go in at session start (`_meta.systemPrompt`); fork is native to the adapter but not yet wired.
-        EngineCapabilities(steer: true, fork: false, instructionsBetweenTurns: false, processPerSession: true, reportsCost: false, runsOwnTools: true)
+        EngineCapabilities(steer: true, fork: false, instructionsBetweenTurns: false, processPerSession: true, cost: .turnEnd, runsOwnTools: true)
     }
 
     public func launch(_ context: EngineLaunchContext) throws -> EngineLaunch {

@@ -21,6 +21,42 @@ public struct AccessReport: Codable, Sendable, Equatable {
         /// The sandbox levels each engine here can provide (Sandbox): one that can't contain its tools provides
         /// `developer` only.
         public var sandboxLevels: [String: [String]]
+        /// Engines the grant allows here that can't run while the app's spending limit counts this provider: they
+        /// report no cost (Codex on an OpenAI key). Absent when there are none.
+        public var uncounted: [String]?
+    }
+
+    /// The limits the user set for the app (AppLimits), and where it stands: absent when there are none.
+    public struct Limits: Codable, Sendable, Equatable {
+        public struct Spend: Codable, Sendable, Equatable {
+            public var max: Double
+            public var currency: String
+            public var period: String
+            public var whenReached: String
+            /// Spent in this period, the running turns' cost so far included.
+            public var used: Double
+            public var resetsAt: String?
+            /// What it counts: tasks on accounts with this billing (API keys), never a plan's.
+            public var billing: String
+            /// The engines it counts, by when their cost is known: `live` or `turn-end`.
+            public var counted: [String: String]
+            /// The engines it can't count, which the app's tasks on API keys can't use while it's set.
+            public var uncounted: [String]
+        }
+        public struct AtOnce: Codable, Sendable, Equatable {
+            public var max: Int
+            public var running: Int
+        }
+        public struct NewTasks: Codable, Sendable, Equatable {
+            public var max: Int
+            public var period: String
+            public var whenReached: String
+            public var used: Int
+            public var resetsAt: String?
+        }
+        public var spend: Spend?
+        public var atOnce: AtOnce?
+        public var newTasks: NewTasks?
     }
 
     /// An engine the app may use, as it is on this Mac.
@@ -53,6 +89,8 @@ public struct AccessReport: Codable, Sendable, Equatable {
     public var scope: Scope
     /// The app's own workspace, when Agneta gives apps one.
     public var workspace: String?
+    /// The limits the user set for the app, when there are any.
+    public var limits: Limits?
 
     /// As it goes on the wire.
     public var json: JSONValue { (try? JSONCoding.decode(JSONCoding.encode(self))) ?? [:] }
@@ -61,12 +99,13 @@ public struct AccessReport: Codable, Sendable, Equatable {
         self = try JSONDecoder().decode(Self.self, from: JSONCoding.encode(json))
     }
 
-    init(providers: [Provider], engines: [Engine], allowedEngines: EngineAllowance, scope: Scope, workspace: String?) {
+    init(providers: [Provider], engines: [Engine], allowedEngines: EngineAllowance, scope: Scope, workspace: String?, limits: Limits? = nil) {
         self.providers = providers
         self.engines = engines
         self.allowedEngines = allowedEngines
         self.scope = scope
         self.workspace = workspace
+        self.limits = limits
     }
 }
 
