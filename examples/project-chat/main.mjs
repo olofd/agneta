@@ -1,9 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, net, protocol, safeStorage, shell } from 'electron';
 import { readFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isListening, safeStorageTokenStore } from '@agneta/client/node';
+import { electronEnvironment, isListening, safeStorageTokenStore } from '@agneta/client/node';
 import { ProjectChat } from './chat.mjs';
 
 // Which Agneta to use: the release (port 47321, opened by agneta://) or a development build (47331, agneta-dev://),
@@ -11,8 +11,8 @@ import { ProjectChat } from './chat.mjs';
 // fixes it instead: an isolated instance on another port has no URL to open it by.
 // Read synchronously: the scheme below must be registered before Electron is ready.
 const agnetas = [
-  { id: 'release', name: 'Agneta', port: 47321, url: 'agneta://open' },
-  { id: 'dev', name: 'Agneta Dev', port: 47331, url: 'agneta-dev://open' }
+  { id: 'release', name: 'Agneta', port: 47321 },
+  { id: 'dev', name: 'Agneta Dev', port: 47331 }
 ];
 let bundled = null;
 try { bundled = readFileSync(new URL('./port', import.meta.url), 'utf8'); } catch {}
@@ -21,7 +21,7 @@ if (fixed !== undefined) {
   const port = Number(fixed);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('AGNETA_PORT must be a valid TCP port.');
   const known = agnetas.find((choice) => choice.port === port);
-  agnetas.splice(0, agnetas.length, known ?? { id: 'fixed', name: `Agneta on port ${port}`, port, url: null });
+  agnetas.splice(0, agnetas.length, known ?? { id: 'fixed', name: `Agneta on port ${port}`, port });
 }
 /** The Agneta in use now. */
 let agneta = agnetas[0];
@@ -76,26 +76,11 @@ async function initialAgneta() {
   return dev && !release ? agnetas[1] : agnetas[0];
 }
 
-/** Asks whether to open Agneta, and opens it when the user says so (docs/APP_PROTOCOL.md, Connecting). */
-async function openAgneta() {
-  if (!agneta.url) return false;
-  const { response } = await dialog.showMessageBox(window, {
-    type: 'info',
-    message: `${agneta.name} isn't running`,
-    detail: `Project Chat runs its AI tasks through ${agneta.name}, on the plan or API key you allow. Open ${agneta.name} now?`,
-    buttons: [`Open ${agneta.name}`, 'Not Now'],
-    defaultId: 0,
-    cancelId: 1
-  });
-  if (response !== 0) return false;
-  try {
-    await shell.openExternal(agneta.url);
-    return true;
-  } catch {
-    await dialog.showMessageBox(window, { type: 'warning', message: `${agneta.name} couldn't be opened`, detail: `Is ${agneta.name} installed? Open it, then connect.` });
-    return false;
-  }
-}
+/**
+ * How the client finds and opens Agneta on this Mac: LaunchServices through Electron, and Electron's shell to open
+ * (docs/APP_PROTOCOL.md, Getting Agneta). It opens nothing by itself: the window's panel asks the user first.
+ */
+const environment = electronEnvironment({ app, shell });
 
 /** The open window, if any: IPC answers only its main frame. */
 let window;
@@ -117,6 +102,9 @@ function setUp() {
     agnetas: () => ({ use: agneta.id, choices: agnetas.map(({ id, name }) => ({ id, name })) }),
     use: (id) => useAgneta(id),
     connect: () => chat.connect(),
+    answer: (choice) => chat.answer(choice),
+    openInstallPage: () => chat.openInstallPage(),
+    copyHomebrew: () => { if (chat.homebrew) clipboard.writeText(chat.homebrew); },
     send: (text) => chat.send(text),
     stop: () => chat.stop(),
     newChat: () => chat.newChat(),
@@ -139,7 +127,7 @@ function setUp() {
 
 /** A chat with the Agneta in use, showing in `opened`. */
 function startChat(opened) {
-  const current = new ProjectChat(agneta.port, { tokens: tokensFor(agneta.port), openAgneta, name: agneta.name });
+  const current = new ProjectChat(agneta.port, { tokens: tokensFor(agneta.port), environment, name: agneta.name });
   current.on('change', (state) => {
     if (!opened.isDestroyed()) opened.webContents.send('chat:state-changed', state);
   });

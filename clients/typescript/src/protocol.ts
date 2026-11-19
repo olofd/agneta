@@ -51,6 +51,11 @@ export interface Catalog {
   engines: CatalogEngine[];
   /** Whether any provider is connected. */
   connected: boolean;
+  /**
+   * Agneta's version, as its bundle says: `0.0.0` for a development build, `dev` with no bundle (the headless host,
+   * `swift run`). Absent from Agnetas before it was added.
+   */
+  version?: string;
 }
 
 export interface SetupParams {
@@ -579,10 +584,19 @@ export interface AgnetaClientRequests {
 /** The ACP protocol version Agneta speaks. */
 export const protocolVersion = 1;
 
-/** Release and development builds of Agneta: their ports and the URLs that open them. */
+/**
+ * Release and development builds of Agneta: their ports, the URLs that open them, their bundle identifiers, where the
+ * user gets them, and Homebrew's command (releases only). docs/APP_PROTOCOL.md, Getting Agneta.
+ */
 export const builds = {
-  release: { name: 'Agneta', port: 47321, openURL: 'agneta://open' },
-  dev: { name: 'Agneta Dev', port: 47331, openURL: 'agneta-dev://open' }
+  release: {
+    name: 'Agneta', port: 47321, openURL: 'agneta://open', bundleIdentifier: 'com.objectivecoder.agneta',
+    installURL: 'https://agneta.dahlbom.io/get/', homebrew: 'brew install olofd/tap/agneta'
+  },
+  dev: {
+    name: 'Agneta Dev', port: 47331, openURL: 'agneta-dev://open', bundleIdentifier: 'com.objectivecoder.agneta.dev',
+    installURL: 'https://github.com/olofd/agneta#build-and-run', homebrew: null
+  }
 } as const;
 
 export type Build = keyof typeof builds;

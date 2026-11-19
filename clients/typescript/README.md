@@ -2,7 +2,7 @@
 
 The official TypeScript client for [Agneta](https://github.com/olofd/agneta), the Mac menu bar app that lets other apps run AI work on the user's own plans and API keys (a ChatGPT or Claude plan, an OpenAI or Anthropic key) through Claude Code, Codex, Goose and OpenCode.
 
-It speaks [Agneta's app protocol](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md) (the Agent Client Protocol over a local WebSocket, with Agneta's extensions) so your app doesn't have to: connecting, offering to open Agneta, pairing, keeping the token, reconnecting, access changes, sessions, streaming, permissions, traces and every error, typed. Nothing of the protocol is hidden: a raw layer sends any request and shows every message.
+It speaks [Agneta's app protocol](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md) (the Agent Client Protocol over a local WebSocket, with Agneta's extensions) so your app doesn't have to: connecting, helping the user get and open Agneta, pairing, keeping the token, reconnecting, access changes, sessions, streaming, permissions, traces and every error, typed. Nothing of the protocol is hidden: a raw layer sends any request and shows every message.
 
 - **No dependencies.** ESM, with type declarations.
 - **Node 22 or later, and Electron's main process.** Agneta refuses connections from web pages and Electron renderers (anything that sends an `Origin` header), so the client says so rather than failing as "not running".
@@ -43,6 +43,7 @@ That's all of it: `connect()` opens `ws://127.0.0.1:47321/acp`, pairs (Agneta's 
 ## Contents
 
 - [Connecting](#connecting)
+- [Getting Agneta](#getting-agneta)
 - [Before pairing](#before-pairing)
 - [Pairing and tokens](#pairing-and-tokens)
 - [Access](#access)
@@ -66,7 +67,8 @@ const client = new AgnetaClient({
   build: 'release',        // or 'dev' for Agneta Dev (port 47331); or port: 47341, or url: 'ws://…'
   tokens,                  // a TokenStore (below); memory only by default
   scope: { tools: 'workspace', folders: ['/Users/me/Documents/Example Project'] },
-  launch: async ({ name, openURL }) => askUser(`Open ${name}?`) && openAgneta('release'),
+  environment: nodeEnvironment(),   // finds and opens Agneta on this Mac (@agneta/client/node); electronEnvironment in Electron
+  minimumVersion: '0.5.0',          // optional: older is "outdated"
   permissions: (request) => 'allow',
   reconnect: true
 });
@@ -79,17 +81,68 @@ const client = new AgnetaClient({
 | `pair` | `'if-needed'` (the default) pairs when there's no usable token. `'never'` stops with `NeedsPairingError` instead: a quiet connect at launch, which never opens the approval window. `'always'` pairs even with a usable token, to change the scope |
 | `setup` | `true` or a provider kind: before pairing, when no provider (of that kind) is connected in Agneta, show Agneta's window for connecting one (`agneta/setup`) and wait until one is (event `setup`). Off by default: the approval window lets the user connect one in place too |
 | `scope` | A scope for this pairing instead of the client's |
+| `guide` | Asks the user each question only they may answer (get Agneta, open it, update it, connect a provider): [Getting Agneta](#getting-agneta) |
+| `onProgress` | Each step of the connect, in words (also the `progress` event) |
 | `signal` | An `AbortSignal` |
 
-**When Agneta isn't running**, the connection is refused and `connect()` rejects with `NotRunningError` (`kind: 'notRunning'`, with `openURL`: `agneta://open` or `agneta-dev://open`). Never open Agneta without asking: quitting it is how the user stops all of it. Pass `launch` to ask and open it; when it resolves `true`, the client waits for Agneta (up to `launchTimeout`, 20 s) and connects. `openAgneta(build)` from `@agneta/client/node` opens it with macOS's `open`; in Electron use `shell.openExternal(openURL)`.
+**When Agneta isn't running**, the connection is refused. Without a `guide`, `connect()` rejects with what it found: `NotInstalledError` (`kind: 'notInstalled'`, with `installURL` and `homebrew`; `onDiskImage` when it's only on its disk image), `OutdatedError` (`kind: 'outdated'`), or `NotRunningError` (`kind: 'notRunning'`, with `openURL`). Without an `environment` it can only say `NotRunningError`. With a `guide`, it asks the user and carries on: [Getting Agneta](#getting-agneta). Never open Agneta without asking: quitting it is how the user stops all of it.
 
-A connection that something answered but refused is `ConnectionRefusedError` (`kind: 'refused'`): a web page, an Electron renderer, or a program other than Agneta on the port. One that was open and closed is `ConnectionClosedError` (`kind: 'connectionClosed'`).
+A connection that something answered but refused is `ConnectionRefusedError` (`kind: 'refused'`): a web page, an Electron renderer, or a program other than Agneta on the port. One this app may not make at all is `NetworkBlockedError` (`kind: 'blocked'`): a sandboxed app without `com.apple.security.network.client`. One that was open and closed is `ConnectionClosedError` (`kind: 'connectionClosed'`).
 
 `client.state` is `disconnected`, `connecting`, `pairing`, `connected` or `reconnecting` (event `state`). `client.close()` disconnects; open sessions end.
 
-**Reconnecting.** With `reconnect: true` (or `{ delay, maxDelay }`), a dropped connection whose token was remembered reconnects by itself, quietly (it never pairs or calls `launch`), with backoff from 1 s to 30 s: events `reconnecting`, `reconnected`, or `accessRemoved` when Agneta no longer accepts the token. Agneta closes a connection's sessions with it, so sessions don't come back by themselves: load them again with `client.loadSession(id)`.
+**Reconnecting.** With `reconnect: true` (or `{ delay, maxDelay }`), a dropped connection whose token was remembered reconnects by itself, quietly (it never pairs or asks anything), with backoff from 1 s to 30 s: events `reconnecting`, `reconnected`, or `accessRemoved` when Agneta no longer accepts the token. Agneta closes a connection's sessions with it, so sessions don't come back by themselves: load them again with `client.loadSession(id)`.
 
 `@agneta/client/node` also has `isListening(port)`, `waitForPort(port)` and `runningBuilds()` (which of the release and Agneta Dev are running), for choosing which Agneta to use.
+
+## Getting Agneta
+
+An app can take its user from nothing installed to a paired, working connection in one guided flow, without restarting (the recipe is [Getting Agneta](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md#getting-agneta) in the protocol). Give the client an `environment`, and `connect` a `guide` that shows each question in your own view and resolves to the user's answer:
+
+```js
+import { AgnetaClient } from '@agneta/client';
+import { electronEnvironment } from '@agneta/client/node';
+
+const client = new AgnetaClient({ name: 'Example App', tokens, environment: electronEnvironment({ app, shell }) });
+await client.connect({
+  setup: true,
+  guide: (question) => panel.ask(question),         // { kind, title, detail, confirm, cancel, … } → true or false
+  onProgress: (progress) => panel.show(progress),   // { step, title, detail, … }
+  signal                                            // the panel's Cancel
+});
+```
+
+| The user is here | Progress | The question (`guide`) | Then |
+| --- | --- | --- | --- |
+| Agneta answers on its port | `looking` | | Connects |
+| Not installed | `notInstalled` | `install`: `installURL`, `homebrew` (show it with a Copy button) | Opens the install page with the Mac's architecture as its fragment (`https://agneta.dahlbom.io/get/#arm64`; nothing else in the URL), then `installing`: waits with no timeout, looking every second or two |
+| Only on its disk image (or translocated) | `onDiskImage` | `install` with `onDiskImage: true` | Waits for the user to drag it into Applications |
+| Installed (while installing) | `installed` | (the yes to `install` covers it) | Opens Agneta: `opening` |
+| Installed, not running | `notRunning` | `open` | Opens Agneta: `opening` |
+| Opening | `opening`, then `slow` | | At 15 s `slow` (macOS may be asking whether to open it), at 60 s `slow` with `keepWaiting: true` (offer Keep Waiting or Cancel; it waits meanwhile). Gives up after 5 minutes (`timeouts.open`) with `NotRunningError` |
+| Too old for `minimumVersion` | `outdated` | `update`: `version`, `needed`, `running` | Opens Agneta if it isn't running, then waits while the user chooses Check for Updates… and Agneta relaunches |
+| Running, no provider of the kind | `needsProvider` | `setup`: `kinds` (with `connect({ setup })`) | Agneta's window for connecting one: `settingUp`. An unpaired connection Agneta closes after 10 minutes is reopened quietly, and the wait goes on |
+| Waiting at the approval window | `pairing` (`code` for an app Agneta can't verify) | | |
+| Paired | `connected` | | |
+
+- **One question per step**, each only the user answers. A no rejects with `DeclinedError` (`kind: 'declined'`, `question`): show the app's idle state, not an error. A yes to `install` covers opening Agneta once it's installed, in that flow.
+- **Every question and step has `title` and `detail`** in plain English (and each question `confirm` and `cancel`), which an app may show as they are or replace.
+- **At launch** (`pair: 'never'`), the guide is asked only to open Agneta, and only when a token is kept: someone who has used the app before. Nothing else is shown; a quiet reconnect never asks anything.
+- **`minimumVersion`** (up to three numbers, `"0.5.0"`; anything else is a `TypeError`) is compared with the installed bundle's version before opening it, and with `agneta/catalog`'s `version` once connected. Versions compare by their numbers only (`0.5.0-beta` is `0.5.0`). An Agneta without `agneta/catalog` counts as 0.4.0, the last release without it. A development build (`0.0.0`) or one without a bundle (`dev`) is never too old.
+- **Timeouts:** `timeouts.open` (5 minutes; 0 for none) after opening, `timeouts.slow` (15 s) and `timeouts.keepWaiting` (60 s) for the `slow` steps. Installing has no timeout: the user cancels (`signal`). After a cancel nothing more is opened, and a question still on screen stops counting: a late yes does nothing. Should opening Agneta fail once it's installed, it's tried again at the next look.
+
+**The parts, for a flow of your own.** `client.presence()` says where Agneta is, without its path: `running`, `notRunning` (with `location`, `applications` or `elsewhere`, and `version`), `onDiskImage`, `notInstalled`, `blocked` (this app may not connect at all) or `unknown` (no environment). `client.openInstallPage({ architecture })` and `client.openAgneta()` open, only after the user asked. `client.waitForAgneta({ installing, openWhenInstalled, opened, timeout, signal, onProgress })` resolves with the connection once Agneta answers. `client.installURL` and `client.homebrew` say where to get it; for Agneta Dev, `installURL` is the README's Build and run.
+
+**Environments** (`@agneta/client/node`):
+
+| | Finds the app for `agneta://` | Opens |
+| --- | --- | --- |
+| `nodeEnvironment()` | LaunchServices through `osascript` (JavaScript for Automation, no Apple Events, about 0.1 s), with the bundle's identifier and version | `/usr/bin/open` |
+| `electronEnvironment({ app, shell })` | `app.getApplicationInfoForProtocol` (main process; Electron is passed in, never imported) | `shell.openExternal` |
+
+Both also look for `Agneta.app` (`Agneta Dev.app`) in `/Applications` and `~/Applications` (or the `folders` you pass) when LaunchServices has nothing (it doesn't see a copy just put in `~/Applications` until something opens it) or answers with a disk image's copy, and open such a copy by its path. A disk image is a read-only volume under `/Volumes` (`EROFS`), as Agneta itself decides; a writable external drive isn't one. Off macOS both know nothing (`presence()` says `unknown`) and open nothing. A handler whose bundle identifier isn't the build's (another app claiming `agneta://`) counts as not installed. An environment is `{ findHandler, readBundle?, openURL, architecture?, home?, lookupInterval? }`: write your own for anything else. `isAgnetaInstalled(build)` answers the question alone, `macArchitecture()` gives the Mac's architecture (`arm64` on Apple silicon even under Rosetta; null off macOS), and `findInFolders` and `isReadOnly` are the folder look and the read-only check.
+
+**What the app learns** is whether Agneta is installed (and whether in Applications), its version, and whether it's running: what any Mac app can find out from LaunchServices. The client doesn't look for Homebrew or other apps, never returns the path, and sends nothing anywhere; the install page's URL carries only the architecture, in the fragment, which the browser keeps to itself.
 
 ## Before pairing
 
@@ -304,6 +357,10 @@ try { await session.prompt(text); } catch (error) {
 | `kind` | Class | When | Data |
 | --- | --- | --- | --- |
 | `notRunning` | `NotRunningError` | Nothing listens on Agneta's port | `url`, `openURL` |
+| `notInstalled` | `NotInstalledError` | Not installed, or only on its disk image (with an `environment`, without a `guide`) | `installURL`, `homebrew`, `onDiskImage` |
+| `outdated` | `OutdatedError` | Older than `minimumVersion` | `version`, `needed` |
+| `blocked` | `NetworkBlockedError` | This app may not connect to loopback (`EPERM`): a sandbox without `network.client` | `url` |
+| `declined` | `DeclinedError` | The user said no to a `guide` question | `question` |
 | `refused` | `ConnectionRefusedError` | Something answered but wouldn't upgrade (a browser, a renderer, not Agneta) | `url` |
 | `connectionClosed` | `ConnectionClosedError` | The connection was open and closed | `closeCode`, `closeReason` |
 | `timeout` | `TimeoutError` | No answer in time; the connection stays open | `method`, `ms` |
@@ -339,6 +396,7 @@ try { await session.prompt(text); } catch (error) {
 | Client event | Arguments |
 | --- | --- |
 | `state` | the new `ClientState` |
+| `progress` | each step of a connect: `{ step, title, detail, … }` ([Getting Agneta](#getting-agneta)) |
 | `pairingCode` | `code`, `{ code, name }` |
 | `setup` | the kind, while Agneta's add-provider window waits |
 | `catalogChanged` | the catalog |
@@ -383,19 +441,20 @@ Run the client in the main process (the renderer sends an `Origin` header, which
 import { app, dialog, safeStorage, shell } from 'electron';
 import { join } from 'node:path';
 import { AgnetaClient } from '@agneta/client';
-import { safeStorageTokenStore } from '@agneta/client/node';
+import { electronEnvironment, safeStorageTokenStore } from '@agneta/client/node';
 
 const client = new AgnetaClient({
   name: 'Example App',
   tokens: safeStorageTokenStore(safeStorage, join(app.getPath('userData'), 'agneta-token-47321')),
-  launch: async ({ name, openURL }) => {
-    const { response } = await dialog.showMessageBox({ message: `${name} isn't running`, buttons: [`Open ${name}`, 'Not Now'] });
-    if (response !== 0 || !openURL) return false;
-    await shell.openExternal(openURL);
-    return true;
-  }
+  environment: electronEnvironment({ app, shell })
 });
-await client.connect({ pair: 'never' }).catch(() => {});   // at launch: quietly, with the kept token
+// Each question as a dialog here; a real app shows them in its own window (Project Chat does), with the progress.
+const guide = async (question) => (await dialog.showMessageBox({
+  message: question.title, detail: question.detail, buttons: [question.confirm, question.cancel], cancelId: 1
+})).response === 0;
+await client.connect({ pair: 'never', guide }).catch(() => {});   // at launch: quietly, offering only to open Agneta to someone with a kept token
+// … and when the user chooses Connect:
+await client.connect({ setup: true, guide, onProgress: (progress) => showStatus(progress.title) });
 ```
 
 Give the renderer fixed actions through a preload bridge, never the token. [Project Chat](https://github.com/olofd/agneta/tree/main/examples/project-chat) and [Replica Bench](https://github.com/olofd/agneta/tree/main/examples/replica-bench) are complete Electron apps on this library.
@@ -408,9 +467,10 @@ The package exports:
 - **Sessions and turns:** `Session`, `Turn`, `TurnEvent`, `TurnResult`, `SessionEnd`, `NewSessionOptions`, `LoadSessionOptions`, `ForkOptions`, `ToolCallState`, `PromptInput`, `promptBlocks`, `httpMcpServer`.
 - **Permissions:** `PermissionHandler`, `PermissionRequest`, `PermissionAnswer`, `permissionResponse`.
 - **Access and settings:** `chooseProvider`, `providerEngines`, `engineInfo`, `findConfigOption`, `configSetting`.
-- **Tokens:** `TokenStore`, `memoryTokenStore`; from `@agneta/client/node`: `fileTokenStore`, `safeStorageTokenStore`, `openAgneta`, `isListening`, `waitForPort`, `runningBuilds`.
-- **The raw layer:** `Connection`, `JsonRpcMessage` and its parts, `RequestOptions`, `WebSocketLike`.
-- **The protocol's types:** every method's params and result (`AgnetaRequests`, `AgnetaNotifications`, `AgnetaClientRequests`), `Access`, `Catalog`, `PairingScope`, `PairResult`, `Policy`, `SessionResult`, `PromptResult`, `AgnetaUsage`, `TraceRecord` and the rest; ACP's (`SessionUpdate`, `ContentBlock`, `ToolCall`, `SessionConfigOption`, …); `builds` (ports and open URLs) and `protocolVersion`.
+- **Getting Agneta:** `AgnetaEnvironment`, `AgnetaHandler`, `AgnetaPresence`, `Guide`, `GuideQuestion`, `ConnectProgress`, `ConnectStep`, `WaitForAgnetaOptions`, `installPage`, `installPageURL`, `lookUpAgneta`, `placement`, `compareVersions`; from `@agneta/client/node`: `nodeEnvironment`, `electronEnvironment`, `isAgnetaInstalled`, `readBundle`, `macArchitecture`, `findInFolders`, `isReadOnly`, `openAgneta`.
+- **Tokens:** `TokenStore`, `memoryTokenStore`; from `@agneta/client/node`: `fileTokenStore`, `safeStorageTokenStore`, `isListening`, `waitForPort`, `runningBuilds`.
+- **The raw layer:** `Connection`, `probeAgneta`, `PortProbe`, `JsonRpcMessage` and its parts, `RequestOptions`, `WebSocketLike`.
+- **The protocol's types:** every method's params and result (`AgnetaRequests`, `AgnetaNotifications`, `AgnetaClientRequests`), `Access`, `Catalog`, `PairingScope`, `PairResult`, `Policy`, `SessionResult`, `PromptResult`, `AgnetaUsage`, `TraceRecord` and the rest; ACP's (`SessionUpdate`, `ContentBlock`, `ToolCall`, `SessionConfigOption`, …); `builds` (ports, open URLs, bundle identifiers, install pages) and `protocolVersion`.
 - **Errors:** every class above, `AnyAgnetaError`, `isAgnetaError`, `fromRpcError`, `ErrorCodes`.
 
 Every declaration has its documentation in the types, so an editor shows it.

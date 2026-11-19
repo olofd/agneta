@@ -24,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Agneta about 5 s after a launch with no window open, taking apps' tasks with it.
         ProcessInfo.processInfo.disableAutomaticTermination("Agneta serves apps from the menu bar")
         if Snapshots.runIfRequested(model) { return }
+        // Before anything starts: run from its disk image, Agneta offers to move to Applications and quits to open there.
+        if MoveToApplications.offerIfNeeded(model) { return }
         statusItem = StatusItemController(model: model)
         Task {
             await model.start()

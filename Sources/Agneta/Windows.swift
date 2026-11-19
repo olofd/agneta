@@ -19,6 +19,7 @@ final class WindowPresenter {
     /// `onClose` runs when the window closes for any reason (its close button, Command-W, or code).
     private func show<Content: View>(_ key: String, title: String, size: NSSize, glass: Bool = true, resizable: Bool = false,
                                      onClose: (@MainActor () -> Void)? = nil, @ViewBuilder content: () -> Content) {
+        if Self.replacesWelcome(key) { closeWelcome() }
         if let window = windows[key] {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -36,7 +37,7 @@ final class WindowPresenter {
         // Dialogs have a fixed size; Settings sizes itself.
         // A dialog lays itself out under its (transparent) title bar, so it ignores the title bar's safe area.
         let host = NSHostingView(rootView: content().frame(width: glass ? size.width : nil, height: glass ? size.height : nil)
-            .ignoresSafeArea(edges: glass ? .all : []).environment(\.onDialogGlass, glass))
+            .ignoresSafeArea(edges: glass ? .all : []).environment(\.onDialogGlass, glass).showcaseKey())
         if glass { host.sizingOptions = [] }
         if glass {
             window.titleVisibility = .hidden
@@ -71,6 +72,11 @@ final class WindowPresenter {
     func window(_ key: String) -> NSWindow? { windows[key] }
     func register(_ key: String, _ window: NSWindow) { windows[key] = window }
 
+    /// Windows that do the first-run window's job, and say who asked: an app's "Connect Your AI" (it names the app),
+    /// its approval window (with a Connect row for each provider it needs), and a sign-in. With one of them up, Welcome
+    /// would be a second window saying nearly the same, so it closes (an app waiting on a fresh install opens them).
+    nonisolated static func replacesWelcome(_ key: String) -> Bool { ["setup", "approval", "signin"].contains(key) }
+
     func showWelcome(_ model: AppModel) { show("welcome", title: "Welcome to Agneta", size: NSSize(width: 460, height: 520)) { WelcomeView(model: model) } }
     func closeWelcome() { close("welcome") }
     /// An app asked Agneta to help connect a provider: the add-provider window, naming it. A repeat brings it forward.
@@ -80,7 +86,6 @@ final class WindowPresenter {
     func closeSetup() { close("setup") }
     /// Closing the window cancels the sign-in it shows (one left running would hold its sign-in callback port).
     func showSignIn(_ model: AppModel, attempt: UUID) {
-        closeWelcome()
         closeSetup()
         show("signin", title: "Sign In", size: NSSize(width: 420, height: 340), onClose: { model.signIn.windowClosed(attempt) }) { SignInView(model: model) }
     }
@@ -404,14 +409,16 @@ struct ApprovalView: View {
                     Button { model.approvals.answer(remember: nil, for: approval.id) } label: { Text("Don't Allow").frame(maxWidth: .infinity) }
                         .glassButton().keyboardShortcut(.cancelAction)
                     // Once: for this connection only, nothing kept. Return chooses it, and only for a verified app.
+                    // The highlighted button is the one Return chooses, as macOS has it: Allow Once for a verified app,
+                    // none for one Agneta can't verify, so nothing draws the eye to letting it in.
                     // A provider that can't run yet (Codex not installed) may still be allowed: it runs once it can.
                     let nothing = approval.allowed.isEmpty
                     Button { model.approvals.answer(remember: false, for: approval.id) } label: { Text("Allow Once").frame(maxWidth: .infinity) }
-                        .glassButton()
+                        .glassButton(prominent: approval.verified)
                         .defaultAction(when: approval.verified)
                         .disabled(nothing)
                     Button { model.approvals.answer(remember: true, for: approval.id) } label: { Text("Always Allow").frame(maxWidth: .infinity) }
-                        .glassButton(prominent: true).tint(Palette.fill)
+                        .glassButton()
                         .disabled(nothing)
                 }
                 .controlSize(.large)
@@ -850,7 +857,7 @@ struct SettingsView: View {
                     .disabled(!model.updates.checksAutomatically)
                 Button("Check Now") { model.updates.check() }.disabled(!model.updates.canCheck)
             } else {
-                LabeledContent("Updates") { Text(model.updates.unavailableReason).foregroundStyle(.secondary) }
+                LabeledContent("Status") { Text(model.updates.unavailableReason).foregroundStyle(.secondary) }
             }
         } header: {
             Text("Updates")
@@ -1261,14 +1268,15 @@ struct HistoryRow: View {
     private var detail: String {
         var parts = [record.app, account]
         if let ended = record.ended { parts.append(Duration.seconds(max(ended.timeIntervalSince(record.started), 1)).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated, maximumUnitCount: 1))) }
-        parts.append(outcome)
+        if let outcome { parts.append(outcome) }
         if let cost = record.cost { parts.append(String(format: "about $%.2f", cost)) }
         return parts.joined(separator: " · ")
     }
 
-    private var outcome: String {
+    /// Nil for a task that finished, the usual case.
+    private var outcome: String? {
         switch record.outcome {
-        case .finished, nil: "Finished"
+        case .finished, nil: nil
         case .stopped: "Stopped"
         case .failed: "Didn't finish"
         case .interrupted: "Stopped when Agneta quit"

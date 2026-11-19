@@ -45,8 +45,16 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$RUNNER_TEMP/release.json" \
             || { echo "::warning::No published release: the page links the releases list"; : > "$RUNNER_TEMP/release.json"; }
 
+      - name: Test the build's checks
+        run: python3 site/test_build.py
+
       - name: Build
         run: python3 site/build.py --out "$RUNNER_TEMP/site" --release "$RUNNER_TEMP/release.json" --commit "$(git rev-parse HEAD)"
+
+      # Apps open https://agneta.dahlbom.io/get/ to help their users install Agneta (docs/APP_PROTOCOL.md): never
+      # publish a site without it.
+      - name: Check the install page
+        run: test -s "$RUNNER_TEMP/site/get/index.html" || { echo "::error::The install page /get/ is missing"; exit 1; }
 
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 

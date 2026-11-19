@@ -8,7 +8,8 @@
 import { EventEmitter } from 'node:events';
 import { realpath } from 'node:fs/promises';
 import {
-  AgnetaClient, builds, configSetting, findConfigOption, isAgnetaError, memoryTokenStore, NeedsPairingError, providerEngines
+  AgnetaClient, builds, configSetting, findConfigOption, installPageURL, isAgnetaError, memoryTokenStore, NeedsPairingError,
+  providerEngines
 } from '@agneta/client';
 import { toolchainFolders } from './toolchain.mjs';
 
@@ -20,6 +21,29 @@ export const agnetas = [
 
 /** Keeps nothing: the token lasts as long as the process runs. Electron passes a Keychain-backed store (main.mjs). */
 export const memoryTokens = memoryTokenStore;
+
+/**
+ * What the headless runner says when no Agneta answers, from each build's `presence()` (`found`: the release first,
+ * then Agneta Dev): to open one that's installed, to drag one off its disk image, else how to get the release (the
+ * install page for this Mac and Homebrew). A script has no one to ask, so it never opens anything itself
+ * (docs/APP_PROTOCOL.md, Getting Agneta).
+ */
+export function whatIsMissing(found, architecture = null) {
+  const first = (state) => found.find(({ presence }) => presence.state === state);
+  const installed = first('notRunning');
+  if (installed) return `${installed.agneta.agnetaName} isn't running. Open it (it lives in the menu bar), then run this again.`;
+  const onImage = first('onDiskImage');
+  if (onImage) return `${onImage.agneta.agnetaName} is on its disk image: drag it into Applications, open it from there, and run this again.`;
+  const blocked = first('blocked');
+  if (blocked) return blocked.presence.reason;
+  const missing = first('notInstalled');
+  if (missing) {
+    const { agnetaName, installURL, homebrew } = missing.agneta;
+    return [`${agnetaName} isn't installed. Get it from ${installPageURL(installURL ?? '', architecture) || 'its website'}`,
+      homebrew ? `, or install it with: ${homebrew}` : '', '. Then open it and run this again.'].join('');
+  }
+  return 'Neither Agneta (47321) nor Agneta Dev (47331) is running. Open one, then run this again, or give --port.';
+}
 
 /** The fields Agneta says it can't enforce (`UnenforceableError.fields`), or an empty list. */
 export function unenforceable(error) {
@@ -97,8 +121,10 @@ export class Agneta extends EventEmitter {
   /**
    * @param home the bench's data folder (workspace.mjs), the one folder the pairing scope asks for.
    * @param tokens where Always Allow's token is kept (`load`, `save`, `clear`).
+   * @param environment how to find and open Agneta on this Mac (`electronEnvironment`, `nodeEnvironment`), for `guide`.
+   * @param client more of the client's options (tests: the open URL, install page and bundle ID for a port of their own).
    */
-  constructor(port, { home, tokens = memoryTokens(), name = 'Agneta' }) {
+  constructor(port, { home, tokens = memoryTokens(), name = 'Agneta', environment = undefined, client: more = {} }) {
     super();
     this.port = port;
     this.home = home;
@@ -112,7 +138,9 @@ export class Agneta extends EventEmitter {
       // The bench's sessions use approval never-ask: the policy is the permission. A request that still arrives is
       // declined, so the bench measures the policy and nothing a person clicked, and counted (each run counts its own).
       permissions: (request) => { this.emit('permission', request); return 'cancel'; },
-      timeouts: { session: 60_000 }
+      timeouts: { session: 60_000 },
+      ...(environment ? { environment } : {}),
+      ...more
     });
     this.client.on('pairingCode', (code) => this.emit('code', code));
     this.client.on('accessChanged', (access) => this.emit('access', access));
@@ -141,12 +169,14 @@ export class Agneta extends EventEmitter {
   /**
    * Connects with the kept token when there is one, else pairs (Agneta's approval window). A kept grant that no
    * longer covers the bench's folder, or that Agneta forgot, is replaced by pairing again. `quiet` never pairs: it
-   * resolves to null when pairing would be needed. `pair` pairs even with a usable token (to widen the grant).
+   * resolves to null when pairing would be needed. `pair` pairs even with a usable token (to widen the grant). `guide`,
+   * `onProgress` and `signal` are the client's: getting and opening Agneta when it isn't running (docs/APP_PROTOCOL.md).
    */
-  async connect({ quiet = false, pair = false } = {}) {
+  async connect({ quiet = false, pair = false, guide, onProgress, signal } = {}) {
     this.#up = false;
     try {
-      let access = await this.client.connect({ pair: pair ? 'always' : quiet ? 'never' : 'if-needed' }).catch((error) => {
+      const guided = { ...(guide ? { guide } : {}), ...(onProgress ? { onProgress } : {}), ...(signal ? { signal } : {}) };
+      let access = await this.client.connect({ pair: pair ? 'always' : quiet ? 'never' : 'if-needed', ...guided }).catch((error) => {
         if (quiet && error instanceof NeedsPairingError) return null;
         throw error;
       });

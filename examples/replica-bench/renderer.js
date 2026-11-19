@@ -60,7 +60,8 @@ const time = (at) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minu
 function render(next) {
   state = next;
   phase = state.phase;
-  const connected = !['disconnected', 'connecting', 'pairing'].includes(phase);
+  const connected = !['disconnected', 'connecting', 'guide', 'pairing'].includes(phase);
+  showGuide(state.guide);
   const ready = phase === 'ready';
   const running = phase === 'running';
 
@@ -320,6 +321,31 @@ element('tab-run').addEventListener('click', () => { tab = 'run'; render(state);
 element('tab-sandbox').addEventListener('click', () => { tab = 'sandbox'; render(state); });
 element('modes-run').addEventListener('click', () => act(bench.checkModes()));
 element('tab-results').addEventListener('click', () => { tab = 'results'; act(bench.loadReports()); render(state); });
+/**
+ * Getting Agneta: the panel shows the step, the question when there is one (its own buttons), Homebrew's command with
+ * Copy, Open the page again while the user installs, and Keep Waiting when Agneta is slow to open.
+ */
+function showGuide(guide) {
+  element('guide').hidden = !guide;
+  if (!guide) return;
+  element('guide-title').textContent = guide.title;
+  element('guide-detail').textContent = guide.detail;
+  element('guide-homebrew').hidden = !guide.homebrew;
+  element('guide-homebrew-command').textContent = guide.homebrew ?? '';
+  const question = guide.question;
+  element('guide-confirm').hidden = !question;
+  element('guide-confirm').textContent = question?.confirm ?? '';
+  element('guide-cancel').textContent = question?.cancel ?? 'Cancel';
+  element('guide-reopen').hidden = !['installing', 'onDiskImage'].includes(guide.step);
+  element('guide-wait').hidden = !guide.keepWaiting;
+}
+
+element('guide-confirm').addEventListener('click', () => act(bench.answer('yes')));
+// Cancel answers no to a question, or ends the wait for Agneta.
+element('guide-cancel').addEventListener('click', () => act(phase === 'guide' && !element('guide-confirm').hidden ? bench.answer('no') : bench.disconnect()));
+element('guide-wait').addEventListener('click', () => act(bench.answer('wait')));
+element('guide-reopen').addEventListener('click', () => act(bench.openInstallPage()));
+element('guide-copy').addEventListener('click', () => act(bench.copyHomebrew().then(() => { element('guide-copy').textContent = 'Copied'; })));
 element('connection-button').addEventListener('click', () => act(phase === 'disconnected' ? bench.connect() : bench.disconnect()));
 element('agneta').addEventListener('change', (event) => act(bench.use(event.target.value).then(loadAgnetas)));
 element('provider').addEventListener('change', (event) => act(bench.choose({ account: event.target.value })));

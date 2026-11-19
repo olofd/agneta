@@ -1,9 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
 import { readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isListening, safeStorageTokenStore } from '@agneta/client/node';
+import { electronEnvironment, isListening, safeStorageTokenStore } from '@agneta/client/node';
 import { agnetas as known, memoryTokens } from './agneta.mjs';
 import { BenchApp } from './app.mjs';
 import { resultsFolder } from './bench.mjs';
@@ -81,26 +81,12 @@ async function initialAgneta() {
   return dev && !release ? agnetas[1] : agnetas[0];
 }
 
-/** Asks whether to open Agneta, and opens it when the user says so (docs/APP_PROTOCOL.md, Connecting). */
-async function openAgneta() {
-  if (!agneta.url || snapshot) return false;
-  const { response } = await dialog.showMessageBox(window, {
-    type: 'info',
-    message: `${agneta.name} isn't running`,
-    detail: `Replica Bench runs its agents through ${agneta.name}, on the plan or API key you allow. Open ${agneta.name} now?`,
-    buttons: [`Open ${agneta.name}`, 'Not Now'],
-    defaultId: 0,
-    cancelId: 1
-  });
-  if (response !== 0) return false;
-  try {
-    await shell.openExternal(agneta.url);
-    return true;
-  } catch {
-    await dialog.showMessageBox(window, { type: 'warning', message: `${agneta.name} couldn't be opened`, detail: `Is ${agneta.name} installed? Open it, then connect.` });
-    return false;
-  }
-}
+/**
+ * How the client finds and opens Agneta on this Mac: LaunchServices through Electron, and Electron's shell to open
+ * (docs/APP_PROTOCOL.md, Getting Agneta). It opens nothing by itself: the window's panel asks the user first. A
+ * snapshot never asks, so it gets none.
+ */
+const environment = snapshot ? undefined : electronEnvironment({ app, shell });
 
 let window;
 let bench;
@@ -119,6 +105,9 @@ function setUp() {
     agnetas: () => ({ use: agneta.id, choices: agnetas.map(({ id, name }) => ({ id, name })) }),
     use: (id) => useAgneta(id),
     connect: () => bench.connect(),
+    answer: (choice) => bench.answer(choice),
+    openInstallPage: () => bench.openInstallPage(),
+    copyHomebrew: () => { if (bench.homebrew) clipboard.writeText(bench.homebrew); },
     disconnect: () => bench.disconnect(),
     pairAgain: () => bench.pairAgain(),
     choose: (value) => bench.choose(value),
@@ -148,7 +137,7 @@ function setUp() {
 
 /** The bench for the Agneta in use, showing in `opened`; its view reaches the window at most ten times a second. */
 function startBench(opened) {
-  const current = new BenchApp(agneta.port, { home, tokens: snapshot ? memoryTokens() : tokensFor(agneta.port), openAgneta, name: agneta.name });
+  const current = new BenchApp(agneta.port, { home, tokens: snapshot ? memoryTokens() : tokensFor(agneta.port), environment, name: agneta.name });
   let pending = false;
   current.on('change', () => {
     if (pending) return;

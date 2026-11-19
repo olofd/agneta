@@ -2,7 +2,7 @@
 
 How a Mac app runs AI work through Agneta. Agneta speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP, JSON-RPC 2.0) and adds a few namespaced extensions, each listed in `initialize`. An app that ignores them still gets plain ACP.
 
-**In TypeScript or JavaScript, use [`@agneta/client`](../clients/typescript/README.md),** the official client: it implements everything on this page (connecting and opening Agneta, pairing and the token, access, sessions, streaming, permissions, traces and every error, typed) and keeps a raw layer for anything else. Two runnable Electron examples are built on it: [Project Chat](../examples/project-chat/README.md), with pairing, streamed replies, and app-owned MCP tools, and [Replica Bench](../examples/replica-bench/README.md), which runs demanding work on every engine in both sandbox modes.
+**In TypeScript or JavaScript, use [`@agneta/client`](../clients/typescript/README.md),** the official client: it implements everything on this page (connecting, and getting and opening Agneta, pairing and the token, access, sessions, streaming, permissions, traces and every error, typed) and keeps a raw layer for anything else. Two runnable Electron examples are built on it: [Project Chat](../examples/project-chat/README.md), with pairing, streamed replies, and app-owned MCP tools, and [Replica Bench](../examples/replica-bench/README.md), which runs demanding work on every engine in both sandbox modes.
 
 Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/AppScenarioTests.swift` runs it against a real engine, and `RouterContractTests.swift` pins each decision. How Agneta works inside is in [ARCHITECTURE.md](ARCHITECTURE.md); what each engine can do is in [ENGINES.md](ENGINES.md).
 
@@ -13,7 +13,23 @@ Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/Ap
 - **Browsers can't connect:** a WebSocket upgrade with an `Origin` header is refused, so a web page can't drive Agneta.
 - **Sandboxed (Mac App Store) apps** need `com.apple.security.network.client` to connect to Agneta, and `com.apple.security.network.server` as well if they serve their own MCP server on loopback.
 - **Folders for sandboxed apps.** A folder inside an app container (`~/Library/Containers`, `~/Library/Group Containers`) can't be a session's folder: Agneta keeps apps' private storage out of reach. Ask in the pairing scope for folders the user chose (an open panel or a security-scoped bookmark gives the real path, outside the container), or let tasks work in the workspace Agneta makes for the app and hand results back through the app's MCP tools: the sandbox keeps the app itself out of that workspace.
-- **When Agneta isn't running,** the connection is refused. Ask the user whether to open it, and when they say yes, open `agneta://open` (`agneta-dev://open` for a development build), wait for its port, and connect. Never open it without asking: quitting Agneta is how the user stops all of it. Opening the URL only launches Agneta; nothing in the URL is acted on.
+- **When Agneta isn't running,** the connection is refused. Find out whether it's installed, and help the user get it or open it: [Getting Agneta](#getting-agneta).
+
+### Getting Agneta
+
+An app can tell whether Agneta is running, installed but not running, or not installed, and take the user from any of them to a working connection without restarting. [`@agneta/client`](../clients/typescript/README.md#getting-agneta) does all of it (`connect({ guide })`); this is the recipe for apps that write their own. Every call named here works in a sandboxed app without an entitlement, except connecting.
+
+1. **Running?** Connect to the port. Refused means not running (or not installed). A sandboxed app without `com.apple.security.network.client` gets `EPERM` ("Operation not permitted") instead: that's the app's missing entitlement, not Agneta, and the app should say so.
+2. **Installed?** Ask LaunchServices which app opens `agneta://open` (`agneta-dev://open` for a development build): `NSWorkspace.shared.urlForApplication(toOpen:)`, or in Electron's main process `app.getApplicationInfoForProtocol(url)`. Read that bundle's `Info.plist`: its `CFBundleIdentifier` must be `com.objectivecoder.agneta` (`com.objectivecoder.agneta.dev`), or another app claimed the scheme and Agneta counts as not installed; its `CFBundleShortVersionString` is Agneta's version. LaunchServices doesn't see a copy just put in `~/Applications` until something opens it, so when it finds nothing, also look for `Agneta.app` (`Agneta Dev.app`) in `/Applications` and `~/Applications`, and open such a copy by its path, which registers it.
+3. **Where?** In `/Applications` or `~/Applications`, or anywhere else (a developer's build folder): installed. On a disk image (a read-only volume under `/Volumes`: a write check there fails with `EROFS`) or translocated (a path containing `/AppTranslocation/`): not installed yet. LaunchServices may prefer a disk image's copy it has seen over a new one in `~/Applications`, so when it answers with a disk image's copy, look in the Applications folders too. A copy run from its disk image ends when the image is ejected, so say "drag Agneta into Applications first" and wait. (Agneta itself also offers to move there when started from its disk image.)
+4. **Not installed:** offer to get it. The install page is **`https://agneta.dahlbom.io/get/`**, an address that stays: it explains what Agneta is, offers both downloads and Homebrew, and has an **Open Agneta** button for afterwards. Add the Mac's architecture as the fragment (`#arm64` or `#x86_64`) to put the right download first, and nothing else: no query string, nothing about the app or the user. The architecture is the Mac's, not the app's: an Intel build of the app on Apple silicon runs under Rosetta, where `sysctl.proc_translated` is 1. Offer Homebrew as the other way, with a Copy button: `brew install olofd/tap/agneta`. For a development build, point to the README's [Build and run](../README.md#build-and-run) instead. Then wait, with no timeout (the user cancels): check the port every second, and the install check every second or two. When Agneta is installed, open it; when the port answers first (the user opened it), go on.
+5. **Installed, not running:** ask, then open `agneta://open`. Wait for the port: every 250 ms for the first 5 s, then every second. A first launch may wait for macOS's "downloaded from the Internet" confirmation, so at 15 s say that macOS may be asking whether to open Agneta, and at 60 s offer to keep waiting or cancel (still waiting meanwhile).
+6. **Too old:** an app that needs a newer Agneta compares the bundle's version before opening it, and `agneta/catalog`'s `version` once connected. An Agneta that answers `agneta/catalog` with `-32601` is 0.4.0 or earlier (count it as 0.4.0). A development build says `0.0.0`, and the headless host or `swift run`, which have no bundle, say `dev`: both are built from source, so they're never too old. Compare versions by their numbers (`0.5.0-beta` is `0.5.0`). Ask the user to open Agneta and choose **Check for Updates…** in its ⋯ menu; Agneta relaunches after updating, so wait for the connection to close and the port to answer again, then check again.
+7. **Running:** go on to [Before pairing](#before-pairing-what-agneta-offers).
+
+**Consent.** One question per step, each answered by the user: getting Agneta, opening it, updating it, and connecting a provider (`agneta/setup`). A yes to getting Agneta covers opening it once it's installed, within that flow; opening it at any other time needs its own yes. Never open Agneta, or the install page, without asking: quitting Agneta is how the user stops all of it. Opening `agneta://open` only launches Agneta; nothing in the URL is acted on. A quiet connect at launch asks nothing, except to offer opening Agneta to someone who has used the app before (a token kept).
+
+**What an app learns** this way is whether Agneta is installed (and whether in Applications), its version, and whether it's running: what any Mac app can find out from LaunchServices. Don't look further (for Homebrew, or other apps), keep the bundle's path to yourself, and send none of it anywhere.
 
 ## Before pairing: what Agneta offers
 
@@ -22,7 +38,8 @@ Two calls work on a connection that hasn't paired, so an app can find out whethe
 - **`agneta/catalog {}`** returns what this Agneta offers any app:
   - each provider kind (`claude`, `chatgpt`, `anthropic-key`, `openai-key`), with its name, whether one is `connected`, and the engines it runs on, each with the modes it can provide (`sandboxLevels`) and `uncontained` where it can't be contained;
   - the engines on this Mac (`id`, `name`, `state`, `reason`);
-  - `connected`: whether any provider is.
+  - `connected`: whether any provider is;
+  - `version`: Agneta's version, as its bundle says (`0.0.0` for a development build; `dev` with no bundle, as for the headless host), so an app can ask for an update before pairing ([Getting Agneta](#getting-agneta)).
 
   It never names the user's accounts (labels, addresses, how many): pairing guards those. An unpaired connection also gets `agneta/catalogChanged {"catalog"}` when a provider is connected or removed, or an engine changes.
 
@@ -31,7 +48,7 @@ Two calls work on a connection that hasn't paired, so an app can find out whethe
                   "engines": [{"id": "claude-code", "sandboxLevels": ["contained", "developer"]},
                               {"id": "goose", "sandboxLevels": ["developer"], "uncontained": true}]}, …],
    "engines": [{"id": "claude-code", "name": "Claude Code", "state": "ready"}, …],
-   "connected": true}
+   "connected": true, "version": "0.5.0"}
   ```
 - **`agneta/setup {"name"?, "kind"?}`** asks Agneta to help the user connect a provider. Agneta comes forward with its add-provider window, naming your app, narrowed to `kind` when given. It answers `{"shown": true}` at once; wait for `agneta/catalogChanged`. Ask only when the user asked to connect, as with opening Agneta.
 
@@ -104,7 +121,7 @@ What the user allows an app is two lists: the **providers** (each an account: a 
 | --- | --- |
 | `agneta/policy` | The session policy: tools, folders, sandbox, network, approval, command environment and ports, limits |
 | `agneta/access` | `agneta/access` and `agneta/accessChanged`: the providers and engines the app may use ([Access](#access)) |
-| `agneta/catalog` | `agneta/catalog` and `agneta/catalogChanged`: what Agneta offers, before pairing too ([Before pairing](#before-pairing-what-agneta-offers)) |
+| `agneta/catalog` | `agneta/catalog` and `agneta/catalogChanged`: what Agneta offers, and its version, before pairing too ([Before pairing](#before-pairing-what-agneta-offers)) |
 | `agneta/setup` | `agneta/setup`: Agneta's add-provider window, for the user to connect one |
 | `agneta/task` | A title and a stop warning shown in Agneta's menu |
 | `agneta/instructions` | Instructions at start, and `agneta/instructions/set` between turns |
@@ -201,7 +218,7 @@ The user can limit each app in Settings → Apps. Every limit is optional, and n
 | `approval` | `ask-app` (the default): tool permission requests reach the app as `session/request_permission`. `never-ask`: the policy is the permission, and Agneta answers |
 | `readable`, `writable`, `readOnly`, `denied` | Absolute paths. `readOnly` stays read-only even inside the workspace; `denied` is neither readable nor writable, even inside allowed folders |
 | `toolEnvironment` | Variables for shell commands, which run through Agneta's broker on every engine: your toolchain's `PATH` (each entry an absolute path inside the session's folders, no empty entries; it goes ahead of everything else), `CARGO_HOME`, `PYTHONPATH`, your kit's settings. Your values win over the ones developer access sets. Refused: `HOME`, `TMPDIR`, `USER`, `LOGNAME`, `SHELL`, `BASH_ENV`, `ENV`, `ZDOTDIR`, `PROMPT_COMMAND`, `IFS`, and anything starting `DYLD_`, `LD_`, `AGNETA_`, `CLAUDE_CODE_`, `CODEX_`, `GOOSE_` or `OPENCODE_`. Commands also get the selected Xcode's own tools on `PATH` and `SDKROOT` |
-| `toolPorts`, `toolSockets` | Loopback ports and Unix sockets that shell commands may reach (every engine's commands run through Agneta's broker) |
+| `toolPorts`, `toolSockets` | Loopback ports and Unix sockets that shell commands may reach (every engine's commands run through Agneta's broker). A socket follows the folder rules: one inside other apps' containers, Agneta's data, `~/.ssh`, LaunchAgents or Keychains is refused |
 | `limits` | `maxTurns`: model calls within one prompt (default 200). `maxSeconds`: a prompt's wall time (default 4 hours). `maxCostUSD`: the task's known cost so far, across resumes (no default) |
 
 - **Nothing is weakened silently.** A policy Agneta can't enforce is refused with `-32602` and `data.agneta.unenforceable: ["<field>"]`. That covers:

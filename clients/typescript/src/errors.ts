@@ -63,6 +63,66 @@ export class NotRunningError extends AgnetaError {
   }
 }
 
+/** Agneta isn't installed on this Mac (or only on its disk image, not yet in Applications). Offer to get it. */
+export class NotInstalledError extends AgnetaError {
+  readonly kind = 'notInstalled' as const;
+  /** Where the user gets this build of Agneta (the install page for a release), or null when not known. */
+  readonly installURL: string | null;
+  /** Homebrew's command for it, for a release. */
+  readonly homebrew: string | null;
+  /** A copy is on a mounted disk image: it needs dragging into Applications. */
+  readonly onDiskImage: boolean;
+  constructor(installURL: string | null, homebrew: string | null, onDiskImage = false) {
+    super(onDiskImage ? 'Agneta is on its disk image, not in Applications yet.' : 'Agneta isn\'t installed on this Mac.',
+      onDiskImage ? 'Ask the user to drag Agneta into Applications, then connect.'
+        : installURL ? `Offer to get Agneta (${installURL}), then connect.` : 'Install Agneta, then connect.');
+    this.installURL = installURL;
+    this.homebrew = homebrew;
+    this.onDiskImage = onDiskImage;
+  }
+}
+
+/** The installed Agneta is older than the app needs (`minimumVersion`). */
+export class OutdatedError extends AgnetaError {
+  readonly kind = 'outdated' as const;
+  /** The version found; null for an Agneta too old to say (0.4.0 or earlier). */
+  readonly version: string | null;
+  /** The version the app needs. */
+  readonly needed: string;
+  constructor(version: string | null, needed: string) {
+    super(`This app needs Agneta ${needed} or later${version ? `; this Mac has ${version}` : ''}.`,
+      'Ask the user to open Agneta and choose Check for Updates… in its ⋯ menu.');
+    this.version = version;
+    this.needed = needed;
+  }
+}
+
+/**
+ * The app may not connect to loopback at all (`EPERM`): a sandboxed app without the network client entitlement.
+ * Nothing about Agneta is known.
+ */
+export class NetworkBlockedError extends AgnetaError {
+  readonly kind = 'blocked' as const;
+  readonly url: string;
+  constructor(url: string, options?: { cause?: unknown }) {
+    super(`This app isn't allowed to connect to ${url} (Operation not permitted).`,
+      'A sandboxed app needs the com.apple.security.network.client entitlement to connect to Agneta.', options);
+    this.url = url;
+  }
+}
+
+/** The user said no to one of the guided connect's questions (`guide`): show the app's idle state, not an error. */
+export class DeclinedError extends AgnetaError {
+  readonly kind = 'declined' as const;
+  /** Which question: `install`, `open`, `update` or `setup`. */
+  readonly question: 'install' | 'open' | 'update' | 'setup';
+  constructor(question: 'install' | 'open' | 'update' | 'setup') {
+    super(`The user declined to ${{ install: 'get Agneta', open: 'open Agneta', update: 'update Agneta', setup: 'connect a provider in Agneta' }[question]}.`,
+      'Nothing to tell the user; offer to connect again.');
+    this.question = question;
+  }
+}
+
 /**
  * Something answered on the port but wouldn't open a WebSocket: a browser or Electron renderer (Agneta refuses any
  * upgrade with an `Origin` header), or a program other than Agneta on that port.
@@ -376,7 +436,8 @@ export class UnknownRpcError extends AgnetaRpcError {
 
 /** Every error the library throws. `switch (error.kind)` narrows to the class. */
 export type AnyAgnetaError =
-  | NotRunningError | ConnectionRefusedError | ConnectionClosedError | TimeoutError | AbortedError
+  | NotRunningError | NotInstalledError | OutdatedError | NetworkBlockedError | DeclinedError
+  | ConnectionRefusedError | ConnectionClosedError | TimeoutError | AbortedError
   | UnsupportedEnvironmentError | ProtocolError
   | NeedsPairingError | NotAllowedError | NoTurnRunningError | TurnBusyError | QueueFullError | PausedError
   | UnsupportedByEngineError | EngineDownloadingError | AppLimitError | MethodNotFoundError | UnenforceableError | EngineRefusedError

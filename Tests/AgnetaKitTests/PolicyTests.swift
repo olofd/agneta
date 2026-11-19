@@ -92,6 +92,42 @@ import Testing
         #expect(rejection(["denied": [.string(workspace)]]) == "denied")
     }
 
+    /// A Unix socket is reached by connecting, not reading, so the folder checks never saw `toolSockets`: an app (a
+    /// sandboxed one included) could hand its commands another app's socket, such as a password manager's SSH agent in
+    /// its group container, or one under Agneta's own data. Sockets get the same protected places as folders.
+    @Test func toolSocketsCantReachProtectedPlaces() throws {
+        for socket in ["Library/Group Containers/TEAM.com.example.vault/t/agent.sock", "Library/Containers/com.example.app/Data/app.sock",
+                       "Library/Application Support/Agneta/broker.sock", ".ssh/agent.sock"] {
+            let path = home.appending(path: socket).path(percentEncoded: false)
+            #expect(throws: PolicyRejection.self, "\(socket)") { _ = try SessionPolicy.parse(["toolSockets": [.string(path)]], cwd: workspace, context: context) }
+        }
+        // An ordinary socket is still a socket: no trailing slash, as the profile's path-literal needs.
+        let policy = try SessionPolicy.parse(["toolSockets": ["/tmp/tools.sock"]], cwd: workspace, context: context)
+        #expect(policy.toolSockets.map { $0.path(percentEncoded: false) } == [URL(filePath: "/tmp/tools.sock").realFileURL.path(percentEncoded: false)])
+        #expect(policy.toolSockets.allSatisfy { !$0.path(percentEncoded: false).hasSuffix("/") })
+    }
+
+    /// Under /private (/tmp, the temporary folder), whether a path existed changed how it was compared, so a missing
+    /// folder under an existing one wasn't inside it: a writable folder not made yet slipped past its denied parent.
+    @Test func aMissingFolderIsInsideItsExistingParent() throws {
+        let parent = URL(filePath: "/private/tmp", directoryHint: .isDirectory).appending(path: "agneta-inside-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        #expect(parent.appending(path: "not-yet/deeper", directoryHint: .isDirectory).isInside(parent))
+        #expect(!URL(filePath: "/private/tmp/elsewhere").isInside(parent))
+
+        let workspace = parent.appending(path: "ws", directoryHint: .isDirectory)
+        let denied = parent.appending(path: "ws-secrets", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: denied, withIntermediateDirectories: true)
+        let tmpContext = PolicyContext(userHome: home, agnetaRoots: [])
+        #expect(throws: PolicyRejection.self) {
+            _ = try SessionPolicy.parse(["denied": [.string(denied.path(percentEncoded: false))],
+                                         "writable": [.string(denied.appending(path: "made-later").path(percentEncoded: false))]],
+                                        cwd: workspace.path(percentEncoded: false), context: tmpContext)
+        }
+    }
+
     @Test func realPathsKeepPrivate() {
         #expect(URL(filePath: "/tmp/agneta-x/y").realFileURL.path(percentEncoded: false) == "/private/tmp/agneta-x/y")
     }

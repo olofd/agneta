@@ -15,8 +15,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { isListening } from '@agneta/client/node';
-import { Agneta, agnetas, describeError } from './agneta.mjs';
+import { AgnetaClient } from '@agneta/client';
+import { isListening, macArchitecture, nodeEnvironment } from '@agneta/client/node';
+import { Agneta, agnetas, describeError, whatIsMissing } from './agneta.mjs';
 import { checkModes } from './modes.mjs';
 import { duration, modesTable, outcomeText, writeReport } from './report.mjs';
 import { BenchRun } from './run.mjs';
@@ -96,7 +97,10 @@ export async function runMatrix(agneta, home, runs, { model, effort, prompts = {
   return results;
 }
 
-/** The port to use: --port, else AGNETA_PORT, else the release when it runs, else the development build when it runs. */
+/**
+ * The port to use: --port, else AGNETA_PORT, else the release when it runs, else the development build when it runs.
+ * With neither running, it says what's missing (not installed: where to get it; not running: open it) and opens nothing.
+ */
 async function choosePort(given) {
   const fixed = given ?? process.env.AGNETA_PORT;
   if (fixed !== undefined) {
@@ -105,7 +109,12 @@ async function choosePort(given) {
     return { port, name: agnetas.find((entry) => entry.port === port)?.name ?? `Agneta on port ${port}` };
   }
   for (const entry of agnetas) if (await isListening(entry.port)) return entry;
-  throw new Error('Neither Agneta (47321) nor Agneta Dev (47331) is running. Open one, or give --port.');
+  const environment = nodeEnvironment();
+  const found = await Promise.all(agnetas.map(async (entry) => {
+    const agneta = new AgnetaClient({ name: 'Replica Bench', build: entry.id, environment });
+    return { agneta, presence: await agneta.presence() };
+  }));
+  throw new Error(whatIsMissing(found, await macArchitecture()));
 }
 
 /** Hosts one run for plain Claude Code in a terminal: the reference column, measured the same way but run by hand. */
