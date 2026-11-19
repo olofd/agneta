@@ -111,12 +111,18 @@ jobs:
   # (scripts/check). Linux is enough and starts in seconds.
   checks:
     name: Static checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # The scripts run on the Python that comes with Xcode's command line tools, 3.9, so they're compiled and tested
+      # on it: newer syntax fails here. (TOML isn't parsed on 3.9; the check says which files it left.)
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.9'
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -153,8 +159,8 @@ jobs:
           AGNETA_REQUIRE_TOOLS: "1"
         run: scripts/check whitespace shell python js actions data
 
-  # swift-format comes with Xcode, so it runs on a Mac: the same version as on a maintainer's. Until the one-shot
-  # reformat (CONTRIBUTING.md, Formatting) only the lines a change touches must be formatted; the log reports the
+  # swift-format comes with Xcode, so it runs on a Mac, with the version scripts/check pins. Until the one-shot
+  # reformat (CONTRIBUTING.md, Static checks) only the lines a change touches must be formatted; the log reports the
   # whole tree's findings.
   swift-format:
     name: Swift format
@@ -166,12 +172,23 @@ jobs:
           fetch-depth: 0 # the base the changed lines are measured against
           persist-credentials: false
 
-      - name: Use Xcode 26
+      # The newest Xcode whose swift-format is the pinned one (swift_format_version in scripts/check), so a
+      # maintainer's --fix and CI lay code out alike. None on the runner fails here, naming what there is.
+      - name: Use the Xcode with the pinned swift-format
         run: |
-          xcode=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
-          [ -n "$xcode" ] || { echo "No Xcode 26 on this runner" >&2; exit 1; }
-          sudo xcode-select -s "$xcode"
-          xcrun swift-format --version
+          want=$(sed -n 's/^swift_format_version=//p' scripts/check)
+          found=()
+          for xcode in $(ls -d /Applications/Xcode_26*.app | sort -rV); do
+            have=$(DEVELOPER_DIR="$xcode/Contents/Developer" xcrun swift-format --version 2>/dev/null || true)
+            found+=("$(basename "$xcode"): ${have:-none}")
+            if [[ "$have" == "$want" ]]; then
+              sudo xcode-select -s "$xcode"
+              echo "$(basename "$xcode"), swift-format $have"
+              exit 0
+            fi
+          done
+          echo "::error::No Xcode 26 here has swift-format $want (${found[*]}); update swift_format_version in scripts/check"
+          exit 1
 
       # A pull request is measured against its base branch, a push against what main was before it. A base that
       # isn't in the history (a new branch, a force push, a run by hand) falls back to the last commit.

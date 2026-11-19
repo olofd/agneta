@@ -7,8 +7,8 @@
 | macOS 26, Apple silicon | `macos-26` | The newest macOS, where the app's glass look and most users are |
 | macOS 15, Apple silicon | `macos-15` | The previous major version |
 | macOS 15, Intel | `macos-15-intel` | Intel Macs: the engines and the sandbox differ by architecture |
-| Static checks | `ubuntu-latest` | Whitespace, shell scripts, Python, JavaScript, workflows and data files: no Mac needed |
-| Swift format | `macos-26` | swift-format comes with Xcode: the same version a maintainer runs |
+| Static checks | `ubuntu-24.04` | Whitespace, shell scripts, Python (on 3.9, as Xcode's), JavaScript, workflows and data files: no Mac needed |
+| Swift format | `macos-26` | swift-format comes with Xcode: the job selects the Xcode with the pinned version (`swift_format_version` in `scripts/check`) |
 
 Each macOS job:
 
@@ -32,13 +32,13 @@ The only actions used are GitHub's own (`actions/checkout`, `actions/setup-node`
 | Check | Tool | CI job |
 | --- | --- | --- |
 | `whitespace` | `scripts/dev/check-files`: no trailing whitespace, CRLF, conflict markers or blank lines at the end of a file (`Licenses/` is verbatim) | Static checks |
-| `swift` | swift-format from Xcode (`.swift-format`), on the lines changed since the base; the whole tree's findings are reported | Swift format |
+| `swift` | swift-format 6.3.0 from Xcode (`.swift-format`), on the lines changed since the base, a rename counting only its edited lines; the whole tree's findings are reported; the check's own tests | Swift format |
 | `shell` | `bash -n` or `sh -n` on every script, then [ShellCheck](https://github.com/koalaman/shellcheck) 0.11.0 (`.shellcheckrc`) | Static checks |
-| `python` | every Python file compiles with warnings as errors, then [Ruff](https://github.com/astral-sh/ruff) 0.17.3 (`ruff.toml`) | Static checks |
+| `python` | every Python file compiles with warnings as errors on Python 3.9, the file checks' tests pass, then [Ruff](https://github.com/astral-sh/ruff) 0.17.3 (`ruff.toml`) | Static checks |
 | `js` | `node --check` on every JavaScript file | Static checks |
 | `typescript` | the client's own type check (`npm run typecheck`); in CI, `client-typescript.yml` runs it | locally only |
 | `actions` | [actionlint](https://github.com/rhysd/actionlint) 1.7.12 on the workflows, with ShellCheck on their `run` steps | Static checks |
-| `data` | every JSON, lock, plist and TOML file parses | Static checks |
+| `data` | every JSON, lock, plist and TOML file parses (TOML from Python 3.11; on 3.9 the check names the files it left) | Static checks |
 
 The Swift format job measures a pull request against its base branch and a push against what `main` was before it. ShellCheck, actionlint and Ruff report without failing until their first findings on `main` are fixed (`AGNETA_CHECK_REPORT_ONLY`). Each should take about a minute (not yet measured on GitHub); the macOS test jobs gain only Replica Bench's tests, about ten seconds.
 
