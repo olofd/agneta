@@ -47,6 +47,23 @@ import Testing
         #expect(try JSONCoding.decode(Data(line.utf8))["b"]?.stringValue == "x\n\"y\"\u{1}")
     }
 
+    /// A turn can end after its task's trace was closed (Stop on an engine that stopped responding): flushing or
+    /// closing a closed trace asked the closed file for its descriptor, which raises an exception Swift can't catch,
+    /// and took Agneta down (seen in CI). Now it does nothing.
+    @Test func aClosedTraceCanBeFlushedAndClosedAgain() throws {
+        let folder = try folder()
+        let writer = TraceWriter(task: "closed", file: folder.appending(path: "closed.jsonl"), mask: SecretMask())
+        writer.record("event", ["kind": "turn", "n": 1])
+        writer.close()
+        writer.flush()
+        writer.close()
+        writer.record("event", ["kind": "turn", "n": 2])
+        writer.flush()
+        let lines = try String(contentsOf: folder.appending(path: "closed.jsonl"), encoding: .utf8).split(
+            separator: "\n")
+        #expect(lines.count == 1)
+    }
+
     @Test func concurrentRecordsAreWrittenInSequenceOrder() async throws {
         let folder = try folder()
         defer { try? FileManager.default.removeItem(at: folder) }
