@@ -89,27 +89,38 @@ test('Project Chat pairs, reads a brief, stages a draft, and stops a turn', { ti
 
   const port = await availablePort();
   const tokens = memoryTokens();
-  // Agneta isn't running: Project Chat asks whether to open it. "Not Now" leaves it disconnected; "Open" starts the
-  // headless host here (the app opens agneta-dev://), and Project Chat waits for it, then connects.
-  let asked = 0, open = false;
-  const openAgneta = async () => {
-    asked += 1;
-    if (!open) return false;
-    children.push(start(hostBinary, [
-      '--goose', goose, '--home', join(root, 'host'), '--port', String(port),
-      '--env', 'GOOSE_MODEL=gpt-4o', '--env', 'OPENAI_API_KEY=fake', '--env', `OPENAI_BASE_URL=${modelURL}`
-    ]));
-    return true;
+  // Agneta isn't running: Project Chat's panel asks whether to open it. "Not Now" leaves it disconnected; "Open"
+  // starts the headless host here (the app opens agneta://open), and Project Chat waits for it, then connects.
+  const opened = [];
+  const environment = {
+    findHandler: async () => ({ path: '/Applications/Agneta.app', identifier: 'com.objectivecoder.agneta', version: '0.5.0' }),
+    openURL: async (url) => {
+      opened.push(url);
+      children.push(start(hostBinary, [
+        '--goose', goose, '--home', join(root, 'host'), '--port', String(port),
+        '--env', 'GOOSE_MODEL=gpt-4o', '--env', 'OPENAI_API_KEY=fake', '--env', `OPENAI_BASE_URL=${modelURL}`
+      ]));
+      return true;
+    }
   };
-  chat = new ProjectChat(port, { tokens, openAgneta });
-  await chat.connect();
+  const asked = async () => {
+    for (let attempt = 0; attempt < 100 && !chat.view.guide?.question; attempt++) await delay(50);
+    assert.equal(chat.view.guide?.question?.kind, 'open', chat.view.status);
+  };
+  chat = new ProjectChat(port, { tokens, environment, client: { openURL: 'agneta://open' } });
+  let connecting = chat.connect();
+  await asked();
+  chat.answer('no');
+  await connecting;
   assert.equal(chat.view.phase, 'disconnected');
-  assert.match(chat.view.status, /Agneta isn't running\. Open it, then connect\./);
-  assert.equal(asked, 1);
+  assert.equal(chat.view.status, 'Connect to start chatting.');
+  assert.deepEqual(opened, []);
 
-  open = true;
-  await chat.connect();
-  assert.equal(asked, 2);
+  connecting = chat.connect();
+  await asked();
+  chat.answer('yes');
+  await connecting;
+  assert.deepEqual(opened, ['agneta://open']);
   assert.equal(chat.view.phase, 'ready', chat.view.status);
   // What agnetad lets it use: its one development provider, on Goose.
   assert.deepEqual(chat.view.providers.map((provider) => provider.id), ['dev']);

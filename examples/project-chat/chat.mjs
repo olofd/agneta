@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { AgnetaClient, NeedsPairingError, NotRunningError, configSetting, findConfigOption, memoryTokenStore } from '@agneta/client';
+import { AgnetaClient, configSetting, findConfigOption, memoryTokenStore } from '@agneta/client';
 import { project, startProjectTools } from './project-tools.mjs';
 
 const limits = { maxTurns: 12, maxSeconds: 90 };
@@ -13,6 +13,8 @@ const instructions = [
 /** What to show for an error from Agneta (`@agneta/client` types each one by `kind`). */
 function describeError(error) {
   switch (error?.kind) {
+    case 'blocked': return 'Project Chat may not connect to Agneta here (a sandbox without the network client entitlement).';
+    case 'outdated': return error.message;
     case 'needsSignIn': return 'Sign in to this account in Agneta, then try again.';
     case 'notAllowed': return 'Pairing was declined or expired. Select Connect to try again.';
     case 'paused': return 'This account is paused. Resume it in Agneta, then try again.';
@@ -39,6 +41,12 @@ export function settings(configOptions) {
   };
 }
 
+/**
+ * Steps of getting Agneta that the window's panel shows (with the question, when there is one); the rest go in the
+ * status line. `@agneta/client` words each one; the panel shows them as they are.
+ */
+const panelSteps = new Set(['notInstalled', 'installing', 'onDiskImage', 'installed', 'notRunning', 'opening', 'slow', 'outdated', 'needsProvider', 'settingUp']);
+
 /** No session, so no settings to show. */
 const noSettings = { models: [], model: '', efforts: [], effort: '' };
 
@@ -56,11 +64,10 @@ export class ProjectChat extends EventEmitter {
   #tools;
   #access;
   #tokens;
-  #openAgneta;
-  /** The connect in progress is quiet: it never opens the approval window. */
-  #quiet = false;
-  /** Agneta was opened for this connect and didn't come up in time. */
-  #launched = false;
+  /** Ends the connect in progress: its waits for Agneta, and a question on screen. */
+  #controller = null;
+  /** Answers the question the panel shows. */
+  #answer = null;
   /** The session being opened ahead of the first message, so the model and effort can be chosen before it. */
   #opening = null;
   /** Counts chats: a session that finishes opening after its chat was closed or switched is closed, not used. */
@@ -71,47 +78,34 @@ export class ProjectChat extends EventEmitter {
 
   /**
    * @param tokens where the token from Always Allow is kept between launches (`load`, `save`, `clear`).
-   * @param openAgneta when Agneta isn't running: asks the user whether to open it and, if they say yes, opens it;
-   *   resolves to whether it did (main.mjs: a dialog, then `agneta://open` or `agneta-dev://open`). Without it, the
-   *   app only says so.
+   * @param environment how to find and open Agneta on this Mac (main.mjs: `electronEnvironment({ app, shell })`). Without
+   *   it, the app only says Agneta isn't running.
    * @param name what the app calls this Agneta in what it shows: "Agneta" for a release, "Agneta Dev" for a development build.
+   * @param client more of the client's options (tests: the open URL, install page and bundle ID for a port of their own).
    */
-  constructor(port, { tokens = memoryTokens(), openAgneta = null, name = 'Agneta' } = {}) {
+  constructor(port, { tokens = memoryTokens(), environment = undefined, name = 'Agneta', client: more = {} } = {}) {
     super();
     this.port = port;
     this.name = name;
     this.#tokens = tokens;
-    this.#openAgneta = openAgneta;
     this.#client = new AgnetaClient({
       name: 'Project Chat',
       port,
       tokens,
+      ...(environment ? { environment } : {}),
       // The app's own tools and no user folders.
       scope: { tools: 'app-only', folders: [] },
       clientInfo: { name: 'agneta-project-chat', title: 'Project Chat', version: '0.1.0' },
-      // Agneta isn't running: offer to open it (at launch only to someone who has used it, a token kept).
-      launch: openAgneta ? async () => {
-        if (this.#quiet && !await this.#tokens.load()) return false;
-        this.#update({ status: `${this.name} isn't running.` });
-        if (!await this.#openAgneta()) return false;
-        this.#launched = true;
-        this.#update({ status: `Opening ${this.name}…` });
-        return true;
-      } : undefined,
-      timeouts: { session: 30_000, prompt: 120_000 }
+      timeouts: { session: 30_000, prompt: 120_000 },
+      ...more
     });
     const client = this.#client;
-    client.on('state', (state) => {
-      if (state === 'pairing') this.#update({ phase: 'pairing', status: `Approve Project Chat in ${this.name}.` });
-    });
-    // With no AI connected in Agneta yet, it shows its window for connecting one, and pairing waits for it.
-    client.on('setup', () => this.#update({ phase: 'pairing', status: `Connect your AI in ${this.name} to start chatting.` }));
     client.on('pairingCode', (code) => { if (this.view.phase === 'pairing') this.#update({ code }); });
     // The user changed what this app may use, or an engine arrived or went away.
     client.on('accessChanged', (access) => this.#setAccess(access));
     client.on('disconnected', () => {
       // Let the pending handshake surface its more specific connection error.
-      if (this.view.phase === 'disconnected' || this.view.phase === 'connecting' || this.view.phase === 'pairing') return;
+      if (['disconnected', 'connecting', 'guide', 'pairing'].includes(this.view.phase)) return;
       const remembered = client.remembered;
       this.disconnect('Connection closed. Connect to start a new chat.');
       // Agneta closes an app's connections when its access is removed: reconnecting with the token says whether
@@ -123,6 +117,8 @@ export class ProjectChat extends EventEmitter {
       phase: 'disconnected',
       status: 'Connect to start chatting.',
       code: '',
+      // While getting Agneta: what the panel shows ({ step, title, detail }), with the question to answer, if any.
+      guide: null,
       // What Agneta lets this app use (agneta/access), and the provider and engine the next chat runs on.
       providers: [],
       account: '',
@@ -146,37 +142,95 @@ export class ProjectChat extends EventEmitter {
 
   /**
    * Connects to Agneta: with the token kept from an earlier Always Allow when there is one, else by pairing, which
-   * opens Agneta's approval window (after Agneta's window for connecting a provider, when none is). A token Agneta no
-   * longer accepts (access removed there) is forgotten. `quiet` (at launch, and after the connection drops) never
-   * opens the approval window: without a usable token it stops and says so.
+   * opens Agneta's approval window (after Agneta's window for connecting a provider, when none is). When Agneta isn't
+   * installed or running, the window's panel asks the user and shows each step (docs/APP_PROTOCOL.md, Getting Agneta).
+   * A token Agneta no longer accepts (access removed there) is forgotten. `quiet` (at launch, and after the connection
+   * drops) never opens the approval window, and only offers to open Agneta to someone with a kept token.
    */
   async connect({ quiet = false } = {}) {
     if (this.view.phase !== 'disconnected') return;
     const attempt = ++this.#attempt;
-    this.#quiet = quiet;
-    this.#launched = false;
+    const controller = this.#controller = new AbortController();
     this.#update({
-      phase: 'connecting', status: `Connecting to ${this.name}…`, code: '',
+      phase: 'connecting', status: `Connecting to ${this.name}…`, code: '', guide: null,
       messages: [], draft: null, usage: null
     });
     const kept = await this.#tokens.load();
     try {
-      await this.#client.connect({ pair: quiet ? 'never' : 'if-needed', setup: true });
+      await this.#client.connect({
+        pair: quiet ? 'never' : 'if-needed',
+        setup: true,
+        // Without an environment (tests, an isolated instance) the client can't open anything, so nothing is asked.
+        ...(this.#client.options.environment ? { guide: (question) => this.#ask(question, attempt) } : {}),
+        onProgress: (progress) => { if (this.#attempt === attempt) this.#progress(progress); },
+        signal: controller.signal
+      });
       if (this.#attempt !== attempt) return;
       if (typeof this.#client.workspace !== 'string') throw new Error('Use an Agneta build that tells apps what they may use.');
       this.#setAccess(this.#client.access);
       if (!this.view.account) throw new Error(`No active provider was granted. Connect one in ${this.name} and pair again.`);
-      this.#update({ phase: 'ready', status: 'Ready', code: '' });
+      this.#update({ phase: 'ready', status: 'Ready', code: '', guide: null });
       this.#prepare();
     } catch (error) {
       if (this.#attempt !== attempt) return;
-      if (error instanceof NeedsPairingError) {
-        this.disconnect(kept ? `Your access was removed in ${this.name}. Connect to ask again.` : 'Connect to start chatting.');
-      } else if (error instanceof NotRunningError) {
-        this.disconnect(this.#launched ? `${this.name} didn't start. Open it, then connect.` : `${this.name} isn't running. Open it, then connect.`);
-      } else {
-        this.disconnect(describeError(error));
+      switch (error?.kind) {
+        case 'needsPairing': return this.disconnect(kept ? `Your access was removed in ${this.name}. Connect to ask again.` : 'Connect to start chatting.');
+        case 'declined': case 'aborted': return this.disconnect('Connect to start chatting.');
+        case 'notInstalled': return this.disconnect(`${this.name} isn't installed. Connect to get it.`);
+        case 'notRunning': return this.disconnect(`${this.name} isn't running. Connect to open it.`);
+        default: return this.disconnect(describeError(error));
       }
+    }
+  }
+
+  /** A question only the user answers, in the window's panel; resolves to their answer. */
+  #ask(question, attempt) {
+    if (this.#attempt !== attempt) return false;
+    return new Promise((resolve) => {
+      this.#answer = resolve;
+      this.#update({
+        phase: 'guide', status: question.title,
+        guide: {
+          step: question.kind, title: question.title, detail: question.detail,
+          question: { kind: question.kind, confirm: question.confirm, cancel: question.cancel },
+          homebrew: question.kind === 'install' && !question.onDiskImage ? question.homebrew : null
+        }
+      });
+    });
+  }
+
+  /** The user's answer to the panel's question (`yes`), or Keep Waiting while Agneta is slow to open (`wait`). */
+  answer(choice) {
+    if (choice === 'wait' && this.view.guide?.keepWaiting) {
+      this.#update({ guide: { ...this.view.guide, keepWaiting: false } });
+      return;
+    }
+    const resolve = this.#answer;
+    this.#answer = null;
+    resolve?.(choice === 'yes');
+  }
+
+  /** Opens the install page again (the user closed it), during the install wait. */
+  async openInstallPage() {
+    if (this.view.guide?.step === 'installing' || this.view.guide?.step === 'onDiskImage') await this.#client.openInstallPage();
+  }
+
+  /** Homebrew's command, for the panel's Copy (main.mjs puts it on the clipboard). */
+  get homebrew() {
+    return this.#client.homebrew;
+  }
+
+  #progress(progress) {
+    if (panelSteps.has(progress.step)) {
+      const homebrew = ['notInstalled', 'installing'].includes(progress.step) ? this.#client.homebrew : null;
+      this.#update({
+        phase: 'guide', status: progress.title,
+        guide: { step: progress.step, title: progress.title, detail: progress.detail, homebrew, keepWaiting: progress.step === 'slow' && progress.keepWaiting }
+      });
+    } else if (progress.step === 'pairing') {
+      this.#update({ phase: 'pairing', status: progress.title, guide: null, ...(progress.code ? { code: progress.code } : {}) });
+    } else if (progress.step === 'connecting' || progress.step === 'looking') {
+      this.#update({ phase: 'connecting', status: progress.title, guide: null });
     }
   }
 
@@ -376,8 +430,12 @@ export class ProjectChat extends EventEmitter {
 
   disconnect(status = 'Disconnected. Connect to start a new chat.') {
     this.#attempt += 1;
+    // Ends a wait for Agneta, and answers no to a question on screen.
+    this.#controller?.abort();
+    this.#controller = null;
+    this.answer('no');
     this.#dropSession();
-    this.#update({ phase: 'disconnected', status, code: '', providers: [], account: '', engine: '', ...noSettings });
+    this.#update({ phase: 'disconnected', status, code: '', guide: null, providers: [], account: '', engine: '', ...noSettings });
     this.#client.close();
   }
 
