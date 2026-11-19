@@ -232,7 +232,7 @@ export class Connection extends Emitter<ConnectionEvents> {
   #send(message: JsonRpcMessage): void {
     if (this.#socket.readyState !== OPEN) throw this.#closedError ?? new ConnectionClosedError(undefined, 'not open');
     const text = JSON.stringify(message);
-    this.emit('message', message, 'out');
+    this.emit('message', redacted(message), 'out');
     this.#socket.send(text);
   }
 
@@ -255,7 +255,7 @@ export class Connection extends Emitter<ConnectionEvents> {
   #dispatch(message: unknown): void {
     if (!message || typeof message !== 'object' || (message as { jsonrpc?: unknown }).jsonrpc !== '2.0') return;
     const value = message as JsonRpcMessage & { id?: JsonRpcId | null; method?: unknown };
-    this.emit('message', value, 'in');
+    this.emit('message', redacted(value), 'in');
     if (typeof value.method === 'string') {
       if (value.id === undefined || value.id === null) {
         this.emit('notification', value.method, (value as JsonRpcNotification).params);
@@ -330,4 +330,19 @@ async function probeWithFetch(url: string): Promise<boolean> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * A message as the `message` tap shows it: the pairing token (in `initialize`'s `_meta.agneta.token` and the pairing
+ * result's `token`) replaced, so logging every frame never logs a credential. The wire is unchanged.
+ */
+function redacted<T extends object>(message: T): T {
+  const value = message as { params?: { _meta?: { agneta?: { token?: unknown } } }; result?: { token?: unknown } };
+  const inParams = typeof value.params?._meta?.agneta?.token === 'string';
+  const inResult = typeof value.result === 'object' && value.result !== null && typeof value.result.token === 'string';
+  if (!inParams && !inResult) return message;
+  const copy = structuredClone(message) as typeof value;
+  if (inParams) copy.params!._meta!.agneta!.token = '[redacted]';
+  if (inResult) copy.result!.token = '[redacted]';
+  return copy as T;
 }

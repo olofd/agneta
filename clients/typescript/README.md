@@ -420,7 +420,7 @@ npm test               # unit tests against a stand-in Agneta
 npm run test:integration   # against the real headless host (below)
 ```
 
-The integration test needs, from the repository root, `scripts/fetch-engines` and `swift build --product agnetad --product agneta-fakes`. It runs its own `agnetad` with Goose and a fake model in a temporary folder, on ports 47800–47899, and leaves your Agneta alone. How it's built is in [DESIGN.md](DESIGN.md).
+The integration test needs, from the repository root, `scripts/fetch-engines` and `swift build --product agnetad` and `swift build --product agneta-fakes`. It runs its own `agnetad` with Goose and a fake model in a temporary folder, on ports 47800–47899, and leaves your Agneta alone. How it's built is in [DESIGN.md](DESIGN.md).
 
 ## Releasing
 

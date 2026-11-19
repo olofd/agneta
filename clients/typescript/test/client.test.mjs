@@ -287,6 +287,28 @@ test('pair: "always" pairs again on a client that is already connected', async (
   assert.equal(client.state, 'connected');
 });
 
+test('Don\'t Allow on pairing again keeps the connection that works, and its sessions', async (t) => {
+  const { agneta } = await setUp(t, { handlers: { 'agneta/pair': () => ({ error: { code: -32002, message: 'Example wasn\'t allowed to use Agneta' } }) } });
+  const client = await connect({ name: 'Example', port: agneta.port, tokens: memoryTokenStore('kept-token') });
+  t.after(() => client.close());
+  const connection = client.connection;
+  await assert.rejects(client.connect({ pair: 'always', scope: { tools: 'workspace' } }), NotAllowedError);
+  assert.equal(client.state, 'connected');
+  assert.equal(client.connection, connection);
+});
+
+test('the message tap never shows the token: initialize\'s nor the pairing result\'s', async (t) => {
+  const { agneta } = await setUp(t);
+  const client = new AgnetaClient({ name: 'Example', port: agneta.port, tokens: memoryTokenStore() });
+  t.after(() => client.close());
+  const seen = [];
+  client.on('state', () => { client.connection?.on('message', (message) => seen.push(JSON.stringify(message))); });
+  await client.connect();
+  const token = await client.tokens.load();
+  assert.ok(seen.some((line) => line.includes('[redacted]')), 'the tap saw the pairing and initialize');
+  assert.ok(token === null || !seen.some((line) => line.includes(token)), 'no token in what the tap saw');
+});
+
 test('two connects at once share one connection and one pairing', async (t) => {
   const { agneta } = await setUp(t);
   const client = new AgnetaClient({ name: 'Example', port: agneta.port });

@@ -12,6 +12,7 @@ on:
       - CHANGELOG.md
       - packaging/release-page.md
       - examples/project-chat/preview.png
+      - clients/typescript/README.md
       - .github/workflows/pages.yml
   # A published release changes the download links. Its Homebrew run starts when it's published; once that run
   # ends, the site is rebuilt from main. (A workflow_run event runs on main, which Pages may deploy from; the

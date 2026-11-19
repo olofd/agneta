@@ -207,6 +207,8 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   async #connect(options: ConnectOptions): Promise<Access> {
     this.#closing = false;
     this.#cancelReconnect();
+    // Already connected (pairing again for a wider scope): a failure, the user's Don't Allow included, keeps what works.
+    const wasConnected = this.#state === 'connected' && this.#connection?.isOpen === true && this.#access !== null;
     const connection = await this.open({ signal: options.signal });
     try {
       const pair = options.pair ?? 'if-needed';
@@ -232,7 +234,10 @@ export class AgnetaClient extends Emitter<ClientEvents> {
       this.#setState('connected');
       return this.#access!;
     } catch (error) {
-      if (this.#connection === connection) this.#drop(connection);
+      if (this.#connection === connection) {
+        if (wasConnected && connection.isOpen) this.#setState('connected');
+        else this.#drop(connection);
+      }
       throw error;
     }
   }
@@ -547,12 +552,13 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     connection.handle('session/request_permission', async (params) => {
       const session = this.#sessions.get(params?.sessionId);
       const handler = session?.permissionHandler ?? this.options.permissions;
-      if (!handler) return { outcome: { outcome: 'cancelled' } };
+      // No handler: declined, by the engine's own reject option where it offers one (Agneta's preference too).
+      if (!handler) return permissionResponse('reject', params?.options ?? []);
       try {
         return permissionResponse(await handler({ ...params, session }), params?.options ?? []);
       } catch (error) {
         this.emit('error', error);
-        return { outcome: { outcome: 'cancelled' } };
+        return permissionResponse('reject', params?.options ?? []);
       }
     });
     connection.on('close', (error) => {

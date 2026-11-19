@@ -351,7 +351,8 @@ test('permission requests: declined by default; answered by the client\'s or the
   answer = 'reject';
   assert.deepEqual(await ask(), { outcome: { outcome: 'selected', optionId: 'r0' } });
   answer = 'throw';
-  assert.deepEqual(await ask(), { outcome: { outcome: 'cancelled' } });
+  // A handler that throws declines, by the engine's own reject option.
+  assert.deepEqual(await ask(), { outcome: { outcome: 'selected', optionId: 'r0' } });
   assert.deepEqual(errors, ['oops']);
   const seen = [];
   const off = session.onPermission((request) => { seen.push([request.session === session, request.toolCall.title]); return { optionId: 'a1' }; });
@@ -361,10 +362,10 @@ test('permission requests: declined by default; answered by the client\'s or the
   answer = 'cancel';
   assert.deepEqual(await ask(), { outcome: { outcome: 'cancelled' } });
 
-  // No handler anywhere: declined.
+  // No handler anywhere: declined, by the engine's reject option.
   const bare = await setUp(t);
   await bare.client.newSession();
-  assert.deepEqual((await bare.agneta.peers[0].request('session/request_permission', { sessionId: 's1', toolCall: { toolCallId: 't' }, options })).result, { outcome: { outcome: 'cancelled' } });
+  assert.deepEqual((await bare.agneta.peers[0].request('session/request_permission', { sessionId: 's1', toolCall: { toolCallId: 't' }, options })).result, { outcome: { outcome: 'selected', optionId: 'r0' } });
 });
 
 test('permissionResponse falls back to the other option of the kind, else cancels', () => {

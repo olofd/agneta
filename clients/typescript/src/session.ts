@@ -7,7 +7,7 @@ import type {
 import { configSetting, findConfigOption, type ConfigSetting } from './config.js';
 import type { Connection, RequestOptions } from './connection.js';
 import { Emitter } from './emitter.js';
-import { TurnBusyError, type ConnectionClosedError, type DownloadProgress } from './errors.js';
+import { TimeoutError, TurnBusyError, type ConnectionClosedError, type DownloadProgress } from './errors.js';
 import type {
   AgnetaRequests, AgnetaUsage, EngineId, LimitHit, Policy, PromptResult, RateLimitDetails, SandboxLevel,
   SessionCapabilities, SessionRequestMeta, SessionResult, SteerResult, StoppedBy, TaskInfo, TraceDelivery,
@@ -399,6 +399,8 @@ export class Session extends Emitter<SessionEvents> {
       if (signal?.aborted) queueMicrotask(onAbort);
       return this.#host.connection.request('session/prompt', { sessionId: this.id, prompt: promptBlocks(input), ...(meta ? { _meta: meta } : {}) },
         { timeout: options.timeout ?? this.#host.timeouts.prompt })
+        // Timed out here: the turn still runs in Agneta, so it's cancelled there too (else the next prompt is busy).
+        .catch((error) => { if (error instanceof TimeoutError) this.cancel(); throw error; })
         .finally(() => signal?.removeEventListener('abort', onAbort));
     });
     this.#turn = turn;

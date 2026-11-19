@@ -3,7 +3,7 @@
 // Replica Bench 479xx), nothing of the user's touched, and every process stopped by its process group. The fake model
 // answers "CALL <tool> <json>" with that tool call and "slowly" after 5 s, so this proves the wire, not an agent.
 //
-// From the repository root: scripts/fetch-engines && swift build --product agnetad --product agneta-fakes
+// From the repository root: scripts/fetch-engines && swift build --product agnetad && swift build --product agneta-fakes
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';

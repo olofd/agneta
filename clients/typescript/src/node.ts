@@ -2,7 +2,7 @@
 // Node and Electron-main helpers: token stores on disk (plain, or encrypted with Electron's safeStorage), opening
 // Agneta with macOS's `open`, and finding which Agneta is running. Kept apart so the core needs nothing from Node.
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { dirname } from 'node:path';
 import { builds, type Build } from './protocol.js';
@@ -24,7 +24,12 @@ export function fileTokenStore(path: string): TokenStore {
     },
     async save(token) {
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-      await writeFile(path, token, { mode: 0o600 });
+      // A new file, owner-only from its first byte, then renamed over the old one: never a half-written token, and
+      // never one readable by others even if the old file's mode was looser.
+      const temporary = `${path}.${process.pid}.tmp`;
+      await writeFile(temporary, token, { mode: 0o600, flag: 'w' });
+      await chmod(temporary, 0o600);
+      await rename(temporary, path);
     },
     async clear() {
       await rm(path, { force: true });
