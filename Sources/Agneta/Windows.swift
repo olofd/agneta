@@ -1383,4 +1383,3 @@ struct DefaultsSheet: View {
         }
     }
 }
-

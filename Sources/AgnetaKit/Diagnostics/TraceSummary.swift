@@ -208,9 +208,7 @@ public struct TraceRedactor: Sendable {
     private let salt: [UInt8]
 
     public init() {
-        var bytes = [UInt8](repeating: 0, count: 16)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        salt = bytes
+        salt = SecureRandom.bytes(16)
     }
 
     public func redact(_ value: JSONValue) -> JSONValue { redact(value, path: []) }

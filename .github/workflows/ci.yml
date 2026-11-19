@@ -1,4 +1,4 @@
-# Builds and tests Agneta on the Macs it supports, with the real engines (docs/CI.md).
+# Builds and tests Agneta on the Macs it supports, with the real engines, and runs the static checks (docs/CI.md).
 name: CI
 
 on:
@@ -45,8 +45,10 @@ jobs:
       - name: Fetch the pinned engines
         run: scripts/fetch-engines --engine all
 
+      # Warnings fail the build here (locally they stay warnings), and Package.resolved must already pin every
+      # package. The tests are built in the same step, so Test doesn't build again.
       - name: Build
-        run: swift build
+        run: swift build --build-tests --force-resolved-versions -Xswiftc -warnings-as-errors
 
       # The real-engine suites (Goose and OpenCode against the fake model, the sandbox acceptance test) must run:
       # AGNETA_REQUIRE_ENGINES turns a missing engine into a failure instead of a skip.
@@ -55,7 +57,7 @@ jobs:
         env:
           AGNETA_REQUIRE_ENGINES: "1"
           AGNETA_KEEP_TEST_FILES: "1"
-        run: swift test
+        run: swift test --skip-build
 
       # Foundation's temporary folder is the user's Darwin temp folder, whatever TMPDIR says.
       - name: Collect the test folders
@@ -97,3 +99,104 @@ jobs:
           npm ci --ignore-scripts
           node="$GITHUB_WORKSPACE/build/Agneta Dev.app/Contents/MacOS/node"
           "$node" --test test/*.test.mjs test/agneta.smoke.mjs
+
+      # Replica Bench's unit tests (its scoring, sandbox modes and tools) use macOS's sandbox, so they run here.
+      - name: Test Replica Bench
+        working-directory: examples/replica-bench
+        run: |
+          npm ci --ignore-scripts
+          npm test
+
+  # Everything but Swift: whitespace, shell scripts, Python, JavaScript, the workflows and data files
+  # (scripts/check). Linux is enough and starts in seconds.
+  checks:
+    name: Static checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The scripts run on the Python that comes with Xcode's command line tools, 3.9, so they're compiled and tested
+      # on it: newer syntax fails here. (TOML isn't parsed on 3.9; the check says which files it left.)
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.9'
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      # Each tool is one static binary, pinned by version and SHA-256 (docs/CI.md, Static checks). The runner's own
+      # ShellCheck is older and changes with the image; the pinned one comes first on PATH.
+      - name: Install ShellCheck, actionlint and Ruff
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/bin"
+          mkdir -p "$bin"
+          get() {
+            local url=$1 sum=$2 name=$3 dir
+            dir=$(mktemp -d)
+            curl --fail --location --silent --show-error --output "$dir/archive" "$url"
+            echo "$sum  $dir/archive" | sha256sum --check --quiet
+            tar -xf "$dir/archive" -C "$dir"
+            find "$dir" -type f -name "$name" -exec install -m 755 {} "$bin/$name" \;
+            "$bin/$name" --version | sed -n 1,2p
+          }
+          get https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz \
+            8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198 shellcheck
+          get https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 actionlint
+          get https://github.com/astral-sh/ruff/releases/download/0.17.3/ruff-x86_64-unknown-linux-gnu.tar.gz \
+            2b0890f5a55900af741f133918c2656919bbf18c2ab7741b4ca8403a90e647a9 ruff
+          echo "$bin" >> "$GITHUB_PATH"
+
+      # A missing tool fails instead of skipping. ShellCheck, actionlint and Ruff report without failing until their
+      # first findings on main are fixed (scripts/check, AGNETA_CHECK_REPORT_ONLY).
+      - name: Check
+        env:
+          AGNETA_REQUIRE_TOOLS: "1"
+        run: scripts/check whitespace shell python js actions data
+
+  # swift-format comes with Xcode, so it runs on a Mac, with the version scripts/check pins. Until the one-shot
+  # reformat (CONTRIBUTING.md, Static checks) only the lines a change touches must be formatted; the log reports the
+  # whole tree's findings.
+  swift-format:
+    name: Swift format
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the base the changed lines are measured against
+          persist-credentials: false
+
+      # The newest Xcode whose swift-format is the pinned one (swift_format_version in scripts/check), so a
+      # maintainer's --fix and CI lay code out alike. None on the runner fails here, naming what there is.
+      - name: Use the Xcode with the pinned swift-format
+        run: |
+          want=$(sed -n 's/^swift_format_version=//p' scripts/check)
+          found=()
+          for xcode in $(ls -d /Applications/Xcode_26*.app | sort -rV); do
+            have=$(DEVELOPER_DIR="$xcode/Contents/Developer" xcrun swift-format --version 2>/dev/null || true)
+            found+=("$(basename "$xcode"): ${have:-none}")
+            if [[ "$have" == "$want" ]]; then
+              sudo xcode-select -s "$xcode"
+              echo "$(basename "$xcode"), swift-format $have"
+              exit 0
+            fi
+          done
+          echo "::error::No Xcode 26 here has swift-format $want (${found[*]}); update swift_format_version in scripts/check"
+          exit 1
+
+      # A pull request is measured against its base branch, a push against what main was before it. A base that
+      # isn't in the history (a new branch, a force push, a run by hand) falls back to the last commit.
+      - name: Check the changed lines
+        env:
+          AGNETA_REQUIRE_TOOLS: "1"
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: |
+          base=$BASE
+          git rev-parse --verify --quiet "${base:-none}^{commit}" > /dev/null || base=HEAD^
+          AGNETA_CHECK_BASE=$base scripts/check swift

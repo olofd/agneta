@@ -71,7 +71,7 @@ if options.confine != nil && options.builtins {
     // Shell commands go through Agneta's broker and run under the strict tool profile.
     let workspace = URL(filePath: options.cwd, directoryHint: .isDirectory).realFileURL
     let toolProfile = SandboxProfile(kind: .tool, writable: [workspace], denied: []).render()
-    let token = UUID().uuidString
+    let token = SecureRandom.token()
     let socket = FileManager.default.temporaryDirectory.appending(path: "agneta-\(getpid()).sock").path(percentEncoded: false)
     let service = ToolBroker(socketPath: socket) { offered, cwd in
         offered == token && cwd.isInside(workspace) ? .init(profile: toolProfile, environment: ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": workspace.path(percentEncoded: false), "LANG": "en_US.UTF-8"]) : nil

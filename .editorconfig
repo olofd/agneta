@@ -1,0 +1,25 @@
+# The whitespace the code is written in, for editors (https://editorconfig.org). scripts/check whitespace enforces the
+# part every file shares; .swift-format the Swift layout.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.{swift,py}]
+indent_size = 4
+
+[{scripts/dev/handshake,scripts/dev/notes-html,scripts/dev/sbom,scripts/dev/check-files,scripts/dev/swift-format-changed}]
+indent_size = 4
+
+[*.md]
+indent_size = unset
+
+# Other projects' texts, kept verbatim.
+[Licenses/**]
+trim_trailing_whitespace = false
+insert_final_newline = unset

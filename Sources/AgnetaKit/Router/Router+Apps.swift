@@ -174,9 +174,8 @@ extension Router {
             // An app Agneta can't verify shows a code; the approval window shows the same one.
             var code: String?
             if !verified {
-                var number: UInt32 = 0
-                _ = withUnsafeMutableBytes(of: &number) { SecRandomCopyBytes(kSecRandomDefault, $0.count, $0.baseAddress!) }
-                code = String(format: "%06d", number % 1_000_000)
+                // Uniform over all six-digit codes, from the system generator (cryptographic on Apple platforms).
+                code = String(format: "%06ld", Int.random(in: 0..<1_000_000))
                 try? await app.peer.notify("agneta/pairingCode", ["code": .string(code!), "name": .string(name)])
             }
             var request = PairingRequest(id: UUID(), app: name, peer: peer, code: code, tools: scope.tools, folders: scope.folders)
@@ -544,9 +543,5 @@ extension Router {
     static let extensions = [SessionPolicy.key, "agneta/access", "agneta/catalog", "agneta/setup", "agneta/task", "agneta/instructions", "agneta/steer", "agneta/usage",
                              "agneta/trace", "agneta/limit", "agneta/queue", "agneta/rateLimited", "agneta/fork", "agneta/appLimits"]
 
-    static func newToken() -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        return Data(bytes).base64EncodedString().replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "+", with: "-")
-    }
+    static func newToken() -> String { SecureRandom.token() }
 }

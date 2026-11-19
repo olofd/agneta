@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+# Checks Swift formatting on the lines a change touches, not the whole file (scripts/check runs it).
+#
+# Most of the code predates the formatter, so a whole-file check would fail every change, and a whole-repo reformat
+# would conflict with every branch in flight. Until that one-shot reformat lands (CONTRIBUTING.md, Static checks), the
+# formatter's own output is the reference and only its edits that overlap lines changed since the base count: a
+# changed line inside a statement the formatter would rewrap fails, an old line next to it doesn't. A renamed file
+# counts only for the lines its change edits; a new or untracked one, for all of them.
+#
+#   swift-format-changed [--base REF | --all] [--fix] [--report]
+#
+# --base   what the change is measured against (default: the merge base with origin/main, or main). Uncommitted and
+#          untracked files count as changed.
+# --all    every line of every Swift file counts as changed: the check after the reformat, and with --fix the
+#          reformat itself.
+# --fix    applies, in place, the formatter's edits that touch changed lines. An edit covers what the formatter
+#          rewrites as one, so it can reach the rest of the statements around those lines, never further.
+# --report also prints the whole tree's lint findings by rule, for information; they never fail the check.
+import argparse
+import difflib
+import os
+import re
+import subprocess
+import sys
+from collections import Counter
+
+ROOT = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip()
+CONFIG = os.path.join(ROOT, ".swift-format")
+# The tree the checks cover: everything Swift that's tracked, the package manifest included.
+TREE = ["Package.swift", "Sources", "Tests", "scripts"]
+# Findings about layout, which the formatter's diff already shows; the rest are rules (naming, unsafe patterns).
+LAYOUT = {"Indentation", "LineLength", "AddLines", "RemoveLine", "Spacing", "TrailingComma", "TrailingWhitespace",
+          "EndOfLineComment"}
+FINDING = re.compile(r"^(?P<file>.+?):(?P<line>\d+):(?P<column>\d+): (?:warning|error): \[(?P<rule>\w+)\] (?P<text>.*)$")
+
+
+def git(*args):
+    return subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True, check=True).stdout
+
+
+def git_paths(*args):
+    """A git command's NUL-separated output (-z), as names: any path, spaces and non-ASCII included."""
+    output = subprocess.run(["git", "-C", ROOT, *args], capture_output=True, check=True).stdout
+    return [os.fsdecode(name) for name in output.split(b"\0") if name]
+
+
+def hunk_lines(diff):
+    """The line numbers (1-based, in the new file) a -U0 diff's hunks add or change."""
+    lines = set()
+    for hunk in re.finditer(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", diff, re.M):
+        start, count = int(hunk[1]), int(hunk[2] or 1)
+        lines.update(range(start, start + count))
+    return lines
+
+
+def swift_format(*args, stdin=None):
+    return subprocess.run(["xcrun", "swift-format", *args, "--configuration", CONFIG], input=stdin,
+                          capture_output=True, text=True)
+
+
+def merge_base(base):
+    if base is None:
+        for candidate in ("origin/main", "main"):
+            if subprocess.run(["git", "-C", ROOT, "rev-parse", "--verify", "--quiet", candidate],
+                              capture_output=True).returncode == 0:
+                base = candidate
+                break
+        else:
+            sys.exit("swift-format-changed: no origin/main or main to compare with; pass --base")
+    found = subprocess.run(["git", "-C", ROOT, "merge-base", base, "HEAD"], capture_output=True, text=True)
+    if found.returncode != 0:
+        sys.exit(f"swift-format-changed: no merge base with {base} (a shallow clone needs fetch-depth: 0)")
+    return found.stdout.strip()
+
+
+def changed_lines(base):
+    """Each changed Swift file under the tree, with the line numbers (1-based, in the current file) the change touches.
+    None stands for the whole file (a new or untracked one)."""
+    changed = {}
+    # Each entry is a status and a path, or for a rename R<score>, the old path and the new.
+    entries = git_paths("diff", "-z", "-M", "--name-status", "--diff-filter=AMR", base, "--", *TREE)
+    while entries:
+        status, old = entries[0], entries[1]
+        new = entries[2] if status.startswith("R") else old
+        entries = entries[3:] if status.startswith("R") else entries[2:]
+        if not new.endswith(".swift"):
+            continue
+        # Diffed with both of a rename's paths, git pairs them: only the lines the change edits count.
+        changed[new] = None if status == "A" else hunk_lines(git("diff", "-M", "-U0", base, "--", *{old, new}))
+    for name in git_paths("ls-files", "-z", "--others", "--exclude-standard", "--", *TREE):
+        if name.endswith(".swift"):
+            changed[name] = None
+    return changed
+
+
+def touches(lines, first, last):
+    """Whether the original lines first...last (1-based; last < first for a pure insertion before first) touch the
+    change. An insertion counts when it's next to a changed line."""
+    if lines is None:
+        return True
+    if last < first:
+        return first in lines or (first - 1) in lines
+    return any(n in lines for n in range(first, last + 1))
+
+
+def check_file(name, lines, fix):
+    """The formatter's edits that touch the change, and the rule findings on changed lines. With fix, the edits are
+    applied to the file and the rules are checked on the result."""
+    path = os.path.join(ROOT, name)
+    with open(path, encoding="utf-8") as file:
+        original = file.read()
+    formatted = swift_format("format", "--assume-filename", name, stdin=original)
+    if formatted.returncode != 0:
+        return [], [f"{name}: swift-format couldn't read it:\n{formatted.stderr.strip()}"]
+    old, new = original.splitlines(keepends=True), formatted.stdout.splitlines(keepends=True)
+    edits, result = [], []
+    # The changed lines' numbers in the result, which shift as edits add or remove lines before them.
+    moved = None if lines is None else set()
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
+        if tag == "equal" or not touches(lines, i1 + 1, i2):
+            if moved is not None:
+                moved.update(len(result) + n - i1 for n in range(i1 + 1, i2 + 1) if n in lines)
+            result.extend(old[i1:i2])
+            continue
+        if moved is not None:
+            moved.update(range(len(result) + 1, len(result) + j2 - j1 + 1))
+        result.extend(new[j1:j2])
+        diff = "".join(difflib.unified_diff(old[i1:i2], new[j1:j2], n=0)).splitlines()[3:]
+        edits.append(f"{name}:{max(i1, 1) if i2 == i1 else i1 + 1}: not formatted\n"
+                     + "\n".join("    " + line for line in diff))
+    checked = "".join(result) if fix else original
+    if fix and checked != original:
+        with open(path, "w", encoding="utf-8") as file:
+            file.write(checked)
+    linted = swift_format("lint", "--assume-filename", name, stdin=checked)
+    numbered = moved if fix else lines
+    findings = [f"{name}:{m['line']}:{m['column']}: [{m['rule']}] {m['text']}"
+                for m in map(FINDING.match, linted.stderr.splitlines())
+                if m and m["rule"] not in LAYOUT and touches(numbered, int(m["line"]), int(m["line"]))]
+    return edits, findings
+
+
+def report():
+    linted = swift_format("lint", "--recursive", "--parallel", *[os.path.join(ROOT, p) for p in TREE])
+    found = [m for m in map(FINDING.match, linted.stderr.splitlines()) if m]
+    counts = Counter(m["rule"] for m in found)
+    files = len({m["file"] for m in found})
+    summary = ", ".join(f"{rule} {count}" for rule, count in counts.most_common())
+    print(f"swift-format, whole tree (report only until the reformat): {len(found)} findings in {files} files"
+          + (f": {summary}" if summary else ""))
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="swift-format-changed")
+    parser.add_argument("--base")
+    parser.add_argument("--all", action="store_true")
+    parser.add_argument("--fix", action="store_true")
+    parser.add_argument("--report", action="store_true")
+    args = parser.parse_args()
+    if args.all:
+        changed = {name: None for name in git_paths("ls-files", "-z", "--", *TREE) if name.endswith(".swift")}
+        short = "the start (every line)"
+    else:
+        base = merge_base(args.base)
+        short = git("rev-parse", "--short", base).strip()
+        changed = changed_lines(base)
+    edits, findings = [], []
+    for name, lines in sorted(changed.items()):
+        file_edits, file_findings = check_file(name, lines, args.fix)
+        edits += file_edits
+        findings += file_findings
+    if args.report:
+        report()
+    if args.fix:
+        print(f"swift-format: formatted {len(edits)} place(s) around lines changed since {short}")
+        edits = []
+    for problem in edits + findings:
+        print(problem)
+    if edits or findings:
+        print(f"swift-format: {len(edits)} unformatted place(s) and {len(findings)} rule finding(s) on lines changed "
+              f"since {short}." + (" scripts/check swift --fix formats them." if edits else ""))
+        return 1
+    print(f"swift-format: the lines changed since {short} in {len(changed)} Swift file(s) are formatted")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

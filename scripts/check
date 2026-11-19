@@ -1,0 +1,157 @@
+#!/bin/bash
+# The repository's static checks, the same here and in CI (docs/CI.md, Static checks). Fast: no build, nothing
+# downloaded or installed.
+#   scripts/check [--fix] [check ...]   (default: every check)
+#
+#   whitespace  no trailing whitespace, CRLF, conflict markers or blank lines at the end of a file
+#   swift       swift-format (.swift-format) on the lines changed since the base, until the one-shot reformat
+#               (CONTRIBUTING.md, Static checks); the whole tree's findings are reported, never failed. Also the
+#               format check's own tests (scripts/dev/tests)
+#   shell       every shell script parses; ShellCheck (.shellcheckrc) when installed
+#   python      every Python file compiles; the file checks' own tests; Ruff (ruff.toml) when installed
+#   js          every JavaScript file parses (node --check)
+#   typescript  the TypeScript client's type check, when its packages are installed (npm ci in clients/typescript)
+#   actions     actionlint on the workflows, when installed
+#   data        every JSON, lock, plist and TOML file parses
+#
+# --fix repairs what's mechanical: whitespace in tracked files, and Swift formatting around the changed lines.
+# A check whose tool isn't installed is skipped (and says so); one missing only an optional tool runs without it.
+# AGNETA_CHECK_BASE   what "changed" is measured against (default: the merge base with origin/main, or main).
+# AGNETA_REQUIRE_TOOLS=1   a missing tool fails its check instead of skipping it (CI).
+# AGNETA_CHECK_REPORT_ONLY   tools whose findings are shown but don't fail (default: ShellCheck, actionlint and Ruff,
+#                            until their first findings on main are fixed; CONTRIBUTING.md, Static checks).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+all=(whitespace swift shell python js typescript actions data)
+# The swift-format CI formats with: versions can lay code out differently, so CI selects the Xcode that has this one,
+# and a different one here is pointed out.
+swift_format_version=6.3.0
+report_only=" ${AGNETA_CHECK_REPORT_ONLY-shellcheck actionlint ruff} "
+fix=false checks=()
+for arg in "$@"; do
+  case "$arg" in
+    --fix) fix=true ;;
+    whitespace|swift|shell|python|js|typescript|actions|data) checks+=("$arg") ;;
+    *) echo "usage: scripts/check [--fix] [${all[*]}]" >&2; exit 2 ;;
+  esac
+done
+[[ ${#checks[@]} -eq 0 ]] && checks=("${all[@]}")
+
+# A tool that isn't installed: noted with how to get it, or a failure when CI requires every tool.
+missing() {
+  if [[ "${AGNETA_REQUIRE_TOOLS:-}" == 1 ]]; then echo "$1 isn't installed, and AGNETA_REQUIRE_TOOLS=1 needs it" >&2; return 1; fi
+  echo "not run: $1 isn't installed ($2)"
+  absent+=("$1")
+}
+
+# A check that can't run at all without its tool: skipped (status 3), or failed when CI requires every tool.
+skip() { missing "$@" || return 1; return 3; }
+
+# Runs a third-party tool. Its findings (exit 1) fail the check unless the tool only reports; any other failure, such
+# as a bad configuration, always fails.
+tool() {
+  local name=$1 status=0
+  shift
+  "$@" || status=$?
+  if [[ $status -eq 1 && "$report_only" == *" $name "* ]]; then
+    echo "$name: the findings above are reported only, for now (AGNETA_CHECK_REPORT_ONLY)"
+    return 0
+  fi
+  return $status
+}
+
+list() { local file; while IFS= read -r file; do [[ -n "$file" ]] && printf '%s\n' "$file"; done; }
+
+check_whitespace() {
+  if $fix; then scripts/dev/check-files whitespace --fix; else scripts/dev/check-files whitespace; fi
+}
+
+check_swift() {
+  xcrun --find swift-format > /dev/null 2>&1 || { skip swift-format "it comes with Xcode 26"; return; }
+  local version
+  version=$(xcrun swift-format --version)
+  if [[ "$version" != "$swift_format_version" ]]; then
+    [[ "${AGNETA_REQUIRE_TOOLS:-}" == 1 ]] && { echo "swift-format $version, but CI formats with $swift_format_version" >&2; return 1; }
+    echo "note: swift-format $version here, $swift_format_version in CI: its layout may differ"
+  fi
+  python3 -m unittest discover -s scripts/dev/tests -p test_swift_format_changed.py || return 1
+  # After the one-shot reformat (CONTRIBUTING.md, Static checks), --all here makes every line count.
+  local args=(--report)
+  [[ -n "${AGNETA_CHECK_BASE:-}" ]] && args+=(--base "$AGNETA_CHECK_BASE")
+  $fix && args+=(--fix)
+  scripts/dev/swift-format-changed "${args[@]}"
+}
+
+check_shell() {
+  local files=() file failed=0
+  while IFS= read -r file; do files+=("$file"); done < <(scripts/dev/check-files list shell | list)
+  for file in "${files[@]}"; do
+    case "$(head -1 "$file")" in
+      *bash*) bash -n "$file" ;;
+      *) sh -n "$file" ;;
+    esac || { echo "$file: doesn't parse"; failed=1; }
+  done
+  [[ $failed -eq 0 ]] && echo "shell: ${#files[@]} scripts parse"
+  if command -v shellcheck > /dev/null; then
+    echo "ShellCheck $(shellcheck --version | sed -n 's/^version: //p') on ${#files[@]} scripts"
+    tool shellcheck shellcheck "${files[@]}" || failed=1
+  else
+    missing shellcheck "brew install shellcheck" || failed=1
+  fi
+  return $failed
+}
+
+check_python() {
+  local files=() file failed=0
+  while IFS= read -r file; do files+=("$file"); done < <(scripts/dev/check-files list python | list)
+  scripts/dev/check-files python || failed=1
+  python3 -m unittest discover -s scripts/dev/tests -p test_check_files.py || failed=1
+  if command -v ruff > /dev/null; then
+    echo "$(ruff --version) on ${#files[@]} files"
+    tool ruff ruff check --quiet --no-cache "${files[@]}" || failed=1
+  else
+    missing ruff "brew install ruff" || failed=1
+  fi
+  return $failed
+}
+
+check_js() {
+  command -v node > /dev/null || { skip node "https://nodejs.org"; return; }
+  local files=() file failed=0
+  while IFS= read -r file; do files+=("$file"); done < <(git ls-files --cached --others --exclude-standard -- '*.js' '*.mjs' '*.cjs' | list)
+  for file in "${files[@]}"; do node --check "$file" || failed=1; done
+  [[ $failed -eq 0 ]] && echo "js: ${#files[@]} files parse"
+  return $failed
+}
+
+check_typescript() {
+  [[ -x clients/typescript/node_modules/.bin/tsc ]] || { skip "the client's TypeScript" "npm ci in clients/typescript"; return; }
+  (cd clients/typescript && npm run --silent typecheck) && echo "typescript: the client type-checks"
+}
+
+check_actions() {
+  command -v actionlint > /dev/null || { skip actionlint "brew install actionlint"; return; }
+  echo "actionlint $(actionlint -version | sed -n 1p)$(command -v shellcheck > /dev/null && echo ', with ShellCheck on run steps')"
+  tool actionlint actionlint
+}
+
+check_data() { scripts/dev/check-files data; }
+
+passed=() failed=() skipped=() absent=()
+for check in "${checks[@]}"; do
+  [[ "${GITHUB_ACTIONS:-}" == true ]] && echo "::group::$check" || echo "== $check"
+  status=0
+  "check_$check" || status=$?
+  [[ "${GITHUB_ACTIONS:-}" == true ]] && echo "::endgroup::"
+  case $status in
+    0) passed+=("$check") ;;
+    3) skipped+=("$check") ;;
+    *) failed+=("$check"); echo "$check: failed" ;;
+  esac
+done
+summary="checks passed: ${passed[*]:-none}"
+[[ ${#failed[@]} -gt 0 ]] && summary+="; failed: ${failed[*]}"
+[[ ${#skipped[@]} -gt 0 ]] && summary+="; skipped: ${skipped[*]}"
+[[ ${#absent[@]} -gt 0 ]] && summary+="; not installed, so not run: ${absent[*]}"
+echo "$summary"
+[[ ${#failed[@]} -eq 0 ]]

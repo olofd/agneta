@@ -332,4 +332,3 @@ struct DownloadStatus: View {
         }
     }
 }
-
