@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+# The file checks scripts/check runs that need nothing beyond Python: whitespace, data files and Python syntax.
+#
+#   check-files whitespace [--fix]   no trailing whitespace, CRLF, conflict markers or blank lines at the end; one
+#                                    final newline. --fix repairs the whitespace (never conflict markers).
+#   check-files data                 every JSON, lock (JSON), plist and TOML file parses.
+#   check-files python               every Python file compiles with warnings as errors (an invalid escape, say).
+#   check-files list python|shell    lists the Python or shell files, for the tools scripts/check runs on them.
+#
+# Files are the tracked ones plus untracked ones git doesn't ignore. Licenses/ holds other projects' texts verbatim
+# and is left as it is.
+import json
+import os
+import plistlib
+import re
+import subprocess
+import sys
+import warnings
+
+ROOT = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip()
+VERBATIM = ("Licenses/",)
+CONFLICT = re.compile(rb"^(<{7}|>{7})( |$)|^={7}$")
+
+
+def files():
+    listed = subprocess.run(["git", "-C", ROOT, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                            capture_output=True, check=True).stdout
+    names = sorted({name for name in listed.decode().split("\0") if name})
+    return [n for n in names if os.path.isfile(os.path.join(ROOT, n)) and not n.startswith(VERBATIM)]
+
+
+def read(name):
+    with open(os.path.join(ROOT, name), "rb") as file:
+        return file.read()
+
+
+def is_text(data):
+    return b"\0" not in data[:8192]
+
+
+def shebang(data):
+    return data.split(b"\n", 1)[0] if data.startswith(b"#!") else b""
+
+
+def whitespace(fix):
+    problems, fixed = [], 0
+    for name in files():
+        data = read(name)
+        if not data or not is_text(data):
+            continue
+        found = []
+        lines = data.split(b"\n")
+        for number, line in enumerate(lines[:-1] if data.endswith(b"\n") else lines, 1):
+            if CONFLICT.match(line):
+                found.append(f"{name}:{number}: conflict marker")
+            if line.endswith(b"\r"):
+                found.append(f"{name}:{number}: CRLF line ending")
+            elif line != line.rstrip():
+                found.append(f"{name}:{number}: trailing whitespace")
+        if not data.endswith(b"\n"):
+            found.append(f"{name}: no newline at the end")
+        elif data.endswith(b"\n\n"):
+            found.append(f"{name}: blank line at the end")
+        if not found:
+            continue
+        repaired = b"\n".join(line.rstrip() for line in data.split(b"\n")).rstrip(b"\n") + b"\n"
+        if fix and repaired != data and not any("conflict" in f for f in found):
+            with open(os.path.join(ROOT, name), "wb") as file:
+                file.write(repaired)
+            fixed += 1
+        else:
+            problems += found
+    if fixed:
+        print(f"whitespace: repaired {fixed} file(s)")
+    return report("whitespace", problems, "scripts/check --fix whitespace repairs it")
+
+
+def data_files():
+    problems, count = [], 0
+    for name in files():
+        extension = os.path.splitext(name)[1]
+        try:
+            if extension in (".json", ".lock"):
+                json.loads(read(name))
+            elif extension in (".plist", ".entitlements"):
+                plistlib.loads(read(name))
+            elif extension == ".toml":
+                try:
+                    import tomllib
+                except ImportError:  # Python before 3.11
+                    continue
+                tomllib.loads(read(name).decode())
+            else:
+                continue
+            count += 1
+        except Exception as error:  # every parser's own error type
+            problems.append(f"{name}: doesn't parse: {error}")
+    return report("data", problems, None, f"{count} JSON, plist and TOML files parse")
+
+
+def of_kind(kind):
+    """Python or shell files, by extension or by the interpreter their first line names."""
+    if kind == "python":
+        return [n for n in files() if n.endswith(".py") or re.search(rb"python", shebang(read(n)))]
+    return [n for n in files() if n.endswith(".sh") or re.search(rb"/(env )?(ba|z)?sh\b", shebang(read(n)))]
+
+
+def python_compile():
+    problems = []
+    names = of_kind("python")
+    for name in names:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            try:
+                compile(read(name), name, "exec", dont_inherit=True)
+            except (SyntaxError, SyntaxWarning, ValueError) as error:
+                problems.append(f"{name}: {type(error).__name__}: {error}")
+    return report("python", problems, None, f"{len(names)} Python files compile")
+
+
+def report(check, problems, hint, ok=None):
+    for problem in problems:
+        print(problem)
+    if problems:
+        print(f"{check}: {len(problems)} problem(s)" + (f"; {hint}" if hint else ""))
+        return 1
+    print(f"{check}: {ok or 'clean'}")
+    return 0
+
+
+def main(args):
+    if args[:1] == ["whitespace"]:
+        return whitespace("--fix" in args[1:])
+    if args == ["data"]:
+        return data_files()
+    if args == ["python"]:
+        return python_compile()
+    if args in (["list", "python"], ["list", "shell"]):
+        print("\n".join(of_kind(args[1])))
+        return 0
+    print("usage: check-files whitespace [--fix] | data | python | list python|shell", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

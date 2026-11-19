@@ -17,6 +17,16 @@ swift build && swift test    # everything, with fake models; no accounts needed
 - `AGNETA_REAL_PROBE=1 AGNETA_REAL_PROBE_HOME=<folder> swift test --filter realProbe` runs a short real round on your own accounts. The folder holds the probe's sign-ins, laid out like Agneta's data: sign in once with `swift run agneta-signin claude --home <folder>/Accounts/claude` (and `codex --home <folder>/Accounts/chatgpt`). It never reads the app's own data. It's optional, and it uses your plan's limits or credit.
 - Run test instances of the app with their own `AGNETA_HOME` and `AGNETA_PORT`, so nothing touches your own accounts.
 - `python3 site/build.py` builds the website from the docs and fails on a broken link between them ([site/README.md](site/README.md)). Run it when you change a document.
+- `scripts/check` runs the static checks below in a few seconds. Run it before you push.
+
+## Static checks
+
+`scripts/check` runs the same static checks as CI ([docs/CI.md](docs/CI.md#static-checks)): whitespace, Swift formatting, the shell scripts, Python, JavaScript, the TypeScript client's types, the workflows and the data files. `scripts/check swift shell` runs just those; `scripts/check --fix` repairs what's mechanical (whitespace, and Swift formatting on the lines you changed). It needs only Xcode and Node. ShellCheck, actionlint and Ruff are used when they're installed (`brew install shellcheck actionlint ruff`) and skipped with a note when they aren't; CI installs them pinned and requires them.
+
+- **Warnings are errors in CI.** `swift build --build-tests -Xswiftc -warnings-as-errors` builds as CI does. A warning the code needs on purpose, such as a deprecated API used only for design review, is kept in one place (`Snapshots.swift` calls it through a protocol) rather than left warning.
+- **Swift formatting.** swift-format, which comes with Xcode, with the repository's `.swift-format`: four-space indentation and 120 columns, the width the comments wrap at. Most of the code predates it, so for now only the lines a change touches must be formatted; `scripts/check swift --fix` formats exactly those, and the check also reports the whole tree's findings without failing. Once the whole tree has been reformatted in a commit of its own, the check covers every line.
+- **ShellCheck, actionlint and Ruff** report without failing until their first findings on `main` are fixed; then they fail like the rest (`AGNETA_CHECK_REPORT_ONLY` in `scripts/check`). A deliberate exception is a `# shellcheck disable=SCxxxx` (or `# noqa: Xnnn`) on its line, saying why.
+- `.editorconfig` tells editors the whitespace each kind of file uses.
 
 ## Reporting a bug
 

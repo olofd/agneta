@@ -1,0 +1,4 @@
+# ShellCheck (scripts/check shell, and actionlint on workflow steps). Scripts source their siblings by path relative
+# to themselves; every rule is on, and a deliberate exception is a `# shellcheck disable=SCxxxx` on its line, with why.
+external-sources=true
+source-path=SCRIPTDIR

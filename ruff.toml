@@ -1,0 +1,9 @@
+# Ruff (scripts/check python): lints the scripts in scripts/dev, site/build.py and the examples' Python. Formatting is
+# left as written (no `ruff format`): the files keep their own style. The rules are Ruff's defaults (syntax errors,
+# undefined and unused names, imports, comparisons), bugbear's likely bugs and pylint's errors.
+# The scripts run on the Python that comes with Xcode's command line tools (3.9) as well as newer ones.
+target-version = "py39"
+line-length = 120
+
+[lint]
+select = ["E4", "E7", "E9", "F", "B", "PLE"]
