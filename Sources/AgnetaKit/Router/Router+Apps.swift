@@ -107,12 +107,13 @@ extension Router {
             traces.close(task: id)
         }
         if announced { onEvent(.sessionEnded(id, ending)) }
-        // A turn cut off here still counts what it spent: the engine's records, read once more. (Claude Code's cost for
-        // a turn it never finished never arrives.)
-        if let turn, turn.began, turn.counted, let trace {
+        // What the engine recorded after the last read still counts: a turn cut off here, or rows that landed after an
+        // idle session's last turn ended (a step OpenCode finished late). The engine's records, read once more. (Claude
+        // Code's cost for a turn it never finished never arrives.)
+        if turn.map({ $0.began && $0.counted }) ?? countsSpend(session.account), let trace {
             let before = trace.progress.taskCost
             await trace.pollLedger()
-            addUsage(meter: turn.meter, AppMeter.Usage(cost: max(0, trace.progress.taskCost - before)))
+            addUsage(meter: turn?.meter ?? session.meter, AppMeter.Usage(cost: max(0, trace.progress.taskCost - before)))
         }
         // Its running prompt ends now, whatever the engine does: a shared engine stays up, and one stuck in a tool may
         // never answer it.
@@ -227,7 +228,7 @@ extension Router {
             // its usage goes on under the new one.
             if let earlier {
                 tokens = tokens.filter { $0.value.id != earlier.id }
-                if earlier.id != grant.id, let usage = meters.removeValue(forKey: earlier.id) { meters[grant.id] = usage }
+                if earlier.id != grant.id { recount(from: earlier.id, to: grant.id) }
             }
             tokens[hash] = grant
             if !answer.remember { onceTokens[appID] = hash }
@@ -294,8 +295,10 @@ extension Router {
                 return .success(["sessionId": .string(id), "stopReason": "cancelled",
                                  "_meta": ["agneta/limit": LimitHit(limit: "maxCostUSD", value: .double(max)).report]])
             }
-            // Over a limit the user set for the app: refused, as the user's choice (-32016).
-            if let refusal = appLimitRefusal(grant, account: session.account, newTask: .none) { return .failure(refusal) }
+            // Over a limit the user set for the app: refused, as the user's choice (-32016). And on an engine a spending
+            // limit set since the session opened can't count (Codex on an API key; `apply` stops those sessions too).
+            if let refusal = uncountedRefusal(session.lease.engine.id, account: session.account, grant: grant)
+                ?? appLimitRefusal(grant, account: session.account, newTask: .none) { return .failure(refusal) }
             do {
                 guard try await admit(id, account: session.account, meter: session.meter) else { return .success(["stopReason": "cancelled"]) }
             } catch let error as RPCError {
@@ -304,12 +307,16 @@ extension Router {
                 return .failure(RPCError(code: RPCError.internalError, message: "\(error)"))
             }
             // It may have waited while the app spent its budget, or the user lowered it.
-            if current(id, generation), let now = apps[appID]?.grant, let refusal = appLimitRefusal(now, account: session.account, newTask: .none) {
+            if current(id, generation), let now = apps[appID]?.grant,
+               let refusal = uncountedRefusal(session.lease.engine.id, account: session.account, grant: now)
+                   ?? appLimitRefusal(now, account: session.account, newTask: .none) {
                 runningTurns[id] = nil
+                sessions[id]?.limitHit = nil
                 admitWaiting()
                 return .failure(refusal)
             }
             runningTurns[id]?.began = true
+            sessions[id]?.limitHit = nil // a turn begins with no limit reached
             onEvent(.turnStarted(id))
             trace?.turnStarted(prompt: params?["prompt"])
         }
@@ -425,6 +432,7 @@ extension Router {
     func noteTokens(_ id: String, _ summary: [String: JSONValue]) {
         let ledger = summary["ledger"]
         runningTurns[id]?.tokens = (Int(ledger?["input"]?.intValue ?? 0), Int(ledger?["output"]?.intValue ?? 0))
+        runningTurns[id]?.modelCalls = Int(summary["modelCalls"]?.intValue ?? 0)
     }
 
     /// Settings and steering from the app, in the trace.

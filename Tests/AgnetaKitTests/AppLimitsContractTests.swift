@@ -231,6 +231,142 @@ final class TestClock: @unchecked Sendable {
     }
 }
 
+
+/// The engine's records for a session, as a test hands them out: slow to read while `slow`, and a row once armed.
+final class TestLedger: UsageLedger, @unchecked Sendable {
+    private let lock = NSLock()
+    private var isSlow = false
+    private var rows: [[String: JSONValue]] = []
+    var slow: Bool {
+        get { lock.withLock { isSlow } }
+        set { lock.withLock { isSlow = newValue } }
+    }
+    func add(_ row: [String: JSONValue]) { lock.withLock { rows.append(row) } }
+    func read() -> (messages: [[String: JSONValue]], usage: [[String: JSONValue]], problem: String?) {
+        if slow { Thread.sleep(forTimeInterval: 1.5) }
+        return lock.withLock { () -> ([[String: JSONValue]], [[String: JSONValue]], String?) in
+            defer { rows = [] }
+            return ([], rows, nil)
+        }
+    }
+}
+
+/// Found in review: each a probe first, kept as a regression test.
+@Suite(.serialized) struct AppLimitsReviewTests {
+    typealias Stack = RouterContractTests.Stack
+
+    /// The spending limit is reached while another of the app's turns is finishing (in its last read of the engine's
+    /// records). Once the user raises the limit, that session's next turn runs: nothing stale stops it.
+    @Test func aTurnFinishingAtTheLimitLeavesNothingForTheNext() async throws {
+        let stack = try await Stack.start(port: 47666, concurrency: .init(limitGrace: .milliseconds(300)))
+        defer { stack.stop() }
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Spender")
+        let grant = try await AppLimitsContractTests.grant(stack, "Spender")
+        try await stack.router.setLimits(grant: grant, limits: AppLimits(spend: .init(max: 1, period: .day)))
+        let one = try await stack.session(app, account: "brokered"), two = try await stack.session(app, account: "brokered")
+        let ledger = TestLedger()
+        stack.traces.session(two)?.follow(ledger)
+        let first = Task { try await app.prompt(one, "slow") }
+        try await AppLimitsContractTests.running(stack, one)
+        ledger.slow = true
+        let second = Task { try await app.prompt(two, "hello") }
+        try await Task.sleep(for: .milliseconds(200))
+        stack.traces.session(one)?.ingest(modelCall: ["id": "c1", "cost": .double(1.5)])
+        _ = try await second.value
+        _ = try await first.value
+        ledger.slow = false
+        #expect(await stack.router.sessions[two]?.limitHit == nil)
+        try await stack.router.setLimits(grant: grant, limits: AppLimits(spend: .init(max: 100, period: .day)))
+        let next = try await app.prompt(two, "slow")
+        #expect(next["stopReason"] == "end_turn" && next["_meta"]?["agneta/limit"] == nil, "\(next)")
+    }
+
+    /// A task on Codex with an API key, open before the user set a spending limit, stops when the limit is set: the
+    /// limit can't count it.
+    @Test func codexOpenBeforeASpendingLimitStopsWhenItsSet() async throws {
+        let stack = try await Stack.start(port: 47667)
+        defer { stack.stop() }
+        let codex = CodexAdapter(node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: EngineContractTests.cli)
+        await stack.router.setCatalog(EngineCatalog(ready: [RouterContractTests.goose, codex]))
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Spender")
+        let grant = try await AppLimitsContractTests.grant(stack, "Spender")
+        let session = try await stack.session(app, account: "brokered", meta: ["agneta": ["account": "brokered", "engine": "codex"]])
+        #expect(try await app.prompt(session, "hello")["stopReason"] == "end_turn")
+        try await stack.router.setLimits(grant: grant, limits: AppLimits(spend: .init(max: 1, period: .day)))
+        #expect(await stack.router.sessions[session] == nil)
+        try await AppLimitsContractTests.until("sessionStopped") {
+            app.notifications("agneta/sessionStopped").contains { $0["sessionId"]?.stringValue == session }
+        }
+        #expect(await AppLimitsContractTests.refusal { try await app.prompt(session, "hello") } != nil)
+    }
+
+    /// With "at once" set and not reached, the app's turn on a free account doesn't wait behind its own turn waiting for
+    /// a full account, and that one waits for its account, as it says.
+    @Test func anAppsTurnWaitingForItsAccountHoldsUpNoneOfItsOthers() async throws {
+        let stack = try await Stack.start(port: 47668, concurrency: .init(perAccount: 1))
+        defer { stack.stop() }
+        let capped = AppClient(port: stack.port), other = AppClient(port: stack.port)
+        defer { capped.close(); other.close() }
+        try await capped.pairAndInitialize("Capped")
+        try await other.pairAndInitialize("Other")
+        try await stack.router.setLimits(grant: try await AppLimitsContractTests.grant(stack, "Capped"), limits: AppLimits(atOnce: 2))
+        let busy = try await stack.session(other, account: "brokered")
+        let onKey = try await stack.session(capped, account: "brokered"), onPlan = try await stack.session(capped, account: "native")
+        let holding = Task { try await other.prompt(busy, "slow") }
+        try await AppLimitsContractTests.running(stack, busy)
+        let queued = Task { try await capped.prompt(onKey, "hello") }
+        try await AppLimitsContractTests.until("the key turn to queue") { capped.notifications("agneta/queued").contains { $0["sessionId"]?.stringValue == onKey } }
+        #expect(capped.notifications("agneta/queued").first { $0["sessionId"]?.stringValue == onKey }?["waitingFor"] == "account")
+        // The turn on the plan runs at once.
+        #expect(try await capped.prompt(onPlan, "hello")["stopReason"] == "end_turn")
+        #expect(!capped.notifications("agneta/queued").contains { $0["sessionId"]?.stringValue == onPlan })
+        // The fake's slow turn ends by itself after 3 s, and the waiting one runs.
+        _ = try await holding.value
+        #expect(try await queued.value["stopReason"] == "end_turn")
+    }
+
+    /// A turn that called a model its engine gave no price for is marked, not silently counted as free.
+    @Test func aTurnWithNoPriceIsMarked() async throws {
+        let stack = try await Stack.start(port: 47669)
+        defer { stack.stop() }
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Spender")
+        let grant = try await AppLimitsContractTests.grant(stack, "Spender")
+        try await stack.router.setLimits(grant: grant, limits: AppLimits(spend: .init(max: 1, period: .day)))
+        let session = try await stack.session(app, account: "brokered")
+        let turn = Task { try await app.prompt(session, "slow") }
+        try await AppLimitsContractTests.running(stack, session)
+        stack.traces.session(session)?.ingest(modelCall: ["id": "free", "cost": .int(0), "input_tokens": 5])
+        app.notify("session/cancel", ["sessionId": .string(session)])
+        let result = try await turn.value
+        #expect(result["_meta"]?["agneta/usage"]?["app"]?["unpriced"] == true, "\(result)")
+        #expect(await stack.router.appStatus(grant: grant).today.unpriced == 1)
+        #expect(try stack.records(session).contains { $0["event"]?.stringValue == "unpriced" })
+    }
+
+    /// What the engine records after a session's last turn ended still counts when the session closes.
+    @Test func costRecordedAfterTheLastTurnCountsAtClose() async throws {
+        let stack = try await Stack.start(port: 47670)
+        defer { stack.stop() }
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Spender")
+        let grant = try await AppLimitsContractTests.grant(stack, "Spender")
+        let session = try await stack.session(app, account: "brokered")
+        let ledger = TestLedger()
+        stack.traces.session(session)?.follow(ledger)
+        _ = try await app.prompt(session, "hello")
+        ledger.add(["id": "late", "cost": .double(0.4)])
+        _ = try await app.request("session/close", ["sessionId": .string(session)])
+        #expect(await stack.router.appStatus(grant: grant).today.cost == 0.4)
+    }
+}
+
 /// Always Allow or Allow Once, in order, for approvals.
 actor RememberAnswers {
     private var answers: [Bool]

@@ -90,4 +90,24 @@ struct AppUsageStoreTests {
         #expect(await runtime.appStatus(grant: grant.id).today.isEmpty)
         await runtime.shutdown()
     }
+
+    /// Usage of a grant that isn't saved (removed, or an Allow Once grant of its own) leaves nothing behind, however
+    /// late its last turn's usage arrives.
+    @Test func usageOfARemovedGrantLeavesNothing() async throws {
+        let root = try Self.folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try await AgnetaRuntime(.init(store: AgnetaStore(root: root.appending(path: "agneta", directoryHint: .isDirectory)),
+                                                    shellTool: URL(filePath: "/usr/bin/true"))) { _ in nil }
+        let grant = Router.Grant(app: "Example App", accounts: ["a1"])
+        try runtime.database.save(grant, tokenHash: "h1")
+        await runtime.router.restore(["h1": grant])
+        await runtime.router.addUsage(meter: grant.id, AppMeter.Usage(cost: 1, turns: 1))
+        try await runtime.revoke(grant: grant.id)
+        // A turn that ended as access was removed, recorded after the grant went; and an unsaved grant's.
+        await runtime.router.addUsage(meter: grant.id, AppMeter.Usage(cost: 2, turns: 1))
+        await runtime.router.addUsage(meter: "allowed-once", AppMeter.Usage(cost: 3, turns: 1))
+        await runtime.shutdown() // the recorded events drain first
+        #expect(try AgnetaDatabase(file: runtime.database.file).usage(since: .distantPast).isEmpty)
+    }
 }
+

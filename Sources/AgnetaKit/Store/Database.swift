@@ -174,6 +174,7 @@ public final class AgnetaDatabase: Sendable {
                 t.column("outputTokens", .integer).notNull().defaults(to: 0)
                 t.column("turns", .integer).notNull().defaults(to: 0)
                 t.column("tasks", .integer).notNull().defaults(to: 0)
+                t.column("unpriced", .integer).notNull().defaults(to: 0)
                 t.primaryKey(["grantID", "hour"])
             }
         }
@@ -263,14 +264,26 @@ public final class AgnetaDatabase: Sendable {
 
     // MARK: App usage
 
-    /// Adds to an app's usage in the hour `hour` starts (AppMeter.hour).
+    /// Adds to an app's usage in the hour `hour` starts (AppMeter.hour), only while its grant is saved: a turn that
+    /// ended after Remove Access (or an Allow Once grant's, kept in memory) leaves nothing behind.
     public func addUsage(grant: String, hour: Date, _ usage: AppMeter.Usage) throws {
         try queue.write { db in
             try db.execute(sql: """
-                INSERT INTO app_usage (grantID, hour, cost, inputTokens, outputTokens, turns, tasks) VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO app_usage (grantID, hour, cost, inputTokens, outputTokens, turns, tasks, unpriced)
+                SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM grants WHERE id = ?)
                 ON CONFLICT(grantID, hour) DO UPDATE SET cost = cost + excluded.cost, inputTokens = inputTokens + excluded.inputTokens,
-                    outputTokens = outputTokens + excluded.outputTokens, turns = turns + excluded.turns, tasks = tasks + excluded.tasks
-                """, arguments: [grant, hour, usage.cost, usage.inputTokens, usage.outputTokens, usage.turns, usage.tasks])
+                    outputTokens = outputTokens + excluded.outputTokens, turns = turns + excluded.turns, tasks = tasks + excluded.tasks,
+                    unpriced = unpriced + excluded.unpriced
+                """, arguments: [grant, hour, usage.cost, usage.inputTokens, usage.outputTokens, usage.turns, usage.tasks, usage.unpriced, grant])
+        }
+    }
+
+    /// Grants whose saved limits can't be read: they aren't restored, so their apps pair again (`grants()`).
+    public func unreadableLimits() throws -> [String] {
+        try queue.read { db in
+            try Row.fetchAll(db, sql: "SELECT id, limits FROM grants").compactMap { row in
+                (try? JSONDecoder().decode(AppLimits.self, from: Data(((row["limits"] as String?) ?? "{}").utf8))) == nil ? row["id"] : nil
+            }
         }
     }
 
@@ -280,7 +293,8 @@ public final class AgnetaDatabase: Sendable {
             var usage: [String: [Date: AppMeter.Usage]] = [:]
             for row in try Row.fetchAll(db, sql: "SELECT * FROM app_usage WHERE hour >= ?", arguments: [since]) {
                 usage[row["grantID"], default: [:]][row["hour"]] = AppMeter.Usage(cost: row["cost"], inputTokens: row["inputTokens"],
-                                                                                 outputTokens: row["outputTokens"], turns: row["turns"], tasks: row["tasks"])
+                                                                                 outputTokens: row["outputTokens"], turns: row["turns"], tasks: row["tasks"],
+                                                                                 unpriced: row["unpriced"])
             }
             return usage
         }

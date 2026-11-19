@@ -139,6 +139,17 @@ extension Router {
 
     func refundTask(meter id: String, at date: Date) { meters[id]?.taskRefunded(startedAt: date) }
 
+    /// An app paired again under a new grant: what counted toward the old one counts toward the new one from now on,
+    /// its running turns, waiting turns and Allow Once grants included.
+    func recount(from old: String, to new: String) {
+        if let usage = meters.removeValue(forKey: old) { meters[new] = usage }
+        for (id, session) in sessions where session.meter == old { sessions[id]?.meter = new }
+        for (id, turn) in runningTurns where turn.meter == old { runningTurns[id]?.meter = new }
+        for index in waiting.indices where waiting[index].meter == old { waiting[index].meter = new }
+        for (hash, grant) in tokens where grant.countsAs == old { tokens[hash]?.countsAs = new }
+        for (appID, app) in apps where app.grant?.countsAs == old { apps[appID]?.grant?.countsAs = new }
+    }
+
     /// The task counted at `date` started: it's saved with the app's usage.
     func taskCommitted(meter id: String, at date: Date) {
         onEvent(.appUsage(grant: id, hour: AppMeter.hour(of: date), usage: AppMeter.Usage(tasks: 1)))
@@ -151,7 +162,12 @@ extension Router {
     func meterTurn(_ id: String, _ turn: RunningTurn) {
         guard turn.began else { return }
         let cost = turn.counted ? max(0, (traces?.session(id)?.progress.taskCost ?? turn.costAtStart) - turn.costAtStart) : 0
-        addUsage(meter: turn.meter, AppMeter.Usage(cost: cost, inputTokens: turn.tokens.input, outputTokens: turn.tokens.output, turns: 1))
+        let unpriced = turn.counted && cost == 0 && turn.modelCalls > 0
+        if unpriced {
+            traces?.session(id)?.writer.record("lifecycle", ["event": "unpriced", "modelCalls": .int(Int64(turn.modelCalls))])
+        }
+        addUsage(meter: turn.meter, AppMeter.Usage(cost: cost, inputTokens: turn.tokens.input, outputTokens: turn.tokens.output, turns: 1,
+                                                   unpriced: unpriced ? 1 : 0))
     }
 
     func addUsage(meter id: String, _ usage: AppMeter.Usage) {
@@ -161,19 +177,16 @@ extension Router {
         onEvent(.appUsage(grant: id, hour: AppMeter.hour(of: at), usage: usage))
     }
 
-    /// The spending limit a running turn's app has reached, or nil. Reaching it stops every one of the app's turns it
-    /// counts (each one's watchdog enforces it at its next check), and Agneta's UI hears of it once.
+    /// The spending limit a running turn's app has reached, or nil: checked against the limit as it is now, so a limit
+    /// raised meanwhile lets the turn go on. Every running turn of the app it counts finds it at its own watchdog's next
+    /// check (within half a second); nothing is written into another session, which could outlive the turn it was for.
     func appSpendHit(_ id: String) -> LimitHit? {
-        guard let turn = runningTurns[id], turn.counted, let spend = limits(meter: turn.meter).spend else { return nil }
+        guard let turn = runningTurns[id], turn.began, turn.counted, let spend = limits(meter: turn.meter).spend else { return nil }
         let used = spent(meter: turn.meter, period: spend.period)
         guard used >= spend.max else { return nil }
         let resetsAt = meter(turn.meter).resetsAt(spend.period, now: now(), calendar: calendar)
         let hit = LimitHit(limit: "appSpend", value: .double(spend.max), setBy: "user",
                            extra: ["period": .string(spend.period.rawValue), "resetsAt": Self.timestamp(resetsAt)])
-        for (other, running) in runningTurns where other != id && running.meter == turn.meter && running.counted && sessions[other]?.limitHit == nil {
-            sessions[other]?.limitHit = hit
-            traces?.session(other)?.writer.record("lifecycle", ["event": "app-limit", "limit": "spend", "max": .double(spend.max), "used": .double(used)])
-        }
         traces?.session(id)?.writer.record("lifecycle", ["event": "app-limit", "limit": "spend", "max": .double(spend.max), "used": .double(used)])
         if let grant = tokens.values.first(where: { $0.meter == turn.meter }) {
             onEvent(.appLimitReached(AppLimitNotice(grant: turn.meter, app: grant.app, limit: "spend",
@@ -184,11 +197,14 @@ extension Router {
         return hit
     }
 
-    /// `agneta/usage`'s `app`: where the app stands against its spending limit after this turn.
-    func appUsageReport(meter id: String) -> JSONValue? {
+    /// `agneta/usage`'s `app`: where the app stands against its spending limit after this turn, and `unpriced` when
+    /// this turn on an API key called models its engine gave no price for, so the limit didn't count it.
+    func appUsageReport(meter id: String, unpriced: Bool) -> JSONValue? {
         guard let spend = limits(meter: id).spend else { return nil }
-        return ["spent": .double(spent(meter: id, period: spend.period)), "max": .double(spend.max), "period": .string(spend.period.rawValue),
-                "resetsAt": Self.timestamp(meter(id).resetsAt(spend.period, now: now(), calendar: calendar))]
+        var report: JSONValue = ["spent": .double(spent(meter: id, period: spend.period)), "max": .double(spend.max), "period": .string(spend.period.rawValue),
+                                 "resetsAt": Self.timestamp(meter(id).resetsAt(spend.period, now: now(), calendar: calendar))]
+        if unpriced { report = report.setting("unpriced", to: true) }
+        return report
     }
 
     // MARK: Engines a spending limit can't count
@@ -231,7 +247,7 @@ extension Router {
                                  resetsAt: meter(grant.meter).resetsAt(spend.period, now: at, calendar: calendar).map(TraceWriter.timestamp),
                                  billing: "api-key",
                                  counted: Dictionary(uniqueKeysWithValues: engines.filter { ProviderEngines.cost($0) != .none }.map { ($0, ProviderEngines.cost($0).rawValue) }),
-                                 uncounted: engines.filter { ProviderEngines.cost($0) == .none }.sorted())
+                                 uncounted: engines.filter { ProviderEngines.cost($0) == .none && catalog.usable($0) }.sorted())
         }
         if let atOnce = limits.atOnce { report.atOnce = .init(max: atOnce, running: running(meter: grant.meter)) }
         if let starts = limits.newTasks {
@@ -260,6 +276,9 @@ extension Router {
         for id in meters.keys { meters[id]?.prune(before: date) }
     }
 
+    /// The most turns that run at once, the highest an app's "at once" may be.
+    public nonisolated var maxAtOnce: Int { concurrency.global }
+
     // MARK: Changing them
 
     /// Sets the limits the user chose for an app (Settings → Apps), for every connection holding the grant (and Allow
@@ -271,10 +290,12 @@ extension Router {
             var changed = grant
             changed.limits = limits
             if changed.remembered, let commit { try await commit(hash, changed, nil) }
-            guard tokens[hash]?.id == grant.id else { continue } // removed while it was saved
-            tokens[hash] = changed
-            if changed.remembered { onEvent(.grantChanged(tokenHash: hash, grant: changed)) }
-            await apply(changed)
+            // Removed while it was saved: stays removed. Anything else changed meanwhile stays as it is now.
+            guard var current = tokens[hash], current.id == grant.id else { continue }
+            current.limits = limits
+            tokens[hash] = current
+            if current.remembered { onEvent(.grantChanged(tokenHash: hash, grant: current)) }
+            await apply(current)
         }
         admitWaiting()
     }

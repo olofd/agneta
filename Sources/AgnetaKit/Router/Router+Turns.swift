@@ -15,17 +15,29 @@ extension Router {
         hasRoom(for: account) && (limits(meter: meter).atOnce.map { running(meter: meter) < $0 } ?? true)
     }
 
-    /// Whether the waiter at `index` is held by its own app: its "at once" is full, or an earlier turn of the app waits
-    /// (an app's turns go in order). One held so doesn't hold up other apps' turns on its account.
+    /// Whether the app's "at once" is full.
+    func appFull(_ meter: String) -> Bool { limits(meter: meter).atOnce.map { running(meter: meter) >= $0 } ?? false }
+
+    /// Whether the waiter at `index` is held by its own app: its "at once" is full, or an earlier turn of the app is
+    /// held so (the app's turns for its limit go in order). One held so doesn't hold up other apps' turns on its
+    /// account; one waiting for a full account doesn't hold up the app's turns elsewhere.
     func heldByApp(_ index: Int) -> Bool {
-        let waiter = waiting[index]
-        guard let cap = limits(meter: waiter.meter).atOnce else { return false }
-        return running(meter: waiter.meter) >= cap || waiting[..<index].contains { $0.meter == waiter.meter }
+        let meter = waiting[index].meter
+        guard limits(meter: meter).atOnce != nil else { return false }
+        return appFull(meter) || waiting[..<index].indices.contains { waiting[$0].meter == meter && heldByApp($0) }
     }
 
-    /// Why a turn would wait now: its app's "at once", the account's room, or Agneta's.
+    /// Whether a turn wanting this room waits behind the waiter at `index`: one of its own app held by the app's limit,
+    /// or one on its account that isn't.
+    func waitsBehind(_ index: Int, account: String, meter: String) -> Bool {
+        let held = heldByApp(index)
+        return (waiting[index].meter == meter && held) || (waiting[index].account == account && !held)
+    }
+
+    /// What a turn waits for, from what holds it: its app's "at once", its account, or Agneta's room.
     func waitingFor(account: String, meter: String) -> String {
-        if let cap = limits(meter: meter).atOnce, running(meter: meter) >= cap || waiting.contains(where: { $0.meter == meter }) { return "app" }
+        if appFull(meter) || waiting.indices.contains(where: { waiting[$0].meter == meter && heldByApp($0) }) { return "app" }
+        if runningTurns.values.count(where: { $0.account == account }) >= concurrency.perAccount { return "account" }
         return runningTurns.count >= concurrency.global ? "agneta" : "account"
     }
 
@@ -39,10 +51,8 @@ extension Router {
     /// account was paused while the turn waited.
     func admit(_ id: String, account: String, meter: String) async throws -> Bool {
         // Waits only behind earlier turns that want the same room: on the same account (unless held by their own app's
-        // limit), or of the same app when it has one. One account's or one app's limits never hold up another's.
-        let capped = limits(meter: meter).atOnce != nil
-        if hasRoom(for: account, meter: meter)
-            && !waiting.indices.contains(where: { (capped && waiting[$0].meter == meter) || (waiting[$0].account == account && !heldByApp($0)) }) {
+        // limit), or of the same app held by its limit. One account's or one app's limits never hold up another's.
+        if hasRoom(for: account, meter: meter) && !waiting.indices.contains(where: { waitsBehind($0, account: account, meter: meter) }) {
             start(id, account: account, meter: meter)
             return true
         }
@@ -84,8 +94,8 @@ extension Router {
         var index = 0
         while index < waiting.count {
             let waiter = waiting[index]
-            let capped = limits(meter: waiter.meter).atOnce != nil
-            if hasRoom(for: waiter.account, meter: waiter.meter) && !(capped && waiting[..<index].contains { $0.meter == waiter.meter }) {
+            if hasRoom(for: waiter.account, meter: waiter.meter)
+                && !waiting[..<index].indices.contains(where: { waiting[$0].meter == waiter.meter && heldByApp($0) }) {
                 waiting.remove(at: index)
                 start(waiter.session, account: waiter.account, meter: waiter.meter)
                 waiter.resume.resume(returning: .admitted)
@@ -99,6 +109,8 @@ extension Router {
     func cancelWaiting(_ id: String) -> Bool {
         guard let index = waiting.firstIndex(where: { $0.session == id }) else { return false }
         waiting.remove(at: index).resume.resume(returning: .cancelled)
+        // Turns it held back may run now.
+        admitWaiting()
         return true
     }
 
@@ -133,8 +145,7 @@ extension Router {
             let progress = traces?.session(id)?.progress ?? (turnModelCalls: 0, taskCost: 0)
             let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
             let policy = limits.breached(seconds: seconds, modelCalls: progress.turnModelCalls, cost: progress.taskCost).map { LimitHit(limit: $0.limit, value: $0.value) }
-            // Another of the app's turns may have found its spending limit reached already.
-            guard let hit = policy ?? session.limitHit ?? appSpendHit(id) else { continue }
+            guard let hit = policy ?? appSpendHit(id) else { continue }
             sessions[id]?.limitHit = hit
             traces?.session(id)?.writer.record("lifecycle", ["event": "limit", "limit": .string(hit.limit), "value": hit.value, "setBy": .string(hit.setBy)])
             // Sent on its own: an engine that isn't reading can hold the write, and the grace runs regardless.
@@ -179,6 +190,8 @@ extension Router {
     /// The turn's usage with, when the user set a spending limit for the app, where it stands after this turn.
     func usage(_ turn: [String: JSONValue], account: String, meter: String) -> JSONValue {
         let base = usage(turn, account: account)
-        return appUsageReport(meter: meter).map { base.setting("app", to: $0) } ?? base
+        let calls = turn["modelCalls"]?.intValue ?? 0
+        let cost: Double = switch turn["cost"] { case .double(let v)?: v; case .int(let v)?: Double(v); default: 0 }
+        return appUsageReport(meter: meter, unpriced: countsSpend(account) && calls > 0 && cost == 0).map { base.setting("app", to: $0) } ?? base
     }
 }

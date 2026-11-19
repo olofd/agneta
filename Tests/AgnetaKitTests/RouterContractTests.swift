@@ -94,7 +94,8 @@ actor FakeEngines: EngineSource {
     func loading(takes delay: Duration) { loadDelay = delay }
     /// Every engine stops reading: Agneta's writes to it wait forever.
     func wedge() async { for gate in gates { await gate.close() } }
-    private var steered: CheckedContinuation<Void, Never>?
+    /// Slow turns waiting to be steered or cancelled, each also woken after 3 s.
+    private var steerWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
     private var cancelled = false
 
     /// The engine each open was for.
@@ -149,8 +150,7 @@ actor FakeEngines: EngineSource {
             return .success([:])
         case "_goose/unstable/session/steer":
             steers.append(params ?? .null)
-            steered?.resume()
-            steered = nil
+            wakeAll()
             return .success(["runId": params?["expectedRunId"] ?? .null])
         case "session/prompt":
             let text = params?["prompt"]?.arrayValue?.first?["text"]?.stringValue ?? ""
@@ -187,12 +187,7 @@ actor FakeEngines: EngineSource {
                 return .failure(RPCError(code: RPCError.internalError, message: RateLimitTests.goose, data: ["reason": "turn_failed"]))
             } else if text == "slow" {
                 await update(["sessionUpdate": "session_info_update", "_meta": ["goose": ["activeRunId": "run-7"]]])
-                await withTaskGroup(of: Void.self) { group in
-                    group.addTask { await self.waitForSteer() }
-                    group.addTask { try? await Task.sleep(for: .seconds(3)) }
-                    await group.next()
-                    group.cancelAll()
-                }
+                await waitForSteer(upTo: .seconds(3))
             } else {
                 await update(["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "hi"]])
             }
@@ -225,12 +220,28 @@ actor FakeEngines: EngineSource {
 
     private func cancel() {
         cancelled = true
-        steered?.resume()
-        steered = nil
+        wakeAll()
     }
 
-    private func waitForSteer() async {
-        await withCheckedContinuation { steered = $0 }
+    /// Waits until steered or cancelled, or `upTo` has passed, whichever comes first. (A task group would wait for the
+    /// steer it can't cancel.)
+    private func waitForSteer(upTo limit: Duration) async {
+        let id = UUID()
+        await withCheckedContinuation { continuation in
+            steerWaiters[id] = continuation
+            Task { [weak self] in
+                try? await Task.sleep(for: limit)
+                await self?.wake(id)
+            }
+        }
+    }
+
+    private func wake(_ id: UUID) { steerWaiters.removeValue(forKey: id)?.resume() }
+
+    private func wakeAll() {
+        let waiting = steerWaiters
+        steerWaiters = [:]
+        waiting.values.forEach { $0.resume() }
     }
 }
 

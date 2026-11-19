@@ -82,6 +82,10 @@ public actor AgnetaRuntime {
                                                    appWorkspaces: configuration.appWorkspaces),
                             engines: supervisor, traces: traces, concurrency: configuration.concurrency,
                             commit: { hash, grant, replacing in try database.save(grant, tokenHash: hash, replacing: replacing) }, approve: approve)
+        // A grant whose limits can't be read isn't restored rather than left unlimited: its app pairs again. Said in the log.
+        for id in Self.attempt(log, "read-limits") { try database.unreadableLimits() } ?? [] {
+            log?.error("app-limits-unreadable", ["grant": .string(id)])
+        }
         // Each app's usage goes on from where it was, for the limits the user set for it.
         Self.attempt(log, "prune-app-usage") { try database.pruneUsage(before: Date().addingTimeInterval(-Self.usageDays * 86_400)) }
         await router.restore(Self.attempt(log, "read-grants") { try database.grants() } ?? [:],

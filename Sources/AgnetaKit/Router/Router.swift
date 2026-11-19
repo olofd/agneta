@@ -277,6 +277,8 @@ public actor Router {
         /// Sent to the engine (admitted and not refused afterwards): only those count as turns.
         var began = false
         var tokens = (input: 0, output: 0)
+        /// Its model calls, from its summary.
+        var modelCalls = 0
     }
     var runningTurns: [String: RunningTurn] = [:] // session → its turn
     /// Each app's usage, by the grant its tasks count toward (Grant.meter).
@@ -365,10 +367,12 @@ public actor Router {
             changed.sandbox = sandbox
             if changed.remembered, let commit { try await commit(hash, changed, nil) }
             // Access removed while the change was saved stays removed (AgnetaRuntime.setAccess deletes the saved row again).
-            guard tokens[hash]?.id == id else { continue }
-            tokens[hash] = changed
-            onEvent(.grantChanged(tokenHash: hash, grant: changed))
-            await apply(changed)
+            // Whatever else changed meanwhile (its limits) stays as it is now.
+            guard var current = tokens[hash], current.id == id else { continue }
+            (current.accounts, current.engines, current.sandbox) = (allowed, engines, sandbox)
+            tokens[hash] = current
+            onEvent(.grantChanged(tokenHash: hash, grant: current))
+            await apply(current)
         }
     }
 
@@ -377,7 +381,8 @@ public actor Router {
     func apply(_ grant: Grant) async {
         for (appID, app) in apps where app.grant?.id == grant.id { apps[appID]?.grant = grant }
         for (session, entry) in sessions where apps[entry.app]?.grant?.id == grant.id
-            && !Self.fits(account: entry.account, engine: entry.lease.engine.id, policy: entry.policy, sandbox: entry.sandbox, grant: grant) {
+            && (!Self.fits(account: entry.account, engine: entry.lease.engine.id, policy: entry.policy, sandbox: entry.sandbox, grant: grant)
+                || uncounted(grant, account: entry.account).contains(entry.lease.engine.id)) {
             await stop(session)
         }
         accessChanged(grant: grant.id)
@@ -533,6 +538,8 @@ public actor Router {
         paused.insert(account)
         for waiter in waiting where waiter.account == account { waiter.resume.resume(returning: .paused) }
         waiting.removeAll { $0.account == account }
+        // Turns of the same apps on other accounts may have waited behind them.
+        admitWaiting()
         accessChanged()
     }
 
@@ -555,14 +562,14 @@ public actor Router {
     /// (before anything can suspend), its sessions stop, and its connections close.
     public func revoke(grant id: String) async {
         tokens = tokens.filter { $0.value.id != id }
-        // Its usage goes with it, unless an Allow Once grant still counts against it.
-        if !tokens.values.contains(where: { $0.meter == id }) { meters[id] = nil }
         let affected = apps.filter { $0.value.grant?.id == id }.map(\.key)
         for appID in affected { apps[appID]?.grant = nil }
         for appID in affected {
             for (session, entry) in sessions where entry.app == appID { await stop(session) }
             if let app = apps[appID] { await hangUp(app, reason: "access removed") }
         }
+        // Its usage goes with it, its stopped turns' included, unless an Allow Once grant still counts against it.
+        if !tokens.values.contains(where: { $0.meter == id }) { meters[id] = nil }
     }
 
     /// Ends everything for Reset: no grant works, every session stops, every app connection closes,

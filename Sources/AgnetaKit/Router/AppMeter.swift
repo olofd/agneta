@@ -8,6 +8,10 @@
 // the time zone is a whole number of hours from UTC, and at worst early by the part of an hour before midnight (or
 // the period's start) elsewhere, never late.
 //
+// A clock set back (by the user, or a sync) is taken as it is: usage recorded "later" stays in its hour and counts in
+// any period that hour overlaps, so a period may look fuller than it was, never emptier; new tasks started "in the
+// future" count in the rolling hour until an hour after their recorded start.
+//
 // The rolling hour of new tasks uses each start's exact time while Agneta runs. Starts from before a restart are
 // known only by their hour, so they count as a whole until two hours after that hour began: never less than they were.
 import Foundation
@@ -21,18 +25,22 @@ public struct AppMeter: Sendable, Equatable {
         public var outputTokens: Int
         public var turns: Int
         public var tasks: Int
+        /// Turns on API keys that called a model the engine gave no price for (Goose reports none, OpenCode $0, for a
+        /// model it has no price for): what they cost isn't known, so a spending limit didn't count it.
+        public var unpriced: Int
 
-        public init(cost: Double = 0, inputTokens: Int = 0, outputTokens: Int = 0, turns: Int = 0, tasks: Int = 0) {
+        public init(cost: Double = 0, inputTokens: Int = 0, outputTokens: Int = 0, turns: Int = 0, tasks: Int = 0, unpriced: Int = 0) {
             self.cost = cost
             self.inputTokens = inputTokens
             self.outputTokens = outputTokens
             self.turns = turns
             self.tasks = tasks
+            self.unpriced = unpriced
         }
 
         public static func + (a: Usage, b: Usage) -> Usage {
             Usage(cost: a.cost + b.cost, inputTokens: a.inputTokens + b.inputTokens, outputTokens: a.outputTokens + b.outputTokens,
-                  turns: a.turns + b.turns, tasks: a.tasks + b.tasks)
+                  turns: a.turns + b.turns, tasks: a.tasks + b.tasks, unpriced: a.unpriced + b.unpriced)
         }
 
         public var isEmpty: Bool { self == Usage() }

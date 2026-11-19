@@ -23,6 +23,12 @@ public struct AppLimits: Sendable, Equatable, Codable {
     public enum WhenReached: String, Sendable, Codable {
         /// The work is refused, or stopped.
         case stop
+
+        /// A value this build doesn't know (one a later build may write) reads as stop: refusing is never less than
+        /// what the user asked for.
+        public init(from decoder: any Decoder) throws {
+            self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .stop
+        }
     }
 
     public struct Spend: Sendable, Equatable, Codable {
