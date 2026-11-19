@@ -6,7 +6,7 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 **For you**
 
-- **Agneta moves itself to Applications.** Started from its disk image (or from a download macOS runs from a temporary place), Agneta offers to move to Applications and open again from there. A copy run from the disk image ended when the image was ejected, and apps that open Agneta found it gone.
+- **Agneta moves itself to Applications.** Started from its disk image (or from a download macOS runs from a temporary place), Agneta offers to move to Applications and open again from there (a download it was started from goes to the Trash). A copy run from the disk image ended when the image was ejected, and apps that open Agneta found it gone.
 - **One window on first run.** When an app asks you to connect your AI, or asks for access, while Agneta's welcome window is up, the welcome window closes: the app's window does the same job and says who asked.
 - **Homebrew points to the website,** and after installing says to open Agneta from Applications and find it in the menu bar.
 - **Clearing history removes a Codex task completely:** Codex deletes its own session, including its copies in Codex's databases, not only its session file.

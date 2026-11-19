@@ -34,6 +34,8 @@ Engines are run with their own telemetry, update checks, analytics and feedback 
 
 Everything Agneta writes is readable only by your user account (folders `0700`, files `0600`).
 
+Outside its own folders Agneta changes one thing, and only when you say so: started from its disk image or straight from a download, it offers to **move to Applications**. It then copies itself there, takes macOS's "downloaded from the Internet" mark off that copy (you already opened this signed, notarized app once), and puts a downloaded original in the Trash; a disk image's copy stays where it is.
+
 ## What each action removes
 
 | Action | Effect |

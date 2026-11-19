@@ -1,8 +1,10 @@
 // Agneta started from its disk image (or from a download macOS translocated) offers to move itself to Applications and
 // open again from there. Apps open Agneta through its URL scheme, and a copy on a disk image is gone once the image is
 // ejected: measured, a forced eject leaves it serving for about a second and then it dies with SIGBUS, taking every
-// app's tasks with it. The usual pattern, with no dependency: copy the bundle, relaunch the copy once this process has
-// quit, quit. Development builds and isolated instances never ask.
+// app's tasks with it. The usual pattern (as LetsMove does it), with no dependency: copy the bundle, put a downloaded
+// original in the Trash (a disk image's stays: it's read-only), relaunch the copy once this process has quit, quit.
+// Measured, copying the 43 MB bundle off a freshly mounted disk image takes 0.2 s, so it runs without a progress
+// window. Development builds and isolated instances never ask.
 import AgnetaKit
 import AppKit
 import Darwin
@@ -30,6 +32,10 @@ enum AppPlacement: Equatable {
 
     /// Whether to offer the move.
     var offersMove: Bool { self == .diskImage || self == .translocated }
+
+    /// Whether the original goes to the Trash once copied: a download macOS translocated (so LaunchServices can't later
+    /// open that copy for `agneta://`, translocated again or older), never one on a read-only volume (a disk image).
+    func trashesOriginal(onReadOnlyVolume: Bool) -> Bool { self == .translocated && !onReadOnlyVolume }
 }
 
 @MainActor
@@ -82,6 +88,8 @@ enum MoveToApplications {
             model.log.log("move-to-applications", ["outcome": "declined", "placement": .string("\(placement)")])
             return false
         }
+        // A translocated copy runs from a random read-only mount; the download itself is where macOS found it.
+        let original = placement == .translocated ? originalURL(ofTranslocated: bundle) : nil
         do {
             try move(bundle, to: destination, bundleID: model.bundleID)
         } catch {
@@ -93,6 +101,16 @@ enum MoveToApplications {
             return false
         }
         model.log.log("move-to-applications", ["outcome": "moved", "folder": .string(folder.path(percentEncoded: false))])
+        if let original, original.standardizedFileURL != destination.standardizedFileURL,
+           placement.trashesOriginal(onReadOnlyVolume: (try? original.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) ?? true),
+           Bundle(url: original)?.bundleIdentifier == model.bundleID {
+            do {
+                try FileManager.default.trashItem(at: original, resultingItemURL: nil)
+                model.log.log("move-to-applications", ["original": "trashed"])
+            } catch {
+                model.log.error("move-to-applications", ["original": "kept", "reason": .string("\(error)")])
+            }
+        }
         let relaunch = Process()
         relaunch.executableURL = URL(filePath: "/bin/sh")
         relaunch.arguments = relaunchArguments(pid: ProcessInfo.processInfo.processIdentifier, app: destination)
@@ -119,6 +137,17 @@ enum MoveToApplications {
         // The copy keeps the download's quarantine mark. The user has already opened this signed, notarized bundle, so
         // macOS's "downloaded from the Internet" question would only be asked again: the mark goes from this copy only.
         removeQuarantine(destination)
+    }
+
+    /// Where macOS translocated this bundle from (Security's `SecTranslocateCreateOriginalPathForURL`, looked up at run
+    /// time as LetsMove does: it isn't in the public headers). Nil when it can't say.
+    private static func originalURL(ofTranslocated url: URL) -> URL? {
+        guard let security = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY) else { return nil }
+        defer { dlclose(security) }
+        typealias Original = @convention(c) (CFURL, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> Unmanaged<CFURL>?
+        guard let symbol = dlsym(security, "SecTranslocateCreateOriginalPathForURL") else { return nil }
+        let original = unsafeBitCast(symbol, to: Original.self)
+        return original(url as CFURL, nil)?.takeRetainedValue() as URL?
     }
 
     private static func removeQuarantine(_ root: URL) {

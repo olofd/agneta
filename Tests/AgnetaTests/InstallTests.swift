@@ -19,6 +19,10 @@ import Testing
         #expect(AppPlacement.of("/Applications/Tools/Agneta.app", home: home, readOnlyVolume: false) == .elsewhere)
         #expect([AppPlacement.diskImage, .translocated].allSatisfy { $0.offersMove })
         #expect(![AppPlacement.applications, .elsewhere].contains { $0.offersMove })
+        // A translocated download goes to the Trash once copied; a disk image's copy, read-only, stays.
+        #expect(AppPlacement.translocated.trashesOriginal(onReadOnlyVolume: false))
+        #expect(!AppPlacement.translocated.trashesOriginal(onReadOnlyVolume: true))
+        #expect(!AppPlacement.diskImage.trashesOriginal(onReadOnlyVolume: false))
     }
 
     @Test func movesIntoApplicationsOrTheUsersOwn() {
