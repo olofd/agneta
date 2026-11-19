@@ -36,6 +36,7 @@ jobs:
 
       - name: Use Xcode 26
         run: |
+          # shellcheck disable=SC2012 # Xcode bundle names, sorted by version: ls is clearer than find here
           xcode=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
           [ -n "$xcode" ] || { echo "No Xcode 26 on this runner" >&2; exit 1; }
           sudo xcode-select -s "$xcode"
@@ -176,6 +177,7 @@ jobs:
         run: |
           want=$(sed -n 's/^swift_format_version=//p' scripts/check)
           found=()
+          # shellcheck disable=SC2012 # Xcode bundle names, sorted by version: ls is clearer than find here
           for xcode in $(ls -d /Applications/Xcode_26*.app | sort -rV); do
             have=$(DEVELOPER_DIR="$xcode/Contents/Developer" xcrun swift-format --version 2>/dev/null || true)
             found+=("$(basename "$xcode"): ${have:-none}")

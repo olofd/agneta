@@ -7,7 +7,9 @@ Usage: notes-html <base url>
 It knows what the changelog uses: paragraphs, "- " lists, **bold**, `code` and [links](url). Everything else is
 escaped and shown as text.
 """
-import html, re, sys
+import html
+import re
+import sys
 
 base = sys.argv[1] if len(sys.argv) > 1 else ""
 
@@ -23,23 +25,28 @@ def inline(text):
 out, paragraph, items = [], [], []
 def flush():
     if paragraph:
-        out.append("<p>" + inline(" ".join(paragraph)) + "</p>"); paragraph.clear()
+        out.append("<p>" + inline(" ".join(paragraph)) + "</p>")
+        paragraph.clear()
     if items:
-        out.append("<ul>" + "".join(f"<li>{inline(i)}</li>" for i in items) + "</ul>"); items.clear()
+        out.append("<ul>" + "".join(f"<li>{inline(i)}</li>" for i in items) + "</ul>")
+        items.clear()
 
 for line in sys.stdin.read().splitlines():
     stripped = line.strip()
     if not stripped:
         flush()
     elif stripped.startswith("- "):
-        if paragraph: flush()
+        if paragraph:
+            flush()
         items.append(stripped[2:])
     elif items and line.startswith("  "):
         items[-1] += " " + stripped
     elif stripped.startswith("#"):
-        flush(); out.append("<h3>" + inline(stripped.lstrip("#").strip()) + "</h3>")
+        flush()
+        out.append("<h3>" + inline(stripped.lstrip("#").strip()) + "</h3>")
     else:
-        if items: flush()
+        if items:
+            flush()
         paragraph.append(stripped)
 flush()
 print("\n".join(out))

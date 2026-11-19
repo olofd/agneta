@@ -5,7 +5,14 @@ It proves the program runs as signed (a missing hardened-runtime entitlement kil
 speaks ACP. The engine gets an empty home of its own and is stopped, with everything it started, at the end.
 Usage: handshake <seconds> <program> [arguments...]
 """
-import json, os, signal, subprocess, sys, tempfile, time, select
+import json
+import os
+import select
+import signal
+import subprocess
+import sys
+import tempfile
+import time
 
 limit = float(sys.argv[1])
 # The engine runs in its own empty folder, so paths given relative to here are made absolute.

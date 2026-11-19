@@ -146,7 +146,7 @@ class Markdown:
                     j += 1
                 if j == len(lines):
                     raise BuildError(f"{self.source}: an unclosed code block")
-                out.append(self.code([l[indent:] for l in lines[i + 1:j]], lang))
+                out.append(self.code([line[indent:] for line in lines[i + 1:j]], lang))
                 i = j + 1
             elif re.match(r"^#{1,6} ", line):
                 m = re.match(r"^(#{1,6}) +(.*?) *$", line)
@@ -534,7 +534,7 @@ def doc_page(site, source, sect, path, nav_title):
 def docs_index(site):
     """The documentation index, from README's own table of documents, for those the site publishes."""
     lines, _ = section(site.readme, "Documentation")
-    rows = [l for l in lines if l.startswith("| [")]
+    rows = [line for line in lines if line.startswith("| [")]
     described = {}
     for row in rows:
         m = re.match(r"^\| \[[^\]]+\]\(([^)]+)\)[^|]*\| (.+?) \|$", row)
@@ -561,7 +561,7 @@ def docs_index(site):
 def install_steps(site):
     """The numbered install steps of packaging/release-page.md, rendered."""
     lines, _ = section(read("packaging/release-page.md"), "Install")
-    steps = [l for l in lines if re.match(r"^\d+\. ", l)]
+    steps = [line for line in lines if re.match(r"^\d+\. ", line)]
     return Markdown(site, "packaging/release-page.md", "").render("\n".join(steps))
 
 
@@ -672,19 +672,19 @@ def landing(site):
         lines, _ = section(readme, title)
         body = lines[1:]
         if kind == "list":
-            start = next(i for i, l in enumerate(body) if LIST_ITEM.match(l))
+            start = next(i for i, line in enumerate(body) if LIST_ITEM.match(line))
             end = next((i for i in range(start, len(body)) if not body[i].strip()), len(body))
             body = body[start:end]
         elif kind == "table":
-            start = next(i for i, l in enumerate(body) if l.startswith("|"))
+            start = next(i for i, line in enumerate(body) if line.startswith("|"))
             end = next((i for i in range(start, len(body)) if not body[i].startswith("|")), len(body))
             body = body[start:end]
         elif kind == "paragraph":
-            body = [next(l for l in body if l.startswith(after))]
+            body = [next(line for line in body if line.startswith(after))]
         return Markdown(site, "README.md", "").render("\n".join(body))
 
     def status_quote():
-        quote = [re.sub(r"^> ?", "", l) for l in readme.split("\n") if l.startswith(">")]
+        quote = [re.sub(r"^> ?", "", line) for line in readme.split("\n") if line.startswith(">")]
         if not quote or not quote[0].startswith("**Status"):
             raise BuildError("README.md: the status note isn't its first block quote")
         return Markdown(site, "README.md", "").render("\n".join(quote))
@@ -692,7 +692,7 @@ def landing(site):
     def dev_snippet():
         # The developer guide's first example: a few lines on the TypeScript client.
         lines, _ = section(readme, "For app developers")
-        start = next(i for i, l in enumerate(lines) if l.startswith("```js"))
+        start = next(i for i, line in enumerate(lines) if line.startswith("```js"))
         end = next(i for i in range(start + 1, len(lines)) if l_is_fence(lines[i]))
         return Markdown(site, "README.md", "").render("\n".join(lines[start:end + 1]))
 
