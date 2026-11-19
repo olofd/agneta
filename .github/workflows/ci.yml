@@ -153,8 +153,7 @@ jobs:
             2b0890f5a55900af741f133918c2656919bbf18c2ab7741b4ca8403a90e647a9 ruff
           echo "$bin" >> "$GITHUB_PATH"
 
-      # A missing tool fails instead of skipping. ShellCheck, actionlint and Ruff report without failing until their
-      # first findings on main are fixed (scripts/check, AGNETA_CHECK_REPORT_ONLY).
+      # A missing tool fails instead of skipping, and every tool's findings fail the job (scripts/check).
       - name: Check
         env:
           AGNETA_REQUIRE_TOOLS: "1"

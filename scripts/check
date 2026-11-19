@@ -16,15 +16,15 @@
 # --fix repairs what's mechanical: whitespace in tracked files, and Swift formatting.
 # A check whose tool isn't installed is skipped (and says so); one missing only an optional tool runs without it.
 # AGNETA_REQUIRE_TOOLS=1   a missing tool fails its check instead of skipping it (CI).
-# AGNETA_CHECK_REPORT_ONLY   tools whose findings are shown but don't fail (default: ShellCheck, actionlint and Ruff,
-#                            until their first findings on main are fixed; CONTRIBUTING.md, Static checks).
+# AGNETA_CHECK_REPORT_ONLY   tools whose findings are shown but don't fail (default: none; e.g. "ruff" while trying a
+#                            newer Ruff; CONTRIBUTING.md, Static checks).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 all=(whitespace swift shell python js typescript actions data)
 # The swift-format CI formats with: versions can lay code out differently, so CI selects the Xcode that has this one,
 # and a different one here is pointed out.
 swift_format_version=6.3.0
-report_only=" ${AGNETA_CHECK_REPORT_ONLY-shellcheck actionlint ruff} "
+report_only=" ${AGNETA_CHECK_REPORT_ONLY-} "
 fix=false checks=()
 for arg in "$@"; do
   case "$arg" in
