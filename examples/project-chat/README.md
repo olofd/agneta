@@ -1,6 +1,6 @@
 # Project Chat
 
-Project Chat is a small Electron app that runs an agent through Agneta. The agent can read the fictional Field Notes project brief and propose a release note. The proposal appears in Project Chat for a person to save or dismiss.
+Project Chat is a small Electron app that runs an agent through Agneta, on the official [TypeScript client](../../clients/typescript/README.md), `@agneta/client`. The agent can read the fictional Field Notes project brief and propose a release note. The proposal appears in Project Chat for a person to save or dismiss.
 
 ![Project Chat on a ChatGPT plan with Codex: streamed replies, project tool calls, a release note awaiting review, and the provider, engine, model and effort pickers](preview.png)
 

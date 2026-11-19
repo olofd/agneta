@@ -393,7 +393,7 @@ const client = new AgnetaClient({
 await client.connect({ pair: 'never' }).catch(() => {});   // at launch: quietly, with the kept token
 ```
 
-Give the renderer fixed actions through a preload bridge, never the token. [Project Chat](https://github.com/olofd/agneta/tree/main/examples/project-chat) is a complete Electron app on this library.
+Give the renderer fixed actions through a preload bridge, never the token. [Project Chat](https://github.com/olofd/agneta/tree/main/examples/project-chat) and [Replica Bench](https://github.com/olofd/agneta/tree/main/examples/replica-bench) are complete Electron apps on this library.
 
 ## Reference
 
