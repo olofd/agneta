@@ -4,7 +4,7 @@
 
 <h1 align="center">Agneta</h1>
 
-<p align="center"><strong>Give Mac apps an AI agent you control.</strong></p>
+<p align="center"><strong>The AI you already pay for, in the Mac apps you choose.</strong></p>
 
 <p align="center">
   <a href="https://github.com/olofd/agneta/releases/latest"><img src="https://img.shields.io/github/v/release/olofd/agneta?color=B0365F" alt="Latest release"></a>
@@ -21,9 +21,9 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-Agneta is an open-source macOS menu bar app. You connect the AI you already pay for once: a ChatGPT or Claude plan, or an OpenAI or Anthropic API key. Then you decide which apps may use them. When an allowed app needs an AI agent to do some work, it asks Agneta. Agneta runs the agent on your Mac, in a sandbox, on your account, and shows you every task with a stop button.
+You already pay for ChatGPT or Claude. Agneta lets your other Mac apps put that plan to work: an AI agent that reads, writes and runs things for them, on your account, without any app ever seeing your password or API key. Each app asks first, and you choose which plans it may use and how far it reaches. Every task runs in a sandbox on your Mac, shows in the menu bar, and stops with one click. Agneta is a free, open-source menu bar app.
 
-For app developers, this means agent features without running an agent loop, building sign-in for every provider, or putting a model bill on your own credit card. Your app speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) to Agneta over a local WebSocket, and Agneta does the rest.
+**Building a Mac app?** Add agent features with no backend, no AI bill and no sign-in code for every provider: your users bring the plan they already have. Agneta runs a proven agent (Claude Code, Codex, Goose or OpenCode) with your app's own tools, and streams the work back over one local connection in the open [Agent Client Protocol](https://agentclientprotocol.com) (ACP). The [TypeScript client](clients/typescript/README.md) does the talking for you; any language with a WebSocket works.
 
 <!-- The demo video goes here, above the screenshots: 20 seconds of an app pairing, a task running in the panel, and
      Stop. Drag the .mp4 into this file in GitHub's web editor, which uploads it and puts its URL on a line of its own;
