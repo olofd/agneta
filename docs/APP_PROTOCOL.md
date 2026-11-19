@@ -273,11 +273,11 @@ Known limits, each the same as in a terminal:
 
 A Unix socket or a loopback port reaches whatever serves it: Docker's socket can start a container that mounts the user's home, and a local service's port does what that service does. So in a `contained` session (as the task really runs: `_meta.agneta.sandbox` is `contained`) the policy's `toolSockets` and `toolPorts` are held to what the user granted the app:
 
-- **A socket inside a folder the app was granted** (the folders the approval window showed, and the app's own workspace) is allowed, whoever serves it. Paths are compared as real paths, and a link in a writable folder pointing to another socket gets nothing: the sandbox matches the socket the link resolves to (measured).
-- **Any other socket, and every port, must be served by the app itself.** When the session opens, Agneta finds every process bound to that socket path, or listening on that port, and every one must be the app:
-  - for a verified app, any process with a valid Apple-issued signature from the app's team (its helpers and XPC services count);
-  - for an app Agneta can't verify, the process holding its connection to Agneta, or one that process started (a child, at any depth).
-- Nothing listening counts as not served: **start your server before you open the session.** Processes Agneta can't inspect (another user's, or the system's) count as not the app.
+- **A socket inside a folder the app was granted** (the folders the approval window showed, and the app's own workspace) is allowed, whoever serves it. Paths are compared as real paths, and the sandbox names the socket as it was checked: a link put in its place later, pointing at another socket, reaches neither (measured, and tested).
+- **Any other socket, and every port, must be served by the app itself.** Agneta connects to it, as a command would, and asks the kernel whom it reached: a socket's listener comes with the kernel's audit token for the connection, and a port's is the process holding the other end of that connection (Agneta tries both `127.0.0.1` and `::1`). That process must be the app, and so must every process Agneta finds bound there:
+  - for a verified app, any process with a valid Apple-issued signature from the app's team. Its helpers and XPC services count, and so do **the same developer's other apps**;
+  - for an app Agneta can't verify, the process holding its connection to Agneta, or **any process it started** (a child, at any depth).
+- **Refused** when nothing accepts the connection, when what accepts it can't be identified (a server run by root or another user, one that doesn't accept within a second, or a socket that names no peer, such as a datagram one), or when it's another program. Processes are compared as instances (a pid with its start time, or the audit token), so a pid reused by another program is never taken for the app. **Start your server before you open the session**, and accept connections: Agneta's connection sends nothing and closes at once.
 
 A session that names one it can't allow is refused when it opens (or is loaded or forked) with `-32602`, `data.agneta.unenforceable: ["toolSockets"]` or `["toolPorts"]`, and a reason naming the socket or port, for example:
 
@@ -286,7 +286,7 @@ A session that names one it can't allow is refused when it opens (or is loaded o
  "data": {"agneta": {"unenforceable": ["toolPorts"], "reason": "loopback port 8125 isn't served by …"}}}
 ```
 
-It's checked when the session opens, is loaded or is forked, and again if the app's grant changes (a narrowed grant stops a session that no longer fits). It isn't checked before each command: if your server stops during the session and another program then takes its port, or binds its socket path, the session's commands can reach that program until the session ends. Keep your server running for as long as its sessions are open.
+**Checked again before every command.** Before the broker runs each of the session's commands, Agneta asks again (about 11 ms measured for one port and one socket: one connection to each, and two passes over the processes). If the app no longer serves one, the command is refused, every command of the session still running is stopped, and the session stops: the app gets `agneta/sessionStopped {"sessionId", "stoppedBy": "reach", "reason"}`, the reason naming the socket or port. A narrowed grant stops a session that no longer fits, too. What's left between checks: a command already running when your server stops keeps what it connected to, and can connect again to whatever takes your port or socket path until its session's next command or its end. Keep your server running while its sessions are open.
 
 The app's own MCP servers (`mcpServers`, which the engine calls) aren't affected by any of this.
 
@@ -398,6 +398,8 @@ The result:
 **Signed out.** When the engine says the account isn't signed in, the error keeps the engine's code (usually `-32000`, ACP's `auth_required`) and gains `data.agneta.needsSignIn: "<account id>"`. Agneta's menu asks the user to sign in again; tell the user to open Agneta.
 
 **Stopped by the user.** Someone may press Stop in Agneta's menu. The app then gets `agneta/sessionStopped {"sessionId", "stoppedBy": "user"}`, and the running turn ends as cancelled. Show it as stopped by the user, not as an error.
+
+**Stopped for its sockets or ports.** A contained session whose socket or port the app no longer serves stops before its next command runs ([Tool ports and sockets](#tool-ports-and-sockets)): the app gets `agneta/sessionStopped {"sessionId", "stoppedBy": "reach", "reason"}`, and the running turn ends as cancelled. Serve it again and open a new session or load this one.
 
 **Engine stopped.** If the engine process ends on its own (it crashed, or was killed), its sessions end at once: the app gets `agneta/sessionStopped {"sessionId", "stoppedBy": "engine"}` and a running turn fails. Resume the task with `session/load`, which starts a fresh engine.
 

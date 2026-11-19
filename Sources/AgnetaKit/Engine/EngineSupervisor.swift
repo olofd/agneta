@@ -53,12 +53,16 @@ public actor EngineSupervisor: EngineSource {
         public var userHome: URL
         /// Agneta's own data roots, which developer access keeps out even though they're in the home folder.
         public var agnetaRoots: [URL]
+        /// How a contained session's sockets and ports are checked again before each command (ToolReach).
+        public var reach: ToolReach.Lookup
 
         public init(
             shellTool: URL, root: URL, engineLoopbackPorts: [Int] = [], confine: Bool = true,
             ledger: (any EngineLedger)? = nil, traces: Traces? = nil, startDeadline: Duration = .seconds(60),
-            userHome: URL = FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [URL]? = nil
+            userHome: URL = FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [URL]? = nil,
+            reach: ToolReach.Lookup = .system
         ) {
+            self.reach = reach
             self.userHome = userHome
             self.agnetaRoots = agnetaRoots ?? [root]
             self.startDeadline = startDeadline
@@ -96,6 +100,13 @@ public actor EngineSupervisor: EngineSource {
     private var generations: [String: Int] = [:]
     private var broker: ToolBroker?
     private let grants = GrantTable()
+    private let reachLost = ReachLost()
+
+    /// Called with an engine's lease when the broker refused a command because a contained session's socket or port
+    /// is no longer served by its app: every session on that engine must stop (the router does).
+    public nonisolated func onReachLost(_ handler: @escaping @Sendable (_ lease: String, _ reason: String) -> Void) {
+        reachLost.set(handler)
+    }
 
     public init(_ configuration: Configuration, accounts: [String: ProviderSetup] = [:]) {
         self.configuration = configuration
@@ -146,11 +157,15 @@ public actor EngineSupervisor: EngineSource {
         if let broker { return broker }
         let grants = self.grants
         let traces = configuration.traces
+        let reachLost = self.reachLost
         let service = ToolBroker(
             socketPath: socketPath, holder: configuration.shellTool.path(percentEncoded: false),
             resolve: { token, cwd in grants.grant(token: token, cwd: cwd) },
             report: { token, fields in
                 if let traces, let lease = grants.lease(token: token) { traces.shell(lease: lease, fields) }
+            },
+            lost: { token, reason in
+                if let lease = grants.lease(token: token) { reachLost.call(lease, reason) }
             })
         try service.start()
         broker = service
@@ -304,6 +319,15 @@ public actor EngineSupervisor: EngineSource {
                 environment[key] = key == "PATH" ? value + ":" + (environment["PATH"] ?? "") : value
             }
             grant = ToolBroker.Grant(profile: toolProfile, environment: environment)
+            // A contained session's sockets and ports beyond its folders, held to its app before each command.
+            if let check = policy.reachCheck {
+                let lookup = configuration.reach
+                grant?.reach = {
+                    ToolReach.lost(check, lookup: lookup).map {
+                        "\($0) is no longer served by \(check.name), so this contained session was stopped"
+                    }
+                }
+            }
             grants.set(token: token, grant: grant!, workspace: policy.workspace, lease: key)
             // The token in a file only this engine's profile reads, never in its environment: any process of the user's,
             // sandboxed or not, can read another non-Apple process's environment (measured: no Seatbelt rule stops
@@ -488,6 +512,14 @@ public actor EngineSupervisor: EngineSource {
     }
 
     static func newToken() -> String { SecureRandom.token() }
+}
+
+/// The handler for a session whose sockets or ports its app stopped serving, set once the router exists.
+final class ReachLost: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handler: (@Sendable (String, String) -> Void)?
+    func set(_ handler: @escaping @Sendable (String, String) -> Void) { lock.withLock { self.handler = handler } }
+    func call(_ lease: String, _ reason: String) { lock.withLock { handler }?(lease, reason) }
 }
 
 /// Token → grant for the broker, readable from its threads.

@@ -93,6 +93,10 @@ public actor AgnetaRuntime {
             engines: supervisor, traces: traces, concurrency: configuration.concurrency,
             commit: { hash, grant, replacing in try database.save(grant, tokenHash: hash, replacing: replacing) },
             approve: approve)
+        // A contained session whose socket or port its app stopped serving stops at its next command (ToolReach).
+        supervisor.onReachLost { [weak router] lease, reason in
+            Task { await router?.reachLost(lease: lease, reason: reason) }
+        }
         // A grant whose limits can't be read isn't restored rather than left unlimited: its app pairs again. Said in the log.
         let unreadable = Self.attempt(log, "read-limits") { try database.unreadableLimits() } ?? []
         for id in unreadable {

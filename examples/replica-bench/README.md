@@ -99,7 +99,7 @@ The app's MCP server is `bench` (tools appear as `bench__…` on Goose). It runs
 - `submit_candidate`: records a crate folder inside the workspace.
 - `score_candidate`: the referee builds the crate and scores it on the held-out set.
 
-The **probe gateway** is a loopback TCP port with a per-run token, listed in the policy's `toolPorts`. The bench serves it from the same process that holds its connection to Agneta, before the session opens: under contained mode Agneta allows only ports the app serves itself ([Tool ports and sockets](../../docs/APP_PROTOCOL.md#tool-ports-and-sockets)). It speaks one JSON object per line (`{"token", "op": "describe" | "evaluate" | "evaluate_batch", ...}`). `kit/rb.py` (standard library only) finds it through `RB_GATEWAY_PORT` and `RB_GATEWAY_TOKEN`, else `kit/gateway.json`.
+The **probe gateway** is a loopback TCP port with a per-run token, listed in the policy's `toolPorts`. The bench serves it from the same process that holds its connection to Agneta, before the session opens and until it ends: under contained mode Agneta allows only ports the app serves itself, checked when the session opens and before each command (Agneta's check opens a connection and closes it without sending anything, which the gateway ignores) ([Tool ports and sockets](../../docs/APP_PROTOCOL.md#tool-ports-and-sockets)). It speaks one JSON object per line (`{"token", "op": "describe" | "evaluate" | "evaluate_batch", ...}`). `kit/rb.py` (standard library only) finds it through `RB_GATEWAY_PORT` and `RB_GATEWAY_TOKEN`, else `kit/gateway.json`.
 
 **The referee** runs in the app, outside the agent:
 

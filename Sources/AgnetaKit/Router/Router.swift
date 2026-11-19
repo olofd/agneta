@@ -707,11 +707,15 @@ public actor Router {
     /// Stops a session from Agneta's UI. The app sees the turn end as cancelled by the user.
     public func stop(_ id: String) async { await stop(id, byLimit: nil) }
 
-    /// Stops a session: by the user, or by a limit the user set for its app (`byLimit`), which the app hears as
-    /// `stoppedBy: "limit"` with the limit, and its running prompt's answer names.
-    func stop(_ id: String, byLimit hit: LimitHit?) async {
+    /// Stops a session: by the user, by a limit the user set for its app (`byLimit`), which the app hears as
+    /// `stoppedBy: "limit"` with the limit, and its running prompt's answer names, or because a socket or port it
+    /// reaches is no longer served by its app (`reach`, the reason: `stoppedBy: "reach"`).
+    func stop(_ id: String, byLimit hit: LimitHit?, reach: String? = nil) async {
         guard let session = sessions[id] else { return }
-        traces?.session(id)?.writer.record("lifecycle", ["event": "stop", "by": hit == nil ? "user" : "limit"])
+        let by: JSONValue = reach != nil ? "reach" : hit == nil ? "user" : "limit"
+        var record: [String: JSONValue] = ["event": "stop", "by": by]
+        if let reach { record["reason"] = .string(reach) }
+        traces?.session(id)?.writer.record("lifecycle", record)
         // Its running prompt is answered as stopped by the limit (and only a running one: nothing is left for a later).
         if let hit, inFlight[id] != nil { enforcedLimits[id] = hit }
         // The app hears who stopped it before the engine answers the cancelled prompt, so its turn ends as stopped by
@@ -719,12 +723,19 @@ public actor Router {
         // stopped reading mustn't hold up Stop.
         if let app = apps[session.app] {
             let peer = app.peer
-            let base: JSONValue = ["sessionId": .string(id), "stoppedBy": hit == nil ? "user" : "limit"]
+            var base: JSONValue = ["sessionId": .string(id), "stoppedBy": by]
+            if let reach { base = base.setting("reason", to: .string(reach)) }
             let params = hit.map { base.setting("limit", to: $0.report) } ?? base
             await Self.bounded(seconds: 1) { try? await peer.notify("agneta/sessionStopped", params) }
         }
         await Self.closeOnEngine(session)
         await end(id, .stopped)
+    }
+
+    /// The broker refused a command on `lease`'s engine: a contained session's socket or port is no longer served by
+    /// its app (ToolReach). Every session on that engine stops, and its app is told why.
+    public func reachLost(lease: String, reason: String) async {
+        for (id, session) in sessions where session.lease.key == lease { await stop(id, byLimit: nil, reach: reason) }
     }
 
     /// Tells the engine a session is over: cancel its turn, then close it, within 5 s together. A stuck engine

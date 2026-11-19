@@ -21,9 +21,13 @@ public final class ToolBroker: @unchecked Sendable {
     public struct Grant: Sendable {
         public var profile: String
         public var environment: [String: String]
-        public init(profile: String, environment: [String: String]) {
+        /// Checked before each command: why the session may no longer run commands, or nil. A contained session's
+        /// sockets and ports must still be served by its app (ToolReach.Check).
+        public var reach: (@Sendable () -> String?)?
+        public init(profile: String, environment: [String: String], reach: (@Sendable () -> String?)? = nil) {
             self.profile = profile
             self.environment = environment
+            self.reach = reach
         }
     }
 
@@ -31,6 +35,8 @@ public final class ToolBroker: @unchecked Sendable {
     private let resolve: @Sendable (_ token: String, _ cwd: URL) -> Grant?
     /// Each command's outcome for the task trace: command, cwd, exit status or signal, timing, output sizes.
     private let report: @Sendable (_ token: String, _ fields: [String: JSONValue]) -> Void
+    /// A token's session failed its grant's `reach` check: its commands are stopped, and its session must stop too.
+    private let lost: @Sendable (_ token: String, _ reason: String) -> Void
     private let shell: String
     /// `agneta-shell`, run as each command's group holder (`--hold`), so what a command starts in the background lives
     /// on until its engine ends; without it, a command's group ends with the command.
@@ -49,8 +55,10 @@ public final class ToolBroker: @unchecked Sendable {
     public init(
         socketPath: String, shell: String = "/bin/bash", holder: String? = nil,
         resolve: @escaping @Sendable (_ token: String, _ cwd: URL) -> Grant?,
-        report: @escaping @Sendable (_ token: String, _ fields: [String: JSONValue]) -> Void = { _, _ in }
+        report: @escaping @Sendable (_ token: String, _ fields: [String: JSONValue]) -> Void = { _, _ in },
+        lost: @escaping @Sendable (_ token: String, _ reason: String) -> Void = { _, _ in }
     ) {
+        self.lost = lost
         self.socketPath = socketPath
         self.shell = shell
         self.holder = holder
@@ -163,6 +171,17 @@ public final class ToolBroker: @unchecked Sendable {
             _ = reply("x 126")
             fields["refused"] = "engine ended"
             report(request.token, fields)
+            return
+        }
+        // What the session reaches beyond its folders is still its app's: a server replaced by another program's since
+        // the last command ends the session, its running commands with it, before this one can reach it.
+        if let reason = grant.reach?() {
+            stopCommands(token: request.token)
+            _ = reply("e " + Data("agneta: \(reason)\n".utf8).base64EncodedString())
+            _ = reply("x 126")
+            fields["refused"] = .string(reason)
+            report(request.token, fields)
+            lost(request.token, reason)
             return
         }
         // The command's group: its holder's when there is one (background jobs live on), else its own.

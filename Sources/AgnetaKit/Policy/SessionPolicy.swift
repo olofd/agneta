@@ -57,6 +57,9 @@ public struct SessionPolicy: Sendable, Equatable {
     /// Of `toolPorts` and `toolSockets`, those found served by the app itself when the session opened (ToolReach): what
     /// a contained session may reach beyond its granted folders (GrantScope.reach). Set by the router, never by the app.
     public var servedByApp: Set<ToolReach.Endpoint> = []
+    /// Those endpoints with the app they must stay served by, which the broker checks again before each command. Nil
+    /// when nothing beyond the session's folders was asked for, and under developer access.
+    public var reachCheck: ToolReach.Check?
     public var approval: Approval
     public var limits: Limits
     /// The sandbox the session runs in, as resolved when it opens (SandboxResolution): what Agneta's profiles build.
@@ -138,8 +141,10 @@ extension SessionPolicy {
     func recordingChecked() -> SessionPolicy {
         var policy = self
         // As resolved, nothing more: standardizedFileURL would turn /private/var into /var, which the sandbox never matches.
+        // Sockets too: a link put at a checked socket's path before the profile is written must not move its rule to
+        // wherever the link points.
         policy.checkedPaths = Set(
-            ([workspace] + readable + writable + readOnly + denied).map {
+            ([workspace] + readable + writable + readOnly + denied + toolSockets).map {
                 $0.path(percentEncoded: false).trimmingSuffix("/")
             })
         return policy

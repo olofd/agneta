@@ -137,10 +137,12 @@ extension Router {
         case .failure(let refusal): return .failure(refusal.rpcError)
         }
         // A contained task's sockets and ports: within its folders, or the app's own (ToolReach). Looked up only for
-        // what the folders don't cover.
-        if effective == .contained {
-            policy.servedByApp = ToolReach.served(
-                ToolReach.unresolved(policy, grant: grant), by: reachingApp(appID, grant: grant), lookup: reach)
+        // what the folders don't cover, and checked again before each command.
+        let unresolved = effective == .contained ? ToolReach.unresolved(policy, grant: grant) : []
+        if !unresolved.isEmpty {
+            let app = reachingApp(appID, grant: grant)
+            policy.servedByApp = ToolReach.served(unresolved, by: app, lookup: reach)
+            policy.reachCheck = ToolReach.Check(app: app, name: grant.app, endpoints: unresolved)
         }
         if let refusal = GrantScope.reach(policy, against: grant, sandbox: effective) {
             return .failure(refusal.rpcError)
@@ -166,11 +168,12 @@ extension Router {
                 sandbox: effective))
     }
 
-    /// Who counts as the app for what it serves: a verified grant's team, or the processes holding its connection now.
+    /// Who counts as the app for what it serves: a verified grant's team, or the processes holding its connection now,
+    /// as instances (a pid reused later is another process).
     func reachingApp(_ appID: UUID, grant: Grant) -> ToolReach.App {
-        if grant.verified, let team = grant.team { return ToolReach.App(team: team, pids: []) }
+        if grant.verified, let team = grant.team { return ToolReach.App(team: team, processes: []) }
         let pids = apps[appID]?.ports.map { reach.connection($0.client, $0.server) } ?? []
-        return ToolReach.App(team: nil, pids: pids)
+        return ToolReach.App(team: nil, processes: pids.compactMap(reach.instance))
     }
 
     /// The refusal for anything new on a paused account, or nil when it isn't paused.

@@ -61,6 +61,12 @@ public struct PeerIdentity: Sendable, Equatable {
 
     /// Reads the code signature of a running process.
     public static func of(pid: pid_t) -> PeerIdentity {
+        of(pid: pid, attributes: [kSecGuestAttributePid: NSNumber(value: pid)])
+    }
+
+    /// Reads the code signature of the process `attributes` name (its pid, or its audit token, which names one
+    /// process instance only).
+    static func of(pid: pid_t, attributes: [CFString: Any]) -> PeerIdentity {
         var identity = PeerIdentity(pid: pid, path: nil, identifier: nil, team: nil, valid: false)
         var buffer = [CChar](repeating: 0, count: Int(4 * MAXPATHLEN))
         let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
@@ -68,8 +74,8 @@ public struct PeerIdentity: Sendable, Equatable {
             identity.path = String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
         }
         var code: SecCode?
-        let attributes = [kSecGuestAttributePid: NSNumber(value: pid)] as CFDictionary
-        guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess, let code else {
+        guard SecCodeCopyGuestWithAttributes(nil, attributes as CFDictionary, [], &code) == errSecSuccess, let code
+        else {
             return identity
         }
         identity.valid = SecCodeCheckValidity(code, [], nil) == errSecSuccess
