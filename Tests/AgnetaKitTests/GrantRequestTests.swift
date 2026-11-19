@@ -84,6 +84,8 @@ extension RouterContractTests {
         let result = try await answered.value
         deadline.cancel()
         #expect(result["stopReason"] == "cancelled", "\(result)")
+        // The app heard it was the user before the prompt's answer: its turn ends as stopped by the user.
+        #expect(app.notifications("agneta/sessionStopped").first?["stoppedBy"] == "user")
     }
 
     /// "all" asks for everything; unknown names are refused, with the ones there are.

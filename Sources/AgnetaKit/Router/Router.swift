@@ -549,12 +549,14 @@ public actor Router {
     public func stop(_ id: String) async {
         guard let session = sessions[id] else { return }
         traces?.session(id)?.writer.record("lifecycle", ["event": "stop", "by": "user"])
-        await Self.closeOnEngine(session)
+        // The app hears it was the user before the engine answers the cancelled prompt, so its turn ends as stopped by
+        // the user. Queued before anything that follows (messages leave in order); waited for briefly, since an app
+        // that stopped reading mustn't hold up Stop.
         if let app = apps[session.app] {
-            // Not waited for: an app that stopped reading mustn't hold up Stop.
             let peer = app.peer
-            Task { try? await peer.notify("agneta/sessionStopped", ["sessionId": .string(id), "stoppedBy": "user"]) }
+            await Self.bounded(seconds: 1) { try? await peer.notify("agneta/sessionStopped", ["sessionId": .string(id), "stoppedBy": "user"]) }
         }
+        await Self.closeOnEngine(session)
         await end(id, .stopped)
     }
 
