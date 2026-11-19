@@ -393,6 +393,9 @@ public actor Router {
         return ["providers": .array(providers), "engines": .array(engines), "connected": .bool(!accounts.isEmpty)]
     }
 
+    /// The Codex program this Agneta runs, for what only Codex itself can do outside a task (deleting a saved session).
+    public var codexProgram: URL? { (catalog.adapter("codex") as? CodexAdapter)?.cli.path }
+
     /// Tells connected apps (those holding `grant`, or every one) that what they may use changed, with what it is now.
     /// A change for every app also reaches the ones not paired yet, as what Agneta offers (`agneta/catalogChanged`).
     func accessChanged(grant only: String? = nil) {

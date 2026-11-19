@@ -23,6 +23,10 @@ public struct CodexSignIn: Sendable {
     @discardableResult
     public func signOut() async -> Bool { await codex(["logout"]) == 0 }
 
+    /// Codex's own deletion of a saved session (`codex delete`): its rollout and its copies in Codex's databases, which
+    /// removing the rollout file alone leaves behind. Returns whether it succeeded.
+    public func delete(session: String) async -> Bool { await codex(["delete", "--force", session]) == 0 }
+
     private func codex(_ arguments: [String]) async -> Int32? {
         guard (try? CodexAdapter.prepareAccountHome(codexHome)) != nil else { return nil }
         try? CodexAdapter.writeConfig(codexHome)

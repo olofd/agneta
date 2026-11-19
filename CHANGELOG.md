@@ -6,6 +6,7 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 **For you**
 
+- **Clearing history removes a Codex task completely:** Codex deletes its own session, including its copies in Codex's databases, not only its session file.
 - **Deleting a task deletes all of its conversation:** a task that ran on an API key without built-in tools shares its account's Goose, which kept the conversation until you signed out. Now Agneta asks Goose to delete it, then rewrites Goose's database so no file still holds the words.
 - **Model and Effort… names the engine's own choice:** "Codex's default (its model)" rather than just "Codex's default", so leaving it to the engine says what that means.
 - **Choose how far each app reaches:** **Developer access** (as in a terminal: the internet, your home folder and your toolchains, with credentials and Agneta's data kept out) or **Contained** (the task's folders, no internet for commands), when you allow an app and later in Settings → Apps. Apps you allowed before stay contained.

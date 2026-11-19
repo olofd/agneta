@@ -259,8 +259,32 @@ public actor AgnetaRuntime {
         // Not queued (the database refused the write): those tasks' traces stay, the only record left of where their
         // conversations are.
         let gone = queued ? tasks : tasks.filter { traces.meta(task: $0).flatMap(Router.sharedConversation) == nil }
-        EngineHomes.remove(tasks: gone, traces: traces, root: store.root)
+        // Codex keeps a conversation in its databases too, not only in the rollout file: Codex itself deletes it, while
+        // the rollout is still there to find it by (the files go as before if it can't).
+        let codexThreads: [(home: URL, session: String, files: [URL])] = gone.compactMap { task in
+            guard let engine = traces.meta(task: task)?["engine"], engine["id"]?.stringValue == "codex",
+                  let session = engine["session"]?.stringValue, let root = engine["stateRoot"]?.stringValue else { return nil }
+            let files = EngineHomes.conversation(engine: engine, root: store.root)
+            return files.isEmpty ? nil : (URL(filePath: root, directoryHint: .isDirectory), session, files)
+        }
+        EngineHomes.remove(tasks: gone, traces: traces, root: store.root, keepingConversationsOf: codexThreads.isEmpty ? [] : ["codex"])
         traces.delete(tasks: gone)
+        if !codexThreads.isEmpty {
+            _Concurrency.Task { [router, log] in
+                let program = await router.codexProgram
+                var failed = 0
+                for thread in codexThreads {
+                    var deleted = false
+                    if let program { deleted = await CodexSignIn(cli: program, codexHome: thread.home).delete(session: thread.session) }
+                    if !deleted {
+                        failed += 1
+                        for file in thread.files { try? FileManager.default.removeItem(at: file) }
+                    }
+                }
+                log?.log("codex-threads-deleted", level: failed == 0 ? "info" : "error",
+                         ["asked": .int(Int64(codexThreads.count)), "failed": .int(Int64(failed)), "program": .bool(program != nil)])
+            }
+        }
         if !queued {
             observer(.conversationsLeft(count: shared.count, problem: "Agneta couldn't record which conversations to delete"))
         } else if !shared.isEmpty {

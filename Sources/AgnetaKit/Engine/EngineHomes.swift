@@ -28,10 +28,12 @@ public enum EngineHomes {
 
     /// Removes the engine homes of these tasks, and their conversations kept in an account's folder, read from their
     /// traces' `meta` (call before deleting the traces).
-    public static func remove(tasks: [String], traces: Traces, root: URL) {
+    public static func remove(tasks: [String], traces: Traces, root: URL, keepingConversationsOf kept: Set<String> = []) {
         for task in tasks {
             guard let engine = traces.meta(task: task)?["engine"] else { continue }
-            for file in conversation(engine: engine, root: root) { try? FileManager.default.removeItem(at: file) }
+            if !kept.contains(engine["id"]?.stringValue ?? "") {
+                for file in conversation(engine: engine, root: root) { try? FileManager.default.removeItem(at: file) }
+            }
             guard engine["dedicated"]?.boolValue == true, let key = engine["key"]?.stringValue, !key.contains("..") else { continue }
             try? FileManager.default.removeItem(at: home(root: root, key: key))
         }

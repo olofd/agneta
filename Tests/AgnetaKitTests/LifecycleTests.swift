@@ -184,3 +184,19 @@ struct SharedProbeAdapter: EngineAdapter {
         await supervisor.stopAll()
     }
 }
+
+/// A Codex task leaves history through Codex itself (`codex delete --force <id>` on the account's folder), which also
+/// removes its copies in Codex's databases; a stand-in records what it's asked.
+@Test func codexDeletesItsOwnSession() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: "agneta-codex-delete-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
+    defer { try? FileManager.default.removeItem(at: root) }
+    let codexHome = root.appending(path: "Accounts/a1/codex", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+    let log = root.appending(path: "asked.txt"), program = root.appending(path: "codex")
+    try "#!/bin/sh\necho \"$CODEX_HOME $*\" >> '\(log.path(percentEncoded: false))'\n".write(to: program, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: program.path(percentEncoded: false))
+    let session = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+    #expect(await CodexSignIn(cli: program, codexHome: codexHome).delete(session: session))
+    let asked = try String(contentsOf: log, encoding: .utf8)
+    #expect(asked.contains("delete --force \(session)") && asked.contains(codexHome.path(percentEncoded: false).trimmingSuffix("/")), "\(asked)")
+}

@@ -60,6 +60,10 @@ public struct CodexAdapter: EngineAdapter {
         tool_suggest = false
         daemon_auto_start = false
         hooks = false
+        # Off by default; pinned so they stay off: memories would carry one task into another's, and compressed
+        # rollouts (.jsonl.zst) would escape Agneta's deletion and usage reading, which read .jsonl.
+        memories = false
+        local_thread_store_compression = false
 
         [analytics]
         enabled = false
