@@ -147,7 +147,7 @@ python3 site/build.py && python3 -m http.server 8642 --bind 127.0.0.1 --director
 
 ## For app developers
 
-**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app, built on [`@agneta/client`](clients/typescript/README.md) like Replica Bench, pairs with Agneta, keeps its access and reconnects by itself, offers to open Agneta when it isn't running, lets you choose Agneta or Agneta Dev, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review. **[Replica Bench](examples/replica-bench/README.md)** shows the sandbox modes: it runs a demanding workload on every engine in both modes, and shows what each task got and how a refusal looks.
+**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app, built on [`@agneta/client`](clients/typescript/README.md) like Replica Bench, pairs with Agneta, keeps its access and reconnects by itself, helps the user get Agneta when it isn't installed and open it when it isn't running, lets you choose Agneta or Agneta Dev, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review. **[Replica Bench](examples/replica-bench/README.md)** shows the sandbox modes: it runs a demanding workload on every engine in both modes, and shows what each task got and how a refusal looks.
 
 Your app is an ACP **client** and Agneta is the ACP **agent**. If your app already speaks ACP, most of what follows is familiar. What Agneta adds is how you reach it, how the user lets your app in, and the rules a task runs under.
 
@@ -176,7 +176,7 @@ Otherwise no SDK is needed. Any WebSocket and JSON-RPC 2.0 code will do, includi
 
 `@agneta/client` does each step below for you. They're here for apps in other languages, and to show what goes over the wire.
 
-**1. Connect.** Open `ws://127.0.0.1:47321/acp`, the port of releases; development builds listen on 47331. If the connection is refused, Agneta isn't running: ask the user whether to open it, and on a yes open `agneta://open` (`agneta-dev://open` for development builds), wait for the port and connect. Never open it without asking. Before pairing you may call `agneta/catalog` (what Agneta offers: each kind of provider, whether one is connected, the engines; never the user's accounts) and `agneta/setup` (Agneta's window for connecting a provider). See [Before pairing](docs/APP_PROTOCOL.md#before-pairing-what-agneta-offers).
+**1. Connect.** Open `ws://127.0.0.1:47321/acp`, the port of releases; development builds listen on 47331. If the connection is refused, Agneta isn't running, and may not be installed: ask LaunchServices which app opens `agneta://open`. If none does, offer to get it (the install page, `https://agneta.dahlbom.io/get/`, or Homebrew) and wait until it's installed; if it's installed, ask the user whether to open it, and on a yes open `agneta://open` (`agneta-dev://open` for development builds), wait for the port and connect. Never open it without asking. [Getting Agneta](docs/APP_PROTOCOL.md#getting-agneta) has the whole recipe, with the Swift calls. Before pairing you may call `agneta/catalog` (what Agneta offers: each kind of provider, whether one is connected, the engines; never the user's accounts) and `agneta/setup` (Agneta's window for connecting a provider). See [Before pairing](docs/APP_PROTOCOL.md#before-pairing-what-agneta-offers).
 
 **2. Pair, once.** Ask to be let in, and show the user that you're waiting:
 
