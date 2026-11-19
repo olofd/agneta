@@ -36,7 +36,8 @@ Everything an engine does its own way lives behind one adapter (`Sources/AgnetaK
 | Instructions | System prompt, replaceable between turns | The session agent's system prompt, at launch | `_meta.systemPrompt`, at `session/new` | Appended to Codex's own, at `session/new` |
 | Fork | Export and import | Not offered | Not offered | Not offered |
 | Per-call usage | Its session database | Its session database | Its stream (`_claude/sdkMessage`) | Its rollout files |
-| Cost | Per call | Per call | List-price, at the turn's end | None |
+| Cost | Per call | Per step (after the tools it called) | List-price, at the turn's end | None |
+| Under an app's spending limit | Counted live | Counted live | Counted at each turn's end | Can't run on an OpenAI key |
 
 ## Goose
 
@@ -54,6 +55,7 @@ Everything an engine does its own way lives behind one adapter (`Sources/AgnetaK
 - **Plans.** Goose serves Claude plans, not ChatGPT plans (those run on Codex). A Claude plan uses Goose's `claude-acp` provider, which runs the downloaded `claude-agent-acp` with your installed Claude Code (`CLAUDE_CODE_EXECUTABLE`) under the account's own Claude Code configuration folder.
 - **On a Claude plan, Goose is uncontained by the policy, and says so.** The Claude Code Goose runs as its model uses all its own tools (measured on 2.1.325: Bash, Agent, Skill, Workflow, Monitor, RemoteTrigger, WebSearch) and the claude.ai account's connectors; Goose's own brokered tools don't reach it. Agneta's engine sandbox still holds it to the session's folders, but the policy's tool, network and approval rules don't apply to those tools. It stays offered, as a choice: the access report lists it in `uncontained`, and Settings → Engines says what it means. So it provides developer access only (`sandboxLevels`): a contained task on it is refused, with why. For a Claude plan under Agneta's policy, run Claude Code directly.
 - **Retries.** Goose retries a provider's 429 itself before the turn fails (about a minute).
+- **Cost while a turn runs.** Goose writes a model call's `usage_ledger` row when the call ends, and Agneta reads it at its next 2-second poll: measured on 1.59.2 against a local model, 0.8 to 2.1 seconds after the call ended (`LimitMeasurementTests`). That, plus the watchdog's half second, is how far past an app's spending limit a turn on Goose can go.
 
 The `_goose/unstable/*` methods can change with any Goose release, so the engine is pinned and these calls are tested at every version change.
 
@@ -69,9 +71,11 @@ The `_goose/unstable/*` methods can change with any Goose release, so the engine
 | Shell through Agneta's broker | `shell: <agneta-shell>` |
 | Nothing from the user | A private `HOME` and `XDG_*`, project config off, Claude Code integration off, model catalogue fetch, updates, sharing, plugins, LSP, formatters, snapshots and file watching off |
 | No extra model calls | Session titles off (otherwise one extra model call per session) |
-| Per-call usage | `OPENCODE_DB` in the engine home: `session_message` rows with model, tokens (cache included) and cost |
+| Per-call usage | `OPENCODE_DB` in the engine home: `session_message` rows with model, tokens (cache included) and cost, one per step |
 
 Its sandbox may listen on loopback, for the private server only.
+
+**Usage, step by step.** Measured on 2.3.0: each step (a model call, and the tools it called) gets its assistant row when it starts, without tokens; its tokens, cost and `time.completed` are filled in when it ends, after its tools ran. Agneta reads a row once it's complete (or a later row shows it ended): reading it at the start lost that step's usage, and before this fix a two-call turn recorded one call. A step's row reached Agneta 0.7 to 0.9 seconds after its tools ended (`LimitMeasurementTests`), so under an app's spending limit a turn on OpenCode can go past it by a step and its tools.
 
 **Known limits:**
 - **Instructions between turns and fork** exist in OpenCode, but only through its HTTP API. They're not offered, and calls fail with `-32014`.
@@ -98,7 +102,7 @@ The user's own Claude Code, driven through [`claude-agent-acp`](https://github.c
 - Each assistant message is one model call, with its id, model, input and cache tokens exact. **Its output count isn't:** it's the count at the start of the stream, repeated for every content block. On a two-call tool turn on Haiku, the per-call rows held 37–40 output tokens against 210–230 in the turn's result.
 - Each result carries `modelUsage`: the session's running totals per model, side calls included, with a list-price `costUSD`. Agneta takes each turn's share of those totals as the turn's ledger (`basis: engine-turn-totals`) and keeps the per-call sums beside it as `callLedger`. Per-call rows are marked `outputPartial`.
 - Exact per-call output would need the adapter's `stream_event` messages, which come once per token, so they aren't used.
-- Cost arrives only at the turn's end, so `maxCostUSD` can't stop a turn in time and is refused for Claude Code.
+- Cost arrives only at the turn's end, so `maxCostUSD` can't stop a turn in time and is refused for Claude Code. An app's spending limit is checked before each turn and task instead, so a turn on Claude Code can go over it by one turn for each of the app's running tasks. When the turn-end cost lands relative to the prompt's result on an Anthropic key hasn't been measured yet: it needs an account this measurement didn't have.
 
 ## Codex
 
@@ -109,7 +113,7 @@ The user's own Codex (`codex app-server`), driven through [`codex-acp`](https://
 - **Modes.** Codex starts in `workspace-write` for `workspace` sessions and `read-only` otherwise. Developer access keeps `workspace-write`, so edits still ask. Only those two are allowed. `agent` ("Auto review") hands approval questions to Codex's own model reviewer instead of Agneta, and full access stops asking, so both are refused.
 - **Instructions** are appended to Codex's own developer instructions (`systemPrompt` with `mode: "append"`). Replacing them would remove what tells the model how to use Codex's tools.
 - **Tools.** App tools appear as `mcp.<server>.<tool>`. Edits ask permission first and work (`apply_patch`).
-- **Usage** comes from Codex's rollout files in `CODEX_HOME/sessions`: one `token_usage_record` per model call, with the response id and cached tokens. They carry no cost. On a ChatGPT plan, the same files carry the plan's own limits (used percent, window, reset), which Agneta shows in its menu.
+- **Usage** comes from Codex's rollout files in `CODEX_HOME/sessions`: one `token_usage_record` per model call, with the response id and cached tokens. They carry no cost, so an app's spending limit can't count Codex: while one is set, the app's tasks on an OpenAI key don't run on Codex ([APP_PROTOCOL.md](APP_PROTOCOL.md#limits-the-user-sets)). On a ChatGPT plan nothing is counted, and Codex runs as always. On a ChatGPT plan, the same files carry the plan's own limits (used percent, window, reset), which Agneta shows in its menu.
 
 **Commands go through Agneta's broker.** Codex runs its own commands without asking and wraps each in its own `sandbox-exec`, which macOS won't nest inside Agneta's sandbox (measured: `sandbox_apply: Operation not permitted`). So Codex's own shell is off (`shell_tool`, `unified_exec`), and its commands run through Agneta's own MCP shell instead: `agneta-shell --mcp`, the `shell` tool of the `agneta` server (`mcp__agneta__shell`), set in the account's `config.toml`, under the session's command sandbox. The session's instructions say so. An app's tool server can't be named `agneta` or `codex_apps`.
 

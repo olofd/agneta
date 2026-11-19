@@ -53,7 +53,7 @@ For app developers, this means agent features without running an agent loop, bui
 
 - **A local agent runtime that apps share.** An app sends a task: a workspace folder, its own tools (an MCP server), instructions and limits. Agneta runs an agent engine on it and streams back ACP updates, usage and a full trace.
 - **One place for your providers.** It handles sign-in for ChatGPT and Claude plans through your own Codex's and Claude Code's logins, so Agneta never holds a plan's tokens. API keys stay in your Keychain. One provider can serve several apps, and every task shows which app it belongs to, which provider it runs on and what it costs.
-- **A consent layer.** An app has to pair before it can do anything. You approve it in a window that shows whether its code signature checks out and what it will be able to do (its tools and folders), and you choose which of your providers (plans and API keys) it may use, once or always, and for an app that edits files and runs commands, Developer access or Contained. Engines are all allowed unless you narrow them (Engines… in that window, or Advanced in Settings → Apps); the app picks the engine for each task. You can see and stop every task, and remove an app's access at any time.
+- **A consent layer.** An app has to pair before it can do anything. You approve it in a window that shows whether its code signature checks out and what it will be able to do (its tools and folders), and you choose which of your providers (plans and API keys) it may use, once or always, and for an app that edits files and runs commands, Developer access or Contained. Engines are all allowed unless you narrow them (Engines… in that window, or Advanced in Settings → Apps); the app picks the engine for each task. In Settings → Apps you can also limit each app: what it may spend on your API keys a day, week or month, how many of its tasks run at once, and how many new ones it starts. You can see and stop every task, and remove an app's access at any time.
 - **A sandbox.** Every engine runs under a macOS sandbox profile. When contained, it can read the task's workspace, the folders the policy names and what the engine itself needs, and nothing else in your home folder. The engine itself can reach any HTTPS host, which is how it reaches its provider. Shell commands, on every engine, go through Agneta and run under an even stricter profile, confined to the workspace with no network. Developer access, the default for an app that edits files and runs commands (you can choose Contained when you approve it, or later in Settings), gives a terminal's reach instead: the home folder apart from credentials and Agneta's data, the internet and your own toolchains. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#sandbox-profiles) lists exactly what each part can reach.
 - **A flight recorder.** Every task leaves a structured trace: prompts, tool calls, model calls, permission decisions and timing. You read it with the `agneta-diag` command-line tool or an optional local MCP server. Apps can read their own tasks' traces live.
 
@@ -83,7 +83,7 @@ For app developers, this means agent features without running an agent loop, bui
 
 1. **Pair once.** The app connects and calls `agneta/pair` with the scope it needs (tools and folders, and optionally providers, engines and sandbox mode). Agneta identifies the process by its code signature; the user sees the scope, ticks the providers it may use, chooses Developer access or Contained, and allows it once or always. The app keeps a token in its Keychain, and `agneta/access` tells it which providers and engines it may use.
 2. **Start a session.** It calls `session/new` with a provider and, if it wants, an engine, a workspace, the app's MCP server and a policy, for example `{"tools": "workspace", "sandbox": "contained", "network": "none", "limits": {"maxTurns": 200}}`. Agneta refuses any policy it can't enforce rather than quietly weakening it.
-3. **Prompt.** Agneta queues the turn within the account's limits and starts or reuses an engine under the right sandbox profile. It streams the engine's ACP updates back, answers permission requests from the policy (or asks the app), and returns usage with the result.
+3. **Prompt.** Agneta queues the turn within the account's limits and the ones you set for the app and starts or reuses an engine under the right sandbox profile. It streams the engine's ACP updates back, answers permission requests from the policy (or asks the app), and returns usage with the result.
 4. **Watch and stop.** The task appears in the menu bar panel, its trace is written as it runs, and the user can stop it at any time.
 
 Plain ACP works unchanged. Agneta's own extensions (`agneta/policy`, `agneta/usage`, `agneta/steer`, `agneta/fork`, `agneta/trace` and others) are listed in `initialize`, and an app that ignores them still works.
@@ -264,10 +264,10 @@ The engine's standard ACP `session/update` notifications arrive unchanged, under
 | --- | --- |
 | `agneta/catalogChanged {"catalog"}` | Before pairing: a provider was connected or removed, or an engine changed |
 | `agneta/accessChanged {"access"}` | What your app may use changed: providers or engines added, removed, paused, downloading or ready, or its sandbox mode. Update your pickers |
-| `agneta/queued {"sessionId", "position"}` | The provider is busy; the turn waits its place and runs later |
+| `agneta/queued {"sessionId", "position", "waitingFor"}` | The provider is busy, or (`waitingFor: "app"`) your app is at the user's limit of tasks at once; the turn waits its place and runs later |
 | `agneta/sessionStopped {"stoppedBy": "user"}` | The user pressed Stop in Agneta. Show it as stopped, not as an error |
 | `agneta/sessionStopped {"stoppedBy": "engine"}` | The engine ended on its own; resume the task with `session/load` |
-| `agneta/sessionStopped {"stoppedBy": "limit"}` | A policy limit ended the session; load it again to go on |
+| `agneta/sessionStopped {"stoppedBy": "limit"}` | A limit ended the session (the policy's, or the spending limit the user set for your app); load it again to go on |
 | `agneta/rateLimited {"account", "resetsAt"}` | The provider's limit stopped the turn. Retry after `resetsAt`, or use another provider |
 | Error with `data.agneta.needsSignIn` | The provider must sign in again; ask the user to open Agneta |
 | `-32011` | A turn is already running in this session: steer it, or wait |
@@ -275,6 +275,7 @@ The engine's standard ACP `session/update` notifications arrive unchanged, under
 | `-32013` | The user paused this provider |
 | `-32014` | This engine can't do that; check `capabilities` |
 | `-32015` | The engine is still downloading (`data.agneta.engineDownloading`, with progress); try again shortly |
+| `-32016` | The limit the user set for your app in Agneta is reached (`data.agneta.appLimit`, with when it resets); show it as their choice |
 
 The full reference, with every field, limit and error, is **[docs/APP_PROTOCOL.md](docs/APP_PROTOCOL.md)**. Every step there is exercised by `Tests/AgnetaKitTests/AppScenarioTests.swift` against a real engine.
 

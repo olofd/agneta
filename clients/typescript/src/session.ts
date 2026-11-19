@@ -9,7 +9,7 @@ import type { Connection, RequestOptions } from './connection.js';
 import { Emitter } from './emitter.js';
 import { TimeoutError, TurnBusyError, type ConnectionClosedError, type DownloadProgress } from './errors.js';
 import type {
-  AgnetaRequests, AgnetaUsage, EngineId, LimitHit, Policy, PromptResult, RateLimitDetails, SandboxLevel,
+  AgnetaRequests, AgnetaUsage, EngineId, LimitHit, Policy, PromptResult, QueuedParams, RateLimitDetails, SandboxLevel,
   SessionCapabilities, SessionRequestMeta, SessionResult, SteerResult, StoppedBy, TaskInfo, TraceDelivery,
   TraceReadParams, TraceReadResult, TraceRecord, TraceRecordType
 } from './protocol.js';
@@ -78,7 +78,7 @@ function chunkText(update: SessionUpdate, kind: 'agent_message_chunk' | 'agent_t
 export type TurnEvent =
   | { type: 'update'; update: SessionUpdate }
   /** The provider is busy: the turn waits its place in Agneta's queue. */
-  | { type: 'queued'; position: number }
+  | { type: 'queued'; position: number; waitingFor?: QueuedParams['waitingFor'] }
   /** The provider's limit stopped the turn; the turn then fails with `RateLimitedError`. */
   | { type: 'rateLimited'; details: RateLimitDetails }
   /** The session was stopped while the turn ran. */
@@ -244,7 +244,7 @@ export type SessionEnd =
 export type SessionEvents = {
   /** Every `session/update`, during a turn or not. */
   update: [update: SessionUpdate];
-  queued: [position: number];
+  queued: [position: number, waitingFor?: QueuedParams['waitingFor']];
   rateLimited: [details: RateLimitDetails];
   /** Live trace records (`agneta/trace`), when the session asked for them. */
   trace: [records: TraceRecord[]];
@@ -497,8 +497,8 @@ export class Session extends Emitter<SessionEvents> {
         return;
       }
       case 'agneta/queued':
-        this.#turn?.push({ type: 'queued', position: params.position });
-        this.emit('queued', params.position);
+        this.#turn?.push({ type: 'queued', position: params.position, waitingFor: params.waitingFor });
+        this.emit('queued', params.position, params.waitingFor);
         return;
       case 'agneta/rateLimited': {
         const details: RateLimitDetails = { account: params.account, message: params.message, resetsAt: params.resetsAt ?? null };

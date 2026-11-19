@@ -82,9 +82,13 @@ function render(state) {
 
   const calls = state.usage?.modelCalls;
   const tokens = state.usage?.outputTokens;
+  // With a spending limit set for this app in Agneta, where it stands.
+  const app = state.usage?.app;
+  const period = { day: 'today', week: 'this week', month: 'this month' }[app?.period] ?? '';
   element('usage').textContent = [
     Number.isInteger(calls) && calls > 0 ? `${calls} model ${calls === 1 ? 'call' : 'calls'}` : null,
-    Number.isInteger(tokens) && tokens > 0 ? `${tokens} output tokens` : null
+    Number.isInteger(tokens) && tokens > 0 ? `${tokens} output tokens` : null,
+    app ? `$${app.spent.toFixed(2)} of $${app.max} ${period}` : null
   ].filter(Boolean).join(' · ');
 }
 

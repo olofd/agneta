@@ -15,5 +15,6 @@ The first version: Agneta's whole app protocol ([docs/APP_PROTOCOL.md](https://g
 - **Settings:** model, effort and mode by ACP category; instructions between turns.
 - **Permissions:** answered per session or per client, declined without a handler.
 - **Traces:** live records, overflow, and reading page by page.
-- **Errors:** a class and `kind` for every code and data Agneta sends, with `advice`.
+- **Errors:** a class and `kind` for every code and data Agneta sends, with `advice`; `AppLimitError` for `-32016`, a limit the user set for the app.
+- **Limits the user sets:** `access.limits`, each provider's `uncounted`, `agneta/limit`'s `appSpend` and `setBy`, `agneta/usage`'s `app`, and the `queued` event's `waitingFor`.
 - **The raw layer:** any request or notification, typed for Agneta's methods, and every frame both ways.

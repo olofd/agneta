@@ -45,7 +45,7 @@ Renderer ── fixed IPC actions ──► Electron main ── ACP WebSocket �
 3. [**Prompt and close**](chat.mjs). `session.prompt(text)` sends `session/prompt`; Project Chat renders the reply as it streams (`turn.textStream()`, the `agent_message_chunk` text) and shows usage reported by Agneta. `session.cancel()` sends `session/cancel` to stop a turn and `session.close()` sends `session/close` when starting a new chat. The MCP listener closes with the session.
 4. [**Keep the renderer’s access narrow**](main.mjs). Agneta refuses browser WebSocket upgrades, so ACP runs in the Node main process. The [preload bridge](preload.cjs) exposes specific UI actions. Pairing and MCP credentials stay out of it.
 
-See [Agneta’s app protocol](../../docs/APP_PROTOCOL.md) for the complete wire contract. If the example cannot connect, check that Agneta is running and that the **Use** menu names the Agneta that's running. If Agneta asks you to sign in again or resume a paused account, do so there before retrying the message.
+See [Agneta’s app protocol](../../docs/APP_PROTOCOL.md) for the complete wire contract. If the example cannot connect, check that Agneta is running and that the **Use** menu names the Agneta that's running. If Agneta asks you to sign in again or resume a paused account, do so there before retrying the message. If it says a limit you set for Project Chat in Agneta is reached, the message says when it resets; you can change the limit in Agneta's Settings → Apps.
 
 ## Check it without an account
 

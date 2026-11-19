@@ -27,7 +27,7 @@ App (sandboxed or not) ──ACP over a local WebSocket, paired──▶ Agneta 
 | `  ACP/` | `RPCPeer`: one side of a JSON-RPC connection, transport-agnostic |
 | `  Transport/` | Newline-delimited stdio framing, the WebSocket server for apps, a minimal HTTP server for diagnostics |
 | `  Runtime/` | `AgnetaRuntime`: the router, engines and records wired together; it records grants and task history, cleans up after a crash and applies retention |
-| `  Router/` | The router: its state, grants and access (`Router.swift`, `Access`, `AccessReport`), app connections, pairing and requests (`+Apps`), opening sessions (`+Sessions`), engine messages and permissions (`+Engines`), the turn queue and limits (`+Turns`), grant scopes, rate-limit detection |
+| `  Router/` | The router: its state, grants and access (`Router.swift`, `Access`, `AccessReport`), app connections, pairing and requests (`+Apps`), opening sessions (`+Sessions`), engine messages and permissions (`+Engines`), the turn queue and limits (`+Turns`), the limits the user sets for each app (`AppLimits`, `AppMeter`, `+AppLimits`), grant scopes, rate-limit detection |
 | `  Engine/` | `EngineAdapter` and one adapter per engine, `BuiltinTools` (the built-in tools each policy permits, the contract every engine is tested against), the supervisor, CLI discovery, usage readers, crash recovery |
 | `  Policy/` | `agneta/policy` parsing, the sandbox modes (`Sandbox`) and what developer access widens (`DeveloperAccess`), Seatbelt profiles, the tool broker |
 | `  Pairing/` | Who is on the other end of a loopback connection |
@@ -57,7 +57,8 @@ The only third-party library linked in is [GRDB.swift](https://github.com/groue/
 - **Requests from the engine** (permission requests, file or terminal calls) go back to the owning app, after the policy checks in [APP_PROTOCOL.md](APP_PROTOCOL.md#permissions).
 - **Notifications are delivered in order.** Each connection handles its notifications and responses one at a time, in arrival order, so streamed chunks never reorder and a turn's result never overtakes its last updates. Requests run concurrently, since a handler may wait on another connection.
 - **Writes never block Agneta.** Each engine's stdin is written on a queue of its own, so an engine that stops reading can't hold up anything else.
-- **Turns are queued** (8 at once, 3 per account, 32 waiting) and **limited** by the policy's time, model-call and cost limits, checked twice a second.
+- **Turns are queued** (8 at once, 3 per account, no more of an app's than the user's "at once" limit for it, 32 waiting). A turn waits only behind earlier turns that want the same room, so neither a busy account nor an app at its own limit holds up another.
+- **Turns are limited** by the policy's time, model-call and cost limits, and by the spending limit the user set for the app (on API keys only), checked twice a second. The user's limits for an app (spending, at once, new tasks; [APP_PROTOCOL.md](APP_PROTOCOL.md#limits-the-user-sets)) are kept with its grant and counted per grant in hourly totals; every check that can refuse work is synchronous, made before the request's first wait and again after each one, and new tasks are counted before their engine starts, so a burst can't all pass.
 - **Stopping** (Stop in the menu, `session/close`, an app disconnecting, Remove Access) cancels the turn and closes the session within 5 seconds, even when an engine is stuck or has stopped reading; the session ends whatever the engine answers.
 - **An engine that exits on its own** is retired at once (connection closed, broker grant revoked, recorded as stopped), and its sessions end with `stoppedBy: "engine"`; the next session on that account starts a fresh engine.
 
@@ -168,7 +169,7 @@ Everything is in Agneta's Application Support folder, named by its bundle identi
 
 | Path | What |
 | --- | --- |
-| `agneta.sqlite` | Accounts, grants (by token hash), task history, turns, recorded engines, settings |
+| `agneta.sqlite` | Accounts, grants (by token hash, with the limits the user set), each app's usage by hour, task history, turns, recorded engines, settings |
 | `Accounts/<id>/` | Each account's engine home and sign-in |
 | `Engines/<account>-<id>/` | Dedicated engines' homes |
 | `Runtimes/` | Downloaded runtimes (OpenCode, `claude-agent-acp`, and in releases Codex's runtime) |
@@ -178,16 +179,14 @@ Everything is in Agneta's Application Support folder, named by its bundle identi
 Beside it, `… Workspaces/<grant>` holds each app's own workspace, and `… Workspaces/.build-caches/<grant>` each app's build caches under developer access.
 
 - **The database** is SQLite through GRDB. **Before 1.0 there's no compatibility promise.** The schema may change in place, and a database made with another schema is refused, untouched, so the user resets. Small forward migrations are added where they're cheap, as the sandbox modes did (grants made before them migrate as contained). Compatibility starts at 1.0.
-- **Retention.** Task history, traces and engine homes are kept 30 days by default (or a week, 90 days, or none), pruned at launch and daily.
+- **Retention.** Task history, traces and engine homes are kept 30 days by default (or a week, 90 days, or none), pruned at launch and daily. Each app's usage by hour (what its tasks on API keys cost, tokens, turns and new tasks, for its limits) is kept 35 days whatever history keeps, so clearing history doesn't reset a limit; Remove Access deletes it.
 - **Reset** deletes Agneta's Keychain items, data, caches and logs, the apps' workspaces and build caches, preferences and the login item. A marker file beside the data folder makes an interrupted reset resume at the next launch.
 - **Isolated instances.** A build started with `AGNETA_HOME=<folder>` and `AGNETA_PORT=<port>` keeps its data, Keychain items (a service of its own, derived from the folder), logs and Reset inside that folder, so tests never touch the user's own Agneta or each other. The port is required, and it and the diagnostics port two above it must stay clear of the user's own Agneta (47321, 47323, 47331, 47333); otherwise the instance listens on nothing and says why.
 
 ## The app
 
-A menu bar app (`LSUIElement`) with no Dock icon. Its own `NSStatusItem` and a borderless glass panel show the accounts, running tasks with Stop, and anything needing attention. Settings has panes for general settings, providers, engines (each kind of provider's default engine, and each engine's source, version, install and download), apps (each app's providers, its sandbox mode, and under Advanced its engines), activity with task details, privacy and retention, advanced diagnostics, and about. Approval and sign-in open as their own windows. Reduce Motion and Reduce Transparency are respected, and every control is labelled for VoiceOver.
+A menu bar app (`LSUIElement`) with no Dock icon. Its own `NSStatusItem` and a borderless glass panel show the accounts, running tasks with Stop, and anything needing attention. Settings has panes for general settings, providers, engines (each kind of provider's default engine, and each engine's source, version, install and download), apps (each app's providers, its sandbox mode, its limits with its usage today, and under Advanced its engines), activity with task details, privacy and retention, advanced diagnostics, and about. Approval and sign-in open as their own windows. Reduce Motion and Reduce Transparency are respected, and every control is labelled for VoiceOver.
 
 Release builds update themselves with Sparkle, from the latest published GitHub release; development builds never do ([RELEASING.md](RELEASING.md#3-updates-in-the-app-sparkle-2)).
 
 Releases are built, signed with a Developer ID and notarized on GitHub ([RELEASING.md](RELEASING.md)); development builds are signed ad hoc.
-
-**Not supported yet:** limits set in Settings (the defaults apply).

@@ -47,7 +47,7 @@ Every line has these fields:
 | `permission` | engine call id, tool kind, title, decision (`asked-app`, `allowed-by-policy`, `refused-by-policy`, `cancelled`), answer, ms | Agneta's router |
 | `shell` | command, cwd, exit code or signal, ms, stdout and stderr bytes, the end of stderr, or why it was refused | Agneta's tool broker |
 | `stderr` | One line of the engine's stderr (dedicated engines) | The engine |
-| `lifecycle` | `engine-start` (pid, ms to initialize), `engine-exit` (code or signal), `queued`, `dequeued`, `queue-cancelled`, `queue-paused`, `stop` (by `user`, `app` or `engine`, with the reason), `steer` (delivery), `limit`, `limit-enforced`, `resumed`, `resume-failed`, `forked`, `dropped`, `trace-truncated`, `trace-full`, `engine-db-unavailable` | Agneta |
+| `lifecycle` | `engine-start` (pid, ms to initialize), `engine-exit` (code or signal), `queued` (with `waitingFor`: `app`, `account` or `agneta`), `dequeued`, `queue-cancelled`, `queue-paused`, `stop` (by `user`, `app` or `engine`, with the reason), `steer` (delivery), `limit` (with `setBy`: `app` for the policy's, `user` for the app's spending limit), `app-limit` (the app's spending limit reached: `limit`, `max`, `used`), `limit-enforced`, `resumed`, `resume-failed`, `forked`, `dropped`, `trace-truncated`, `trace-full`, `engine-db-unavailable` | Agneta |
 | `end` | No fields; the outcome is in Agneta's task history | Agneta |
 
 ### Normalized events
@@ -129,7 +129,7 @@ Settings → Activity shows each task's summary and timeline, and exports the sa
 
 ## Agneta's operational log
 
-`~/Library/Logs/Agneta/agneta.jsonl` (development builds: `Logs/Agneta Dev`): JSON lines of what Agneta itself did, such as starts, pairing, tasks, limits, sign-in and reset. Ids, names, counts and timing only, never prompts, tool content, tokens or keys; values are masked again on write. Rotated by size and kept 7 days.
+`~/Library/Logs/Agneta/agneta.jsonl` (development builds: `Logs/Agneta Dev`): JSON lines of what Agneta itself did, such as starts, pairing, tasks, limits (`app-limit-reached`, `app-limits-changed`), sign-in and reset. Ids, names, counts and timing only, never prompts, tool content, tokens or keys; values are masked again on write. Rotated by size and kept 7 days.
 
 ## Retention
 

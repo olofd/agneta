@@ -15,6 +15,7 @@ test('each of Agneta\'s codes maps to its kind, keeping the message, code, data 
     [-32013, 'paused', agneta.PausedError],
     [-32014, 'unsupportedByEngine', agneta.UnsupportedByEngineError],
     [-32015, 'engineDownloading', agneta.EngineDownloadingError],
+    [-32016, 'appLimit', agneta.AppLimitError],
     [-32601, 'methodNotFound', agneta.MethodNotFoundError],
     [-32602, 'invalidParams', agneta.InvalidParamsError],
     [-32603, 'internal', agneta.InternalError],
@@ -104,4 +105,11 @@ test('transport errors say what happened and what to do', () => {
   assert.deepEqual([closed.kind, closed.closeCode, closed.closeReason], ['connectionClosed', 1006, 'gone']);
   assert.match(new agneta.TimeoutError('agneta/pair', 310_000).message, /agneta\/pair within 310 s/);
   assert.equal(new agneta.ProtocolError('odd', { a: 1 }).detail.a, 1);
+});
+
+test('a limit the user set for the app says which, how far and when it resets', () => {
+  const error = make(-32016, { agneta: { appLimit: { limit: 'spend', max: 5, used: 5.04, period: 'day', resetsAt: '2026-11-20T23:00:00Z', whenReached: 'stop' } } });
+  assert.equal(error.kind, 'appLimit');
+  assert.deepEqual(error.limit, { limit: 'spend', max: 5, used: 5.04, period: 'day', resetsAt: '2026-11-20T23:00:00Z', whenReached: 'stop' });
+  assert.equal(make(-32016, {}).limit, null);
 });

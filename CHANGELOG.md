@@ -6,6 +6,9 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 **For you**
 
+- **Set limits for each app,** in Settings → Apps: what it may spend on your API keys a day, a week or a month (at API prices), how many of its tasks run at once, and how many new tasks it starts an hour or a day. Its usage today is shown first, so you see what a limit would mean. At a limit its tasks stop and the app is told why; extra tasks at once wait their turn. Plans aren't charged per call, so their tasks aren't counted, and Codex, which reports no cost, doesn't run on an OpenAI key while spending is limited. The panel says when an app reaches its limit. Your limits stay with the app when it pairs again.
+- **OpenCode's usage is complete.** A turn with several steps recorded only its last, so cost on OpenCode, and a `maxCostUSD` limit, counted too little. Each step's usage is now read once OpenCode has finished writing it.
+
 - **Clearing history removes a Codex task completely:** Codex deletes its own session, including its copies in Codex's databases, not only its session file.
 - **Deleting a task deletes all of its conversation:** a task that ran on an API key without built-in tools shares its account's Goose, which kept the conversation until you signed out. Now Agneta asks Goose to delete it, then rewrites Goose's database so no file still holds the words.
 - **Model and Effort… names the engine's own choice:** "Codex's default (its model)" rather than just "Codex's default", so leaving it to the engine says what that means.
@@ -33,6 +36,8 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 - **Broker tokens aren't in environments.** Any process of yours can read another's environment, so each engine reads its token from a file of its own. An API-key account's key is still in its engine's environment (a known limit).
 
 **For apps**
+
+- **Limits the user sets** ([the protocol](docs/APP_PROTOCOL.md#limits-the-user-sets)), additive: the extension `agneta/appLimits`; `limits` in the access report and each provider's `uncounted` engines; the error `-32016` when a limit is reached, with `data.agneta.appLimit`; `agneta/limit`'s `"limit": "appSpend"` and `setBy` (`app` for the policy's limits, `user` for the user's); `agneta/queued`'s `waitingFor`; `agneta/usage`'s `app`. `@agneta/client` types them all (`AppLimitError`).
 
 - **`@agneta/client`, the official TypeScript client** ([clients/typescript](clients/typescript/README.md)): the whole app protocol, typed, in Node 22+ and Electron's main process, with no dependencies. It connects and offers to open Agneta, pairs and keeps the token, follows access changes, opens, loads and forks sessions, streams turns, answers permission requests, reads traces, and maps every error code to a typed error; a raw layer sends anything else. Project Chat and Replica Bench now run on it. Published to npm separately, from `client-typescript-v*` tags.
 - **A task stopped mid-turn answers its prompt as cancelled,** as the protocol says, even when the engine never answers it (Stop, a removed provider, narrowed access). Before, the prompt could wait on a shared engine indefinitely, or fail as "The engine stopped".

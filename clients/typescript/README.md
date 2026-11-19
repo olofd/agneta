@@ -228,7 +228,7 @@ A turn is a promise of its result and an async iterable of its events. Events ar
 `result` is `{ stopReason, text, thought, usage, engineUsage, limit, cancelled, stoppedBy, toolCalls, raw }`:
 
 - `usage` is Agneta's `agneta/usage`, from the engine's own records: `modelCalls`, `models`, `inputTokens`, `outputTokens`, cache tokens, `cost`, `costKind` (`estimated` for keys, `plan-equivalent` for plans), `taskCost`, `billing`, `ms`, `msToFirstToken`, `basis`. Unknown values are `null`. `engineUsage` is the engine's own figure.
-- `limit` is `{ limit: 'maxTurns' | 'maxSeconds' | 'maxCostUSD', value, sessionEnded? }` when a policy limit stopped the turn. With `sessionEnded`, Agneta ended the session too: load it again to go on.
+- `limit` is `{ limit: 'maxTurns' | 'maxSeconds' | 'maxCostUSD' | 'appSpend', value, setBy, sessionEnded? }` when a limit stopped the turn: the policy's (`setBy: 'app'`), or the spending limit the user set for the app in Agneta (`appSpend`, `setBy: 'user'`, with `period` and `resetsAt`). With `sessionEnded`, Agneta ended the session too: load it again to go on.
 - `cancelled` is true after `session/cancel`, the user's Stop, or a time or cost limit.
 
 | To | Call |
@@ -320,6 +320,7 @@ try { await session.prompt(text); } catch (error) {
 | `paused` | `PausedError` | `-32013`: the account is paused in Agneta | `account` |
 | `unsupportedByEngine` | `UnsupportedByEngineError` | `-32014`: this engine can't do that | `engine` |
 | `engineDownloading` | `EngineDownloadingError` | `-32015`: still downloading (sessions wait it out by default) | `progress` |
+| `appLimit` | `AppLimitError` | `-32016`: the limit the user set for the app in Agneta is reached; show it as their choice, with when it resets | `limit` (`limit`, `max`, `used`, `period`, `resetsAt`, `whenReached`) |
 | `methodNotFound` | `MethodNotFoundError` | `-32601`: not a method Agneta offers | |
 | `unenforceable` | `UnenforceableError` | `-32602` with `unenforceable`: a policy, scope, server list or mode Agneta can't enforce | `fields`, `reason` |
 | `engineRefused` | `EngineRefusedError` | `-32602` with `access`: an engine the app may not use there, or not on this Mac | `access` |

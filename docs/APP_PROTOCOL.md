@@ -88,7 +88,8 @@ What the user allows an app is two lists: the **providers** (each an account: a 
               {"id": "opencode", "name": "OpenCode", "state": "downloadable", "size": 113000000}],
   "allowedEngines": "all",
   "scope": {"tools": "workspace", "folders": ["/Users/me/Documents/Example Project"], "sandbox": "developer"},
-  "workspace": "/Users/me/Library/Application Support/com.objectivecoder.agneta Workspaces/<grant>"
+  "workspace": "/Users/me/Library/Application Support/com.objectivecoder.agneta Workspaces/<grant>",
+  "limits": {"atOnce": {"max": 2, "running": 0}}
 }
 ```
 
@@ -96,7 +97,8 @@ What the user allows an app is two lists: the **providers** (each an account: a 
 - **`engines`:** each engine the app may use, with its `state` on this Mac: `ready` (with its `capabilities`, as in [the session result](#the-result)), `downloading` (`received`, `total`), `downloadable` (`size`: it downloads when first needed), `failed` (`reason`; asking for it tries again) or `unavailable` (`reason`, such as "Install Codex 0.166 or later").
 - **`allowedEngines`:** `"all"` (including engines Agneta adds later) or the engine ids the user ticked.
 - **`scope`** and **`workspace`:** what the user allowed, and the app's own workspace within it.
-- **`agneta/accessChanged {"access"}`** arrives when any of it changes: the user changes the app's providers, engines or sandbox mode in Agneta's settings (sessions that no longer fit stop, with `agneta/sessionStopped`), a provider is paused, resumed, signed out or needs signing in, or an engine arrives, starts downloading or goes away. Download progress doesn't send it: `agneta/access` and `-32015` carry it.
+- **`limits`:** the limits the user set for the app, and where it stands ([Limits the user sets](#limits-the-user-sets)). Absent when there are none. A provider's `uncounted` lists engines its tasks can't use while a spending limit counts that provider.
+- **`agneta/accessChanged {"access"}`** arrives when any of it changes: the user changes the app's providers, engines, sandbox mode or limits in Agneta's settings (sessions that no longer fit stop, with `agneta/sessionStopped`), a provider is paused, resumed, signed out or needs signing in, or an engine arrives, starts downloading or goes away. Download progress doesn't send it: `agneta/access` and `-32015` carry it.
 
 | Extension | What it adds |
 | --- | --- |
@@ -108,11 +110,52 @@ What the user allows an app is two lists: the **providers** (each an account: a 
 | `agneta/instructions` | Instructions at start, and `agneta/instructions/set` between turns |
 | `agneta/steer` | `agneta/steer` during a turn |
 | `agneta/usage` | Each prompt result's usage: model calls, tokens, cost, and what the numbers mean |
-| `agneta/limit` | Which policy limit stopped a turn |
-| `agneta/queue` | `agneta/queued` when a turn waits for room |
+| `agneta/limit` | Which limit stopped a turn: the policy's, or one the user set for the app |
+| `agneta/queue` | `agneta/queued` when a turn waits for room, and what for |
 | `agneta/fork` | `agneta/fork`: a new task that starts with a copy of an earlier one's conversation |
 | `agneta/rateLimited` | `agneta/rateLimited` and structured error data when a provider's limit stops a turn |
 | `agneta/trace` | The task's full trace, live and afterwards ([DIAGNOSTICS.md](DIAGNOSTICS.md)) |
+| `agneta/appLimits` | The limits the user sets for the app: `limits` in the access report, `-32016`, `agneta/limit`'s `setBy`, `agneta/queued`'s `waitingFor`, `agneta/usage`'s `app` ([Limits the user sets](#limits-the-user-sets)) |
+
+### Limits the user sets
+
+The user can limit each app in Settings → Apps. Every limit is optional, and none is set unless the user sets it. They hold whatever the app's policy says; the policy's own limits ([`agneta/policy`](#agnetapolicy)) are separate, and checked first.
+
+| Limit | What it counts | When it's reached |
+| --- | --- | --- |
+| `spend`: up to so many US dollars a day, a week or a month | What the app's tasks on **API keys** cost, at the engine's prices: each turn's share of its task's known cost, the basis of `agneta/usage`'s `taskCost` and `maxCostUSD`. A Claude or ChatGPT plan isn't charged per call (the plan pays), so its tasks are neither counted nor stopped, and a spending limit isn't offered for an app that uses only plans | The app's running turns on API keys stop, and its prompts, new tasks, forks and loads on API keys are refused with `-32016` until it resets |
+| `atOnce`: so many at once | The app's running turns, across all its connections and providers | More wait their turn, as for a busy account: `agneta/queued` with `waitingFor: "app"` |
+| `newTasks`: so many an hour or a day | `session/new` and `agneta/fork`. `session/load` continues a task and isn't a new one | `session/new` and `agneta/fork` are refused with `-32016` |
+
+- **Periods.** An hour is rolling: the last 60 minutes. A day, a week and a month are calendar periods in the user's time zone: they reset at midnight, at the start of the week, and on the 1st.
+- **The limits stay with the app.** Pairing again, Always Allow or Allow Once, keeps the app's limits and what it has used: a new pairing isn't a fresh budget.
+- **Spending, by engine.** How close a turn stays to the limit depends on when its engine reports cost (`counted` in the report below; [ENGINES.md](ENGINES.md)):
+  - **Goose and OpenCode** (`live`): from the engine's own records, read every 2 seconds while a turn runs. At the limit every running turn of the app on an API key stops as a policy limit stops one: cancelled, and the session ended if the engine hasn't stopped 10 seconds later. A turn can pass the limit by what it spends before Agneta reads it: Goose records a model call when it ends, OpenCode a step when it ends, after the tools it called ran.
+  - **Claude Code** (`turn-end`): its cost is known when a turn ends, so the limit is checked before each turn and task, and a turn can go over it: by at most one turn for each of the app's tasks running at the time.
+  - **Codex** reports no cost, so the limit can't count it. While a spending limit is set, the app's tasks on an OpenAI API key can't run on Codex: asking for it is refused with `-32602`, "Codex reports no cost, so it can't run under the spending limit you set for this app in Agneta", and `data.agneta.access`; a task that names no engine runs on another; the provider's entry leaves Codex out of `engines` and names it in `uncounted`. On a ChatGPT plan Codex runs as always: plans aren't counted.
+- **What your app sees.** `limits` in the [access report](#access), only for the app itself:
+
+  ```json
+  "limits": {
+    "spend": {"max": 5, "currency": "USD", "period": "day", "whenReached": "stop", "used": 1.23, "resetsAt": "2026-11-20T23:00:00.000000Z",
+              "billing": "api-key", "counted": {"claude-code": "turn-end", "goose": "live", "opencode": "live"}, "uncounted": ["codex"]},
+    "atOnce": {"max": 2, "running": 1},
+    "newTasks": {"max": 10, "period": "hour", "whenReached": "stop", "used": 3, "resetsAt": "2026-11-19T15:12:00.000000Z"}
+  }
+  ```
+
+  A limit not set is absent. `used` is as it is now, the running turns' cost so far included: read `agneta/access` again for it, since `agneta/accessChanged` arrives when the user changes the limits, not as they're used. `resetsAt` (UTC) is when the period ends; for a rolling hour, when the oldest new task in it leaves it (absent when there's none). `whenReached` is `stop`: the work is refused or stopped (`atOnce` waits).
+- **Refused before anything runs:** `-32016`, from `session/new`, `agneta/fork`, `session/prompt` and, for spending, `session/load`:
+
+  ```json
+  {"code": -32016, "message": "Example App's limit in Agneta is reached: $5 a day. It resets at midnight.",
+   "data": {"agneta": {"appLimit": {"limit": "spend", "max": 5, "used": 5.04, "period": "day",
+                                    "resetsAt": "2026-11-20T23:00:00.000000Z", "whenReached": "stop"}}}}
+  ```
+
+  `limit` is `spend` or `newTasks`. A prompt that waited in the queue is checked again when its turn comes. Show it as the user's choice, not a failure: what was reached, when it resets, and that they can change it in Agneta. Don't retry before `resetsAt`.
+- **Stopped mid-turn by spending:** the prompt's result, as for a policy limit, with `"agneta/limit": {"limit": "appSpend", "setBy": "user", "value": 5, "period": "day", "resetsAt": "…"}` and the stop reason `cancelled`; with `"sessionEnded": true` when the engine didn't stop in time ([Turns](#turns)).
+- **Each turn's usage** says where the app stands when a spending limit is set: `agneta/usage` gains `"app": {"spent": 1.23, "max": 5, "period": "day", "resetsAt": "…"}`.
 
 ## A session
 
@@ -277,9 +320,10 @@ The result:
 - **`agneta/usage`** comes from the engine's own records, one entry per model call, summed over the turn. Nothing is counted from stream items.
   - `basis` says where the numbers come from: `engine-ledger` (the per-call records) or `engine-turn-totals` (the engine's own totals for the turn, which Claude Code needs; see [ENGINES.md](ENGINES.md#claude-code)).
   - `costKind` is `estimated` for API keys, and `plan-equivalent` for subscriptions, where the plan pays and nothing is charged per call.
+  - `app`: where the app stands against the spending limit the user set for it, when there is one ([Limits the user sets](#limits-the-user-sets)).
   - Unknown values are `null`, never guessed.
   - `usage` is the engine's own figure for the turn, passed through.
-- **`agneta/limit`** appears only when a policy limit stopped the turn. `maxTurns` ends with ACP's `max_turn_requests`; time and cost end as `cancelled`, with this field saying why. Limits are checked twice a second. A limit is a hard limit: if the engine hasn't stopped the turn 10 s after Agneta cancels it (stuck in a tool, or ignoring the cancel), Agneta ends the session (which stops its engine), sends `agneta/sessionStopped` with `stoppedBy: "limit"`, and answers the prompt the same way with `"sessionEnded": true` in this field. Load the session again to go on.
+- **`agneta/limit`** appears only when a limit stopped the turn: one of the policy's (`"setBy": "app"`), or the spending limit the user set for the app (`"limit": "appSpend"`, `"setBy": "user"`, with its `period` and `resetsAt`; [Limits the user sets](#limits-the-user-sets)). A turn past both reports its policy's. `maxTurns` ends with ACP's `max_turn_requests`; time and cost end as `cancelled`, with this field saying why. Limits are checked twice a second. A limit is a hard limit: if the engine hasn't stopped the turn 10 s after Agneta cancels it (stuck in a tool, or ignoring the cancel), Agneta ends the session (which stops its engine), sends `agneta/sessionStopped` with `stoppedBy: "limit"`, and answers the prompt the same way with `"sessionEnded": true` in this field. Load the session again to go on.
 - **One turn at a time per session.** A prompt while one runs is refused with `-32011`. To add to a running turn, steer it.
 
 | Method | Effect |
@@ -289,7 +333,7 @@ The result:
 | `session/cancel` (notification) | Ends the running turn with `cancelled` |
 | `session/close` | Ends the session and, if it has one of its own, its engine |
 
-**Waiting for room.** At most 8 turns run at once, and at most 3 per account; up to 32 more wait. A turn waits only behind earlier turns on the same account, so a busy account never holds up another. A waiting turn's app gets `agneta/queued {"sessionId", "position"}`, and the prompt simply returns later. `session/cancel` takes a waiting turn out at once (`cancelled`). A prompt when the queue is full fails with `-32012`.
+**Waiting for room.** At most 8 turns run at once, at most 3 per account, and no more of an app's than the user's `atOnce` limit for it; up to 32 more wait. A turn waits only behind earlier turns that want the same room (on the same account, or of the same app when it has an `atOnce` limit), so a busy account, or an app at its own limit, never holds up another. A waiting turn's app gets `agneta/queued {"sessionId", "position", "waitingFor"}`, where `waitingFor` is `app` (its own `atOnce` limit: say "waiting for your limit of tasks at once"), `account` or `agneta`, and the prompt simply returns later. `session/cancel` takes a waiting turn out at once (`cancelled`). A prompt when the queue is full fails with `-32012`.
 
 **Resuming.** `session/load {"sessionId", "cwd", "mcpServers", "_meta"?}` reopens one of the app's earlier tasks after a close or an Agneta restart, within the history retention.
 - Pass the tool servers again, since their bearers are per session. The policy and instructions default to the original ones; `_meta` may set new ones, and ask for live trace delivery.
@@ -349,6 +393,7 @@ Every record has `v`, `seq` (gapless), `t` (UTC with microseconds), `mono` (nano
 | `-32013` | The account is paused in Agneta (`data.agneta.paused`); a turn already running finishes |
 | `-32014` | This session's engine can't do that (`data.agneta.engine`); check `capabilities` first |
 | `-32015` | What the engine needs is still downloading (`data.agneta.engineDownloading`: `engine`, `received`, `total` bytes); try again shortly |
+| `-32016` | The limit you set for this app in Agneta is reached (`data.agneta.appLimit`: `limit`, `max`, `used`, `period`, `resetsAt`, `whenReached`); show it as the user's choice, with when it resets ([Limits the user sets](#limits-the-user-sets)) |
 | `-32601` | Not a method Agneta offers; engines' own methods aren't reachable |
 | `-32602` | Invalid parameters. For a policy, server list or mode, `data.agneta.unenforceable` names the field. "Unknown session" also uses it: another app's session, or an ended one |
 | `-32603` | Agneta couldn't do it: the engine didn't start (no answer within 60 s) or stopped, or the app disconnected meanwhile |
