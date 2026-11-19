@@ -263,7 +263,7 @@ public final class TraceWriter: @unchecked Sendable {
             if sync { lastSync = ContinuousClock.now }
             return sync
         }
-        if sync, let handle { fsync(handle.fileDescriptor) }
+        if sync { synchronize() }
     }
 
     /// Records how many records were dropped since the last note, if any; on the writer's queue.
@@ -296,14 +296,29 @@ public final class TraceWriter: @unchecked Sendable {
         let elapsed = ContinuousClock.now - started
         queue.sync {
             noteDropped(turn: turn, at: Date(), elapsed: elapsed)
-            if let handle { fsync(handle.fileDescriptor) }
+            synchronize()
         }
     }
 
+    /// Closes the file, once: a flush or close after it (a turn ending after its task was closed) does nothing.
     public func close() {
         flush()
-        lock.withLock { closed = true }
-        queue.sync { try? handle?.close() }
+        queue.sync {
+            guard !fileClosed else { return }
+            lock.withLock { closed = true }
+            fileClosed = true
+            try? handle?.close()
+        }
+    }
+
+    /// Whether the file is closed; read and set on the writer's queue only.
+    private var fileClosed = false
+
+    /// Puts what's written on disk; on the writer's queue. Never through `fileDescriptor`, which raises an exception
+    /// Swift can't catch once the file is closed: the throwing call fails quietly instead.
+    private func synchronize() {
+        guard !fileClosed else { return }
+        try? handle?.synchronize()
     }
 
     /// ISO 8601 in UTC with microseconds.
