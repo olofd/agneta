@@ -109,7 +109,8 @@ enum Snapshots {
 @MainActor private struct WindowList: WindowImages {
     @available(macOS, deprecated: 14.0, message: "Design review only; ScreenCaptureKit needs a permission prompt")
     func image(of window: NSWindow) -> CGImage? {
-        CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution])
+        CGWindowListCreateImage(
+            .null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution])
     }
 
     @available(macOS, deprecated: 14.0, message: "Design review only")
@@ -117,7 +118,9 @@ enum Snapshots {
         let screenHeight = NSScreen.screens.first?.frame.height ?? 0
         let frame = window.frame.insetBy(dx: -24, dy: -24)
         let rect = CGRect(x: frame.minX, y: screenHeight - frame.maxY, width: frame.width, height: frame.height)
-        return CGWindowListCreateImage(rect, [.optionOnScreenBelowWindow, .optionIncludingWindow], CGWindowID(window.windowNumber), [.bestResolution])
+        return CGWindowListCreateImage(
+            rect, [.optionOnScreenBelowWindow, .optionIncludingWindow], CGWindowID(window.windowNumber),
+            [.bestResolution])
     }
 }
 

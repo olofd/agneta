@@ -174,4 +174,3 @@ final class EveningGlow: NSView {
         sky.opacity = effectiveAppearance.bestMatch(from: [.darkAqua]) == .darkAqua ? 0.16 : 0.11
     }
 }
-
