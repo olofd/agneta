@@ -235,6 +235,9 @@ extension SessionPolicy {
         if let raw = value["toolSockets"], raw.arrayValue == nil { throw PolicyRejection(field: "toolSockets", reason: "must be a list of absolute socket paths") }
         let toolSockets = try (value["toolSockets"]?.arrayValue ?? []).map { item -> URL in
             guard let path = item.stringValue, path.hasPrefix("/") else { throw PolicyRejection(field: "toolSockets", reason: "must be a list of absolute socket paths") }
+            // Connecting is a network rule, not a file one, so no folder check would see it: a socket gets the same
+            // protected places (other apps' containers, Agneta's data, ~/.ssh) as a folder does.
+            _ = try canonical(path, field: "toolSockets", context: context)
             return URL(filePath: path).realFileURL
         }
         var policy = SessionPolicy(tools: tools, workspace: workspace, readable: try folders("readable"), writable: writable,
@@ -316,10 +319,12 @@ extension URL {
         return parent.realFileURL.appending(path: lastPathComponent, directoryHint: hasDirectoryPath ? .isDirectory : .inferFromPath)
     }
 
-    /// True when self equals or lies under `folder` (both canonical file URLs).
+    /// True when self equals or lies under `folder` (both canonical file URLs). Compared as written, with only `.` and
+    /// `..` removed: `standardizedFileURL` drops a leading /private only when the shorter path exists, so a missing
+    /// /private/tmp/a/x was never inside an existing /private/tmp/a, and a check meant to refuse it passed.
     public func isInside(_ folder: URL) -> Bool {
-        let path = standardizedFileURL.path(percentEncoded: false).trimmingSuffix("/")
-        let base = folder.standardizedFileURL.path(percentEncoded: false).trimmingSuffix("/")
+        let path = standardized.path(percentEncoded: false).trimmingSuffix("/")
+        let base = folder.standardized.path(percentEncoded: false).trimmingSuffix("/")
         return path == base || path.hasPrefix(base + "/")
     }
 }
