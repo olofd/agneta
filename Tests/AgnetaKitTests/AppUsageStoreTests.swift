@@ -131,4 +131,3 @@ struct AppUsageStoreTests {
         #expect(try database.usage(since: hour.addingTimeInterval(-3600))["g1"]?[hour] == AppMeter.Usage(cost: 2, turns: 2, unpriced: 1))
     }
 }
-
