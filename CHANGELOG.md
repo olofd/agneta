@@ -2,6 +2,12 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
+## Unreleased
+
+**For you**
+
+- **Model and Effort… names the engine's own choice:** "Codex's default (GPT-5.5)" rather than just "Codex's default", so leaving it to the engine says what that means.
+
 ## 0.4.0 (2026-11-18)
 
 A new look, a website, and a default model and effort for each provider.

@@ -249,6 +249,7 @@ final class AppModel {
     /// The config options an engine last offered on an account (its models and efforts), kept between launches so
     /// Settings can list them before any task runs again.
     func options(account: String, engine: String) -> [JSONValue] {
+        if let sample = sampleOptions["\(account).\(engine)"] { return sample }
         guard let text = try? database?.setting("options.\(account).\(engine)"), let data = text.data(using: .utf8),
               let value = try? JSONCoding.decode(data) else { return [] }
         return value.arrayValue ?? []
@@ -262,6 +263,9 @@ final class AppModel {
 
     /// Bumped when an engine's options arrive, so Settings lists them.
     var optionsChanged = 0
+
+    /// Options shown in design snapshots, by "account.engine", in place of the stored ones.
+    private var sampleOptions: [String: [JSONValue]] = [:]
 
     /// Asks the provider's default engine what it offers, without a prompt; nil when it answered, else why not.
     func loadOptions(_ account: AccountRecord) async -> String? {
@@ -756,6 +760,16 @@ final class AppModel {
         approvals.addSample(Approvals.Request(id: sample, app: "Example App", identifier: "com.example.app", verified: true, code: "123456",
                                               allowed: ["a", "c"], engines: Set(library.catalog.entries.keys), tools: .workspace,
                                               folders: [FileManager.default.homeDirectoryForCurrentUser.appending(path: "Documents/Example Project")]))
+        if let engine = library.engine(for: .chatGPT) {
+            func option(_ id: String, _ category: String, _ current: String, _ values: [(String, String)]) -> JSONValue {
+                ["id": .string(id), "category": .string(category), "type": "select", "currentValue": .string(current),
+                 "options": .array(values.map { ["value": .string($0.0), "name": .string($0.1)] })]
+            }
+            sampleOptions["b.\(engine)"] = [
+                option("model", "model", "frontier", [("frontier", "Frontier"), ("frontier-mini", "Frontier Mini"), ("coder", "Coder")]),
+                option("reasoning_effort", "thought_level", "medium", [("low", "Low"), ("medium", "Medium"), ("high", "High"), ("xhigh", "Extra High")]),
+            ]
+        }
         signIn.showSample(SignInFlow.State(kind: .claude, text: "When Claude shows you a code, paste it here.", page: URL(string: "https://claude.com"), needsCode: true))
         history = [TaskRecord(id: "3", app: "Example App", account: "a", title: "Drafting release notes", started: Date().addingTimeInterval(-7_200),
                               ended: Date().addingTimeInterval(-6_100), outcome: .finished, turns: 6, cost: 0.42),

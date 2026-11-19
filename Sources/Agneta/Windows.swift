@@ -87,10 +87,13 @@ final class WindowPresenter {
     func closeApproval() { close("approval") }
     /// The approval window stops floating, so a sign-in or Settings opened from it comes in front of it.
     func lowerApproval() { windows["approval"]?.level = .normal }
-    func showSettings(_ model: AppModel, section: SettingsView.Pane = .providers) {
+    /// `defaults` opens Settings on a provider's model and effort sheet.
+    func showSettings(_ model: AppModel, section: SettingsView.Pane = .providers, defaults: AccountRecord? = nil) {
         model.library.refreshInstalls()
         close("settings")
-        show("settings", title: "Agneta Settings", size: NSSize(width: 780, height: 540), glass: false, resizable: true) { SettingsView(model: model, section: section) }
+        show("settings", title: "Agneta Settings", size: NSSize(width: 780, height: 540), glass: false, resizable: true) {
+            SettingsView(model: model, section: section, opening: defaults)
+        }
     }
 
     func showDetails(_ model: AppModel, task: String, title: String) {
@@ -589,6 +592,8 @@ struct SettingsView: View {
 
     var model: AppModel
     @State var section: Pane
+    /// A provider whose model and effort sheet opens with the window.
+    var opening: AccountRecord? = nil
     @State private var keyKind: AccountKind = .anthropicKey
     @State private var key = ""
     @State private var keyError: String?
@@ -620,6 +625,7 @@ struct SettingsView: View {
             .sheet(item: $defaultsFor) { DefaultsSheet(model: model, account: $0) }
         }
         .frame(minWidth: 720, minHeight: 480)
+        .onAppear { if let opening { defaultsFor = opening } }
     }
 
     @ViewBuilder private var general: some View {
@@ -1090,6 +1096,13 @@ struct DefaultsSheet: View {
         return list
     }
 
+    /// "Codex's default", with the engine's own choice where it reported one: "Codex's default (Frontier)".
+    private func engineDefault(_ category: String, in list: [(value: String, name: String)]) -> String {
+        let current = options.first { $0["category"]?.stringValue == category }?["currentValue"]?.stringValue
+        guard let name = list.first(where: { $0.value == current })?.name else { return "\(engineName)'s default" }
+        return "\(engineName)'s default (\(name))"
+    }
+
     var body: some View {
         let models = choices("model", keeping: chosen.model), efforts = choices("thought_level", keeping: chosen.effort)
         VStack(alignment: .leading, spacing: 16) {
@@ -1113,7 +1126,7 @@ struct DefaultsSheet: View {
                     GridRow {
                         Text("Model").gridColumnAlignment(.trailing)
                         Picker("Model", selection: $chosen.model) {
-                            Text("\(engineName)'s default").tag(String?.none)
+                            Text(engineDefault("model", in: models)).tag(String?.none)
                             ForEach(models, id: \.value) { Text($0.name).tag(String?.some($0.value)) }
                         }
                         .labelsHidden()
@@ -1121,7 +1134,7 @@ struct DefaultsSheet: View {
                     GridRow {
                         Text("Effort")
                         Picker("Effort", selection: $chosen.effort) {
-                            Text("\(engineName)'s default").tag(String?.none)
+                            Text(engineDefault("thought_level", in: efforts)).tag(String?.none)
                             ForEach(efforts, id: \.value) { Text($0.name).tag(String?.some($0.value)) }
                         }
                         .labelsHidden()

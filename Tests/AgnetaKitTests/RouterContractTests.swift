@@ -543,6 +543,8 @@ actor FakeEngines: EngineSource {
         try await Task.sleep(for: .milliseconds(50))
         let reported = await seen.accounts
         #expect(reported.count >= 3 && reported.allSatisfy { $0 == "brokered" })
+        // Reported as the engine set them, before the defaults: Settings names the engine's own choice.
+        #expect(await seen.current.first == ["m1", "low"])
     }
 
     /// While the engine a session needs is downloading, the app hears that, with the progress, instead of that
@@ -1274,7 +1276,12 @@ actor SavedGrants {
 /// What the router reported engines offering, by account.
 actor SeenOptions {
     private(set) var accounts: [String] = []
-    func add(_ account: String, _ options: JSONValue) { accounts.append(account) }
+    /// Each report's current values, in order.
+    private(set) var current: [[String]] = []
+    func add(_ account: String, _ options: JSONValue) {
+        accounts.append(account)
+        current.append(options.arrayValue?.map { $0["currentValue"]?.stringValue ?? "" } ?? [])
+    }
 }
 
 /// Engines the router asked the host for.

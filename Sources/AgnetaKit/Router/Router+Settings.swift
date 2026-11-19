@@ -2,7 +2,7 @@
 // options, found by category (`model`, `thought_level`; docs/APP_PROTOCOL.md, Model and thinking), so defaults are
 // applied the same way on every engine: right after `session/new`, before the app sees the session, and only where
 // the engine lists the value. The app can still choose its own afterwards. What an engine offered is reported
-// (`settingsSeen`), so Settings can list real choices; `probeSettings` asks an engine without sending a prompt.
+// (`settingsSeen`), as the engine set it before any default, so Settings can list real choices and name the engine's own; `probeSettings` asks an engine without sending a prompt.
 import Foundation
 
 extension Router {

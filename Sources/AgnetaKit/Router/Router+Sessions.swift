@@ -210,9 +210,10 @@ extension Router {
             await engines.release(lease)
             return .failure(engineFailure(error, account: plan.account, otherwise: "The engine stopped"))
         }
+        // What the engine offers, as it set it before any default: Settings names the engine's own choice.
+        if let options = result["configOptions"] { onEvent(.settingsSeen(account: plan.account, engine: plan.engine.id, options: options)) }
         // The provider's default model and effort, where the app hasn't chosen yet (Router+Settings).
         result = await withDefaults(result, account: plan.account, lease: lease, engineSession: engineSession)
-        if let options = result["configOptions"] { onEvent(.settingsSeen(account: plan.account, engine: plan.engine.id, options: options)) }
         // The app may have gone or lost access while the engine started: nothing to hand the session to.
         if let refusal = refusal(appID, grant, plan) {
             await engines.release(lease)

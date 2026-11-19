@@ -22,8 +22,9 @@ enum Snapshots {
         presenter.showWelcome(model) // after sign-in, which closes the welcome window
         // AGNETA_SHOWCASE_PANE picks the Settings pane, e.g. Activity or Privacy.
         let paneName = ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_PANE"]
+        // "Defaults" opens a provider's model and effort sheet over Providers.
         let pane = paneName.flatMap { SettingsView.Pane(rawValue: $0) } ?? .providers
-        presenter.showSettings(model, section: pane)
+        presenter.showSettings(model, section: pane, defaults: paneName == "Defaults" ? model.accounts.first { $0.id == "b" } : nil)
         // "Details" shows a task's details window from a sample trace, only in an isolated home.
         if paneName == "Details", ProcessInfo.processInfo.environment["AGNETA_HOME"] != nil {
             try? FileManager.default.createDirectory(at: model.store.tracesFolder, withIntermediateDirectories: true)
@@ -59,6 +60,9 @@ enum Snapshots {
                     if let out {
                         line += "  " + capture(window, to: out.appending(path: "\(key)-\(suffix).png"))
                         line += "  " + captureOverBackdrop(window, to: out.appending(path: "\(key)-\(suffix)-glass.png"))
+                        if let sheet = window.attachedSheet {
+                            line += "  sheet " + capture(sheet, to: out.appending(path: "\(key)-sheet-\(suffix).png"))
+                        }
                     }
                     // Where the close button sits, from the window's top-left corner, for checking it clears the corner.
                     if let close = window.standardWindowButton(.closeButton), let frame = close.superview?.convert(close.frame, to: nil) {
