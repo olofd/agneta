@@ -138,7 +138,8 @@ extension RouterContractTests {
         let grant = try #require(await stack.router.tokens.values.first { $0.app == "Revoked" })
         await stack.router.revoke(grant: grant.id)
         await #expect(throws: (any Error).self) { _ = try await opening.value }
-        try await Task.sleep(for: .milliseconds(800))
+        // The engine is let go once its start finishes: waited for, not timed (a slow runner took longer than 800 ms).
+        for _ in 0..<100 where await stack.engines.opened != stack.engines.released { try await Task.sleep(for: .milliseconds(50)) }
         #expect(await stack.router.sessionCount == 0)
         #expect(await stack.engines.opened == stack.engines.released, "an engine was kept for a session nobody got")
         let other = AppClient(port: stack.port)
