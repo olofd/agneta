@@ -248,6 +248,7 @@ actor FakeEngines: EngineSource {
         /// `approve` replaces the default (allow both accounts at once).
         /// `appWorkspaces`: give each paired app a workspace of its own, as the app does. `commit` saves grants.
         static func start(port: UInt16, concurrency: Router.Concurrency = .init(), appWorkspaces: Bool = false, commit: Router.Commit? = nil,
+                          clock: TestClock? = nil, calendar: Calendar = .autoupdatingCurrent,
                           approve: Router.Approve? = nil) async throws -> Stack {
             let root = FileManager.default.temporaryDirectory.appending(path: "agneta-contract-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory).realFileURL
             try FileManager.default.createDirectory(at: root.appending(path: "work"), withIntermediateDirectories: true)
@@ -255,7 +256,8 @@ actor FakeEngines: EngineSource {
             let engines = FakeEngines()
             let router = Router(context: PolicyContext(userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [root.appending(path: "agneta")],
                                                        appWorkspaces: appWorkspaces ? root.appending(path: "apps", directoryHint: .isDirectory) : nil),
-                                engines: engines, traces: traces, concurrency: concurrency, commit: commit) { request in
+                                engines: engines, traces: traces, concurrency: concurrency, commit: commit,
+                                now: { clock?.now ?? Date() }, calendar: calendar) { request in
                 PairingCodes.shared.add(request.code)
                 return await approve?(request) ?? Router.PairingAnswer(accounts: ["brokered", "native"], remember: true)
             }

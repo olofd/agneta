@@ -1,0 +1,239 @@
+// The limits the user sets for an app, held by the router (Router+AppLimits), against the in-memory fake engine and
+// an injected clock: at once, spending (live, across the app's turns, never a plan's), engines it can't count, new
+// tasks under a burst, limits that travel with the app, and which limit a turn reports when two are passed at once.
+import Foundation
+import Testing
+@testable import AgnetaKit
+
+/// A clock the test moves.
+final class TestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var date: Date
+    init(_ date: Date) { self.date = date }
+    var now: Date { lock.withLock { date } }
+    func advance(_ seconds: TimeInterval) { lock.withLock { date = date.addingTimeInterval(seconds) } }
+}
+
+@Suite(.serialized) struct AppLimitsContractTests {
+    typealias Stack = RouterContractTests.Stack
+
+    static func grant(_ stack: Stack, _ app: String) async throws -> String {
+        try #require(await stack.router.tokens.values.first { $0.app == app && $0.remembered }?.id)
+    }
+
+    static func until(_ what: String, _ condition: () async -> Bool) async throws {
+        for _ in 0..<300 {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        Issue.record("timed out waiting for \(what)")
+    }
+
+    static func running(_ stack: Stack, _ session: String) async throws {
+        try await until("\(session) to run") { await stack.router.runningTurns[session]?.began == true }
+    }
+
+    /// A JSON number, whole numbers included (they come back from the wire as integers).
+    static func number(_ value: JSONValue?) -> Double? {
+        switch value {
+        case .double(let v)?: v
+        case .int(let v)?: Double(v)
+        default: nil
+        }
+    }
+
+    static func refusal(_ work: () async throws -> JSONValue) async -> RPCError? {
+        do {
+            _ = try await work()
+            return nil
+        } catch let error as RPCError {
+            return error
+        } catch {
+            return nil
+        }
+    }
+
+    @Test func atOnceHoldsAnAppsTurnsAndNoOneElses() async throws {
+        let stack = try await Stack.start(port: 47660)
+        defer { stack.stop() }
+        let capped = AppClient(port: stack.port), other = AppClient(port: stack.port)
+        defer { capped.close(); other.close() }
+        try await capped.pairAndInitialize("Capped")
+        try await other.pairAndInitialize("Other")
+        let grant = try await Self.grant(stack, "Capped")
+        try await stack.router.setLimits(grant: grant, limits: AppLimits(atOnce: 1))
+        let first = try await stack.session(capped, account: "brokered"), second = try await stack.session(capped, account: "brokered")
+        let elsewhere = try await stack.session(other, account: "brokered")
+
+        let running = Task { try await capped.prompt(first, "slow") }
+        try await Self.running(stack, first)
+        let waiting = Task { try await capped.prompt(second, "hello") }
+        try await Self.until("the turn to queue") { capped.notifications("agneta/queued").contains { $0["sessionId"]?.stringValue == second } }
+        #expect(capped.notifications("agneta/queued").last?["waitingFor"]?.stringValue == "app")
+        let access = try AccessReport(json: try await capped.request("agneta/access", [:]))
+        #expect(access.limits?.atOnce == .init(max: 1, running: 1) && access.limits?.spend == nil)
+        // Another app's turn on the same account isn't held up by this app's limit.
+        #expect(try await other.prompt(elsewhere, "hello")["stopReason"]?.stringValue == "end_turn")
+        // Raising the limit lets the waiting turn run.
+        try await stack.router.setLimits(grant: grant, limits: AppLimits(atOnce: 2))
+        #expect(try await waiting.value["stopReason"]?.stringValue == "end_turn")
+        capped.notify("session/cancel", ["sessionId": .string(first)])
+        _ = try await running.value
+        #expect(capped.notifications("agneta/accessChanged").last?["access"]?["limits"]?["atOnce"]?["max"] == .int(2))
+    }
+
+    @Test func spendingStopsTheAppsTurnsOnItsKeysAndNothingElse() async throws {
+        let clock = TestClock(AppLimitsTests.date("2026-11-19T12:00:00Z"))
+        // The fake engine stops one slow turn per cancel; the other is ended at the limit's grace.
+        let stack = try await Stack.start(port: 47661, concurrency: .init(limitGrace: .milliseconds(300)), clock: clock,
+                                          calendar: AppLimitsTests.calendar("Europe/Stockholm"))
+        defer { stack.stop() }
+        let app = AppClient(port: stack.port), other = AppClient(port: stack.port)
+        defer { app.close(); other.close() }
+        try await app.pairAndInitialize("Spender")
+        try await other.pairAndInitialize("Other")
+        try await stack.router.setLimits(grant: try await Self.grant(stack, "Spender"), limits: AppLimits(spend: .init(max: 1, period: .day)))
+        let one = try await stack.session(app, account: "brokered"), two = try await stack.session(app, account: "brokered")
+        let idle = try await stack.session(app, account: "brokered"), onPlan = try await stack.session(app, account: "native")
+        let elsewhere = try await stack.session(other, account: "brokered")
+
+        let first = Task { try await app.prompt(one, "slow") }, second = Task { try await app.prompt(two, "slow") }
+        try await Self.running(stack, one)
+        try await Self.running(stack, two)
+        // The engine's records say the first turn spent $1.50: both of the app's turns stop.
+        stack.traces.session(one)?.ingest(modelCall: ["id": "call-1", "cost": .double(1.5), "input_tokens": 100, "output_tokens": 10])
+        for result in [try await first.value, try await second.value] {
+            let limit = result["_meta"]?["agneta/limit"]
+            #expect(limit?["limit"] == "appSpend" && limit?["setBy"] == "user" && Self.number(limit?["value"]) == 1 && limit?["period"] == "day", "\(result)")
+            #expect(result["stopReason"] == "cancelled")
+        }
+        #expect(try stack.records(one).contains { $0["event"]?.stringValue == "app-limit" })
+
+        // More is refused, as the user's choice, with when it resets: midnight in Stockholm.
+        let refused = await Self.refusal { try await app.prompt(idle, "hello") }
+        #expect(refused?.code == -32016 && refused?.message.contains("$1 a day") == true, "\(String(describing: refused))")
+        let detail = refused?.data?["agneta"]?["appLimit"]
+        #expect(detail?["limit"] == "spend" && Self.number(detail?["used"]) == 1.5 && detail?["resetsAt"]?.stringValue?.hasPrefix("2026-11-19T23:00:00") == true)
+        #expect(await Self.refusal { _ = try await stack.session(app, account: "brokered"); return [:] }?.code == -32016)
+        let access = try AccessReport(json: try await app.request("agneta/access", [:]))
+        #expect(access.limits?.spend?.used == 1.5 && access.limits?.spend?.billing == "api-key" && access.limits?.spend?.counted["goose"] == "live")
+
+        // A plan isn't charged per call: the limit doesn't count or stop it. Nor another app's turns.
+        #expect(try await app.prompt(onPlan, "hello")["stopReason"]?.stringValue == "end_turn")
+        #expect(try await other.prompt(elsewhere, "hello")["stopReason"]?.stringValue == "end_turn")
+
+        // After midnight the app may spend again, and each turn says where it stands.
+        clock.advance(12 * 3600)
+        let next = try await app.prompt(idle, "hello")
+        #expect(next["stopReason"] == "end_turn" && Self.number(next["_meta"]?["agneta/usage"]?["app"]?["spent"]) == 0, "\(next)")
+        let status = await stack.router.appStatus(grant: try await Self.grant(stack, "Spender"))
+        #expect(status.spent == 0 && status.today.turns == 1)
+    }
+
+    @Test func anEngineThatReportsNoCostCantRunUnderASpendingLimit() async throws {
+        let stack = try await Stack.start(port: 47662)
+        defer { stack.stop() }
+        await stack.router.setCatalog(EngineCatalog([.init(ready: RouterContractTests.goose), .init(id: "codex", name: "Codex", state: .downloadable(size: nil))]))
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Spender")
+        let grant = try await Self.grant(stack, "Spender")
+        let onCodex: [String: JSONValue] = ["agneta": ["account": "brokered", "engine": "codex"]]
+        // Without a limit Codex runs (here it downloads first).
+        #expect(await Self.refusal { _ = try await stack.session(app, account: "brokered", meta: onCodex); return [:] }?.code == -32015)
+
+        try await stack.router.setLimits(grant: grant, limits: AppLimits(spend: .init(max: 5, period: .week)))
+        let refused = await Self.refusal { _ = try await stack.session(app, account: "brokered", meta: onCodex); return [:] }
+        #expect(refused?.code == RPCError.invalidParams && refused?.message == "Codex reports no cost, so it can't run under the spending limit you set for this app in Agneta")
+        let access = try AccessReport(json: try await app.request("agneta/access", [:]))
+        let key = try #require(access.providers.first { $0.id == "brokered" })
+        #expect(key.engines == ["goose"] && key.uncounted == ["codex"])
+        #expect(access.providers.first { $0.id == "native" }?.uncounted == nil)
+        #expect(access.limits?.spend?.uncounted == ["codex"])
+        // A task that names no engine runs on one the limit can count.
+        _ = try await stack.session(app, account: "brokered")
+        #expect(await stack.engines.askedEngines.last == "goose")
+    }
+
+    @Test func newTasksAreCountedBeforeTheyStart() async throws {
+        let clock = TestClock(AppLimitsTests.date("2026-11-19T12:00:00Z"))
+        let stack = try await Stack.start(port: 47663, clock: clock)
+        defer { stack.stop() }
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Starter")
+        try await stack.router.setLimits(grant: try await Self.grant(stack, "Starter"), limits: AppLimits(newTasks: .init(max: 3, period: .hour)))
+        let first = try await stack.session(app, account: "brokered")
+        _ = try await stack.session(app, account: "brokered")
+        // A fork that fails (this engine can't export) isn't counted.
+        #expect(await Self.refusal { try await app.request("agneta/fork", ["sessionId": .string(first), "mcpServers": []]) } != nil)
+        _ = try await stack.session(app, account: "brokered")
+        let refused = await Self.refusal { _ = try await stack.session(app, account: "brokered"); return [:] }
+        #expect(refused?.code == -32016 && refused?.data?["agneta"]?["appLimit"]?["limit"] == "newTasks")
+        #expect(refused?.data?["agneta"]?["appLimit"]?["resetsAt"]?.stringValue?.hasPrefix("2026-11-19T13:00:00") == true)
+        // Resuming a task isn't a new one.
+        _ = try await stack.meta(first)
+        _ = try await app.request("session/close", ["sessionId": .string(first)])
+        let loaded = try await app.request("session/load", ["sessionId": .string(first), "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": []])
+        #expect(loaded["_meta"]?["agneta"]?["resumed"] == true)
+
+        // An hour later: ten at once, slow to start, and exactly three get through.
+        clock.advance(3601)
+        await stack.engines.starting(takes: .milliseconds(200))
+        let outcomes = await withTaskGroup(of: Bool.self) { group in
+            for _ in 0..<10 { group.addTask { (try? await stack.session(app, account: "brokered")) != nil } }
+            return await group.reduce(into: [Bool]()) { $0.append($1) }
+        }
+        #expect(outcomes.count(where: { $0 }) == 3)
+    }
+
+    @Test func limitsTravelWithTheApp() async throws {
+        let answers = RememberAnswers([true, false])
+        let stack = try await Stack.start(port: 47664, approve: { _ in Router.PairingAnswer(accounts: ["brokered"], remember: await answers.next()) })
+        defer { stack.stop() }
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Example")
+        let grant = try await Self.grant(stack, "Example")
+        let limits = AppLimits(spend: .init(max: 2, period: .month), newTasks: .init(max: 10, period: .day))
+        try await stack.router.setLimits(grant: grant, limits: limits)
+        try await Self.until("accessChanged") { Self.number(app.notifications("agneta/accessChanged").last?["access"]?["limits"]?["spend"]?["max"]) == 2 }
+        #expect(await Self.refusal { try await stack.router.setLimits(grant: grant, limits: AppLimits(atOnce: 9)); return [:] }?.code == RPCError.invalidParams)
+
+        // Allowed once more, it has the same limits and counts against the same usage: no fresh budget.
+        let again = AppClient(port: stack.port)
+        defer { again.close() }
+        try await again.pairAndInitialize("Example")
+        let access = try AccessReport(json: try await again.request("agneta/access", [:]))
+        #expect(access.limits?.spend?.max == 2 && access.limits?.newTasks?.max == 10)
+        let once = try #require(await stack.router.tokens.values.first { !$0.remembered })
+        #expect(once.meter == grant && once.limits == limits)
+        _ = try await stack.session(again, account: "brokered")
+        #expect(await stack.router.appStatus(grant: grant).started == 1)
+    }
+
+    @Test func aTurnPastItsPolicyAndTheAppsLimitReportsItsPolicy() async throws {
+        let stack = try await Stack.start(port: 47665)
+        defer { stack.stop() }
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Both")
+        try await stack.router.setLimits(grant: try await Self.grant(stack, "Both"), limits: AppLimits(spend: .init(max: 1, period: .day)))
+        let session = try await stack.session(app, account: "brokered", meta: [SessionPolicy.key: ["tools": "app-only", "network": "none", "approval": "never-ask",
+                                                                                                  "limits": ["maxTurns": 1]]])
+        let turn = Task { try await app.prompt(session, "slow") }
+        try await Self.running(stack, session)
+        let trace = try #require(stack.traces.session(session))
+        trace.ingest(modelCall: ["id": "a", "cost": .double(1)])
+        trace.ingest(modelCall: ["id": "b", "cost": .double(1)])
+        let limit = try await turn.value["_meta"]?["agneta/limit"]
+        #expect(limit?["limit"] == "maxTurns" && limit?["setBy"] == "app", "\(String(describing: limit))")
+    }
+}
+
+/// Always Allow or Allow Once, in order, for approvals.
+actor RememberAnswers {
+    private var answers: [Bool]
+    init(_ answers: [Bool]) { self.answers = answers }
+    func next() -> Bool { answers.isEmpty ? true : answers.removeFirst() }
+}
