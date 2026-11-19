@@ -25,7 +25,7 @@ swift build && swift test    # everything, with fake models; no accounts needed
 
 - **Warnings are errors in CI.** `swift build --build-tests -Xswiftc -warnings-as-errors` builds as CI does. A warning the code needs on purpose, such as a deprecated API used only for design review, is kept in one place (`Snapshots.swift` calls it through a protocol) rather than left warning.
 - **Swift formatting.** swift-format, which comes with Xcode, with the repository's `.swift-format`: four-space indentation and 120 columns, the width the comments wrap at. CI formats with swift-format 6.3.0 (`swift_format_version` in `scripts/check`; the check points out a different one). Every line must be formatted; `scripts/check swift --fix` formats them. The whole tree was reformatted in one commit, which `.git-blame-ignore-revs` lets `git blame` look past (`git config blame.ignoreRevsFile .git-blame-ignore-revs`).
-- **ShellCheck, actionlint and Ruff** report without failing until their first findings on `main` are fixed; then they fail like the rest (`AGNETA_CHECK_REPORT_ONLY` in `scripts/check`). A deliberate exception is a `# shellcheck disable=SCxxxx` (or `# noqa: Xnnn`) on its line, saying why.
+- **ShellCheck, actionlint and Ruff** fail like the rest (`AGNETA_CHECK_REPORT_ONLY` in `scripts/check` makes a tool report only, for trying a newer version). A deliberate exception is a `# shellcheck disable=SCxxxx` (or `# noqa: Xnnn`) on its line, saying why.
 - `.editorconfig` tells editors the whitespace each kind of file uses.
 
 ## Reporting a bug

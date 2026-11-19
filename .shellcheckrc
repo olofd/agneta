@@ -1,4 +1,6 @@
 # ShellCheck (scripts/check shell, and actionlint on workflow steps). Scripts source their siblings by path relative
 # to themselves; every rule is on, and a deliberate exception is a `# shellcheck disable=SCxxxx` on its line, with why.
 external-sources=true
+# ls on paths the scripts make themselves (no newlines or odd names), and macOS ls is what they target.
+disable=SC2012
 source-path=SCRIPTDIR

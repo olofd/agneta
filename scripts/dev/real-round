@@ -28,7 +28,7 @@ trap 'kill $mcp 2>/dev/null; rm -rf "$run"' EXIT
 sleep 0.5
 .build/debug/agneta-probe --goose "Engines/bin/$arch/goose-acp" --home "$run/home" --cwd "$run/work" \
   --confine 47392 --builtins --mcp http://127.0.0.1:47392/mcp --mcp-token "$token" \
-  --env GOOSE_PROVIDER=$provider --env GOOSE_MODEL=$model --pass-env "$key" \
+  --env "GOOSE_PROVIDER=$provider" --env "GOOSE_MODEL=$model" --pass-env "$key" \
   --system "You are a test assistant for Agneta. Be brief. Use tools exactly when asked." \
   --prompt "Reply with exactly five words." \
   --prompt "Call the echo tool with the text 'agneta', then report what it returned." \

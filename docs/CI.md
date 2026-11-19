@@ -40,7 +40,7 @@ The only actions used are GitHub's own (`actions/checkout`, `actions/setup-node`
 | `actions` | [actionlint](https://github.com/rhysd/actionlint) 1.7.12 on the workflows, with ShellCheck on their `run` steps | Static checks |
 | `data` | every JSON, lock, plist and TOML file parses (TOML from Python 3.11; on 3.9 the check names the files it left) | Static checks |
 
-ShellCheck, actionlint and Ruff report without failing until their first findings on `main` are fixed (`AGNETA_CHECK_REPORT_ONLY`). Each should take about a minute (not yet measured on GitHub); the macOS test jobs gain only Replica Bench's tests, about ten seconds.
+Every tool's findings fail the job, ShellCheck, actionlint and Ruff included. The job takes about a minute; the macOS test jobs gain only Replica Bench's tests, about ten seconds.
 
 ## Not covered yet
 
