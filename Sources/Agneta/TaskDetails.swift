@@ -11,13 +11,37 @@ struct TaskDetailsView: View {
     var title: String
     @State private var summary: TraceSummary?
 
+    /// "Claude plan", or "OpenAI API" (an API key account is named for it already).
+    static func provider(_ summary: TraceSummary) -> String {
+        guard let account = summary.account else { return summary.billing == "subscription" ? "A plan" : "An API key" }
+        return summary.billing == "subscription" && !account.hasSuffix(" plan") ? "\(account) plan" : account
+    }
+
+    /// The policy's network as the trace records it ("none", or `allow(["host"])`).
+    static func network(_ raw: String) -> String {
+        guard raw != "none" else { return "no internet" }
+        let hosts = raw.replacing("allow([", with: "").replacing("])", with: "").replacing("\"", with: "")
+        return hosts.isEmpty ? "no internet" : "internet: \(hosts)"
+    }
+
+    /// The policy's tools (as the trace records them), as the approval window words them.
+    static func tools(_ raw: String) -> String {
+        switch raw {
+        case "app-only", "appOnly": "The app's own tools"
+        case "read": "Read files"
+        case "workspace": "Read, change and run commands"
+        default: raw
+        }
+    }
+
     var body: some View {
         Form {
             if let summary {
                 Section {
                     LabeledContent("App", value: summary.app ?? "Unknown")
-                    LabeledContent("Provider", value: [summary.account, summary.billing.map { $0 == "subscription" ? "plan" : "API key" }].compactMap { $0 }.joined(separator: " · "))
-                    LabeledContent("Tools", value: [summary.tools, summary.network.map { $0 == "none" ? "no network" : $0 }].compactMap { $0 }.joined(separator: " · "))
+                    LabeledContent("Provider", value: Self.provider(summary))
+                    LabeledContent("Tools", value: [summary.tools.map(Self.tools), summary.network.map(Self.network)]
+                        .compactMap { $0 }.joined(separator: ", "))
                     if let cost = summary.cost {
                         LabeledContent("Cost", value: String(format: "about $%.2f", cost) + (summary.billing == "subscription" ? " at API prices" : ""))
                     }

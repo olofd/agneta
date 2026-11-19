@@ -8,12 +8,18 @@ import SwiftUI
 
 @MainActor
 enum Snapshots {
+    /// Set for the showcase only: windows draw as key whatever window or app has the focus.
+    static private(set) var drawsAsKey = false
+
     static func runIfRequested(_ model: AppModel) -> Bool {
         guard let raw = ProcessInfo.processInfo.environment["AGNETA_SHOWCASE"], let seconds = Double(raw) else { return false }
         if let mode = ProcessInfo.processInfo.environment["AGNETA_APPEARANCE"] {
             NSApp.appearance = NSAppearance(named: mode == "dark" ? .darkAqua : .aqua)
         }
         model.loadSample()
+        // The terminal that launched the showcase keeps the focus, which would leave every window drawn as
+        // inactive: dimmed buttons, grey sidebars. Windows draw as in use instead, as the published screenshots should.
+        drawsAsKey = true
         let presenter = WindowPresenter.shared
         showBackdrop()
         presenter.showPanelPreview(model)
@@ -155,7 +161,7 @@ private struct Backdrop: View {
 extension WindowPresenter {
     /// The menu bar panel's content in a glass window of the same shape, for design review.
     func showPanelPreview(_ model: AppModel) {
-        let host = NSHostingView(rootView: PanelView(model: model))
+        let host = NSHostingView(rootView: PanelView(model: model).showcaseKey())
         let size = host.fittingSize
         let window = GlassPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window.isOpaque = false
@@ -189,3 +195,10 @@ private let sampleTrace: [JSONValue] = {
     records.append(["type": "end"])
     return records
 }()
+
+extension View {
+    /// Draws as in the key window during the showcase (`Snapshots.drawsAsKey`); otherwise unchanged.
+    @ViewBuilder func showcaseKey() -> some View {
+        if Snapshots.drawsAsKey { environment(\.controlActiveState, .key) } else { self }
+    }
+}
