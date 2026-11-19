@@ -1,9 +1,18 @@
 import Foundation
+import Security
 import Testing
 
 @testable import AgnetaKit
 
 @Suite struct SecureRandomTests {
+    /// A generator that fails stops the process: no token is ever made of the zeros the buffer started as. (Ignoring
+    /// the status, as the code once did, returns those zeros and the process carries on, which fails this test.)
+    @Test func aFailingGeneratorStopsTheProcess() async {
+        await #expect(processExitsWith: .failure) {
+            _ = SecureRandom.bytes(32) { _ in errSecInternalError }
+        }
+    }
+
     /// The bytes are as many as asked and differ each time: 32 equal bytes twice would mean the generator wasn't used.
     @Test func givesFreshBytesOfTheSizeAsked() {
         let first = SecureRandom.bytes(32), second = SecureRandom.bytes(32)
@@ -13,9 +22,10 @@ import Testing
         #expect(SecureRandom.bytes(0).isEmpty)
     }
 
-    /// App tokens come from it: URL-safe, 32 bytes' worth, never the same twice.
-    @Test func appTokensAreFreshAndURLSafe() {
-        let tokens = (0..<8).map { _ in Router.newToken() }
+    /// Apps' and the tool broker's tokens come from it: URL-safe, 32 bytes' worth, never the same twice.
+    @Test(arguments: [Router.newToken, EngineSupervisor.newToken])
+    func tokensAreFreshAndURLSafe(_ newToken: @Sendable () -> String) {
+        let tokens = (0..<8).map { _ in newToken() }
         #expect(Set(tokens).count == tokens.count)
         for token in tokens {
             #expect(!token.contains("/") && !token.contains("+"))

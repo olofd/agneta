@@ -432,7 +432,7 @@ public actor EngineSupervisor: EngineSource {
         }.start()
     }
 
-    static func newToken() -> String { UUID().uuidString + UUID().uuidString }
+    static func newToken() -> String { SecureRandom.token() }
 }
 
 /// Token → grant for the broker, readable from its threads.

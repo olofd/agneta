@@ -166,7 +166,7 @@ extension Router {
             var code: String?
             if !verified {
                 // Uniform over all six-digit codes, from the system generator (cryptographic on Apple platforms).
-                code = String(format: "%06d", Int.random(in: 0..<1_000_000))
+                code = String(format: "%06ld", Int.random(in: 0..<1_000_000))
                 try? await app.peer.notify("agneta/pairingCode", ["code": .string(code!), "name": .string(name)])
             }
             var request = PairingRequest(id: UUID(), app: name, peer: peer, code: code, tools: scope.tools, folders: scope.folders)
@@ -502,8 +502,5 @@ extension Router {
     static let extensions = [SessionPolicy.key, "agneta/access", "agneta/catalog", "agneta/setup", "agneta/task", "agneta/instructions", "agneta/steer", "agneta/usage",
                              "agneta/trace", "agneta/limit", "agneta/queue", "agneta/rateLimited", "agneta/fork"]
 
-    static func newToken() -> String {
-        Data(SecureRandom.bytes(32)).base64EncodedString().replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "+", with: "-")
-    }
+    static func newToken() -> String { SecureRandom.token() }
 }
