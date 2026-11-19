@@ -759,9 +759,13 @@ final class AppModel {
                  Task(id: "2", app: "Example App", appIdentifier: nil, account: "b", title: "Naming a project", started: Date(), running: true)]
         grants = ["h": Router.Grant(app: "Example App", identifier: "com.example.app", verified: true, accounts: ["a", "b", "c"])]
         let sample = UUID()
-        approvals.addSample(Approvals.Request(id: sample, app: "Example App", identifier: "com.example.app", verified: true, code: "123456",
+        // AGNETA_SHOWCASE_UNVERIFIED shows the busiest request: an app Agneta can't verify, asking for several folders.
+        let unverified = ProcessInfo.processInfo.environment["AGNETA_SHOWCASE_UNVERIFIED"] != nil
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        approvals.addSample(Approvals.Request(id: sample, app: "Example App", identifier: "com.example.app", verified: !unverified, code: "123456",
                                               allowed: ["a", "c"], engines: Set(library.catalog.entries.keys), tools: .workspace,
-                                              folders: [FileManager.default.homeDirectoryForCurrentUser.appending(path: "Documents/Example Project")]))
+                                              folders: unverified ? ["Documents/Example Project", ".rustup", ".cargo/bin"].map { home.appending(path: $0) }
+                                                                  : [home.appending(path: "Documents/Example Project")]))
         if let engine = library.engine(for: .chatGPT) {
             func option(_ id: String, _ category: String, _ current: String, _ values: [(String, String)]) -> JSONValue {
                 ["id": .string(id), "category": .string(category), "type": "select", "currentValue": .string(current),

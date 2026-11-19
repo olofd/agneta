@@ -81,7 +81,19 @@ final class WindowPresenter {
     func closeSignIn() { close("signin") }
     /// Closing the window is Don't Allow for the request it shows; the next waiting request then appears.
     func showApproval(_ model: AppModel, request: UUID) {
-        show("approval", title: "Allow an App", size: NSSize(width: 460, height: 600), onClose: { model.approvals.settle(request, with: nil) }) { ApprovalView(model: model) }
+        // Tall enough for what this request shows and no taller: measured from the busiest one (three providers,
+        // three folders, an unverified app's code, the mode choice) at 750 points.
+        let height: CGFloat = {
+            guard let request = model.approvals.current else { return 750 }
+            let providers = CGFloat(model.accounts.isEmpty ? 3 : model.accounts.count) // no provider yet: about as tall as three
+            let rows = CGFloat(min(request.folders.count, 3) + (request.folders.count > 3 ? 1 : 0))
+            var height = 750 + 47 * (providers - 3) + 20 * (rows - 3)
+            if request.verified { height -= 55 }
+            if request.tools != .workspace { height -= 85 }
+            if request.replaces { height += 26 }
+            return min(max(height, 520), (NSScreen.main?.visibleFrame.height ?? 900) - 60)
+        }()
+        show("approval", title: "Allow an App", size: NSSize(width: 480, height: height), onClose: { model.approvals.settle(request, with: nil) }) { ApprovalView(model: model) }
         windows["approval"]?.level = .floating
     }
     func closeApproval() { close("approval") }
@@ -314,13 +326,19 @@ struct ApprovalScope: View {
     var folders: [URL]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 5) {
             Label(toolsLine, systemImage: tools == .appOnly ? "puzzlepiece.extension" : tools == .read ? "doc.text.magnifyingglass" : "hammer")
-            ForEach(folders, id: \.self) { folder in
+                .foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
+            // A few folders by name; the rest counted, all of them in the tooltip.
+            ForEach(folders.prefix(3), id: \.self) { folder in
                 Label(Self.display(folder), systemImage: "folder").lineLimit(1).truncationMode(.middle)
             }
+            if folders.count > 3 {
+                Label("and \(folders.count - 3) more", systemImage: "ellipsis")
+                    .help(folders.dropFirst(3).map(Self.display).joined(separator: "\n"))
+            }
         }
-        .font(.system(size: 11.5)).foregroundStyle(.secondary)
+        .font(.system(size: 12)).foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
     }
@@ -349,96 +367,28 @@ struct ApprovalView: View {
     var body: some View {
         if let approval = model.approvals.current {
             DialogLayout(title: "Let \(approval.app) use your AI?",
-                         message: "\(approval.app) can start AI tasks that count against your plan limits or API credit. You see and can stop every task, and can remove access at any time.") {
+                         message: "Its tasks count against your plan or API credit. You can watch and stop them, and remove access, at any time.") {
                 HStack(spacing: 14) {
-                    AppIcon(name: approval.app, identifier: approval.verified ? approval.identifier : nil, size: 64)
-                    Image(systemName: "arrow.left.arrow.right").font(.system(size: 15, weight: .semibold)).foregroundStyle(.tertiary)
-                    MarkTile(size: 64)
+                    AppIcon(name: approval.app, identifier: approval.verified ? approval.identifier : nil, size: 56)
+                    Image(systemName: "arrow.left.arrow.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(.tertiary)
+                    MarkTile(size: 56)
                 }
             } content: {
-                VStack(spacing: 12) {
+                VStack(spacing: 14) {
                     if model.accounts.isEmpty {
                         NoProviderYet(model: model, app: approval.app)
                     } else {
-                    VStack(spacing: 2) {
-                        ForEach(model.accounts) { account in
-                            let on = approval.allowed.contains(account.id)
-                            Button {
-                                if on { model.approvals.current?.allowed.remove(account.id) } else { model.approvals.current?.allowed.insert(account.id) }
-                            } label: {
-                                HStack(spacing: 11) {
-                                    ProviderIcon(kind: account.kind, size: 28)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(account.label).font(.system(size: 13, weight: .semibold))
-                                        // What it needs before it can run, where something's missing; its plan otherwise.
-                                        if on, let reason = model.library.cantRun(account, engines: approval.engines) {
-                                            Text(reason).font(.system(size: 11.5)).foregroundStyle(Palette.attention).lineLimit(2)
-                                        } else {
-                                            Text(account.kind.plan).font(.system(size: 11.5)).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    Spacer()
-                                    Image(systemName: on ? "checkmark.circle.fill" : "circle").font(.system(size: 18))
-                                        .foregroundStyle(on ? AnyShapeStyle(Palette.accent) : AnyShapeStyle(.tertiary))
-                                        .contentTransition(.symbolEffect(.replace))
-                                }
-                                .padding(.horizontal, 10).padding(.vertical, 7)
-                            }
-                            .buttonStyle(RowButtonStyle())
-                            .accessibilityAddTraits(on ? .isSelected : [])
-                        }
+                        providers(approval)
                     }
-                    .padding(5)
-                    .frostedCard(cornerRadius: 18)
-                    .padding(.horizontal, 28)
-
-                    // Which engines the app may pick from: all of them, unless someone who knows wants otherwise. A
-                    // popover, so the dialog keeps its size.
-                    HStack(spacing: 6) {
-                        Button("Advanced…") { showsAdvanced = true }
-                            .buttonStyle(.link).foregroundStyle(Palette.accent)
-                            .popover(isPresented: $showsAdvanced, arrowEdge: .bottom) {
-                                EngineAccessList(model: model, allowed: approval.allowed,
-                                                 engines: Binding(get: { model.approvals.current?.engines ?? [] }, set: { model.approvals.current?.engines = $0 }),
-                                                 sandbox: approval.sandbox)
-                                    .padding(16).frame(width: 320)
-                            }
-                        if model.library.allowance(approval.engines) != .all {
-                            Text(approval.engines.count == 1 ? "1 engine" : "\(approval.engines.count) engines").foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
-                    .font(.system(size: 12))
-                    .padding(.horizontal, 32)
-                    }
-
-                    ApprovalScope(app: approval.app, tools: approval.tools, folders: approval.folders)
-                        .padding(.horizontal, 32)
-                    if approval.tools == .workspace {
-                        SandboxPicker(model: model, accounts: approval.allowed, engines: approval.engines,
-                                      sandbox: Binding(get: { model.approvals.current?.sandbox ?? .default }, set: { model.approvals.current?.sandbox = $0 }))
-                            .padding(.horizontal, 32)
-                    }
+                    access(approval)
                     if approval.replaces {
                         Label("Always Allow replaces the access \(approval.app) was given before", systemImage: "arrow.triangle.2.circlepath")
                             .font(.system(size: 11.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 32)
+                            .padding(.horizontal, 34)
                     }
-
-                    if approval.verified, let identifier = approval.identifier {
-                        Label("Verified app · \(identifier)", systemImage: "checkmark.seal.fill").foregroundStyle(Palette.running)
-                            .font(.system(size: 12, weight: .medium))
-                    } else {
-                        VStack(spacing: 6) {
-                            Label("Agneta can't verify this app", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Palette.attention)
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("Allow it only if \(approval.app) shows this code:").font(.system(size: 11.5)).foregroundStyle(.secondary)
-                            Text(approval.code.isEmpty ? "–" : "\(approval.code.prefix(3)) \(approval.code.suffix(3))")
-                                .font(.system(size: 22, weight: .semibold, design: .monospaced)).tracking(2)
-                                .accessibilityLabel("Code \(approval.code.map(String.init).joined(separator: " "))")
-                        }
-                    }
+                    identity(approval)
                 }
+                .padding(.bottom, 8)
             } actions: {
                 HStack(spacing: 8) {
                     // The labels fill the width so the glass bezels do too.
@@ -457,6 +407,100 @@ struct ApprovalView: View {
                 }
                 .controlSize(.large)
             }
+        }
+    }
+}
+
+
+extension ApprovalView {
+    /// The providers to allow, one row each.
+    func providers(_ approval: Approvals.Request) -> some View {
+        VStack(spacing: 2) {
+            ForEach(model.accounts) { account in
+                let on = approval.allowed.contains(account.id)
+                Button {
+                    if on { model.approvals.current?.allowed.remove(account.id) } else { model.approvals.current?.allowed.insert(account.id) }
+                } label: {
+                    HStack(spacing: 11) {
+                        ProviderIcon(kind: account.kind, size: 28)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(account.label).font(.system(size: 13, weight: .semibold))
+                            // What it needs before it can run, where something's missing; its plan otherwise.
+                            if on, let reason = model.library.cantRun(account, engines: approval.engines) {
+                                Text(reason).font(.system(size: 11.5)).foregroundStyle(Palette.attention).lineLimit(2)
+                            } else {
+                                Text(account.kind.plan).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        Image(systemName: on ? "checkmark.circle.fill" : "circle").font(.system(size: 18))
+                            .foregroundStyle(on ? AnyShapeStyle(Palette.accent) : AnyShapeStyle(.tertiary))
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                }
+                .buttonStyle(RowButtonStyle())
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(5)
+        .frostedCard(cornerRadius: 18)
+        .padding(.horizontal, 28)
+    }
+
+    /// What the app may do, in one card: its tools and folders, how its tasks run, and (rarely needed) which engines.
+    func access(_ approval: Approvals.Request) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Access").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).textCase(.uppercase)
+                Spacer()
+                // Which engines the app may pick from: all of them, unless someone who knows wants otherwise. A
+                // popover, so the dialog keeps its size.
+                if !model.accounts.isEmpty {
+                    Button(model.library.allowance(approval.engines) != .all
+                           ? (approval.engines.count == 1 ? "1 engine…" : "\(approval.engines.count) engines…") : "Engines…") { showsAdvanced = true }
+                        .buttonStyle(.link).foregroundStyle(Palette.accent).font(.system(size: 11.5))
+                        .popover(isPresented: $showsAdvanced, arrowEdge: .bottom) {
+                            EngineAccessList(model: model, allowed: approval.allowed,
+                                             engines: Binding(get: { model.approvals.current?.engines ?? [] }, set: { model.approvals.current?.engines = $0 }),
+                                             sandbox: approval.sandbox)
+                                .padding(16).frame(width: 320)
+                        }
+                }
+            }
+            ApprovalScope(app: approval.app, tools: approval.tools, folders: approval.folders)
+            if approval.tools == .workspace {
+                Divider().opacity(0.5)
+                SandboxPicker(model: model, accounts: approval.allowed, engines: approval.engines,
+                              sandbox: Binding(get: { model.approvals.current?.sandbox ?? .default }, set: { model.approvals.current?.sandbox = $0 }))
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .frostedCard(cornerRadius: 16)
+        .padding(.horizontal, 28)
+    }
+
+    /// Who's asking: verified, or a code to compare, on one row.
+    @ViewBuilder func identity(_ approval: Approvals.Request) -> some View {
+        if approval.verified, let identifier = approval.identifier {
+            Label("Verified app · \(identifier)", systemImage: "checkmark.seal.fill").foregroundStyle(Palette.running)
+                .font(.system(size: 12, weight: .medium))
+        } else {
+            HStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.attention).font(.system(size: 16))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Agneta can't verify this app").font(.system(size: 12, weight: .semibold))
+                    Text("Allow it only if \(approval.app) shows this code.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Text(approval.code.isEmpty ? "–" : "\(approval.code.prefix(3)) \(approval.code.suffix(3))")
+                    .font(.system(size: 20, weight: .semibold, design: .monospaced)).tracking(1.5)
+                    .accessibilityLabel("Code \(approval.code.map(String.init).joined(separator: " "))")
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .frostedCard(tint: Palette.attention.opacity(0.08), cornerRadius: 16)
+            .padding(.horizontal, 28)
         }
     }
 }
