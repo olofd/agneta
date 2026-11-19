@@ -15,7 +15,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { Agneta, agnetas, describeError, listening } from './agneta.mjs';
+import { isListening } from '@agneta/client/node';
+import { Agneta, agnetas, describeError } from './agneta.mjs';
 import { checkModes } from './modes.mjs';
 import { duration, modesTable, outcomeText, writeReport } from './report.mjs';
 import { BenchRun } from './run.mjs';
@@ -103,7 +104,7 @@ async function choosePort(given) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('The port must be a valid TCP port.');
     return { port, name: agnetas.find((entry) => entry.port === port)?.name ?? `Agneta on port ${port}` };
   }
-  for (const entry of agnetas) if (await listening(entry.port, 0.5)) return entry;
+  for (const entry of agnetas) if (await isListening(entry.port)) return entry;
   throw new Error('Neither Agneta (47321) nor Agneta Dev (47331) is running. Open one, or give --port.');
 }
 

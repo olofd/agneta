@@ -1,9 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
 import { readFileSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { createConnection } from 'node:net';
-import { dirname, join } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isListening, safeStorageTokenStore } from '@agneta/client/node';
 import { agnetas as known, memoryTokens } from './agneta.mjs';
 import { BenchApp } from './app.mjs';
 import { resultsFolder } from './bench.mjs';
@@ -65,29 +65,10 @@ app.whenReady().then(async () => {
 
 /** Always Allow's token, encrypted with safeStorage (its key is in the login Keychain), one file per Agneta. */
 function tokensFor(port) {
-  const file = () => join(app.getPath('userData'), `agneta-token-${port}`);
-  return {
-    async load() {
-      try { return safeStorage.decryptString(await readFile(file())); } catch { return null; }
-    },
-    async save(token) {
-      if (!safeStorage.isEncryptionAvailable()) return;
-      await mkdir(dirname(file()), { recursive: true });
-      await writeFile(file(), safeStorage.encryptString(token), { mode: 0o600 });
-    },
-    async clear() { await rm(file(), { force: true }); }
-  };
+  return safeStorageTokenStore(safeStorage, join(app.getPath('userData'), `agneta-token-${port}`));
 }
 
 const choiceFile = () => join(app.getPath('userData'), 'agneta.json');
-
-function answers(port) {
-  return new Promise((resolve) => {
-    const probe = createConnection({ host: '127.0.0.1', port }, () => { probe.destroy(); resolve(true); });
-    probe.on('error', () => resolve(false));
-    probe.setTimeout(500, () => { probe.destroy(); resolve(false); });
-  });
-}
 
 async function initialAgneta() {
   if (agnetas.length === 1) return agnetas[0];
@@ -96,7 +77,7 @@ async function initialAgneta() {
     const picked = agnetas.find((choice) => choice.id === use);
     if (picked) return picked;
   } catch {}
-  const [release, dev] = await Promise.all(agnetas.map((choice) => answers(choice.port)));
+  const [release, dev] = await Promise.all(agnetas.map((choice) => isListening(choice.port)));
   return dev && !release ? agnetas[1] : agnetas[0];
 }
 

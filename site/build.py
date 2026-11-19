@@ -32,6 +32,7 @@ SITE = "https://agneta.dahlbom.io"
 GROUPS = [
     ("For app developers", [
         ("README.md", "For app developers", "docs/apps", "Developer guide"),
+        ("clients/typescript/README.md", None, "docs/typescript-client", "TypeScript client"),
         ("docs/APP_PROTOCOL.md", None, "docs/app-protocol", "App protocol"),
         ("docs/DIAGNOSTICS.md", None, "docs/diagnostics", "Diagnostics"),
     ]),
@@ -581,8 +582,9 @@ def landing(site):
         return Markdown(site, "README.md", "").render("\n".join(quote))
 
     def dev_snippet():
-        lines, _ = section(readme, "The conversation, step by step")
-        start = next(i for i, l in enumerate(lines) if l.startswith("```json"))
+        # The developer guide's first example: a few lines on the TypeScript client.
+        lines, _ = section(readme, "For app developers")
+        start = next(i for i, l in enumerate(lines) if l.startswith("```js"))
         end = next(i for i in range(start + 1, len(lines)) if l_is_fence(lines[i]))
         return Markdown(site, "README.md", "").render("\n".join(lines[start:end + 1]))
 

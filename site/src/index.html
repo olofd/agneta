@@ -48,7 +48,7 @@
       <h2>For app developers</h2>
       <p>Agent features without running an agent loop, building sign-in for every provider, or putting a model bill on your own credit card.</p>
       <ul class="points">
-        <li>Speak the <a href="https://agentclientprotocol.com" rel="noopener">Agent Client Protocol</a> over a local WebSocket. No SDK is needed, and a sandboxed Mac App Store app can do it too.</li>
+        <li>Use the official <a href="/docs/typescript-client/">TypeScript client</a>, or speak the <a href="https://agentclientprotocol.com" rel="noopener">Agent Client Protocol</a> over a local WebSocket from any language. A sandboxed Mac App Store app can do it too.</li>
         <li>Keep your tools and data in your app, served as an MCP server on loopback. The agent uses them on the user’s account.</li>
         <li>Ask for exactly what you need: the providers, engines and mode. Find out first what Agneta offers, and ask it to help the user connect a provider.</li>
         <li>Send a policy with each session: tools, folders, network, approval and limits. Agneta enforces it with sandboxes, or refuses it.</li>
@@ -107,21 +107,22 @@
 
   <section class="dev wrap" aria-labelledby="dev">
     <h2 id="dev">Add it to your app</h2>
-    <p class="section-lede">Your app is an ACP client and Agneta is the ACP agent. Connect to <code>ws://127.0.0.1:47321/acp</code>, pair once, and start sessions with your own tools and a policy. Any WebSocket and JSON-RPC 2.0 code will do.</p>
+    <p class="section-lede">Your app is an ACP client and Agneta is the ACP agent. In TypeScript or JavaScript, <a href="/docs/typescript-client/"><code>@agneta/client</code></a> connects, pairs once, keeps the token, and starts sessions with your own tools and a policy, typed. In any other language, connect to <code>ws://127.0.0.1:47321/acp</code>: any WebSocket and JSON-RPC 2.0 code will do.</p>
     <div class="dev-code">
-      <p class="code-title">Pairing, once</p>
+      <p class="code-title">Pair, then stream a reply</p>
 {{dev_snippet}}
     </div>
     <div class="dev-grid">
       <ul class="link-list">
         <li><a href="/docs/apps/">Developer guide</a>: the conversation, step by step</li>
+        <li><a href="/docs/typescript-client/">TypeScript client</a>: build it from <code>clients/typescript</code> until its first npm release, and every class, event and error</li>
         <li><a href="/docs/app-protocol/">App protocol</a>: every field, limit and error</li>
         <li><a href="/docs/diagnostics/">Diagnostics</a>: traces, <code>agneta-diag</code> and the diagnostics MCP server</li>
         <li><a href="https://github.com/olofd/agneta/blob/main/Sources/agneta-testclient/main.swift" rel="noopener">The test client</a>: the whole exchange in about 170 lines of Swift</li>
       </ul>
       <figure class="dev-shot">
         <img src="/images/project-chat.png" width="1960" height="1560" loading="lazy" alt="Project Chat: a conversation with the agent, the project tools it called, and a proposed note with Dismiss and Save note buttons">
-        <figcaption><a href="https://github.com/olofd/agneta/tree/main/examples/project-chat" rel="noopener">Project Chat</a>, the example app: it pairs with Agneta, streams a conversation, and lets the agent propose a note for you to review.</figcaption>
+        <figcaption><a href="https://github.com/olofd/agneta/tree/main/examples/project-chat" rel="noopener">Project Chat</a>, an example app on the TypeScript client: it pairs with Agneta, streams a conversation, and lets the agent propose a note for you to review. <a href="https://github.com/olofd/agneta/tree/main/examples/replica-bench" rel="noopener">Replica Bench</a> runs demanding work on every engine in both sandbox modes.</figcaption>
       </figure>
     </div>
   </section>

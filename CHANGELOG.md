@@ -34,6 +34,7 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 **For apps**
 
+- **`@agneta/client`, the official TypeScript client** ([clients/typescript](clients/typescript/README.md)): the whole app protocol, typed, in Node 22+ and Electron's main process, with no dependencies. It connects and offers to open Agneta, pairs and keeps the token, follows access changes, opens, loads and forks sessions, streams turns, answers permission requests, reads traces, and maps every error code to a typed error; a raw layer sends anything else. Project Chat and Replica Bench now run on it. Published to npm separately, from `client-typescript-v*` tags.
 - **A task stopped mid-turn answers its prompt as cancelled,** as the protocol says, even when the engine never answers it (Stop, a removed provider, narrowed access). Before, the prompt could wait on a shared engine indefinitely, or fail as "The engine stopped".
 - **`maxCostUSD` is checked before a prompt is sent:** a task already over its limit spends nothing more.
 - **Fewer false rate limits:** an error that merely says "429" or "limit reached" (a token count, a context window, a tool's output) is no longer reported as `agneta/rateLimited`.

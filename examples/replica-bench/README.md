@@ -6,9 +6,10 @@ The work it gives agents has the shape of a demanding app's, whose agents Agneta
 
 ## Run it
 
-You need Node.js 24 or newer, and a running Agneta with a provider connected (a plan or an API key). Rust (`rustup`) is needed for the referee to score candidates; Python 3 is needed for the agent's probes.
+You need Node.js 24 or newer, and a running Agneta with a provider connected (a plan or an API key). Rust (`rustup`) is needed for the referee to score candidates; Python 3 is needed for the agent's probes. The bench talks to Agneta through the [TypeScript client](../../clients/typescript/README.md), `@agneta/client`: build it first. From the repository root:
 
 ```sh
+(cd clients/typescript && npm ci && npm run build)
 cd examples/replica-bench
 npm ci
 npm start                      # the window
@@ -197,6 +198,8 @@ To see a contained grant without changing your own, run an isolated Agneta that 
 
 ## Pairing and policy
 
+The bench runs on [`@agneta/client`](../../clients/typescript/README.md). [`agneta.mjs`](agneta.mjs) holds only what the bench adds to it: the scope below, a check that a kept grant still covers the bench folder, and the providers as its pickers show them (each engine's `sandboxLevels` and `uncontained`). A [run](run.mjs) opens a client `Session` with its policy, tools, title, instructions and live trace, streams the reply and tool calls from the session's events, reads commands, permission decisions and model calls from its trace records, and sends each turn with `session.prompt()`. Refusals arrive as the client's typed errors (`UnenforceableError`, with Agneta's fields and reason).
+
 The pairing scope:
 
 ```json
@@ -235,7 +238,7 @@ Developer runs send `"sandbox": "developer"`, without the toolchain (the agent f
 - the scenarios' judging;
 - the report;
 - the sandbox rules the bench predicts (the ladder, the grant as ceiling, engine levels) and how asked/got and refusals read;
-- pairing and access against a stand-in Agneta that follows the protocol's sandbox rules: the scope asked for, the grant's mode read back and changed by `agneta/accessChanged`, each engine's `sandboxLevels` and `uncontained`, kept grants;
+- pairing and access, through the client library, against a stand-in Agneta that follows the protocol's sandbox rules: the scope asked for, the grant's mode read back and changed by `agneta/accessChanged`, each engine's `sandboxLevels` and `uncontained`, kept grants;
 - the modes check against the same stand-in, under a developer grant, under a contained grant, with an answer that disagrees with the declarations, and with an unavailable engine.
 
 The integration check runs the bench against a headless Agneta (`agnetad`) with real Goose and the fake model (`agneta-fakes`). It uses its own temporary `AGNETA_HOME` and bench folder, and ports in 47900–47999 (Agneta's own Swift tests use 474xx, 476xx and 477xx). From the repository root:
@@ -244,7 +247,9 @@ The integration check runs the bench against a headless Agneta (`agnetad`) with 
 scripts/fetch-engines
 swift build --product agnetad
 swift build --product agneta-fakes
+(cd clients/typescript && npm ci && npm run build)
 cd examples/replica-bench
+npm ci --ignore-scripts
 npm run test:integration
 ```
 
