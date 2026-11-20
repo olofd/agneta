@@ -143,10 +143,10 @@ extension SessionPolicy {
         // As resolved, nothing more: standardizedFileURL would turn /private/var into /var, which the sandbox never matches.
         // Sockets too: a link put at a checked socket's path before the profile is written must not move its rule to
         // wherever the link points.
-        policy.checkedPaths = Set(
-            ([workspace] + readable + writable + readOnly + denied + toolSockets).map {
-                $0.path(percentEncoded: false).trimmingSuffix("/")
-            })
+        // Built step by step: one long chain of + took older compilers too long to type-check.
+        var urls: [URL] = [workspace]
+        for list in [readable, writable, readOnly, denied, toolSockets] { urls.append(contentsOf: list) }
+        policy.checkedPaths = Set(urls.map { $0.path(percentEncoded: false).trimmingSuffix("/") })
         return policy
     }
 
