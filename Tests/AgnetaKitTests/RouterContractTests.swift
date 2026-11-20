@@ -1577,6 +1577,83 @@ actor FakeEngines: EngineSource {
         }
     }
 
+    /// `builtins` in the policy narrow the engine's own tools: Claude Code gets exactly the kept groups' tools, the reply
+    /// and the trace say what the session has, and a load or fork keeps the narrowing with the policy. An engine that
+    /// can't honour it (Goose without skills, Codex without edit under workspace tools) and an unknown group are refused,
+    /// naming the field; without it nothing changes.
+    @Test func builtinsNarrowTheEnginesOwnTools() async throws {
+        let stack = try await Stack.start(port: 47730)
+        defer { stack.stop() }
+        let cli = InstalledCLI(path: URL(filePath: "/usr/bin/false"), version: "2", source: "path")
+        let claude = ClaudeCodeAdapter(executable: URL(filePath: "/usr/bin/false"), cli: cli)
+        let codex = CodexAdapter(node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: cli)
+        await stack.router.setCatalog(EngineCatalog(ready: [Self.goose, claude, codex]))
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Narrow")
+        let cwd = JSONValue.string(stack.root.appending(path: "work").path(percentEncoded: false))
+        func open(_ account: String, _ builtins: JSONValue?, engine: String? = nil) async throws -> JSONValue {
+            var policy: JSONValue = ["tools": "workspace", "approval": "never-ask", "sandbox": "contained"]
+            if let builtins { policy = policy.setting("builtins", to: builtins) }
+            var agneta: JSONValue = ["account": .string(account)]
+            if let engine { agneta = agneta.setting("engine", to: .string(engine)) }
+            return try await app.request(
+                "session/new", ["cwd": cwd, "mcpServers": [], "_meta": [SessionPolicy.key: policy, "agneta": agneta]])
+        }
+        func lastOptions() async -> JSONValue? {
+            await stack.engines.opening.last?.params["_meta"]?["claudeCode"]?["options"]
+        }
+        func refused(_ account: String, _ builtins: JSONValue, engine: String? = nil) async -> RPCError? {
+            do {
+                _ = try await open(account, builtins, engine: engine)
+                return nil
+            } catch let error as RPCError { return error } catch { return nil }
+        }
+
+        // Without it: Claude Code's contained set, reported.
+        let plain = try await open("native", nil)
+        #expect(plain["_meta"]?["agneta"]?["builtins"] == ["read", "edit", "execute", "subagents"])
+        #expect(await lastOptions()?["tools"]?.arrayValue?.contains("Agent") == true)
+
+        // The clean-room set: no subagents, the same on a load that sends no policy, and in the trace.
+        let narrowed = try await open("native", ["read", "edit", "execute"])
+        let session = try #require(narrowed["sessionId"]?.stringValue)
+        #expect(narrowed["_meta"]?["agneta"]?["builtins"] == ["read", "edit", "execute"])
+        #expect(
+            await lastOptions()?["tools"]
+                == ["Read", "Glob", "Grep", "Edit", "Write", "NotebookEdit", "ToolSearch", "Bash", "TaskStop"])
+        #expect(await lastOptions()?["disallowedTools"]?.arrayValue?.contains("Agent") == true)
+        let meta = try await stack.meta(session)
+        #expect(meta["policy"]?["builtins"] == ["read", "edit", "execute"])
+        #expect(meta["policy"]?["builtinsOffered"] == ["read", "edit", "execute"])
+        _ = try await app.request("session/close", ["sessionId": .string(session)])
+        let loaded = try await app.request(
+            "session/load", ["sessionId": .string(session), "cwd": cwd, "mcpServers": []])
+        #expect(loaded["_meta"]?["agneta"]?["builtins"] == ["read", "edit", "execute"])
+        #expect(await stack.engines.askedPolicies.last?.builtins == [.read, .edit, .execute])
+        #expect(await lastOptions()?["tools"]?.arrayValue?.contains("Agent") == false)
+
+        // A fork reads (its policy is the original's with read tools), still narrowed.
+        let goose = try #require(try await open("brokered", ["read", "execute", "skills"])["sessionId"]?.stringValue)
+        let fork = try await app.request("agneta/fork", ["sessionId": .string(goose), "mcpServers": []])
+        #expect(fork["_meta"]?["agneta"]?["builtins"] == ["read", "execute", "skills"])
+        #expect(await stack.engines.askedPolicies.last?.builtins == [.read, .execute, .skills])
+        #expect(await stack.engines.askedPolicies.last?.tools == .read)
+
+        // Refused where the engine would still offer a tool left out, and for anything but known groups.
+        for (account, builtins, engine) in [
+            ("brokered", ["read", "edit", "execute"] as JSONValue, nil as String?),
+            ("brokered", ["read", "execute"], "codex"), ("native", ["web", "network"], nil), ("native", "read", nil)
+        ] {
+            let error = await refused(account, builtins, engine: engine)
+            #expect(error?.code == RPCError.invalidParams, "\(builtins) on \(engine ?? account)")
+            #expect(
+                error?.data?["agneta"]?["unenforceable"] == ["builtins"], "\(builtins): \(error?.message ?? "taken")")
+        }
+        let onCodex = try await open("brokered", ["read", "edit", "execute"], engine: "codex")
+        #expect(onCodex["_meta"]?["agneta"]?["builtins"] == ["read", "edit", "execute"])
+    }
+
     /// A fork's engine gets Claude Code's options for the fork's `agneta/appTools`: the original's, or its own.
     @Test func aForkOfAClaudeCodeTaskKeepsItsAppToolsOptions() async throws {
         let stack = try await Stack.start(port: 47642)

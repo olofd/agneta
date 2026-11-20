@@ -80,6 +80,11 @@ public struct SessionPolicy: Sendable, Equatable {
     /// How the engine offers the app's MCP tools (`_meta["agneta/appTools"]`, AppToolsLoad): set by the router from that
     /// extension, never from `agneta/policy`, and carried here because every engine call already takes the policy.
     public var appTools: AppToolsLoad = .engine
+    /// The groups of the engine's own tools the session may have (`builtins`), or nil for all its `tools`, `sandbox` and
+    /// network give. It only narrows: a group those don't give stays out whether it's named or not.
+    public var builtins: Set<BuiltinGroup>?
+    /// Whether `builtins` keeps this group (nothing else is decided here: the tools level and sandbox still apply).
+    public func allows(_ group: BuiltinGroup) -> Bool { builtins?.contains(group) ?? true }
     /// The policy's folders as they were checked when it was parsed (resolved, refused if protected), recorded then:
     /// sandbox profiles write these without resolving them again. Empty for a policy built in code.
     public var checkedPaths: Set<String> = []
@@ -295,6 +300,7 @@ extension SessionPolicy {
         policy.toolPorts = toolPorts
         policy.toolSockets = toolSockets
         policy.requestedSandbox = requestedSandbox
+        policy.builtins = try BuiltinGroup.parse(value["builtins"])
         if let raw = value["toolEnvironment"] {
             guard let fields = raw.objectValue else {
                 throw PolicyRejection(field: "toolEnvironment", reason: "must be an object of strings")
@@ -331,7 +337,7 @@ extension SessionPolicy {
     static let knownFields: Set<String> = [
         "tools", "network", "approval", "limits", "readable", "writable", "readOnly", "denied", "toolPorts",
         "toolSockets",
-        "sandbox", "toolEnvironment"
+        "sandbox", "toolEnvironment", "builtins"
     ]
     static let reservedEnvironment: Set<String> = [
         "HOME", "TMPDIR", "USER", "LOGNAME", "SHELL", "BASH_ENV", "ENV", "ZDOTDIR", "PROMPT_COMMAND", "IFS"

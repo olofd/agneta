@@ -141,24 +141,14 @@ public struct CodexAdapter: EngineAdapter {
             context.session?.policy.tools == .workspace ? "workspace-write" : "read-only"
         // Codex's own command tools off, Agneta's shell instead: the server in config.toml offers its tool to this
         // process only (AGNETA_SHELL), running in the session's workspace through this engine's broker token.
-        var config: [String: JSONValue] = [:], features: [String: JSONValue] = [:]
-        if context.shell != nil, let policy = context.session?.policy, brokersShell(policy) {
-            features["shell_tool"] = false
-            features["unified_exec"] = false
-            // Web search runs on OpenAI's servers, which no sandbox reaches: on under developer access, as in Codex
-            // itself; off when contained (the account's config.toml has it off).
-            if policy.sandbox == .developer { config["web_search"] = "live" }
-            environment["AGNETA_SHELL"] = "1"
-            environment["AGNETA_SHELL_CWD"] = policy.workspace.path(percentEncoded: false)
-        }
-        if let session = context.session, let namespaces = Self.directNamespaces(session) {
-            features["code_mode"] = ["direct_only_tool_namespaces": .array(namespaces.map(JSONValue.string))]
-        }
-        if !features.isEmpty { config["features"] = .object(features) }
-        // Merged into the session's config by codex-acp (CODEX_CONFIG).
-        if !config.isEmpty {
-            environment["CODEX_CONFIG"] = String(
-                decoding: try JSONCoding.encode(JSONValue.object(config)), as: UTF8.self)
+        if let session = context.session {
+            let policy = session.policy
+            environment["CODEX_CONFIG"] = Self.overrides(
+                policy, shell: context.shell != nil, direct: Self.directNamespaces(session))
+            if context.shell != nil, brokersShell(policy) {
+                environment["AGNETA_SHELL"] = "1"
+                environment["AGNETA_SHELL_CWD"] = policy.workspace.path(percentEncoded: false)
+            }
         }
         // Developer access: its commands run as in a terminal, through Agneta's shell in the widened profile, finding the
         // user's toolchains. The mode stays one that asks before edits, so an app that answers permissions is asked.
@@ -189,6 +179,62 @@ public struct CodexAdapter: EngineAdapter {
         // give later sessions its instructions, skills, rules or tool servers.
         launch.readOnly = Self.trustedFiles.map { codexHome.appending(path: $0) }
         return launch
+    }
+
+    /// The session's settings over config.toml (codex-acp's CODEX_CONFIG, key-sorted JSON), nil when there are none.
+    /// With Agneta's shell at hand (`shell`, every session with a broker), Codex's own shell is off: an `app-only`
+    /// session, which had no settings before, was offered `exec_command` and `write_stdin` (measured on 0.167.0). Web
+    /// search runs on OpenAI's servers, which no sandbox reaches: on under developer access, as in Codex itself; off when
+    /// contained (the account's config.toml has it off). `direct`: the app's namespaces that bypass deferral
+    /// (`directNamespaces`). `builtins` turn off each group they leave out (measured on 0.167.0 through codex-acp 2.7.0,
+    /// on gpt-6.1-sol's code mode and gpt-5.1-codex's plain tools alike): subagents (`multi_agent`, `agents`), the
+    /// bundled skills (imagegen, openai-docs, skill-creator, skill-installer, listed otherwise), goals, the clock's sleep
+    /// and questions for the user, and `view_image`. The shell goes with `execute` (`brokersShell`); `apply_patch` has
+    /// no setting, so a narrowing without `edit` is refused (`builtinsRefusal`).
+    static func overrides(_ policy: SessionPolicy, shell: Bool = true, direct: [String]? = nil) -> String? {
+        var config: [String: JSONValue] = [:], features: [String: JSONValue] = [:]
+        if shell {
+            features["shell_tool"] = false
+            features["unified_exec"] = false
+            if policy.sandbox == .developer, policy.allows(.web) { config["web_search"] = "live" }
+        }
+        if let direct { features["code_mode"] = ["direct_only_tool_namespaces": .array(direct.map(JSONValue.string))] }
+        if let groups = policy.builtins {
+            if config["web_search"] == nil { config["web_search"] = "disabled" }
+            if !groups.contains(.read) { features["view_image"] = false }
+            if !groups.contains(.subagents) {
+                features["multi_agent"] = false
+                config["agents"] = ["enabled": false]
+            }
+            if !groups.contains(.skills) {
+                config["skills"] = ["bundled": ["enabled": false], "include_instructions": false]
+            }
+            if !groups.contains(.planning) {
+                features["goals"] = false
+                features["sleep_tool"] = false
+                config["tools"] = ["experimental_request_user_input": ["enabled": false]]
+            }
+        }
+        if !features.isEmpty { config["features"] = .object(features) }
+        guard !config.isEmpty, let data = try? JSONCoding.encode(JSONValue.object(config)) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// What Codex offers: `view_image` (read), `apply_patch` (edit, refused below workspace tools), Agneta's shell,
+    /// web search under developer access, and unless narrowed its subagents, bundled skills and goals and questions,
+    /// at every tools level (measured on 0.167.0).
+    public func builtinGroups(_ policy: SessionPolicy, kind: AccountKind?) -> Set<BuiltinGroup>? {
+        var groups = Set(BuiltinGroup.allCases.filter(policy.allows))
+        if policy.tools != .workspace { groups.remove(.edit) }
+        if !brokersShell(policy) { groups.remove(.execute) }
+        if policy.sandbox != .developer { groups.remove(.web) }
+        return groups
+    }
+
+    /// No setting turns `apply_patch` off, so workspace tools can't leave out `edit`.
+    public func builtinsRefusal(_ policy: SessionPolicy, kind: AccountKind?) -> String? {
+        guard policy.tools == .workspace, !policy.allows(.edit) else { return nil }
+        return "Codex always offers its apply_patch edit tool: keep edit in builtins, or ask for read tools"
     }
 
     /// Codex's own instructions describe its own shell, which is off on the contained path: without a word on it, the
@@ -297,7 +343,7 @@ public struct CodexAdapter: EngineAdapter {
     static let shellServer = "agneta"
     /// Under developer access too: there the broker's profile is widened like a terminal's but keeps the ChatGPT
     /// sign-in out, which Codex's own sandbox must read (measured: a developer command listed ~/Library/Keychains).
-    public func brokersShell(_ policy: SessionPolicy) -> Bool { policy.tools != .appOnly }
+    public func brokersShell(_ policy: SessionPolicy) -> Bool { policy.tools != .appOnly && policy.allows(.execute) }
 
     /// Agneta's shell in the account's config.toml, the same for every session: codex-acp replaces the MCP servers in
     /// CODEX_CONFIG with the session's own (measured: the shell vanished once an app passed a server), while config.toml's

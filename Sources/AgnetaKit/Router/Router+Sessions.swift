@@ -141,6 +141,10 @@ extension Router {
             effective = outcome.effective
         case .failure(let refusal): return .failure(refusal.rpcError)
         }
+        // A narrowing the engine can't honour on this account would leave it offering a tool the app left out.
+        if let reason = engine.builtinsRefusal(policy, kind: kind) {
+            return .failure(PolicyRejection(field: "builtins", reason: reason).rpcError)
+        }
         if policy.limits.maxCostUSD != nil, !engine.capabilities.reportsCost {
             return .failure(
                 PolicyRejection(
@@ -314,7 +318,8 @@ extension Router {
         var agneta: [String: JSONValue] = [
             "account": .string(plan.account), "dedicatedEngine": .bool(lease.dedicated),
             "capabilities": Self.capabilities(lease.engine), "sandbox": .string(plan.sandbox.rawValue),
-            "appTools": Self.appTools(plan.policy, engine: lease.engine, kind: accounts[plan.account]?.kind)
+            "appTools": Self.appTools(plan.policy, engine: lease.engine, kind: accounts[plan.account]?.kind),
+            "builtins": Self.builtins(plan.policy, engine: lease.engine, kind: accounts[plan.account]?.kind)
         ]
         agneta.merge(extra) { _, new in new }
         return (id.map { result.setting("sessionId", to: .string($0)) } ?? result).setting(
@@ -726,7 +731,10 @@ extension Router {
                 "writable": paths(policy.writable), "readOnly": paths(policy.readOnly), "denied": paths(policy.denied),
                 // The mode the task ran in, and which variables the app set for its commands (names: values may hold paths of its own).
                 "sandbox": .string(sandbox.rawValue),
-                "toolEnvironment": .array(policy.toolEnvironment.keys.sorted().map(JSONValue.string))
+                "toolEnvironment": .array(policy.toolEnvironment.keys.sorted().map(JSONValue.string)),
+                // The groups the app kept (null: no narrowing), and those the engine offers (null: not known).
+                "builtins": policy.builtins.map { .array($0.sorted().map { .string($0.rawValue) }) } ?? .null,
+                "builtinsOffered": Self.builtins(policy, engine: lease.engine, kind: account?.kind)
             ],
             "request": request ?? .null,
             "engineResult": result,

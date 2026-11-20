@@ -321,6 +321,199 @@ import Testing
         #expect(try environment()["ENABLE_TOOL_SEARCH"] == "false")
     }
 
+    /// Policies narrowed by `builtins`, at every tools level, contained and with developer access.
+    func narrowed(_ builtins: [BuiltinGroup], tools: String = "workspace", developer: Bool = false) throws
+        -> SessionPolicy
+    {
+        var policy = try SessionPolicy.parse(
+            ["tools": .string(tools), "builtins": .array(builtins.map { .string($0.rawValue) })],
+            cwd: FileManager.default.temporaryDirectory.path(percentEncoded: false), context: context)
+        if developer { policy.sandbox = .developer }
+        return policy
+    }
+
+    /// Every engine keeps to the contract under every narrowing it accepts: no more than the narrowed policy permits,
+    /// no less than it promises. An engine that refuses one says why.
+    @Test(arguments: engines) func everyEngineKeepsToANarrowing(engine: String) throws {
+        let adapters: [String: any EngineAdapter] = [
+            "goose": GooseAdapter(executable: URL(filePath: "/usr/bin/false")),
+            "opencode": OpenCodeAdapter(executable: URL(filePath: "/usr/bin/false")),
+            "claude-code": ClaudeCodeAdapter(executable: URL(filePath: "/usr/bin/false"), cli: Self.cli),
+            "codex": CodexAdapter(
+                node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: Self.cli)
+        ]
+        let adapter = try #require(adapters[engine])
+        let kind: AccountKind = engine == "codex" ? .openAIKey : .anthropicKey
+        let choices: [[BuiltinGroup]] = [
+            [], [.read], [.read, .execute], [.read, .edit], [.read, .edit, .execute], [.skills]
+        ]
+        for tools in ["app-only", "read", "workspace"] {
+            for groups in choices {
+                let policy = try narrowed(groups, tools: tools)
+                let label = "\(engine) under \(tools) keeping \(groups.map(\.rawValue))"
+                if let reason = adapter.builtinsRefusal(policy, kind: kind) {
+                    #expect(!reason.isEmpty, "\(label)")
+                    continue
+                }
+                let got = try offered(engine, policy)
+                #expect(got.isSubset(of: BuiltinTools.permitted(by: policy)), "\(label) offers \(got)")
+                #expect(BuiltinTools.promised(by: policy).isSubset(of: got), "\(label) lacks some of what it promises")
+                let groups = try #require(adapter.builtinGroups(policy, kind: kind), "\(label)")
+                #expect(groups.isSubset(of: policy.builtins!), "\(label) reports \(groups)")
+            }
+        }
+    }
+
+    /// Claude Code: a narrowing is the exact `tools` list, contained and under developer access alike; developer access
+    /// keeps the account-reaching tools, Monitor and PowerShell out (`disallowedTools`), and ToolSearch follows
+    /// `agneta/appTools`. The clean-room set (read, edit, execute) is what was measured on 2.1.326.
+    @Test func claudeCodeOffersOnlyTheGroupsKept() throws {
+        let adapter = ClaudeCodeAdapter(executable: URL(filePath: "/usr/bin/false"), cli: Self.cli)
+        let developer = try narrowed([.read, .edit, .execute], developer: true)
+        let exact = ["Read", "Glob", "Grep", "Edit", "Write", "NotebookEdit", "Bash", "TaskStop", "ToolSearch"]
+        #expect(ClaudeCodeAdapter.tools(developer) == exact)
+        let denied = ClaudeCodeAdapter.disallowed(developer)
+        for tool in [
+            "WebFetch", "WebSearch", "Agent", "Task", "Skill", "Workflow", "SendMessage", "Monitor", "PowerShell",
+            "Artifact", "RemoteTrigger", "PushNotification", "CronCreate", "EnterWorktree"
+        ] {
+            #expect(denied.contains(tool), "\(tool)")
+        }
+        #expect(!denied.contains("Bash") && !denied.contains("Read"))
+        #expect(adapter.builtinGroups(developer, kind: .claude) == [.read, .edit, .execute])
+        var upfront = developer
+        upfront.appTools = .always
+        #expect(ClaudeCodeAdapter.tools(upfront) == exact.filter { $0 != "ToolSearch" })
+        // Every group: still an allowlist, and still nothing that reaches the account or runs outside the broker.
+        let all = try narrowed(BuiltinGroup.allCases, developer: true)
+        let every = try #require(ClaudeCodeAdapter.tools(all))
+        #expect(Set(["WebFetch", "WebSearch", "Agent", "Skill", "ExitPlanMode"]).isSubset(of: Set(every)))
+        #expect(every.allSatisfy { BuiltinGroup.named[$0] != nil || BuiltinGroup.infrastructure.contains($0) })
+        for tool in ["Monitor", "PowerShell", "Artifact", "SendUserFile"] {
+            #expect(ClaudeCodeAdapter.disallowed(all).contains(tool) && !every.contains(tool))
+        }
+        // Contained: the policy's own set, less what's left out; nothing kept means only tool search.
+        #expect(
+            ClaudeCodeAdapter.tools(try narrowed([.read, .execute]))
+                == ["Read", "Glob", "Grep", "ToolSearch", "Bash", "TaskStop"])
+        #expect(ClaudeCodeAdapter.tools(try narrowed([.read, .edit, .execute, .subagents]))?.last == "Agent")
+        #expect(ClaudeCodeAdapter.tools(try narrowed([])) == ["ToolSearch"])
+        #expect(ClaudeCodeAdapter.tools(try narrowed([], developer: true)) == ["ToolSearch"])
+        #expect(!ClaudeCodeAdapter.shellBrokered(try narrowed([.read, .edit])))
+        // Kept groups beyond what a contained session gets add nothing.
+        #expect(
+            ClaudeCodeAdapter.tools(try narrowed(BuiltinGroup.allCases)) == ClaudeCodeAdapter.tools(try policies.last!))
+        let opened = adapter.newSession(
+            cwd: URL(filePath: "/tmp/w"), servers: [], policy: developer, title: nil, instructions: nil)
+        let loaded = adapter.loadSession(
+            "s1", cwd: URL(filePath: "/tmp/w"), servers: [], policy: developer, instructions: nil)
+        #expect(opened["_meta"] == loaded["_meta"])
+        #expect(loaded["_meta"]?["claudeCode"]?["options"]?["tools"] == .array(exact.map(JSONValue.string)))
+    }
+
+    /// Codex: each group left out is a setting off (measured on 0.167.0); the shell goes with `execute`; `apply_patch`
+    /// can't be turned off, so workspace tools without `edit` are refused. No narrowing leaves the settings as they were.
+    @Test func codexTurnsOffTheGroupsLeftOut() throws {
+        let adapter = CodexAdapter(
+            node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: Self.cli)
+        let plain = try policies.last!
+        #expect(CodexAdapter.overrides(plain) == #"{"features":{"shell_tool":false,"unified_exec":false}}"#)
+        let kept = try narrowed([.read, .edit, .execute], developer: true)
+        let config: JSONValue = try JSONCoding.decode(Data(CodexAdapter.overrides(kept).utf8))
+        #expect(config["web_search"] == "disabled" && config["agents"]?["enabled"] == false)
+        #expect(config["features"]?["multi_agent"] == false && config["features"]?["goals"] == false)
+        #expect(config["features"]?["sleep_tool"] == false && config["features"]?["shell_tool"] == false)
+        #expect(config["features"]?["view_image"] == nil)
+        #expect(config["skills"]?["bundled"]?["enabled"] == false)
+        #expect(config["tools"]?["experimental_request_user_input"]?["enabled"] == false)
+        #expect(adapter.builtinGroups(kept, kind: .chatGPT) == [.read, .edit, .execute])
+        let web: JSONValue = try JSONCoding.decode(
+            Data(CodexAdapter.overrides(try narrowed([.read, .edit, .web], developer: true)).utf8))
+        #expect(web["web_search"] == "live" && web["features"]?["view_image"] == nil)
+        let none: JSONValue = try JSONCoding.decode(Data(CodexAdapter.overrides(try narrowed([], tools: "read")).utf8))
+        #expect(none["features"]?["view_image"] == false)
+        #expect(adapter.builtinsRefusal(try narrowed([.read, .execute]), kind: .chatGPT) != nil)
+        #expect(adapter.builtinsRefusal(try narrowed([.read, .execute], tools: "read"), kind: .chatGPT) == nil)
+        // Without `execute`, Agneta's shell isn't offered, and the session is told nothing about it.
+        let noShell = try narrowed([.read], tools: "read")
+        #expect(!adapter.brokersShell(noShell))
+        let home = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-contract-narrow-\(UUID().uuidString.prefix(6))", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let launch = try adapter.launch(
+            EngineLaunchContext(
+                home: home, provider: ProviderSetup(kind: .openAI, apiKey: "k"), shell: URL(filePath: "/usr/bin/true"),
+                session: EngineSessionSpec(policy: noShell, servers: [], instructions: nil), loopbackPorts: []))
+        #expect(launch.environment["AGNETA_SHELL"] == nil && launch.environment["CODEX_CONFIG"] != nil)
+        let params = adapter.newSession(cwd: home, servers: [], policy: noShell, title: nil, instructions: nil)
+        #expect(params["systemPrompt"] == nil)
+    }
+
+    /// Goose and OpenCode: the developer extension's tools and the permission rules, narrowed. Goose always offers its
+    /// skills, and on a Claude plan runs Claude Code, so it refuses a narrowing there or without skills.
+    @Test func brokeredEnginesNarrowTheirOwnTools() throws {
+        let goose = GooseAdapter(executable: URL(filePath: "/usr/bin/false"))
+        func available(_ policy: SessionPolicy) -> [String]? {
+            GooseAdapter.extensions(servers: [], policy: policy).first { $0["name"]?.stringValue == "developer" }?[
+                "available_tools"]?.arrayValue?.compactMap(\.stringValue)
+        }
+        #expect(available(try narrowed([.read, .edit, .skills])) == ["write", "edit", "tree", "read_image"])
+        #expect(available(try narrowed([.execute, .skills], tools: "read")) == ["shell"])
+        #expect(available(try narrowed([.skills])) == nil)
+        #expect(goose.builtinGroups(try narrowed([.read, .skills]), kind: .openAIKey) == [.read, .skills])
+        #expect(goose.builtinGroups(try policies.first!, kind: .openAIKey) == [.skills])
+        #expect(goose.builtinsRefusal(try narrowed([.read, .edit, .execute]), kind: .openAIKey) != nil)
+        #expect(goose.builtinsRefusal(try narrowed([.read, .skills]), kind: .openAIKey) == nil)
+        #expect(goose.builtinsRefusal(try narrowed(BuiltinGroup.allCases), kind: .claude) != nil)
+        #expect(goose.builtinsRefusal(try policies.last!, kind: .claude) == nil)
+
+        let opencode = OpenCodeAdapter(executable: URL(filePath: "/usr/bin/false"))
+        func open(_ policy: SessionPolicy) -> [String] {
+            (OpenCodeAdapter.permissions(policy: policy, servers: []).arrayValue ?? []).dropFirst().compactMap {
+                $0["action"]?.stringValue
+            }
+        }
+        #expect(open(try narrowed([.read, .execute])) == ["read", "glob", "grep", "shell"])
+        #expect(open(try narrowed([.edit])) == ["edit"])
+        #expect(open(try narrowed([])) == [])
+        #expect(opencode.builtinGroups(try narrowed([.read, .edit]), kind: .openAIKey) == [.read, .edit])
+        #expect(opencode.builtinsRefusal(try narrowed([]), kind: .openAIKey) == nil)
+    }
+
+    /// `builtins` is a list of known groups, or absent; anything else is refused, naming the field. Native runners'
+    /// requests outside the kept groups are refused, under developer access too, by name where known, else by kind.
+    @Test func builtinsParseStrictlyAndAnswerNativeRunners() throws {
+        let cwd = FileManager.default.temporaryDirectory.path(percentEncoded: false)
+        #expect(try SessionPolicy.parse(["tools": "read"], cwd: cwd, context: context).builtins == nil)
+        #expect(try SessionPolicy.parse(["builtins": []], cwd: cwd, context: context).builtins == [])
+        #expect(
+            try SessionPolicy.parse(["builtins": ["read", "web", "read"]], cwd: cwd, context: context).builtins
+                == [.read, .web])
+        for value: JSONValue in ["read", ["network"], ["Read"], [1], ["read", .null], ["read": true]] {
+            do {
+                _ = try SessionPolicy.parse(["builtins": value], cwd: cwd, context: context)
+                Issue.record("\(value) was taken")
+            } catch let rejection as PolicyRejection {
+                #expect(rejection.field == "builtins", "\(value)")
+                #expect(rejection.rpcError.data?["agneta"]?["unenforceable"] == ["builtins"])
+            }
+        }
+        let developer = try narrowed([.read, .edit, .execute], developer: true)
+        func may(_ kind: String?, _ tool: String?, _ policy: SessionPolicy) -> Bool {
+            BuiltinTools.nativeRunnerMayUse(kind: kind, tool: tool, policy: policy, brokered: true)
+        }
+        #expect(may("execute", "Bash", developer) && may("edit", "Write", developer) && may("read", nil, developer))
+        #expect(may("other", "ToolSearch", developer))
+        #expect(!may("fetch", "WebFetch", developer) && !may("fetch", nil, developer))
+        #expect(!may("think", "Agent", developer) && !may("other", "Skill", developer))
+        #expect(!may("other", "CronCreate", developer) && !may("other", nil, developer))
+        #expect(!may("switch_mode", "ExitPlanMode", developer))
+        #expect(may("switch_mode", "ExitPlanMode", try narrowed([.planning], developer: true)))
+        let contained = try narrowed([.read])
+        #expect(may("read", "Read", contained) && !may("edit", "Edit", contained) && !may("execute", "Bash", contained))
+        #expect(BuiltinTools.permitted(by: contained) == [.read])
+    }
+
     /// `agneta/appTools` is `{"load": "always" | "engine"}` or absent; anything else names the extension.
     @Test func appToolsParseStrictly() throws {
         #expect(try AppToolsLoad.parse(nil) == .engine)

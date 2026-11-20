@@ -194,6 +194,11 @@ extension EngineAdapter {
     public func sessionsDeleted(stateRoot: URL) -> String? { nil }
     public func appToolsUpfront(_ policy: SessionPolicy, kind: AccountKind?) -> Bool? { nil }
     public func sessionsStored(stateRoot: URL, sessions: [String]) -> Set<String>? { nil }
+    public func builtinGroups(_ policy: SessionPolicy, kind: AccountKind?) -> Set<BuiltinGroup>? { nil }
+    /// An engine that doesn't say how to narrow its tools can't: a narrowed session on it is refused.
+    public func builtinsRefusal(_ policy: SessionPolicy, kind: AccountKind?) -> String? {
+        policy.builtins == nil ? nil : "\(displayName) can't narrow its own tools"
+    }
 }
 
 public protocol EngineAdapter: Sendable {
@@ -264,6 +269,12 @@ public protocol EngineAdapter: Sendable {
     /// Whether the app's MCP tools (their descriptions and schemas) are in the model's first request under the policy's
     /// `appTools` on this kind of account, as measured on the versions docs/ENGINES.md names; nil when not known.
     func appToolsUpfront(_ policy: SessionPolicy, kind: AccountKind?) -> Bool?
+    /// The groups of its own tools the engine offers a session under the policy (`builtins` applied) on this kind of
+    /// account, as measured on the versions docs/ENGINES.md names; nil when not known.
+    func builtinGroups(_ policy: SessionPolicy, kind: AccountKind?) -> Set<BuiltinGroup>?
+    /// Why the engine can't honour the policy's `builtins` on this kind of account (it would still offer a tool they
+    /// leave out), or nil. Such a session is refused, never run with more.
+    func builtinsRefusal(_ policy: SessionPolicy, kind: AccountKind?) -> String?
     func permitsMode(_ mode: String) -> Bool
     /// A model call reported in the stream instead (a notification), as a usage row (keys as `UsageLedger`,
     /// plus `id` to recognize repeats), or nil.

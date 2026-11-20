@@ -65,22 +65,53 @@ public struct GooseAdapter: EngineAdapter {
             writable: writable, readable: readable, stateRoot: launch.gooseRoot)
     }
 
-    /// The app's MCP servers plus only the built-ins the policy allows. Nothing from the user's own setup.
+    /// The app's MCP servers plus only the built-ins the policy allows, narrowed by its `builtins`. Nothing from the
+    /// user's own setup: Goose's other extensions (subagents, skills, to-do lists) are never enabled.
     static func extensions(servers: [JSONValue], policy: SessionPolicy) -> [JSONValue] {
         var extensions: [JSONValue] = servers.map { ["type": "mcp", "server": $0] }
-        switch policy.tools {
-        case .appOnly: break
-        case .read:
+        let level: [String] =
+            switch policy.tools {
+            case .appOnly: []
+            case .read: ["tree", "read_image", "shell"]
+            case .workspace: ["write", "edit", "shell", "tree", "read_image"]
+            }
+        let tools = level.filter { policy.allows(developerGroup[$0]!) }
+        if !tools.isEmpty {
             extensions.append([
-                "type": "platform", "name": "developer", "available_tools": ["tree", "read_image", "shell"]
-            ])
-        case .workspace:
-            extensions.append([
-                "type": "platform", "name": "developer",
-                "available_tools": ["write", "edit", "shell", "tree", "read_image"]
+                "type": "platform", "name": "developer", "available_tools": .array(tools.map(JSONValue.string))
             ])
         }
         return extensions
+    }
+
+    /// The developer extension's tools by group.
+    static let developerGroup: [String: BuiltinGroup] = [
+        "tree": .read, "read_image": .read, "write": .edit, "edit": .edit, "shell": .execute
+    ]
+
+    /// With a model API, what the developer extension enables, and skills: Goose always offers `load_skill`, with its
+    /// built-in skills (goose-doc-guide, web-search) listed in the system prompt (measured on 1.59.2; its skill step
+    /// is part of every agent). On a Claude plan, Claude Code's own set, not known here.
+    public func builtinGroups(_ policy: SessionPolicy, kind: AccountKind?) -> Set<BuiltinGroup>? {
+        if kind == .claude { return nil }
+        let developer = Self.extensions(servers: [], policy: policy).first
+        let tools = developer?["available_tools"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        return Set(tools.compactMap { Self.developerGroup[$0] } + [.skills])
+    }
+
+    /// On a Claude plan Goose's model is Claude Code with all its own tools, which Goose's settings don't reach. With a
+    /// model API every group is a developer tool or never enabled, but skills, which Goose always offers.
+    public func builtinsRefusal(_ policy: SessionPolicy, kind: AccountKind?) -> String? {
+        guard policy.builtins != nil else { return nil }
+        if kind == .claude {
+            return "Goose on a Claude plan runs Claude Code with all its own tools, which Agneta can't narrow; "
+                + "run Claude Code itself to narrow them"
+        }
+        if !policy.allows(.skills) {
+            return
+                "Goose always offers its load_skill tool and built-in skills: keep skills in builtins, or use another engine"
+        }
+        return nil
     }
 
     public func newSession(

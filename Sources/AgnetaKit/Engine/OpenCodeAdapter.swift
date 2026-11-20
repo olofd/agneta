@@ -131,18 +131,34 @@ public struct OpenCodeAdapter: EngineAdapter {
         // keeps worktree changes inside the workspace.
         var rules: [JSONValue] = [["action": "*", "resource": "*", "effect": "deny"]]
         for server in servers { rules.append(["action": .string("\(server)_*"), "resource": "*", "effect": decide]) }
-        if policy.tools != .appOnly {
+        if policy.tools != .appOnly, policy.allows(.read) {
             for action in ["read", "glob", "grep"] {
                 rules.append(["action": .string(action), "resource": "*", "effect": "allow"])
             }
         }
         if policy.tools == .workspace {
-            for action in ["edit", "shell"] {
+            // `opencode_worktree_remove` goes with `edit` (measured on 2.3.0).
+            for (action, group) in [("edit", BuiltinGroup.edit), ("shell", .execute)] where policy.allows(group) {
                 rules.append(["action": .string(action), "resource": "*", "effect": decide])
             }
         }
         return .array(rules)
     }
+
+    /// What the rules open. Web, subagents (`task`) and to-do lists stay denied, and `skill`, which ignores the rules,
+    /// has no skill to load (none in the private home; ones planted in the workspace aren't found, measured on 2.3.0).
+    public func builtinGroups(_ policy: SessionPolicy, kind: AccountKind?) -> Set<BuiltinGroup>? {
+        var groups: Set<BuiltinGroup> = []
+        if policy.tools != .appOnly, policy.allows(.read) { groups.insert(.read) }
+        if policy.tools == .workspace {
+            if policy.allows(.edit) { groups.insert(.edit) }
+            if policy.allows(.execute) { groups.insert(.execute) }
+        }
+        return groups
+    }
+
+    /// Every group is a permission rule here, or never offered.
+    public func builtinsRefusal(_ policy: SessionPolicy, kind: AccountKind?) -> String? { nil }
 
     public func newSession(
         cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?

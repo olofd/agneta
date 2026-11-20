@@ -38,7 +38,7 @@ Every line has these fields:
 
 | `type` | Fields | Source |
 | --- | --- | --- |
-| `meta` | app (name, identifier, verified, grant), account (id, label, kind, billing: `api-key` or `subscription`, runner), engine (id, `stateFormat`, name and version, pid, dedicated, start time, engine session), policy (tools, network, approval, folders, `sandbox`: the mode the task ran in, and `toolEnvironment`: the names of the variables the app set for commands, never their values), the `session/new` request, the engine's result, instructions | Agneta at `session/new` |
+| `meta` | app (name, identifier, verified, grant), account (id, label, kind, billing: `api-key` or `subscription`, runner), engine (id, `stateFormat`, name and version, pid, dedicated, start time, engine session), policy (tools, network, approval, folders, `sandbox`: the mode the task ran in, and `toolEnvironment`: the names of the variables the app set for commands, never their values; `builtins`: the groups of the engine's own tools the app kept, null for no narrowing, and `builtinsOffered`: those the session has, null when not known), the `session/new` request, the engine's result, instructions | Agneta at `session/new` |
 | `config` | method, request, `by` | Model, option and instruction changes |
 | `acp` | `leg` (`app→agneta`, `agneta→engine`, `engine→agneta`, `agneta→app`), `msg`: the JSON-RPC message exactly as received | Both connections |
 | `event` | Normalized, below | Derived from the ACP stream and the engine's records |

@@ -137,7 +137,10 @@ public struct ClaudeCodeAdapter: EngineAdapter {
     /// access too: there the broker's profile is widened like a terminal's (the user's home as HOME, the internet),
     /// but it keeps the engine's sign-in out, which the engine's own sandbox must read (measured: a developer command
     /// listed ~/Library/Keychains when it ran in the engine's sandbox).
-    public static func shellBrokered(_ policy: SessionPolicy) -> Bool { policy.tools != .appOnly }
+    /// A session whose `builtins` leave out `execute` has no Bash.
+    public static func shellBrokered(_ policy: SessionPolicy) -> Bool {
+        policy.tools != .appOnly && policy.allows(.execute)
+    }
 
     /// Bash through the broker. Claude Code wraps each whole command (snapshot sourcing, `eval`, and recording the
     /// current folder) in `CLAUDE_CODE_SHELL_PREFIX`, split at its last ` -` into `'agneta-shell' -c '<command>'`,
@@ -172,18 +175,40 @@ public struct ClaudeCodeAdapter: EngineAdapter {
     /// affected; measured on 2.1.325). Commands aren't among them: Claude Code runs the ones it judges read-only
     /// without asking, inside the engine's sandbox, which reaches port 443 (measured), so Bash waits for the broker.
     /// `ToolSearch` only loads deferred tools, the app's among them, so it goes when nothing is deferred
-    /// (`agneta/appTools` `always`). Developer access gets Claude Code's own set.
+    /// (`agneta/appTools` `always`). Developer access gets Claude Code's own set, or with `builtins` the named groups'
+    /// tools (`developerTools`). `builtins` narrow the contained set the same way.
     static func tools(_ policy: SessionPolicy) -> [String]? {
-        if policy.sandbox == .developer { return nil }
-        // Bash (and stopping its background commands) only through the broker; Monitor never on this path.
-        let shell = shellBrokered(policy) ? ["Bash", "TaskStop", "Agent"] : []
         let search = policy.appTools == .always ? [] : ["ToolSearch"]
-        switch policy.tools {
-        case .appOnly: return search
-        case .read: return ["Read", "Glob", "Grep"] + search + shell
-        case .workspace: return ["Read", "Glob", "Grep", "Edit", "Write", "NotebookEdit"] + search + shell
+        if policy.sandbox == .developer {
+            guard let groups = policy.builtins else { return nil }
+            let named = BuiltinGroup.allCases.filter(groups.contains).flatMap { developerTools[$0] ?? [] }
+            return named + search
         }
+        var tools: [String] = []
+        if policy.tools != .appOnly, policy.allows(.read) { tools += ["Read", "Glob", "Grep"] }
+        if policy.tools == .workspace, policy.allows(.edit) { tools += ["Edit", "Write", "NotebookEdit"] }
+        tools += search
+        // Bash (and stopping its background commands) only through the broker; Monitor never on this path.
+        if shellBrokered(policy) { tools += ["Bash", "TaskStop"] }
+        if policy.tools != .appOnly, policy.allows(.subagents) { tools.append("Agent") }
+        return tools
     }
+
+    /// Under developer access with `builtins`: each group's tools by Claude Code's names. Its own set without them
+    /// (measured on 2.1.326) has Read, Edit, Write, NotebookEdit, Bash, TaskStop, WebFetch, WebSearch, Agent,
+    /// SendMessage, ListAgents, Workflow, Skill and plan mode, and beyond any group CronCreate, CronDelete, CronList,
+    /// ScheduleWakeup, EnterWorktree, ExitWorktree and ReportFindings, which a narrowed session never gets. Glob and Grep
+    /// aren't in its own set but are offered when named (measured), as on the contained path. A name a version doesn't
+    /// have is skipped (measured: the to-do and task tools, absent from 2.1.326).
+    static let developerTools: [BuiltinGroup: [String]] = [
+        .read: ["Read", "Glob", "Grep"], .edit: ["Edit", "Write", "NotebookEdit"], .execute: ["Bash", "TaskStop"],
+        .web: ["WebFetch", "WebSearch"], .subagents: ["Agent", "SendMessage", "ListAgents", "Workflow"],
+        .skills: ["Skill"],
+        .planning: [
+            "TodoWrite", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "EnterPlanMode", "ExitPlanMode",
+            "AskUserQuestion"
+        ]
+    ]
 
     /// Claude Code's own variables for the session's query, merged over the engine's environment by the adapter
     /// (`options.env`). Tool search defers every MCP tool by default: only names reach the model, each loaded with
@@ -210,16 +235,27 @@ public struct ClaudeCodeAdapter: EngineAdapter {
         // works for the app, and what it makes or sends goes back to the app.
         // Monitor and PowerShell run commands natively inside the engine's profile, which on a plan reaches the sign-in's
         // Keychain: off until they're shown to go through Agneta's broker as Bash does.
-        if policy.sandbox == .developer {
+        if policy.sandbox == .developer, policy.builtins == nil {
             return [
                 "RemoteTrigger", "Artifact", "Projects", "ClaudeDesign", "SendUserMessage", "SendUserFile",
                 "PushNotification", "Monitor", "PowerShell"
             ]
         }
-        return shellBrokered(policy)
-            ? neverByDefault.filter { !["Bash", "TaskStop", "KillShell", "BashOutput", "Agent", "Task"].contains($0) }
-            : neverByDefault
+        // Otherwise everything the allowlist doesn't offer (older names with their new ones): the account-reaching
+        // tools, Monitor and PowerShell are never in it.
+        let offered = Set(tools(policy) ?? [])
+        let renamed = ["BashOutput": "Bash", "KillShell": "Bash", "Task": "Agent"]
+        return neverByDefault.filter { !offered.contains(renamed[$0] ?? $0) }
     }
+
+    /// The groups the session's tools fall in; Claude Code's own set (developer access without `builtins`) has them all.
+    public func builtinGroups(_ policy: SessionPolicy, kind: AccountKind?) -> Set<BuiltinGroup>? {
+        guard let tools = Self.tools(policy) else { return Set(BuiltinGroup.allCases) }
+        return Set(tools.compactMap { BuiltinGroup.named[$0] })
+    }
+
+    /// Every narrowing is an allowlist Claude Code honours exactly (`tools`).
+    public func builtinsRefusal(_ policy: SessionPolicy, kind: AccountKind?) -> String? { nil }
 
     /// The session options, the same on new, load and fork: a resumed session given none falls back to the
     /// adapter's defaults, which load the workspace's own `.claude/settings.json` (hooks, env, permissions the agent

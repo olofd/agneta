@@ -611,6 +611,12 @@ extension Router {
         ]
     }
 
+    /// `_meta.agneta.builtins` in a session's reply: the groups of the engine's own tools the session has, as its engine
+    /// is configured (null when Agneta doesn't know: Goose on a Claude plan).
+    static func builtins(_ policy: SessionPolicy, engine: any EngineAdapter, kind: AccountKind?) -> JSONValue {
+        engine.builtinGroups(policy, kind: kind).map { .array($0.sorted().map { .string($0.rawValue) }) } ?? .null
+    }
+
     /// `agneta/trace/read`: a page of one of this app's own tasks, running or finished.
     func readTrace(grant: Grant, params: JSONValue?) async -> Result<JSONValue, RPCError> {
         guard let traces else { return .failure(RPCError(code: RPCError.methodNotFound, message: "Traces are off")) }
