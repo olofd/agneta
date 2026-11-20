@@ -447,7 +447,7 @@ import Testing
         #expect(adapter.builtinsRefusal(try narrowed([.read], tools: "read"), kind: .chatGPT) != nil)
         #expect(adapter.builtinGroups(try policies.first!, kind: .chatGPT)?.contains(.read) == false)
         let kept = try narrowed([.read, .edit, .execute], developer: true)
-        let config: JSONValue = try JSONCoding.decode(Data(CodexAdapter.overrides(kept).utf8))
+        let config: JSONValue = try JSONCoding.decode(Data(try #require(CodexAdapter.overrides(kept)).utf8))
         #expect(config["web_search"] == "disabled" && config["agents"]?["enabled"] == false)
         #expect(config["features"]?["multi_agent"] == false && config["features"]?["goals"] == false)
         #expect(config["features"]?["sleep_tool"] == false && config["features"]?["shell_tool"] == false)
@@ -455,10 +455,20 @@ import Testing
         #expect(config["skills"]?["bundled"]?["enabled"] == false)
         #expect(config["tools"]?["experimental_request_user_input"]?["enabled"] == false)
         #expect(adapter.builtinGroups(kept, kind: .chatGPT) == [.read, .edit, .execute])
+        // One key-sorted object with `agneta/appTools`' direct namespaces, byte for byte.
+        #expect(
+            CodexAdapter.overrides(kept, shell: true, direct: ["mcp__app"])
+                == #"{"agents":{"enabled":false},"features":{"code_mode":{"direct_only_tool_namespaces":["mcp__app"]},"#
+                + #""goals":false,"multi_agent":false,"shell_tool":false,"sleep_tool":false,"unified_exec":false},"#
+                + #""skills":{"bundled":{"enabled":false},"include_instructions":false},"#
+                + #""tools":{"experimental_request_user_input":{"enabled":false}},"web_search":"disabled"}"#)
+        // Without a broker (tests only: every Codex session has one) and without `builtins`, nothing, as before.
+        #expect(CodexAdapter.overrides(plain, shell: false) == nil)
         let web: JSONValue = try JSONCoding.decode(
-            Data(CodexAdapter.overrides(try narrowed([.read, .edit, .web], developer: true)).utf8))
+            Data(try #require(CodexAdapter.overrides(try narrowed([.read, .edit, .web], developer: true))).utf8))
         #expect(web["web_search"] == "live" && web["features"]?["view_image"] == nil)
-        let none: JSONValue = try JSONCoding.decode(Data(CodexAdapter.overrides(try narrowed([], tools: "read")).utf8))
+        let none: JSONValue = try JSONCoding.decode(
+            Data(try #require(CodexAdapter.overrides(try narrowed([], tools: "read"))).utf8))
         #expect(none["features"]?["view_image"] == false)
         #expect(adapter.builtinsRefusal(try narrowed([.read, .execute]), kind: .chatGPT) != nil)
         #expect(adapter.builtinsRefusal(try narrowed([.read, .execute], tools: "read"), kind: .chatGPT) == nil)

@@ -1588,6 +1588,7 @@ actor FakeEngines: EngineSource {
         let claude = ClaudeCodeAdapter(executable: URL(filePath: "/usr/bin/false"), cli: cli)
         let codex = CodexAdapter(node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: cli)
         await stack.router.setCatalog(EngineCatalog(ready: [Self.goose, claude, codex]))
+        await stack.engines.exporting(true)
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Narrow")
