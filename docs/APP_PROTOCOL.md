@@ -415,6 +415,8 @@ The result:
 
 **Engine stopped.** If the engine process ends on its own (it crashed, or was killed), its sessions end at once: the app gets `agneta/sessionStopped {"sessionId", "stoppedBy": "engine"}` and a running turn fails. Resume the task with `session/load`, which starts a fresh engine.
 
+**Agneta quits.** The connection closes, with no `agneta/sessionStopped`: the app's sessions end with it, and their running turns fail. Connect again once Agneta is back, and resume a task with `session/load`.
+
 ## Permissions
 
 With `approval: "ask-app"`, the engine's `session/request_permission` requests reach the app with Agneta's session id. Agneta applies two rules:

@@ -433,9 +433,10 @@ public actor AgnetaRuntime {
     /// Quitting: apps are disconnected, every engine stops, and history records the tasks that were running as stopped.
     public func stopAll() async {
         housekeeping?.cancel()
-        await router.hangUpAll(reason: "Agneta is quitting")
+        // Recorded before the hang-up: a session that ends cleanly meanwhile would otherwise be recorded as finished.
         for id in running.keys { write("task-stopped") { try database.taskEnded(id, outcome: .stopped) } }
         running = [:]
+        await router.hangUpAll(reason: "Agneta is quitting")
         await supervisor.stopAll()
     }
 

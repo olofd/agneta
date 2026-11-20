@@ -471,6 +471,8 @@ struct RouterIntegrationTests {
             try await Task.sleep(for: .milliseconds(300))
             #expect(app.notifications("agneta/sessionStopped").isEmpty)
             #expect(await stack.supervisor.processCount == 0)
+            #expect(await stack.runtime.history().first?.outcome == .stopped)
+            app.close()
         } catch {
             await stack.stop()
             throw error

@@ -680,8 +680,18 @@ public actor Router {
     /// Quitting: every app's connection closes before the engines stop, so an app hears that Agneta went away (its
     /// sessions end with the connection), never that an engine stopped, which the engines' exits would otherwise
     /// report to apps still connected (`engineGone`).
+    /// Nothing new starts meanwhile, each task's trace says Agneta quit (the disconnect's own record follows), and the
+    /// sessions are given up to 2 s to close on their engines, so their traces end and their last usage is read before
+    /// the engines are stopped.
     public func hangUpAll(reason: String) async {
+        shutDown = true
+        for id in sessions.keys {
+            traces?.session(id)?.writer.record(
+                "lifecycle", ["event": "stop", "by": "agneta", "reason": .string(reason)])
+        }
         for app in apps.values { await hangUp(app, reason: reason) }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !sessions.isEmpty, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(20)) }
     }
 
     /// Closes an app's peer and its connection; the connection's `serve` then cleans up.
