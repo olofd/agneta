@@ -138,6 +138,10 @@ actor FakeEngines: EngineSource {
     private(set) var opened = 0
     private(set) var released = 0
     func loading(takes delay: Duration) { loadDelay = delay }
+    /// Whether engines export and import conversations (Goose's fork). Off by default: tests that need a fork to fail
+    /// (one that isn't counted, AppLimitsContractTests) rely on an engine that can't export.
+    private var exports = false
+    func exporting(_ on: Bool) { exports = on }
     /// Every engine stops reading: Agneta's writes to it wait forever.
     func wedge() async { for gate in gates { await gate.close() } }
     /// Slow turns waiting to be steered or cancelled, by engine session, each also woken after 3 s.
@@ -311,9 +315,9 @@ actor FakeEngines: EngineSource {
         case "session/load":
             try? await Task.sleep(for: loadDelay)
             return .success(["models": ["currentModelId": "fake-model"], "configOptions": []])
-        case "_goose/unstable/session/export":
+        case "_goose/unstable/session/export" where exports:
             return .success(["data": ["copied": session]])
-        case "_goose/unstable/session/import":
+        case "_goose/unstable/session/import" where exports:
             return .success(["sessionId": .string("e\(n)-imported"), "messageCount": 2])
         case "session/close":
             switch close {
@@ -1485,6 +1489,7 @@ actor FakeEngines: EngineSource {
     @Test func appToolsLoadUpFrontWhenAsked() async throws {
         let stack = try await Stack.start(port: 47640)
         defer { stack.stop() }
+        await stack.engines.exporting(true)
         let claude = ClaudeCodeAdapter(
             executable: URL(filePath: "/usr/bin/false"),
             cli: InstalledCLI(path: URL(filePath: "/usr/bin/false"), version: "2", source: "path"))
@@ -1576,6 +1581,7 @@ actor FakeEngines: EngineSource {
     @Test func aForkOfAClaudeCodeTaskKeepsItsAppToolsOptions() async throws {
         let stack = try await Stack.start(port: 47642)
         defer { stack.stop() }
+        await stack.engines.exporting(true)
         await stack.router.setCatalog(EngineCatalog(ready: [Self.goose, ForkableClaudeCode()]))
         let app = AppClient(port: stack.port)
         defer { app.close() }
