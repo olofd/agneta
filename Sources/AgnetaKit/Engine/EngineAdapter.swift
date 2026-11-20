@@ -148,12 +148,21 @@ public struct EngineLaunch: Sendable {
 
 /// One engine's per-call usage, read from its own records. Rows use these keys: `row`, `created`,
 /// `model`, `input_tokens`, `output_tokens`, `total_tokens`, `cache_read_tokens`, `cache_write_tokens`,
-/// `cost`, `cost_source`, `is_compaction`, `output_partial` (the output count is the stream's opening one); messages:
-/// `row`, `role`, `content`, `meta`, `messageId`, `created`. A row with `session_totals` (per model: `input`, `output`,
-/// `cacheRead`, `cacheWrite`, `cost`, running totals for the session) gives the turn's ledger instead of the calls' sums.
+/// `cost`, `cost_source`, `is_compaction`, `output_partial` (true: the output count is the stream's opening one;
+/// false: it's final), `basis` (where the row comes from, default `engine-ledger`), `parent` (the agent thread a
+/// streamed call belongs to: a subagent's tool call id, nil for the session's own); messages: `row`, `role`,
+/// `content`, `meta`, `messageId`, `created`. A row with `session_totals` (per model: `input`, `output`, `cacheRead`,
+/// `cacheWrite`, `cost`, running totals for the session) gives the turn's ledger instead of the calls' sums.
 public protocol UsageLedger: Sendable {
     /// Rows newer than those already read. `problem` is set once when the records can't be read.
     func read() -> (messages: [[String: JSONValue]], usage: [[String: JSONValue]], problem: String?)
+    /// Whether these records later give the final row for a call the stream reported partial (same `id`): the
+    /// trace then holds a partial row back until its final one is read (Claude Code's transcript).
+    var completesStreamRows: Bool { get }
+}
+
+extension UsageLedger {
+    public var completesStreamRows: Bool { false }
 }
 
 extension EngineAdapter {

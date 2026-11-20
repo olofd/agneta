@@ -62,7 +62,7 @@ Every line has these fields:
 | `tool-call` | `call` (task-scoped id, `c1`, `c2`, …), `engineCall`, `tool` and `extension` (the tool's own name and the server it came from), `message` (the model response id, when known), `name` (the engine's title, which may carry arguments), `toolKind`, full `input`, `tStart` |
 | `tool-input` | `call`, and input or name that arrived after the first sighting (ACP updates are upserts) |
 | `tool-result` | `call`, status, `isError`, full `content` and `rawOutput`, `tEnd`, `ms`, `bytes`, `estTokens` |
-| `model-call` | `n` (per task), model, input, output, cacheRead, cacheWrite, cost, `costKind` (`estimated` or `plan-equivalent`), `costSource`, compaction, `outputPartial` (Claude Code), `basis`, `taskCost` (the task's known cost so far) |
+| `model-call` | `n` (per task), model, input, output, cacheRead, cacheWrite, cost, `costKind` (`estimated` or `plan-equivalent`), `costSource`, compaction, `outputPartial` (Claude Code: `false` when the output count is final, `true` when it's the stream's opening count), `basis` (`engine-ledger`; on Claude Code `engine-transcript`, or `engine-stream` when the transcript didn't give the call in time), `taskCost` (the task's known cost so far) |
 | `usage` | Context `size` and `used`, **marked cumulative**, with the engine's cost when it sends one |
 | `plan` | The engine's plan entries |
 | `turn` | `n`, stopReason, `ms`, `msToFirstToken`, `modelCalls`, `ledger` (input, output, cacheRead, cacheWrite), `callLedger` (the per-call sums, when `ledger` holds the engine's own turn totals), `basis`, the engine's own `usage`, `cost`, `taskCost`, `models`, `costKind`, `error` |

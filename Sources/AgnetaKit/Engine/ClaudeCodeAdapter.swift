@@ -307,12 +307,17 @@ public struct ClaudeCodeAdapter: EngineAdapter {
     public func exportSession(_ engineSession: String) -> EngineRequest? { nil }
     public func importSession(_ exported: JSONValue) -> EngineRequest? { nil }
     public func importedSession(_ result: JSONValue) -> String? { nil }
-    public func ledger(stateRoot: URL, engineSession: String) -> (any UsageLedger)? { nil }
+    /// The session's own transcript, in the account's config (`stateRoot`): each call's final usage.
+    public func ledger(stateRoot: URL, engineSession: String) -> (any UsageLedger)? {
+        ClaudeCodeTranscriptLedger(config: stateRoot, session: engineSession)
+    }
 
     /// `_claude/sdkMessage`. An assistant message is one model call: its id, model, input and cache tokens are
     /// exact, but its usage is the stream's opening count, so output is only the first few tokens (measured on
-    /// Haiku: 40 recorded against 210 in the turn's result). A result carries `modelUsage`, the session's
-    /// running totals per model, side calls included; the trace takes each turn's share from it.
+    /// Haiku: 40 recorded against 210 in the turn's result). The transcript gives the call's final row
+    /// (`ClaudeCodeTranscriptLedger`); this one stands in if it doesn't come. A subagent's calls carry the tool call
+    /// that started it (`parent_tool_use_id`). A result carries `modelUsage`, the session's running totals per model,
+    /// side calls included; the trace takes each turn's share from it.
     public func modelCall(fromNotification method: String, params: JSONValue?) -> [String: JSONValue]? {
         guard method == "_claude/sdkMessage" else { return nil }
         let sdk = params?["message"] ?? params?["sdkMessage"] ?? params
@@ -324,7 +329,8 @@ public struct ClaudeCodeAdapter: EngineAdapter {
                 "input_tokens": usage["input_tokens"] ?? .null, "output_tokens": usage["output_tokens"] ?? .null,
                 "cache_read_tokens": usage["cache_read_input_tokens"] ?? .null,
                 "cache_write_tokens": usage["cache_creation_input_tokens"] ?? .null,
-                "output_partial": true, "cost": .null, "cost_source": "claude-code"
+                "output_partial": true, "cost": .null, "cost_source": "claude-code", "basis": "engine-stream",
+                "parent": sdk?["parent_tool_use_id"] ?? .null
             ]
         case "result":
             guard let models = sdk?["modelUsage"]?.objectValue, !models.isEmpty else { return nil }

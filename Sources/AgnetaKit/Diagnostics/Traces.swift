@@ -281,6 +281,14 @@ public final class TraceSession: @unchecked Sendable {
     private var poller: Task<Void, Never>?
     /// How often the engine's records are read while a turn runs.
     var pollInterval: Duration = .seconds(2)
+    /// Partial rows from the stream held back until the engine's records give their final row (by id), oldest
+    /// first, each with its agent thread and, once that thread has moved on to its next call, when to give up.
+    private var held: [(id: String, row: [String: JSONValue], thread: String, due: ContinuousClock.Instant?)] = []
+    /// How long a held row waits for its final one after its thread's next call began (the call had ended by then;
+    /// its final row is written about 100 ms after it ends, and read at the next poll).
+    var holdAfterNext: Duration = .seconds(5)
+    /// How long a turn's end waits for the final rows still held (the last call's lands just after the result).
+    var finalGrace: Duration = .seconds(1)
     private var taskCost = 0.0
 
     init(writer: TraceWriter) {
@@ -403,7 +411,7 @@ public final class TraceSession: @unchecked Sendable {
     /// What limits are checked against while a turn runs: model calls in this turn so far and the
     /// task's known cost so far (both from the engine's ledger, read every 2 s).
     public var progress: (turnModelCalls: Int, taskCost: Double) {
-        lock.withLock { (turnModelCalls.count, taskCost) }
+        lock.withLock { (turnModelCalls.count + held.count, taskCost) }
     }
 
     // MARK: Turns
@@ -434,6 +442,16 @@ public final class TraceSession: @unchecked Sendable {
         inFlight?.cancel()
         await inFlight?.value
         await pollLedger()
+        // The last call's final row lands just after the result: wait for it a little, reading off the router. A call
+        // cut off (cancelled, or the engine failed) never gets one.
+        if !["error", "cancelled"].contains(stopReason), lock.withLock({ !held.isEmpty }) {
+            let deadline = ContinuousClock.now + finalGrace
+            while ContinuousClock.now < deadline, lock.withLock({ !held.isEmpty }) {
+                try? await Task.sleep(for: .milliseconds(25))
+                await pollLedger()
+            }
+        }
+        release(all: true)
         let (started, first, calls, n, totals):
             (ContinuousClock.Instant?, ContinuousClock.Instant?, [JSONValue], Int, [String: [String: Double]]?) =
                 lock.withLock {
@@ -512,6 +530,35 @@ public final class TraceSession: @unchecked Sendable {
         }
         for message in rows.messages { writer.record("engine.message", message) }
         for usage in rows.usage { ingest(modelCall: usage) }
+        release(all: false)
+    }
+
+    /// Held rows whose final one didn't come in time (all of them at the turn's end) go out as they are, partial.
+    private func release(all: Bool) {
+        let now = ContinuousClock.now
+        let due = lock.withLock { () -> [[String: JSONValue]] in
+            let out = held.filter { all || ($0.due.map { $0 <= now } ?? false) }
+            held.removeAll { all || ($0.due.map { $0 <= now } ?? false) }
+            return out.map(\.row)
+        }
+        for row in due { record(modelCall: row) }
+    }
+
+    /// Holds a partial row from the stream when the engine's records will give the call's final one: the same
+    /// call's later content blocks are dropped, and its thread's earlier calls, which have ended, get a deadline.
+    private func hold(_ usage: [String: JSONValue]) -> Bool {
+        guard usage["output_partial"] == .bool(true), let id = usage["id"]?.stringValue else { return false }
+        return lock.withLock {
+            guard ledger?.completesStreamRows == true, turnStarted != nil, !seenCalls.contains(id) else { return false }
+            if held.contains(where: { $0.id == id }) { return true }
+            let thread = usage["parent"]?.stringValue ?? ""
+            let due = ContinuousClock.now + holdAfterNext
+            for index in held.indices where held[index].thread == thread && held[index].due == nil {
+                held[index].due = due
+            }
+            held.append((id, usage, thread, nil))
+            return true
+        }
     }
 
     private var seenCalls: Set<String> = []
@@ -527,7 +574,8 @@ public final class TraceSession: @unchecked Sendable {
     private var turnTotals: [String: [String: Double]]?
 
     /// One model call's usage (from the engine's records or its stream). Rows with an `id` already seen are skipped.
-    /// A row with `session_totals` is instead the engine's running totals per model (Claude Code's results).
+    /// A row with `session_totals` is instead the engine's running totals per model (Claude Code's results). A partial
+    /// row whose final one the records will give is held back until it's read, or until it's late (`hold`).
     public func ingest(modelCall usage: [String: JSONValue]) {
         if let plan = usage["plan"], plan != .null, let listener = lock.withLock({ planListener }) { listener(plan) }
         if let totals = usage["session_totals"]?.objectValue {
@@ -535,7 +583,19 @@ public final class TraceSession: @unchecked Sendable {
             ingest(sessionTotals: totals)
             return
         }
-        if let id = usage["id"]?.stringValue, !lock.withLock({ seenCalls.insert(id).inserted }) { return }
+        if hold(usage) { return }
+        record(modelCall: usage)
+    }
+
+    private func record(modelCall usage: [String: JSONValue]) {
+        if let id = usage["id"]?.stringValue,
+            !lock.withLock({
+                held.removeAll { $0.id == id } // its final row came
+                return seenCalls.insert(id).inserted
+            })
+        {
+            return
+        }
         writer.record("engine.usage", usage)
         let cost: Double? =
             switch usage["cost"] {
@@ -555,7 +615,7 @@ public final class TraceSession: @unchecked Sendable {
             "cost": usage["cost"] ?? .null, "costSource": usage["cost_source"] ?? .null,
             "costKind": .string(billing == "subscription" ? "plan-equivalent" : "estimated"),
             "compaction": .bool((usage["is_compaction"]?.intValue ?? 0) != 0), "at": usage["created"] ?? .null,
-            "basis": "engine-ledger",
+            "basis": usage["basis"] ?? "engine-ledger",
             "outputPartial": usage["output_partial"] ?? .null, "taskCost": .double(total)
         ]
         lock.withLock { turnModelCalls.append(call) }
