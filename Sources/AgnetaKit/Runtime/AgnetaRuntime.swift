@@ -230,7 +230,8 @@ public actor AgnetaRuntime {
 
     // MARK: Tasks
 
-    /// Stops a running task from Agneta's UI. Returns once history records it as stopped.
+    /// Stops a running task from Agneta's UI. Returns once history records what Stop ended (a session still starting
+    /// isn't there to stop yet).
     public func stop(task id: String) async {
         await router.stop(id)
         await recorded()
@@ -240,7 +241,8 @@ public actor AgnetaRuntime {
     /// it returns, but its events reach the records one at a time, behind any still being written.
     private func recorded() async {
         await withCheckedContinuation { waiter in
-            if case .terminated = sink.yield(.waiter(waiter)) { waiter.resume() } // shut down: nothing more is recorded
+            // Not queued (shut down): nothing more is recorded, so nothing to wait for.
+            if case .enqueued = sink.yield(.waiter(waiter)) {} else { waiter.resume() }
         }
     }
 

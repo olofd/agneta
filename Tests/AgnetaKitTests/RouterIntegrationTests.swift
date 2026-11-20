@@ -261,7 +261,13 @@ struct RouterIntegrationTests {
                 if let outcome = await runtime.history().first(where: { $0.id == task })?.outcome { return outcome }
                 try await Task.sleep(for: .milliseconds(50))
             }
-            throw RPCError(code: RPCError.internalError, message: "\(task) wasn't recorded as ended within 10 s")
+            throw NotRecorded(task: task)
+        }
+
+        /// Not an RPCError: a test's own failure never passes for a refusal from Agneta.
+        struct NotRecorded: Error, CustomStringConvertible {
+            let task: String
+            var description: String { "\(task) wasn't recorded as ended within 10 s" }
         }
 
         func stop() async {
