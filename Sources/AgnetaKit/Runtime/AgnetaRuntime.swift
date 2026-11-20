@@ -55,7 +55,12 @@ public actor AgnetaRuntime {
     public private(set) var historyDays: Int
     private var consumer: Task<Void, Never>?
     private var housekeeping: Task<Void, Never>?
-    private let finish: @Sendable () -> Void
+    /// What the router sent, in order, for the consumer to record; a waiter there resumes once everything before it is.
+    private enum Recorded: Sendable {
+        case event(Router.Event)
+        case waiter(CheckedContinuation<Void, Never>)
+    }
+    private let sink: AsyncStream<Recorded>.Continuation
     /// Deleting the queued conversations (`pendingConversations`), one pass at a time; `deleteAgain` asks for another.
     private var deleting: Task<Void, Never>?
     private var deleteAgain = false
@@ -112,8 +117,8 @@ public actor AgnetaRuntime {
                 try database.usage(since: Date().addingTimeInterval(-Self.usageDays * 86_400))
             } ?? [:])
         // Events are recorded one at a time, in the order the router sent them.
-        let (events, sink) = AsyncStream<Router.Event>.makeStream()
-        await router.observe { sink.yield($0) }
+        let (events, sink) = AsyncStream<Recorded>.makeStream()
+        await router.observe { sink.yield(.event($0)) }
 
         self.store = store
         self.log = log
@@ -122,14 +127,19 @@ public actor AgnetaRuntime {
         self.supervisor = supervisor
         self.router = router
         self.recovered = (stopped.count, interrupted)
-        self.finish = { sink.finish() }
+        self.sink = sink
         historyDays =
             Self.attempt(log, "read-retention") { try database.setting("historyDays") }.flatMap {
                 $0.flatMap { Int($0) }
             } ?? 30
 
         consumer = Task { [weak self] in
-            for await event in events { await self?.record(event) }
+            for await item in events {
+                switch item {
+                case .event(let event): await self?.record(event)
+                case .waiter(let waiter): waiter.resume()
+                }
+            }
         }
         traces.onProblem { [weak self] task, reason in
             log?.error("trace-write-failed", ["task": .string(task), "reason": .string(reason)])
@@ -220,9 +230,18 @@ public actor AgnetaRuntime {
 
     // MARK: Tasks
 
-    /// Stops a running task from Agneta's UI. History records it as stopped.
+    /// Stops a running task from Agneta's UI. Returns once history records it as stopped.
     public func stop(task id: String) async {
         await router.stop(id)
+        await recorded()
+    }
+
+    /// Waits until every event the router sent so far is recorded (and observed): the router's own work is done when
+    /// it returns, but its events reach the records one at a time, behind any still being written.
+    private func recorded() async {
+        await withCheckedContinuation { waiter in
+            if case .terminated = sink.yield(.waiter(waiter)) { waiter.resume() } // shut down: nothing more is recorded
+        }
     }
 
     private func record(_ event: Router.Event) {
@@ -445,7 +464,7 @@ public actor AgnetaRuntime {
         housekeeping?.cancel()
         await router.shutdown()
         await supervisor.stopAll()
-        finish()
+        sink.finish()
         await consumer?.value
         write("close") { try database.close() }
     }

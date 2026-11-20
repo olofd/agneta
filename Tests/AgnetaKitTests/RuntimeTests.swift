@@ -16,8 +16,8 @@ extension RouterIntegrationTests {
             #expect(try await app.prompt(finished, "hello")["stopReason"]?.stringValue == "end_turn")
             _ = try await app.request("session/close", ["sessionId": .string(finished)])
             let stopped = try await app.newSession(cwd: try stack.workspace("R"), tools: "workspace")
+            // Stop returns once history records it, and everything the router reported before it (the close above).
             await stack.runtime.stop(task: stopped)
-            try await Task.sleep(for: .milliseconds(500))
 
             // Each outcome as it happened: closed by the app after a good turn, and stopped by the user.
             let history = await stack.runtime.history()
