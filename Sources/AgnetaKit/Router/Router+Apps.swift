@@ -603,10 +603,10 @@ extension Router {
 
     /// `_meta.agneta.appTools` in a session's reply: the `load` it runs with, and whether the app's tools are in the
     /// model's first request on this engine (`upfront`, null when not known).
-    static func appTools(_ policy: SessionPolicy, engine: any EngineAdapter) -> JSONValue {
+    static func appTools(_ policy: SessionPolicy, engine: any EngineAdapter, kind: AccountKind?) -> JSONValue {
         [
             "load": .string(policy.appTools.rawValue),
-            "upfront": engine.appToolsUpfront(policy).map(JSONValue.bool) ?? .null
+            "upfront": engine.appToolsUpfront(policy, kind: kind).map(JSONValue.bool) ?? .null
         ]
     }
 

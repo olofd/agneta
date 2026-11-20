@@ -186,7 +186,8 @@ import Testing
 
     /// `agneta/appTools` `always` turns Claude Code's tool search off for the session (`options.env`, the same on every
     /// open) and drops ToolSearch, which would only load deferred tools; the built-ins are otherwise the policy's.
-    /// Without it the options are as before. The other engines load the app's tools up front either way.
+    /// Without it the options are as before. The other engines load the app's tools up front either way, but for Goose on
+    /// a Claude plan, whose model is Claude Code (below).
     @Test func claudeCodeLoadsAppToolsUpFrontWhenAsked() throws {
         let adapter = ClaudeCodeAdapter(executable: URL(filePath: "/usr/bin/false"), cli: Self.cli)
         let cwd = URL(filePath: "/tmp/w")
@@ -195,7 +196,7 @@ import Testing
             #expect(deferred.contains("ToolSearch") && ClaudeCodeAdapter.environment(policy).isEmpty)
             let plain = adapter.newSession(cwd: cwd, servers: [], policy: policy, title: nil, instructions: nil)
             #expect(plain["_meta"]?["claudeCode"]?["options"]?["env"] == nil)
-            #expect(adapter.appToolsUpfront(policy) == false)
+            #expect(adapter.appToolsUpfront(policy, kind: .claude) == false)
 
             policy.appTools = .always
             #expect(try #require(ClaudeCodeAdapter.tools(policy)) == deferred.filter { $0 != "ToolSearch" })
@@ -203,7 +204,7 @@ import Testing
             let loaded = adapter.loadSession("s1", cwd: cwd, servers: [], policy: policy, instructions: nil)
             #expect(opened["_meta"] == loaded["_meta"])
             #expect(loaded["_meta"]?["claudeCode"]?["options"]?["env"] == ["ENABLE_TOOL_SEARCH": "false"])
-            #expect(adapter.appToolsUpfront(policy) == true)
+            #expect(adapter.appToolsUpfront(policy, kind: .anthropicKey) == true)
         }
         // Developer access keeps Claude Code's own tool set; the environment still turns tool search off.
         var developer = try #require(try policies.first { $0.tools == .workspace })
@@ -211,12 +212,49 @@ import Testing
         developer.appTools = .always
         #expect(ClaudeCodeAdapter.tools(developer) == nil)
         #expect(ClaudeCodeAdapter.environment(developer) == ["ENABLE_TOOL_SEARCH": "false"])
-        let others: [any EngineAdapter] = [
-            GooseAdapter(executable: URL(filePath: "/usr/bin/false")),
-            OpenCodeAdapter(executable: URL(filePath: "/usr/bin/false")),
-            CodexAdapter(node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: Self.cli)
+        let goose = GooseAdapter(executable: URL(filePath: "/usr/bin/false"))
+        let others: [(any EngineAdapter, AccountKind)] = [
+            (goose, .openAIKey), (goose, .anthropicKey),
+            (OpenCodeAdapter(executable: URL(filePath: "/usr/bin/false")), .anthropicKey),
+            (
+                CodexAdapter(
+                    node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: Self.cli),
+                .chatGPT
+            )
         ]
-        for engine in others { #expect(engine.appToolsUpfront(developer) == true, "\(engine.id)") }
+        for (engine, kind) in others {
+            #expect(engine.appToolsUpfront(developer, kind: kind) == true, "\(engine.id) on \(kind)")
+        }
+        #expect(goose.appToolsUpfront(developer, kind: .claude) == true)
+        developer.appTools = .engine
+        #expect(goose.appToolsUpfront(developer, kind: .claude) == false)
+    }
+
+    /// Goose on a Claude plan runs Claude Code as its model (claude-acp), which inherits Goose's environment: `always`
+    /// turns its tool search off there too, and nothing changes without it.
+    @Test func gooseOnAPlanPassesToolSearchOffToClaudeCode() throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-contract-plan-\(UUID().uuidString.prefix(6))", directoryHint: .isDirectory)
+        let subscription = SubscriptionAccount(
+            route: .claudeCode, home: root.appending(path: "account", directoryHint: .isDirectory))
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: subscription.claudeTemp)
+        }
+        let adapter = GooseAdapter(executable: URL(filePath: "/usr/bin/false"))
+        var policy = try #require(try policies.first { $0.tools == .appOnly })
+        func environment() throws -> [String: String] {
+            try adapter.launch(
+                EngineLaunchContext(
+                    home: root.appending(path: "engine", directoryHint: .isDirectory),
+                    provider: ProviderSetup(kind: .claudeCode, subscription: subscription), shell: nil,
+                    session: EngineSessionSpec(policy: policy, servers: [], instructions: nil), loopbackPorts: [])
+            ).environment
+        }
+        #expect(try environment()["GOOSE_PROVIDER"] == "claude-acp")
+        #expect(try environment()["ENABLE_TOOL_SEARCH"] == nil)
+        policy.appTools = .always
+        #expect(try environment()["ENABLE_TOOL_SEARCH"] == "false")
     }
 
     /// `agneta/appTools` is `{"load": "always" | "engine"}` or absent; anything else names the extension.

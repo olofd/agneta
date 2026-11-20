@@ -300,8 +300,9 @@ public struct ClaudeCodeAdapter: EngineAdapter {
 
     public func brokersShell(_ policy: SessionPolicy) -> Bool { Self.shellBrokered(policy) }
 
-    /// Deferred behind tool search unless the app asked for them up front.
-    public func appToolsUpfront(_ policy: SessionPolicy) -> Bool? { policy.appTools == .always }
+    /// Deferred behind tool search unless the app asked for them up front: tool search is on by default as measured on
+    /// 2.1.326 (behind a gateway too since 2.1.304, Claude Code's docs say; an older version there loads them up front).
+    public func appToolsUpfront(_ policy: SessionPolicy, kind: AccountKind?) -> Bool? { policy.appTools == .always }
 
     public func exportSession(_ engineSession: String) -> EngineRequest? { nil }
     public func importSession(_ exported: JSONValue) -> EngineRequest? { nil }

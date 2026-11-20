@@ -314,7 +314,7 @@ extension Router {
         var agneta: [String: JSONValue] = [
             "account": .string(plan.account), "dedicatedEngine": .bool(lease.dedicated),
             "capabilities": Self.capabilities(lease.engine), "sandbox": .string(plan.sandbox.rawValue),
-            "appTools": Self.appTools(plan.policy, engine: lease.engine)
+            "appTools": Self.appTools(plan.policy, engine: lease.engine, kind: accounts[plan.account]?.kind)
         ]
         agneta.merge(extra) { _, new in new }
         return (id.map { result.setting("sessionId", to: .string($0)) } ?? result).setting(

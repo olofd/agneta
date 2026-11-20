@@ -48,6 +48,45 @@ func endablePeerPair(gate: Gate? = nil) -> (RPCPeer, RPCPeer, @Sendable () -> Vo
 
 /// An engine that follows its prompts: "permission <kind>" asks Agneta about a tool of that
 /// kind, "slow" runs until steered (or 3 s), anything else replies with text.
+/// Claude Code's adapter with Goose's export and import, which the fake engine answers: what a fork of a Claude Code
+/// task would send it, should Claude Code's fork be wired.
+struct ForkableClaudeCode: EngineAdapter {
+    let base = ClaudeCodeAdapter(
+        executable: URL(filePath: "/usr/bin/false"),
+        cli: InstalledCLI(path: URL(filePath: "/usr/bin/false"), version: "2", source: "path"))
+    let goose = GooseAdapter(executable: URL(filePath: "/usr/bin/false"))
+    var id: String { base.id }
+    var displayName: String { base.displayName }
+    var capabilities: EngineCapabilities { base.capabilities }
+    func launch(_ context: EngineLaunchContext) throws -> EngineLaunch { try base.launch(context) }
+    func newSession(cwd: URL, servers: [JSONValue], policy: SessionPolicy, title: JSONValue?, instructions: String?)
+        -> JSONValue
+    { base.newSession(cwd: cwd, servers: servers, policy: policy, title: title, instructions: instructions) }
+    func loadSession(_ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy) -> JSONValue {
+        base.loadSession(engineSession, cwd: cwd, servers: servers, policy: policy)
+    }
+    func loadSession(
+        _ engineSession: String, cwd: URL, servers: [JSONValue], policy: SessionPolicy, instructions: String?
+    ) -> JSONValue {
+        base.loadSession(engineSession, cwd: cwd, servers: servers, policy: policy, instructions: instructions)
+    }
+    func prepareSession(_ engineSession: String) -> [EngineRequest] { base.prepareSession(engineSession) }
+    func setInstructions(_ engineSession: String, text: String, appendKey: String?) -> EngineRequest? { nil }
+    func steer(_ engineSession: String, run: String?, prompt: JSONValue) -> EngineRequest? { nil }
+    func steerResult(_ result: JSONValue) -> (accepted: Bool, run: String?) { (false, nil) }
+    func activeRun(in update: JSONValue) -> String?? { nil }
+    func toolIdentity(in update: JSONValue) -> (tool: String?, server: String?, message: String?) {
+        base.toolIdentity(in: update)
+    }
+    func exportSession(_ engineSession: String) -> EngineRequest? { goose.exportSession(engineSession) }
+    func importSession(_ exported: JSONValue) -> EngineRequest? { goose.importSession(exported) }
+    func importedSession(_ result: JSONValue) -> String? { goose.importedSession(result) }
+    func ledger(stateRoot: URL, engineSession: String) -> (any UsageLedger)? { nil }
+    func appToolsUpfront(_ policy: SessionPolicy, kind: AccountKind?) -> Bool? {
+        base.appToolsUpfront(policy, kind: kind)
+    }
+}
+
 /// An engine with only plain ACP: no steering, fork or instructions between turns.
 /// A plain engine, standing in for one of Agneta's (Goose by default) so a provider supports it.
 struct PlainAdapter: EngineAdapter {
@@ -1485,6 +1524,16 @@ actor FakeEngines: EngineSource {
         #expect(loaded["_meta"]?["agneta"]?["appTools"]?["load"] == "always")
         #expect(await stack.engines.opening.last?.method == "session/load")
         #expect(await lastOptions()?["env"] == ["ENABLE_TOOL_SEARCH": "false"])
+        // A load's own `_meta` wins, and an explicit null is the engine's default.
+        for value: JSONValue in [["load": "engine"], .null] {
+            _ = try await app.request("session/close", ["sessionId": .string(session)])
+            let reloaded = try await app.request(
+                "session/load",
+                ["sessionId": .string(session), "cwd": cwd, "mcpServers": [], "_meta": [AppToolsLoad.key: value]])
+            #expect(reloaded["_meta"]?["agneta"]?["appTools"] == ["load": "engine", "upfront": false], "\(value)")
+            options = await lastOptions()
+            #expect(options?["tools"] == ["ToolSearch"] && options?["env"] == nil, "\(value)")
+        }
 
         // A fork keeps the original's, and so does a later load of the fork; Goose has its tools up front anyway.
         let original = try #require(try await open("brokered", always)["sessionId"]?.stringValue)
@@ -1521,6 +1570,30 @@ actor FakeEngines: EngineSource {
                 }
             }
         }
+    }
+
+    /// A fork's engine gets Claude Code's options for the fork's `agneta/appTools`: the original's, or its own.
+    @Test func aForkOfAClaudeCodeTaskKeepsItsAppToolsOptions() async throws {
+        let stack = try await Stack.start(port: 47642)
+        defer { stack.stop() }
+        await stack.router.setCatalog(EngineCatalog(ready: [Self.goose, ForkableClaudeCode()]))
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Forks")
+        let original = try await stack.session(
+            app, account: "native", meta: [AppToolsLoad.key: ["load": "always"]])
+        func lastOptions() async -> JSONValue? {
+            await stack.engines.opening.last?.params["_meta"]?["claudeCode"]?["options"]
+        }
+        _ = try await app.request("agneta/fork", ["sessionId": .string(original), "mcpServers": []])
+        #expect(await stack.engines.opening.last?.method == "session/load")
+        #expect(await lastOptions()?["env"] == ["ENABLE_TOOL_SEARCH": "false"])
+        #expect(await lastOptions()?["tools"]?.arrayValue?.contains("ToolSearch") == false)
+        _ = try await app.request(
+            "agneta/fork",
+            ["sessionId": .string(original), "mcpServers": [], "_meta": [AppToolsLoad.key: ["load": "engine"]]])
+        #expect(await lastOptions()?["env"] == nil)
+        #expect(await lastOptions()?["tools"]?.arrayValue?.contains("ToolSearch") == true)
     }
 
     /// Modes that stop asking are refused where Agneta gates calls from the questions.

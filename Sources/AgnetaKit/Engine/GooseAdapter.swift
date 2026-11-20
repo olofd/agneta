@@ -41,6 +41,10 @@ public struct GooseAdapter: EngineAdapter {
                 throw RPCError(code: RPCError.internalError, message: "The account has no sign-in")
             }
             provider = subscription.gooseEnvironment(model: setup.model)
+            // Claude Code, Goose's model here, inherits Goose's environment: its tool search off as on its own route
+            // (ClaudeCodeAdapter.environment; measured on 1.59.2 with 2.1.326: all 35 tools in the first request, none
+            // without). A session on this route always has a process of its own, so this is the session's.
+            if let policy = context.session?.policy { provider.merge(ClaudeCodeAdapter.environment(policy)) { $1 } }
             if let extra = provider.removeValue(forKey: "AGNETA_EXTRA_PATH") {
                 paths.append(URL(filePath: extra, directoryHint: .isDirectory))
             }
@@ -130,8 +134,15 @@ public struct GooseAdapter: EngineAdapter {
         return .some(run.stringValue)
     }
 
-    /// Goose sends every MCP tool with each request (measured on 1.59.2): `agneta/appTools` changes nothing here.
-    public func appToolsUpfront(_ policy: SessionPolicy) -> Bool? { true }
+    /// With a model API, Goose sends every MCP tool with each request (measured on 1.59.2). On a Claude plan its model is
+    /// Claude Code (claude-acp), which defers them as it does on its own unless the app asked for them up front.
+    public func appToolsUpfront(_ policy: SessionPolicy, kind: AccountKind?) -> Bool? {
+        switch kind {
+        case .claude: policy.appTools == .always
+        case .anthropicKey, .openAIKey: true
+        case .chatGPT, nil: nil
+        }
+    }
 
     /// Goose names the tool and the model response in `_meta.goose`, and prefixes an MCP server's
     /// tools with the server's name (`app__echo`); the app's own name is the bare one.

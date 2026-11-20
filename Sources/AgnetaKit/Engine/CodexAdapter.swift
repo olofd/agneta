@@ -231,7 +231,7 @@ public struct CodexAdapter: EngineAdapter {
 
     /// A configured MCP server's tools go to the model up front, as one namespace with every description (measured on
     /// Codex 0.167.0: 35 tools, no `tool_search`). Codex's own tool search is for ChatGPT apps (`codex_apps`).
-    public func appToolsUpfront(_ policy: SessionPolicy) -> Bool? { true }
+    public func appToolsUpfront(_ policy: SessionPolicy, kind: AccountKind?) -> Bool? { true }
 
     /// Measured: an app's tool is `mcp.<server>.<tool>`; built-ins by their own name.
     public func toolIdentity(in update: JSONValue) -> (tool: String?, server: String?, message: String?) {
