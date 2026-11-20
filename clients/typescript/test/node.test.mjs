@@ -7,16 +7,14 @@ import { electronEnvironment, findInFolders, isReadOnly, macArchitecture, nodeEn
 
 const mac = process.platform === 'darwin';
 
-test('nodeEnvironment finds the app for a scheme, with its bundle, and nothing for an unknown one, each within a second', { skip: !mac && 'macOS only' }, async () => {
+// A lookup's only bound is its own: `osascript` is given 5 s, past which it finds nothing and the match below fails.
+// How fast it is (about a tenth of a second, measured) isn't asserted: a fresh, loaded runner's first one took 1.1 s.
+test('nodeEnvironment finds the app for a scheme, with its bundle, and nothing for an unknown one', { skip: !mac && 'macOS only' }, async () => {
   const environment = nodeEnvironment();
-  let started = performance.now();
   const mail = await environment.findHandler('mailto:someone@example.com');
-  assert.ok(performance.now() - started < 1000, 'a lookup takes well under a second');
   assert.match(mail.path, /\.app$/);
   assert.equal(typeof mail.identifier, 'string');
-  started = performance.now();
   assert.equal(await environment.findHandler('agneta-test-no-such-scheme-7f3a://open'), null);
-  assert.ok(performance.now() - started < 1000);
   const bundle = await readBundle(mail.path);
   assert.equal(bundle.identifier, mail.identifier);
   assert.equal(await readBundle('/nonexistent/Nothing.app'), null);
