@@ -551,6 +551,9 @@ public final class TraceSession: @unchecked Sendable {
         if let problem = rows.problem {
             writer.record("lifecycle", ["event": "engine-db-unavailable", "reason": .string(problem)])
         }
+        if let notice = ledger.takeNotice() {
+            writer.record("lifecycle", ["event": "engine-records-limited", "reason": .string(notice)])
+        }
         for message in rows.messages { writer.record("engine.message", message) }
         if !rows.usage.isEmpty {
             lock.withLock {
@@ -688,9 +691,10 @@ public final class TraceSession: @unchecked Sendable {
 
     /// Ends the trace. Calls still held (a session ended mid-turn) go out first, as they are.
     func close() {
-        lock.withLock { poller }?.cancel()
+        // A poll still in flight records rows at once from here on: it no longer holds them.
         let left = lock.withLock {
-            defer { held = [] }
+            defer { held = []; turnStarted = nil }
+            poller?.cancel()
             return held
         }
         for row in left { record(modelCall: row.row) }

@@ -162,11 +162,14 @@ public protocol UsageLedger: Sendable {
     /// On resume, starts after what's already recorded without reading it (cheaply, as on the router); false when
     /// the reader can't, and the trace reads it all once to skip it.
     func startAfterExisting() -> Bool
+    /// Something worth a trace record, given once (a reader that hit one of its limits).
+    func takeNotice() -> String?
 }
 
 extension UsageLedger {
     public var completesStreamRows: Bool { false }
     public func startAfterExisting() -> Bool { false }
+    public func takeNotice() -> String? { nil }
 }
 
 extension EngineAdapter {

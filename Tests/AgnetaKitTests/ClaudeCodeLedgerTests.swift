@@ -128,6 +128,70 @@ import Testing
         #expect(ledger.startAfterExisting())
         try account.append(Self.line("msg_new", output: 20, stop: "end_turn"), to: account.transcript)
         #expect(ledger.read().usage.map { $0["id"]?.stringValue } == ["msg_new"])
+
+        // Replaced by a shorter file: what's there is taken as read, so earlier turns aren't counted again.
+        try (Self.line("msg_old", output: 10, stop: "end_turn")).write(
+            to: account.transcript, atomically: true, encoding: .utf8)
+        #expect(ledger.read().usage.isEmpty)
+    }
+
+    /// A sparse file of zeros (no disk used), `size` bytes long.
+    static func sparse(_ file: URL, size: UInt64) throws {
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: file)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.truncate(atOffset: size)
+        try handle.close()
+    }
+
+    /// Huge files without a newline, planted and planted again under new names, keep what the reader holds within
+    /// its caps; a line after an overlong one is still read.
+    @Test func plantedHugeFilesKeepMemoryBounded() throws {
+        let account = try Account()
+        defer { account.remove() }
+        try account.append(Self.line("msg_a", output: 1, stop: "end_turn"), to: account.transcript)
+        let ledger = try account.ledger()
+        for round in 0..<2 {
+            for n in 0..<12 {
+                try Self.sparse(account.subagents.appending(path: "agent-r\(round)-\(n).jsonl"), size: 64 << 20)
+            }
+            for _ in 0..<5 {
+                _ = ledger.read()
+                #expect(ledger.held.bytes <= ClaudeCodeTranscriptLedger.maxBuffered)
+            }
+            #expect(ledger.held.files <= 13)
+            for n in 0..<12 {
+                try FileManager.default.removeItem(at: account.subagents.appending(path: "agent-r\(round)-\(n).jsonl"))
+            }
+        }
+        _ = ledger.read()
+        #expect(ledger.held.files == 1) // the planted ones are forgotten
+
+        // A line longer than any kept, then a call: the call is read once the long line is behind.
+        let long = account.subagents.appending(path: "agent-long.jsonl")
+        try Self.sparse(long, size: UInt64(ClaudeCodeTranscriptLedger.maxLine) + (1 << 20))
+        try account.append("\n" + Self.line("msg_after", output: 2, stop: "end_turn"), to: long)
+        var ids: [String] = []
+        for _ in 0..<8 { ids += ledger.read().usage.compactMap { $0["id"]?.stringValue } }
+        #expect(ids == ["msg_after"])
+    }
+
+    /// At most `maxRowsPerRead` new calls per read, the rest at the next, said once in the trace.
+    @Test func callsPerReadAreCapped() throws {
+        let account = try Account()
+        defer { account.remove() }
+        let count = ClaudeCodeTranscriptLedger.maxRowsPerRead + 904
+        try (0..<count).map { Self.line("msg_\($0)", output: 1, stop: "end_turn") }.joined()
+            .write(to: account.transcript, atomically: true, encoding: .utf8)
+        let ledger = try account.ledger()
+        let first = ledger.read().usage
+        #expect(first.count == ClaudeCodeTranscriptLedger.maxRowsPerRead)
+        #expect(ledger.takeNotice() != nil && ledger.takeNotice() == nil)
+        let second = ledger.read().usage
+        #expect(
+            second.count == 904
+                && second.first?["id"]?.stringValue == "msg_\(ClaudeCodeTranscriptLedger.maxRowsPerRead)")
+        #expect(ledger.read().usage.isEmpty)
     }
 
     static let adapter = ClaudeCodeAdapter(
