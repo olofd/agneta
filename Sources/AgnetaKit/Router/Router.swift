@@ -236,7 +236,8 @@ public actor Router {
     var paused: Set<String> = []
     /// Each account's default model and effort, by config option category (Router+Settings).
     var settingDefaults: [String: [String: String]] = [:]
-    /// Sessions each engine process deleted, by `process(_:)`: one it hands back as new is never used (Router+Forget).
+    /// Sessions each engine process was asked to delete (answered or not), by `process(_:)`: one it hands back as new
+    /// is never used (Router+Forget).
     var deletedSessions: [String: Set<String>] = [:]
     var apps: [UUID: App] = [:]
     var tokens: [String: Grant] = [:] // token hash → grant

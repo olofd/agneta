@@ -2,6 +2,7 @@
 // checking where things end up: processes, storage, and what Agneta's UI hears. On the real Goose where it matters.
 import Darwin
 import Foundation
+import GRDB
 import Testing
 
 @testable import AgnetaKit
@@ -45,6 +46,109 @@ extension RouterIntegrationTests {
             }
             #expect(last?["type"]?.stringValue == "end")
             #expect(await stack.supervisor.processCount == 0)
+        } catch {
+            await stack.stop()
+            throw error
+        }
+        await stack.stop()
+    }
+
+    /// A task that told the account's shared Goose `words`, closed and recorded as finished: the task, its
+    /// conversation, and the folder of the engine's database.
+    static func sharedTask(_ stack: Stack, _ app: AppClient, _ words: String) async throws -> (
+        task: String, conversation: Router.SharedConversation, database: URL
+    ) {
+        let task = try await app.newSession(cwd: try stack.workspace("Shared"), tools: "app-only")
+        #expect(try await app.prompt(task, "Please remember \(words)")["stopReason"]?.stringValue == "end_turn")
+        let meta = try #require(stack.traces.meta(task: task))
+        let conversation = try #require(Router.sharedConversation(meta))
+        let database = URL(filePath: try #require(meta["engine"]?["stateRoot"]?.stringValue)).appending(
+            path: "data/sessions", directoryHint: .isDirectory)
+        _ = try await app.request("session/close", ["sessionId": .string(task)])
+        #expect(try await stack.outcome(of: task) == .finished)
+        return (task, conversation, database)
+    }
+
+    /// The files of an engine's database that hold `words`.
+    static func holding(_ words: String, in database: URL) -> [String] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: database.path(percentEncoded: false))) ?? []
+        return names.filter {
+            (try? Data(contentsOf: database.appending(path: $0)))?.range(of: Data(words.utf8)) != nil
+        }
+    }
+
+    /// A shared engine that stops answering (frozen here) can't hold up deleting a conversation, nor every deletion
+    /// after it: the pass ends within `deleteWithin`, says why, and keeps the conversation queued. The engine serves
+    /// again once it answers.
+    @Test func aFrozenSharedEngineCantHoldUpDeletingAConversation() async throws {
+        let stack = try await Stack.start(port: 47636, modelPort: 47637)
+        do {
+            let left = Recorder()
+            await stack.runtime.observe { event in
+                if case .conversationsLeft(let count, let problem) = event { left.add("\(count) \(problem ?? "")") }
+            }
+            let app = AppClient(port: stack.port)
+            defer { app.close() }
+            try await app.pairAndInitialize("Frozen")
+            let shared = try await Self.sharedTask(stack, app, "numbat-\(UUID().uuidString.prefix(6))")
+            let pid = try Self.enginePID(stack, shared.task)
+            kill(pid, SIGSTOP)
+            let started = ContinuousClock.now
+            await stack.runtime.clearHistory()
+            await stack.runtime.conversationsSettled()
+            kill(pid, SIGCONT)
+            #expect(ContinuousClock.now - started < Router.deleteWithin + .seconds(5), "the deletion waited on Goose")
+            #expect(await stack.runtime.pendingConversations == [shared.conversation])
+            #expect(left.all.count == 1 && left.all.last?.hasPrefix("1 Goose didn't delete a session") == true)
+            let next = try await app.newSession(cwd: try stack.workspace("Shared"), tools: "app-only")
+            #expect(try await app.prompt(next, "hello")["stopReason"]?.stringValue == "end_turn")
+        } catch {
+            await stack.stop()
+            throw error
+        }
+        await stack.stop()
+    }
+
+    /// A conversation isn't taken as deleted while a file of the engine's database still holds its words: when
+    /// another connection keeps Goose's log in use (here a reader holding its snapshot), Agneta can't clear it, says
+    /// so, and keeps the conversation queued as deleted; asked again, only the clearing is tried, and goes through.
+    @Test func aConversationStaysQueuedUntilNoFileHoldsIt() async throws {
+        let stack = try await Stack.start(port: 47638, modelPort: 47639)
+        do {
+            let left = Recorder()
+            await stack.runtime.observe { event in
+                if case .conversationsLeft(let count, let problem) = event { left.add("\(count) \(problem ?? "")") }
+            }
+            let app = AppClient(port: stack.port)
+            defer { app.close() }
+            try await app.pairAndInitialize("Held")
+            let words = "bilby-\(UUID().uuidString.prefix(6))"
+            let shared = try await Self.sharedTask(stack, app, words)
+            var holdingOpen = Configuration()
+            holdingOpen.allowsUnsafeTransactions = true
+            let reader = try DatabaseQueue(
+                path: shared.database.appending(path: "sessions.db").path(percentEncoded: false),
+                configuration: holdingOpen)
+            defer { try? reader.close() }
+            try reader.inDatabase { db in
+                try db.beginTransaction(.deferred)
+                _ = try Int.fetchOne(db, sql: "SELECT count(*) FROM sessions")
+            }
+
+            await stack.runtime.clearHistory()
+            await stack.runtime.conversationsSettled()
+            var deleted = shared.conversation
+            deleted.deleted = true
+            #expect(await stack.runtime.pendingConversations == [deleted])
+            #expect(left.all == ["1 Goose's storage: its log is still in use"])
+            #expect(!Self.holding(words, in: shared.database).isEmpty)
+
+            try reader.inDatabase { try $0.rollback() }
+            await stack.runtime.retryForgetting()
+            await stack.runtime.conversationsSettled()
+            #expect(await stack.runtime.pendingConversations.isEmpty)
+            #expect(left.all.last == "0 ")
+            #expect(Self.holding(words, in: shared.database).isEmpty)
         } catch {
             await stack.stop()
             throw error
@@ -130,8 +234,7 @@ extension RouterIntegrationTests {
             for _ in 0..<40 where problems.all.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
             #expect(problems.all.contains(session), "Agneta's UI wasn't told the trace stopped")
             _ = try await app.request("session/close", ["sessionId": .string(session)])
-            try await Task.sleep(for: .milliseconds(200))
-            #expect(await stack.runtime.history().first { $0.id == session }?.outcome == .finished)
+            #expect(try await stack.outcome(of: session) == .finished)
         } catch {
             _ = await hdiutil(["detach", volume.path(percentEncoded: false), "-force", "-quiet"])
             await stack.stop()

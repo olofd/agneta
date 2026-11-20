@@ -238,6 +238,16 @@ struct RouterIntegrationTests {
             return url
         }
 
+        /// How history records a task an app ended, once it does (within 10 s): the router answers the app first, and
+        /// its events reach the records one at a time after.
+        func outcome(of task: String) async throws -> TaskOutcome {
+            for _ in 0..<200 {
+                if let outcome = await runtime.history().first(where: { $0.id == task })?.outcome { return outcome }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            throw RPCError(code: RPCError.internalError, message: "\(task) wasn't recorded as ended within 10 s")
+        }
+
         func stop() async {
             server.stop()
             await runtime.shutdown()
@@ -312,14 +322,19 @@ struct RouterIntegrationTests {
             }
             #expect(!holding().isEmpty)
             _ = try await app.request("session/close", ["sessionId": .string(session)])
+            #expect(try await stack.outcome(of: session) == .finished)
 
+            let left = Recorder()
+            await stack.runtime.observe { event in
+                if case .conversationsLeft(let count, let problem) = event { left.add("\(count) \(problem ?? "")") }
+            }
             await stack.runtime.clearHistory()
-            let deadline = Date().addingTimeInterval(10)
-            while !holding().isEmpty, Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
-            #expect(holding().isEmpty)
             #expect(stack.traces.meta(task: session) == nil)
-            // Deleted, so nothing is left queued to ask for again.
+            // Once the deletion is through (it can't wait on the engine for ever), its storage holds nothing of it, and
+            // nothing is left queued to ask for again: Agneta cleared the files itself, never waiting for Goose to.
             await stack.runtime.conversationsSettled()
+            #expect(left.all == ["0 "])
+            #expect(holding().isEmpty)
             #expect(await stack.runtime.pendingConversations.isEmpty)
             // Asking again finds nothing to delete, and says so rather than failing silently.
             let again = await stack.runtime.router.deleteConversations([conversation])

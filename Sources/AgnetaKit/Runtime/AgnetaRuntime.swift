@@ -414,8 +414,18 @@ public actor AgnetaRuntime {
             let asked = pendingConversations
             guard !asked.isEmpty else { break }
             let outcome = await router.deleteConversations(asked)
-            // Others may have been queued meanwhile: only what this pass finished leaves the queue.
-            if !outcome.done.isEmpty { savePending(pendingConversations.filter { !outcome.done.contains($0) }) }
+            // Others may have been queued meanwhile: only what this pass finished leaves the queue, and what the engine
+            // deleted but its storage still holds stays, for only the clearing to be tried again.
+            if !outcome.done.isEmpty || !outcome.uncleared.isEmpty {
+                savePending(
+                    pendingConversations.compactMap { conversation in
+                        if outcome.done.contains(conversation) { return nil }
+                        guard outcome.uncleared.contains(conversation) else { return conversation }
+                        var deleted = conversation
+                        deleted.deleted = true
+                        return deleted
+                    })
+            }
             log?.log(
                 "conversations-deleted", level: outcome.problems.isEmpty ? "info" : "error",
                 [

@@ -2,7 +2,8 @@
 // Codex's files in the account folder are removed (EngineHomes). A shared engine keeps every task of an account in
 // its own storage, so it's asked to delete the task's session (ACP `session/delete`), started if it isn't running,
 // and then to clear what its storage still holds of it (`EngineAdapter.sessionsDeleted`). The runtime keeps the
-// conversations still to delete (AgnetaRuntime, `pendingConversations`) until they are.
+// conversations still to delete (AgnetaRuntime, `pendingConversations`) until they are, storage included: a session the
+// engine deleted while its storage couldn't be cleared stays queued, and only the clearing is tried again.
 import Foundation
 
 extension Router {
@@ -11,16 +12,27 @@ extension Router {
         public var account: String
         public var engine: String
         public var session: String
+        /// The engine deleted the session already, and only what its storage still holds of it is left to clear (nil:
+        /// not deleted yet).
+        public var deleted: Bool? = nil
     }
 
     /// What deleting conversations did: how many the engines deleted, and why any weren't, or their storage kept a trace.
     public struct ConversationDeletion: Sendable {
         public var deleted = 0
         public var problems: [String] = []
-        /// Conversations nothing more can be done for: deleted, or on an engine that can't delete one. The rest are
-        /// worth asking again (the engine wasn't here or failed, or their provider isn't served yet).
+        /// Conversations nothing more can be done for: deleted with their storage cleared, or on an engine that can't
+        /// delete one. The rest are worth asking again (the engine wasn't here, failed or didn't answer, or their
+        /// provider isn't served yet).
         public var done: Set<SharedConversation> = []
+        /// Of those asked, the ones the engine has deleted (now or before) whose storage couldn't be cleared: asked
+        /// again, `deleted`, only the clearing is tried.
+        public var uncleared: Set<SharedConversation> = []
     }
+
+    /// How long a shared engine has to answer `session/delete`: one that doesn't (stuck, or busy past it) can't hold up
+    /// the pass, and with it every later one; the conversation stays queued.
+    static let deleteWithin: Duration = .seconds(10)
 
     /// The shared engine's conversation of a task, from its trace's `meta`; nil for a task on its own engine.
     public static func sharedConversation(_ meta: JSONValue) -> SharedConversation? {
@@ -33,8 +45,9 @@ extension Router {
     }
 
     /// Asks each account's shared engine to delete these conversations, starting it where it isn't running (it then
-    /// stays, as after any task). An engine without `session/delete` or one that fails is reported; a provider not
-    /// served (not yet, at launch, or signed out: its engine state went with it) is left for the runtime to decide.
+    /// stays, as after any task). An engine without `session/delete`, one that fails or doesn't answer within
+    /// `deleteWithin`, and a storage that can't be cleared are reported; a provider not served (not yet, at launch, or
+    /// signed out: its engine state went with it) is left for the runtime to decide.
     public func deleteConversations(_ conversations: [SharedConversation]) async -> ConversationDeletion {
         var outcome = ConversationDeletion()
         let groups = Dictionary(grouping: Set(conversations)) { [$0.account, $0.engine] }
@@ -58,13 +71,22 @@ extension Router {
                 outcome.problems.append("\(group.count) on \(adapter.displayName): \(error.message)")
                 continue
             }
-            var deleted = 0
+            // Deleted now or before: what its storage still holds of them is cleared next.
+            var deleted: Set<SharedConversation> = []
             for conversation in group {
+                if conversation.deleted == true {
+                    deleted.insert(conversation)
+                    continue
+                }
+                // Asked is as good as deleted for a new session's id: one that answers late may still delete it.
+                deletedSessions[Self.process(lease), default: []].insert(conversation.session)
                 do {
-                    _ = try await lease.peer.request("session/delete", ["sessionId": .string(conversation.session)])
-                    deletedSessions[Self.process(lease), default: []].insert(conversation.session)
-                    deleted += 1
-                    outcome.done.insert(conversation)
+                    let peer = lease.peer, params: JSONValue = ["sessionId": .string(conversation.session)]
+                    _ = try await EngineSupervisor.within(Self.deleteWithin) {
+                        try await peer.request("session/delete", params)
+                    }
+                    outcome.deleted += 1
+                    deleted.insert(conversation)
                 } catch let error as RPCError where error.code == RPCError.methodNotFound {
                     outcome.problems.append("\(adapter.displayName) can't delete a session")
                     outcome.done.formUnion(group) // asking again can't help
@@ -73,10 +95,15 @@ extension Router {
                     outcome.problems.append("\(adapter.displayName) didn't delete a session: \(error)")
                 }
             }
-            if deleted > 0, let root = lease.stateRoot, let problem = lease.engine.sessionsDeleted(stateRoot: root) {
+            // A storage that couldn't be cleared (another connection held its log, say) still holds their words: they
+            // stay queued until it is.
+            if !deleted.isEmpty, let root = lease.stateRoot, let problem = lease.engine.sessionsDeleted(stateRoot: root)
+            {
                 outcome.problems.append("\(adapter.displayName)'s storage: \(problem)")
+                outcome.uncleared.formUnion(deleted.subtracting(outcome.done))
+            } else {
+                outcome.done.formUnion(deleted)
             }
-            outcome.deleted += deleted
             await engines.release(lease)
         }
         return outcome
@@ -86,7 +113,7 @@ extension Router {
     static func process(_ lease: EngineLease) -> String { "\(lease.key)#\(lease.pid)" }
 
     /// A new engine session (`session/new`, or a fork's import), asked for again while the engine hands back one this
-    /// process deleted. Measured on goose-acp 1.59.2: a new session takes the highest id left plus one, so deleting the
+    /// process was asked to delete. Measured on goose-acp 1.59.2: a new session takes the highest id left plus one, so deleting the
     /// newest frees its id for the next, and an id once closed fails as "Session not found" for the rest of the
     /// process. The unused session holds nothing of a task (no prompt, no instructions) and goes with the engine's state.
     func freshSession(_ lease: EngineLease, _ request: EngineRequest, id: (JSONValue) -> String?) async throws -> (
