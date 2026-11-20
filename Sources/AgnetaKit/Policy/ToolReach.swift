@@ -18,8 +18,9 @@
 //
 // Checked when a session opens, is loaded or forked (off the router: the probes wait on servers), and again by the
 // broker before each command and about every second while commands or background jobs run: a server that went away
-// and was replaced by another program's stops the session. In between, for up to about a second and a half, a running
-// command can reach what took its place (docs/APP_PROTOCOL.md, Tool ports and sockets). Developer access reaches
+// and was replaced by another program's stops the session. In between, a running command can reach what took its
+// place: about 1.5 s when it answers quickly, about 3.5 s when it's slow, longer under load (docs/APP_PROTOCOL.md,
+// Tool ports and sockets). Developer access reaches
 // every local server, as a terminal does, and isn't checked.
 import Darwin
 import Foundation
@@ -96,13 +97,17 @@ public enum ToolReach {
         public var instance: @Sendable (pid_t) -> Instance?
         /// A process's parent, or nil when it can't be read.
         public var parent: @Sendable (pid_t) -> pid_t?
+        /// The threads the probes run on.
+        public var pool: Pool
 
         public init(
             connection: @escaping @Sendable (Int, Int) -> [pid_t], answer: @escaping @Sendable (Endpoint) -> Answer,
             listeners: @escaping @Sendable (Set<Endpoint>) -> [Endpoint: [pid_t]],
             identity: @escaping @Sendable (Peer) -> PeerIdentity, current: @escaping @Sendable (Peer) -> Bool,
-            instance: @escaping @Sendable (pid_t) -> Instance?, parent: @escaping @Sendable (pid_t) -> pid_t?
+            instance: @escaping @Sendable (pid_t) -> Instance?, parent: @escaping @Sendable (pid_t) -> pid_t?,
+            pool: Pool = .shared
         ) {
+            self.pool = pool
             self.connection = connection
             self.answer = answer
             self.listeners = listeners
@@ -145,25 +150,64 @@ public enum ToolReach {
         case other
     }
 
-    /// How long all of a check's probes may take together; one not done by then is unidentified.
+    /// How long a probe may take from when it starts; one not done by then is unidentified. Time waiting for a thread
+    /// isn't counted: that's Agneta being busy, not the server being silent.
     static let deadline: Duration = .seconds(3)
+    /// How long a check waits in all, whatever happens to the pool: past it, what isn't answered is unidentified.
+    static let longest: Duration = .seconds(60)
+
+    /// Agneta's own threads for probes: a fixed number, first come first served. Probes block (they wait on servers),
+    /// so they never take the system's shared threads, and a flood of them queues here rather than starving others.
+    public final class Pool: @unchecked Sendable {
+        /// As many as one check's most endpoints: the router runs one check per app at a time, so another app's probe
+        /// waits for at most one round of them.
+        public static let shared = Pool(threads: ToolReach.most)
+        private let condition = NSCondition()
+        private var jobs: [@Sendable () -> Void] = []
+        private let size: Int
+        private var threads = 0
+
+        public init(threads: Int) { size = max(1, threads) }
+
+        func run(_ job: @escaping @Sendable () -> Void) {
+            condition.lock()
+            jobs.append(job)
+            if threads < size {
+                threads += 1
+                Thread { [self] in work() }.start()
+            }
+            condition.signal()
+            condition.unlock()
+        }
+
+        private func work() {
+            while true {
+                condition.lock()
+                while jobs.isEmpty { condition.wait() }
+                let job = jobs.removeFirst()
+                condition.unlock()
+                job()
+            }
+        }
+    }
     /// How long a re-check waits before trying a failed endpoint again: a busy server may just have been slow.
     public static let retryAfter: Duration = .milliseconds(500)
 
-    /// Each endpoint's verdict. The probes run at once, on threads of their own, within `deadline` together: the
-    /// caller waits, so it must never be an actor others wait on (the router awaits `served(_:by:lookup:) async`).
+    /// Each endpoint's verdict. The probes run at once on the lookup's pool, each given `deadline` from when it starts:
+    /// the caller waits, so it must never be an actor others wait on (the router awaits `served(_:by:lookup:) async`).
     public static func verdicts(_ endpoints: [Endpoint], by app: App, lookup: Lookup) -> [Endpoint: Verdict] {
         guard !endpoints.isEmpty else { return [:] }
         let unique = Array(Set(endpoints))
         let holders = lookup.listeners(Set(unique))
         let answers = Answers()
-        let group = DispatchGroup()
         for endpoint in unique {
-            DispatchQueue.global(qos: .userInitiated).async(group: group) {
+            lookup.pool.run {
+                answers.start(endpoint)
                 answers.set(endpoint, lookup.answer(endpoint))
             }
         }
-        _ = group.wait(timeout: .now() + .milliseconds(Int(deadline.components.seconds * 1000)))
+        let giveUp = ContinuousClock.now + longest
+        while !answers.settled(unique, within: deadline), ContinuousClock.now < giveUp { usleep(10_000) }
         let found = answers.all
         var known: [Peer: Bool] = [:]
         func isApp(_ peer: Peer) -> Bool {
@@ -186,12 +230,20 @@ public enum ToolReach {
         return verdicts
     }
 
-    /// Answers arriving from the probes' threads; one that comes after the deadline is ignored.
+    /// Answers arriving from the probes' threads, and when each probe started; one that comes too late is ignored.
     private final class Answers: @unchecked Sendable {
         private let lock = NSLock()
         private var answers: [Endpoint: Answer] = [:]
+        private var started: [Endpoint: ContinuousClock.Instant] = [:]
+        func start(_ endpoint: Endpoint) { lock.withLock { started[endpoint] = .now } }
         func set(_ endpoint: Endpoint, _ answer: Answer) { lock.withLock { answers[endpoint] = answer } }
         var all: [Endpoint: Answer] { lock.withLock { answers } }
+        /// Every probe answered, or ran out of its own time.
+        func settled(_ endpoints: [Endpoint], within deadline: Duration) -> Bool {
+            lock.withLock {
+                endpoints.allSatisfy { answers[$0] != nil || started[$0].map { .now - $0 > deadline } == true }
+            }
+        }
     }
 
     /// Of `endpoints`, those the app serves itself: a connection there reached the app, as the kernel says, and every
@@ -200,12 +252,11 @@ public enum ToolReach {
         Set(verdicts(endpoints, by: app, lookup: lookup).filter { $0.value == .served }.keys)
     }
 
-    /// The same, off the caller's thread: an actor awaiting it goes on serving others meanwhile.
+    /// The same, off the caller's thread: an actor awaiting it goes on serving others meanwhile. The wait itself runs
+    /// on a thread of its own, never one the system shares.
     public static func served(_ endpoints: [Endpoint], by app: App, lookup: Lookup) async -> Set<Endpoint> {
         await withCheckedContinuation { done in
-            DispatchQueue.global(qos: .userInitiated).async {
-                done.resume(returning: served(endpoints, by: app, lookup: lookup))
-            }
+            Thread { done.resume(returning: served(endpoints, by: app, lookup: lookup)) }.start()
         }
     }
 
@@ -216,6 +267,8 @@ public enum ToolReach {
         let first = verdicts(check.endpoints, by: check.app, lookup: lookup)
         let failing = check.endpoints.filter { first[$0] != .served }
         guard !failing.isEmpty else { return nil }
+        // Another program answering isn't slowness: no second chance, which would give it more time.
+        if let taken = failing.first(where: { first[$0] == .other }) { return (taken, .other) }
         Thread.sleep(forTimeInterval: Double(retry.components.attoseconds) / 1e18 + Double(retry.components.seconds))
         let again = verdicts(failing, by: check.app, lookup: lookup)
         return failing.first { again[$0] != .served }.map { ($0, again[$0] ?? .unidentified) }
@@ -267,9 +320,9 @@ extension PeerIdentity {
     /// Whom a connection to `endpoint` reaches. A socket: its listener, by the kernel's audit token for the connection.
     /// A port: on 127.0.0.1 and on ::1 (each may have a listener of its own), the process holding the far end of
     /// Agneta's connection once it accepts it, or, when it doesn't in time (a busy server, or one that closes at once),
-    /// the processes holding the listening sockets that cover that address. Those are the kernel's records of port
-    /// and address, not a string the process chose, and another user can't bind there beside them (measured on every
-    /// way of binding), so they say who serves it.
+    /// the processes holding that family's listening sockets for that address or its wildcard. Those are the kernel's
+    /// records of port and address, not a string the process chose, and within one family another user can't bind
+    /// there beside them (measured), so they say who serves it.
     public static func answer(_ endpoint: ToolReach.Endpoint) -> ToolReach.Answer {
         switch endpoint {
         case .socket(let path): return unixPeer(path)
@@ -375,8 +428,8 @@ extension PeerIdentity {
         return listening(port: port, family: family)
     }
 
-    /// The processes holding a listening socket on `port` that a connection to `family`'s loopback address reaches:
-    /// bound to that address or to the family's wildcard (an IPv6 wildcard socket may take IPv4 too). Unidentified
+    /// The processes holding a listening socket of `family` on `port` bound to that family's loopback address or its
+    /// wildcard. Never the other family's: a dual-stack IPv6 server must be seen accepting an IPv4 probe. Unidentified
     /// when none can be seen (root's and other users' can't).
     static func listening(port: Int, family: Int32) -> ToolReach.Answer {
         var found = Set<ToolReach.Peer>()
@@ -403,13 +456,14 @@ extension PeerIdentity {
             let tcp = info.psi.soi_proto.pri_tcp
             let local = Int(UInt16(bigEndian: UInt16(truncatingIfNeeded: tcp.tcpsi_ini.insi_lport)))
             guard tcp.tcpsi_state == TSI_S_LISTEN, local == port else { continue }
+            // Only the probe's own family: beside another user's 0.0.0.0 listener, anyone may bind [::] or [::1]
+            // (measured), so an IPv6 listener says nothing about who answers on 127.0.0.1, dual-stack or not.
             let flags = Int32(tcp.tcpsi_ini.insi_vflag)
-            var six = tcp.tcpsi_ini.insi_laddr.ina_6
-            let bytes = withUnsafeBytes(of: &six) { Array($0) }
-            let anySix = bytes.allSatisfy { $0 == 0 }
-            if flags & INI_IPV6 != 0 {
-                if anySix || (family == AF_INET6 && bytes == Array(repeating: 0, count: 15) + [1]) { return true }
-            } else if family == AF_INET, flags & INI_IPV4 != 0 {
+            if family == AF_INET6, flags & INI_IPV6 != 0 {
+                var six = tcp.tcpsi_ini.insi_laddr.ina_6
+                let bytes = withUnsafeBytes(of: &six) { Array($0) }
+                if bytes.allSatisfy({ $0 == 0 }) || bytes == Array(repeating: 0, count: 15) + [1] { return true }
+            } else if family == AF_INET, flags & INI_IPV4 != 0, flags & INI_IPV6 == 0 {
                 let four = UInt32(bigEndian: tcp.tcpsi_ini.insi_laddr.ina_46.i46a_addr4.s_addr)
                 if four == 0 || four == 0x7f00_0001 { return true }
             }

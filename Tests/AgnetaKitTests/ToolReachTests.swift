@@ -121,6 +121,30 @@ final class ReachListener: @unchecked Sendable {
         return (fd, Int(UInt16(bigEndian: address.sin_port)))
     }
 
+    /// This process listening on IPv6's wildcard (`[::]`), dual-stack unless `sixOnly`, on a port the kernel picks.
+    static func sixWildcard(sixOnly: Bool, accepting: Accepting) throws -> ReachListener {
+        let fd = Darwin.socket(AF_INET6, SOCK_STREAM, 0)
+        var only: Int32 = sixOnly ? 1 : 0
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &only, socklen_t(MemoryLayout<Int32>.size))
+        var address = sockaddr_in6()
+        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_addr = in6addr_any
+        var length = socklen_t(MemoryLayout<sockaddr_in6>.size)
+        let bound = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, length) == 0 && Darwin.listen(fd, 16) == 0 && getsockname(fd, $0, &length) == 0
+            }
+        }
+        guard fd >= 0, bound else {
+            close(fd)
+            throw POSIXError(.EADDRINUSE)
+        }
+        return ReachListener(
+            endpoint: .port(Int(UInt16(bigEndian: address.sin6_port))), pid: getpid(),
+            acceptor: Acceptor(fd, accepting: accepting))
+    }
+
     /// This process listening on a loopback port the kernel picks: no other program can take it first.
     static func port(accepting: Accepting = .drain) throws -> ReachListener {
         let (fd, port) = try listen(port: 0)
@@ -501,6 +525,39 @@ extension RouterContractTests {
         #expect(result.level == "contained" && took < .seconds(3), "\(result) after \(took)")
     }
 
+    /// One app opening many sessions at once, each naming its most ports and each of those slow to answer (through the
+    /// lookup), runs one check at a time on Agneta's own threads; another app's check meanwhile is counted from when
+    /// its probe starts, so its healthy server isn't taken for silent and its session opens.
+    @Test func aFloodFromOneAppDoesntFailAnothersCheck() async throws {
+        let flooding = Set(40_001...40_016)
+        var lookup = ToolReach.Lookup.system
+        lookup.pool = ToolReach.Pool(threads: ToolReach.most)
+        lookup.answer = { endpoint in
+            guard case .port(let port) = endpoint, flooding.contains(port) else {
+                return ToolReach.Lookup.system.answer(endpoint)
+            }
+            Thread.sleep(forTimeInterval: 3.5)
+            return .unidentified
+        }
+        let stack = try await Stack.start(port: 47727, reach: lookup, approve: Self.contained)
+        defer { stack.stop() }
+        let flood = AppClient(port: stack.port)
+        defer { flood.close() }
+        try await flood.pairAndInitialize("Flood")
+        let other = AppClient(port: stack.port)
+        defer { other.close() }
+        try await other.pairAndInitialize("Other")
+        let own = try ReachListener.port()
+        defer { own.stop() }
+
+        for _ in 0..<8 {
+            Task { _ = await Self.reaching(stack, flood, ports: flooding.sorted()) }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        let opened = await Self.reaching(stack, other, ports: [own.port])
+        #expect(opened.level == "contained", "\(opened)")
+    }
+
     /// Developer access reaches every local server, as a terminal does: the socket and port a contained task of the
     /// same app is refused are allowed to its developer tasks, unchanged.
     @Test func developerAccessStillReachesAnyLocalServer() async throws {
@@ -685,6 +742,13 @@ extension RouterContractTests {
             counter.next() == 1 ? .unidentified : Self.peers(10)
         }
         #expect(ToolReach.lost(check, lookup: slow, retry: .milliseconds(10)) == nil)
+        // Another program answering isn't slowness: it fails at once, with no second look to give it more time.
+        let asked = Counter()
+        let taken = Self.lookup(answers: [:], holders: [:]).with { _ in
+            asked.next() == 1 ? Self.peers(20) : Self.peers(10)
+        }
+        let other = try #require(ToolReach.lost(check, lookup: taken, retry: .milliseconds(10)))
+        #expect(other.1 == .other && asked.next() == 2)
         let silent = Self.lookup(answers: [.port(1): .unidentified])
         let lost = try #require(ToolReach.lost(check, lookup: silent, retry: .milliseconds(10)))
         #expect(lost.1 == .unidentified)
@@ -785,6 +849,32 @@ extension RouterContractTests {
         #expect(took < .seconds(2), "\(took)")
         #expect(PeerIdentity.parent(of: getpid()) == getppid())
         #expect(PeerIdentity.instance(of: getpid()) == PeerIdentity.instance(of: getpid()))
+    }
+
+    /// Within one family another user can't bind beside a listener, but across families anyone can: beside root's
+    /// 0.0.0.0:P, the app may bind [::]:P, dual-stack or not (measured). So an IPv6 listener never answers for
+    /// 127.0.0.1: an app's IPv6 wildcard server that doesn't accept the IPv4 probe in time isn't taken as serving it,
+    /// though its IPv4 connection may have gone to a server no scan can see.
+    @Test func anIPv6ListenerNeverAnswersForIPv4() throws {
+        let app = ToolReach.App(team: nil, processes: [try #require(PeerIdentity.instance(of: getpid()))])
+        for sixOnly in [true, false] {
+            let six = try ReachListener.sixWildcard(sixOnly: sixOnly, accepting: .never)
+            defer { six.stop() }
+            #expect(PeerIdentity.listening(port: six.port, family: AF_INET) == .unidentified, "v6only \(sixOnly)")
+            #expect(
+                PeerIdentity.listening(port: six.port, family: AF_INET6) == .peers([ToolReach.Peer(pid: getpid())]),
+                "v6only \(sixOnly)")
+            // The whole check: the IPv4 probe either reaches nothing (v6-only) or isn't accepted and can't be answered
+            // for by the IPv6 listener, so it's refused rather than credited to the app.
+            if !sixOnly {
+                #expect(ToolReach.served([six.endpoint], by: app, lookup: .system).isEmpty)
+            }
+        }
+        // The family's own wildcard still answers for it.
+        let four = try ReachListener.port(accepting: .never)
+        defer { four.stop() }
+        #expect(PeerIdentity.listening(port: four.port, family: AF_INET) == .peers([ToolReach.Peer(pid: getpid())]))
+        #expect(ToolReach.served([four.endpoint], by: app, lookup: .system) == [four.endpoint])
     }
 
     /// What the docs call measured: the sandbox matches the socket a path resolves to, and the profile names a socket

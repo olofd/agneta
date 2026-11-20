@@ -166,7 +166,10 @@ extension Router {
         }
         if !unresolved.isEmpty {
             let app = reachingApp(appID, grant: grant)
+            // One check per app at a time: an app opening many sessions at once can't flood the probes' threads.
+            await beginReachCheck(grant.id)
             policy.servedByApp = await ToolReach.served(unresolved, by: app, lookup: reach)
+            endReachCheck(grant.id)
             policy.reachCheck = ToolReach.Check(app: app, name: grant.app, endpoints: unresolved)
         }
         if let refusal = GrantScope.reach(policy, against: grant, sandbox: effective) {
@@ -176,6 +179,26 @@ extension Router {
             Plan(
                 account: account, engine: engine, policy: policy, servers: servers, instructions: instructions,
                 sandbox: effective))
+    }
+
+    /// Waits until no other reach check of this grant's is running, then holds the turn.
+    func beginReachCheck(_ grant: String) async {
+        guard reachChecks[grant] != nil else {
+            reachChecks[grant] = []
+            return
+        }
+        await withCheckedContinuation { reachChecks[grant, default: []].append($0) }
+    }
+
+    /// Hands the turn to the grant's next waiting check, or frees it.
+    func endReachCheck(_ grant: String) {
+        guard var waiting = reachChecks[grant], !waiting.isEmpty else {
+            reachChecks[grant] = nil
+            return
+        }
+        let next = waiting.removeFirst()
+        reachChecks[grant] = waiting
+        next.resume()
     }
 
     /// Who counts as the app for what it serves: a verified grant's team, or the processes holding its connection now,

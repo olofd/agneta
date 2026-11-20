@@ -276,7 +276,7 @@ A Unix socket or a loopback port reaches whatever serves it: Docker's socket can
 - **A socket inside a folder the app was granted** (the folders the approval window showed, and the app's own workspace) is allowed, whoever serves it. Paths are compared as real paths, and the sandbox names the socket as it was checked: a link put in its place later, pointing at another socket, reaches neither (measured, and tested).
 - **Any other socket, and every port, must be served by the app itself,** at most 16 of them together (more is refused with `-32602`). Agneta connects to each, as a command would, and asks the kernel whom it reached:
   - a socket: its listener, with the kernel's audit token for the connection;
-  - a port, on `127.0.0.1` and on `::1`: the process that accepts Agneta's connection, or, when it doesn't accept within a moment (a busy server, or one that closes at once), the process holding the listening socket for that address or its wildcard. That is the kernel's record of the port, and another user can't bind there beside it.
+  - a port, on `127.0.0.1` and on `::1`: the process that accepts Agneta's connection, or, when it doesn't accept within a moment (a busy server, or one that closes at once), the process holding the listening socket of that address's own family for that address or its wildcard. That is the kernel's record of the port, and within one family another user can't bind there beside it. Across families anyone can (beside another user's `0.0.0.0` listener, `[::]` is free), so an IPv6 listener never answers for `127.0.0.1`: a dual-stack server listening only on `[::]` must accept Agneta's IPv4 connection to count, or listen on `127.0.0.1` too.
 
   That process must be the app, and so must every process Agneta finds bound there:
   - for a verified app, any process with a valid Apple-issued signature from the app's team. Its helpers and XPC services count, and so do **the same developer's other apps**;
@@ -284,7 +284,7 @@ A Unix socket or a loopback port reaches whatever serves it: Docker's socket can
 - **Refused** when nothing accepts the connection, when what answers can't be identified, or when it's another program. Can't be identified means: a server run by root or another user, a datagram socket, a socket path of 104 bytes or more, and a server launchd started on demand (socket activation: the kernel names launchd, not your app). Processes are compared as instances (a pid with its start time, or the audit token), so a pid reused by another program is never taken for the app.
 - **Start your server before you open the session.** Agneta's connection sends nothing and closes at once; keep an accepted connection open until the client closes it, as most servers do.
 
-The probes run off Agneta's router, all of a session's at once and within 3 s together, so a slow server holds up only its own session's opening.
+The probes run off Agneta's router, on a fixed set of Agneta's own threads, all of a session's at once, each given 3 s from when it starts (waiting for a thread isn't counted against your server). An app runs one check at a time, so an app opening many sessions at once queues behind itself, and a slow server holds up only its own app's sessions.
 
 A session that names one it can't allow is refused when it opens (or is loaded or forked) with `-32602`, `data.agneta.unenforceable: ["toolSockets"]` or `["toolPorts"]`, and a reason naming the socket or port, for example:
 
@@ -294,11 +294,11 @@ A session that names one it can't allow is refused when it opens (or is loaded o
 ```
 
 **Checked again while the session runs:**
-- before each command, and about every second while any of its commands or background jobs (`… &`, which outlive the command that started them) run. Each check takes about 11 ms for one port and one socket (one connection to each, and two passes over the processes);
-- one that fails is tried again half a second later, so a server that was only slow isn't taken for gone;
+- before each command, and about every second while any of its commands or background jobs (`… &`, which outlive the command that started them) run. Each check takes about 11 ms for one port and one socket, with one connection to each socket and two to each port (`127.0.0.1` and `::1`), so a contained session with something running costs about that every second;
+- one that found nothing, or no answer in time, is tried again half a second later, so a server that was only slow isn't taken for gone. One that another program answers fails at once;
 - if the app still doesn't serve it, the command is refused, every command and background job of the session is stopped, and the session stops. The app gets `agneta/sessionStopped {"sessionId", "stoppedBy": "reach", "reason"}`, the reason naming the socket or port and what was found: nothing listening, another program, or a server that didn't answer in time.
 
-A narrowed grant stops a session that no longer fits, too. What's left: if your server stops and another program takes its port or socket path, a command or job of the session can reach that program for up to about a second and a half, until the next check stops it. Keep your server running while its sessions are open. Closing that gap completely needs Agneta to serve the only socket a session may reach and pass connections on to your server once the kernel says it's yours. That's future work.
+A narrowed grant stops a session that no longer fits, too. What's left: if your server stops and another program takes its port or socket path, a command or job of the session can reach that program until a check stops the session: about 1.5 s when the program that took its place answers quickly, about 3.5 s when it's slow to answer (the probe waits for it, then tries again), and longer while Agneta is busy with many checks. Keep your server running while its sessions are open. Closing that gap completely needs Agneta to serve the only socket a session may reach and pass connections on to your server once the kernel says it's yours. That's future work.
 
 The app's own MCP servers (`mcpServers`, which the engine calls) aren't affected by any of this.
 

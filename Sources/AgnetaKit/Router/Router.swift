@@ -317,6 +317,8 @@ public actor Router {
     enum Admission { case admitted, cancelled, paused }
     var waiting: [Waiter] = []
     var loading: Set<String> = []
+    /// Reach checks waiting for their grant's running one, by grant (present while one runs).
+    var reachChecks: [String: [CheckedContinuation<Void, Never>]] = [:]
     /// Sessions being opened, by lease: an engine may speak of a new session before its answer names it.
     var openingOn: [String: Int] = [:]
     /// What an engine said about a session not yet registered, by lease and engine session, delivered once it is.

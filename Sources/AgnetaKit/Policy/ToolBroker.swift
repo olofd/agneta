@@ -148,6 +148,14 @@ public final class ToolBroker: @unchecked Sendable {
                 }
                 guard live else { return }
                 guard let reason = reach() else { continue }
+                // Everything may have ended while it was asked: nothing to stop, and no session to report.
+                let still = self.registryLock.withLock { () -> Bool in
+                    let still =
+                        !self.stopped && !self.revoked.contains(token) && !(self.running[token]?.isEmpty ?? true)
+                    if !still { self.watching.remove(token) }
+                    return still
+                }
+                guard still else { return }
                 self.stopCommands(token: token)
                 self.registryLock.withLock { _ = self.watching.remove(token) }
                 self.report(token, ["refused": .string(reason), "while": "running"])
