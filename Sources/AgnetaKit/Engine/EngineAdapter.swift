@@ -174,7 +174,7 @@ extension EngineAdapter {
     public func brokersShell(_ policy: SessionPolicy) -> Bool { false }
     public func sessionsDeleted(stateRoot: URL) -> String? { nil }
     public func appToolsUpfront(_ policy: SessionPolicy, kind: AccountKind?) -> Bool? { nil }
-    public func sessionStored(stateRoot: URL, session: String) -> Bool? { nil }
+    public func sessionsStored(stateRoot: URL, sessions: [String]) -> Set<String>? { nil }
 }
 
 public protocol EngineAdapter: Sendable {
@@ -226,9 +226,9 @@ public protocol EngineAdapter: Sendable {
     /// After the engine deleted sessions (`session/delete`): clears what its storage under the state root still holds
     /// of them. Nil when done, else why not.
     func sessionsDeleted(stateRoot: URL) -> String?
-    /// Whether the engine's storage under the state root still has rows of a session, read without writing: false
-    /// once it's certainly gone, so `session/delete` has nothing left to do; nil when it can't tell.
-    func sessionStored(stateRoot: URL, session: String) -> Bool?
+    /// Which of these sessions the engine's storage under the state root still has rows of, read without writing: one
+    /// not among them is certainly gone, so `session/delete` has nothing left to do. Nil when it can't tell.
+    func sessionsStored(stateRoot: URL, sessions: [String]) -> Set<String>?
     /// Whether a session may switch to this mode: false for modes that skip permission requests.
     /// The MCP server a permission request's tool belongs to: from the request, or from `calls` (each call's server,
     /// from the engine's earlier updates) when it names only the call. Nil for the engine's own tools. Only what the

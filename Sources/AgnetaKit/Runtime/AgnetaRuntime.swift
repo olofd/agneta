@@ -117,6 +117,7 @@ public actor AgnetaRuntime {
                 try database.usage(since: Date().addingTimeInterval(-Self.usageDays * 86_400))
             } ?? [:])
         // Events are recorded one at a time, in the order the router sent them.
+        // Unbounded (the default): nothing is dropped, so a waiter `recorded()` queues is always reached.
         let (events, sink) = AsyncStream<Recorded>.makeStream()
         await router.observe { sink.yield(.event($0)) }
 

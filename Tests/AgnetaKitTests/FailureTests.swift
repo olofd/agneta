@@ -102,7 +102,7 @@ extension RouterIntegrationTests {
             kill(pid, SIGCONT)
             #expect(ContinuousClock.now - started < Router.deleteWithin + .seconds(5), "the deletion waited on Goose")
             #expect(Set(await stack.runtime.pendingConversations) == Set(tasks.map(\.conversation)))
-            #expect(left.all == ["2 Goose didn't answer within 10 s"])
+            #expect(left.all == ["2 Goose didn't answer within \(Router.deleteWithin.components.seconds) s"])
 
             await stack.runtime.retryForgetting()
             await stack.runtime.conversationsSettled()

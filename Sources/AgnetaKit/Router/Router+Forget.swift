@@ -73,11 +73,14 @@ extension Router {
             }
             // Deleted now or before: what its storage still holds of them is cleared next. One whose rows its storage
             // no longer has is deleted already (an answer to an earlier ask that came too late), so isn't asked again.
-            func gone(_ conversation: SharedConversation) -> Bool {
-                lease.stateRoot.flatMap { lease.engine.sessionStored(stateRoot: $0, session: conversation.session) }
-                    == false
+            // Those of `asked` it certainly no longer has (none when it can't tell).
+            func gone(_ asked: [SharedConversation]) -> Set<SharedConversation> {
+                guard let root = lease.stateRoot,
+                    let stored = lease.engine.sessionsStored(stateRoot: root, sessions: asked.map(\.session))
+                else { return [] }
+                return Set(asked.filter { !stored.contains($0.session) })
             }
-            var deleted = Set(group.filter { $0.deleted == true || gone($0) })
+            var deleted = Set(group.filter { $0.deleted == true }).union(gone(group.filter { $0.deleted != true }))
             for conversation in group.filter({ !deleted.contains($0) }) {
                 // Asked is as good as deleted for a new session's id: one that answers late may still delete it.
                 deletedSessions[Self.process(lease), default: []].insert(conversation.session)
@@ -100,7 +103,7 @@ extension Router {
                     break
                 } catch {
                     // Deleted meanwhile (an earlier ask's late answer): it says the session isn't there.
-                    if gone(conversation) {
+                    if !gone([conversation]).isEmpty {
                         deleted.insert(conversation)
                     } else {
                         outcome.problems.append("\(adapter.displayName) didn't delete a session: \(error)")

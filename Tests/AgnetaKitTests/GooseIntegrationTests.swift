@@ -3,6 +3,7 @@
 // hasn't been fetched (scripts/fetch-engines).
 import AgnetaFakes
 import Foundation
+import GRDB
 import Testing
 
 @testable import AgnetaKit
@@ -158,5 +159,44 @@ struct GooseIntegrationTests {
             try await goose.peer.notify("session/cancel", ["sessionId": .string(session)])
             _ = try? await turn.value
         }
+    }
+}
+
+/// What Goose's storage says of deleted sessions is read only from the measured schema: a missing database or another
+/// version can't tell (so Goose is asked), and every table keyed by session counts, not only its messages.
+@Suite struct GooseStorageTests {
+    @Test func onlyTheMeasuredSchemaTellsWhatIsStored() throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-goose-storage-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory
+        ).realFileURL
+        defer { try? FileManager.default.removeItem(at: root) }
+        let goose = GooseAdapter(executable: URL(filePath: "/usr/bin/false"))
+        let asked = ["s1", "s2", "s3", "s4"]
+        #expect(goose.sessionsStored(stateRoot: root, sessions: asked) == nil)
+
+        let folder = root.appending(path: "data/sessions", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let queue = try DatabaseQueue(path: folder.appending(path: "sessions.db").path(percentEncoded: false))
+        try queue.write { db in
+            try db.execute(
+                sql: """
+                    CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+                    INSERT INTO schema_version VALUES (17), (18);
+                    CREATE TABLE sessions (id TEXT PRIMARY KEY);
+                    CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT);
+                    CREATE TABLE session_tags (session_id TEXT, value TEXT);
+                    INSERT INTO sessions VALUES ('s1');
+                    INSERT INTO messages (session_id) VALUES ('s2');
+                    INSERT INTO session_tags VALUES ('s3', 'words');
+                    """)
+        }
+        try queue.close()
+        #expect(goose.sessionsStored(stateRoot: root, sessions: asked) == ["s1", "s2", "s3"])
+        #expect(goose.sessionsStored(stateRoot: root, sessions: []) == [])
+
+        let newer = try DatabaseQueue(path: folder.appending(path: "sessions.db").path(percentEncoded: false))
+        try newer.write { try $0.execute(sql: "INSERT INTO schema_version VALUES (19)") }
+        try newer.close()
+        #expect(goose.sessionsStored(stateRoot: root, sessions: asked) == nil)
     }
 }
