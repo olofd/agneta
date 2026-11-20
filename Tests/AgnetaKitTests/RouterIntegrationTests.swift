@@ -32,6 +32,7 @@ final class AppClient: @unchecked Sendable {
 
     /// Records received live over `agneta/trace`.
     func traceRecords(_ session: String) -> [JSONValue] { lock.withLock { traces[session] ?? [] } }
+    var isClosed: Bool { lock.withLock { closed } }
 
     init(port: UInt16) {
         self.port = port
@@ -447,6 +448,29 @@ struct RouterIntegrationTests {
                     && b.text(sessions[1]) == "Hello from the fake model.")
             a.close()
             b.close()
+        } catch {
+            await stack.stop()
+            throw error
+        }
+        await stack.stop()
+    }
+
+    /// Quitting with a task open: the app's connection closes, and it is never told an engine stopped (which would
+    /// read as a crash). Before the fix, stopping the engines first sent `stoppedBy: "engine"` to the still-connected
+    /// app; the client library's integration test caught it as a race on CI.
+    @Test func quittingHangsUpAppsBeforeEnginesStop() async throws {
+        let stack = try await Stack.start(port: 47682, modelPort: 47683)
+        do {
+            let app = AppClient(port: stack.port)
+            try await app.pairAndInitialize("App")
+            _ = try await app.newSession(cwd: try stack.workspace("Quit"), tools: "workspace")
+            #expect(await stack.supervisor.processCount == 1)
+            await stack.runtime.stopAll()
+            for _ in 0..<60 where !app.isClosed { try await Task.sleep(for: .milliseconds(50)) }
+            #expect(app.isClosed)
+            try await Task.sleep(for: .milliseconds(300))
+            #expect(app.notifications("agneta/sessionStopped").isEmpty)
+            #expect(await stack.supervisor.processCount == 0)
         } catch {
             await stack.stop()
             throw error

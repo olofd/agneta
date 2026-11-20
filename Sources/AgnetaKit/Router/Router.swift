@@ -677,6 +677,13 @@ public actor Router {
         for app in apps.values { await hangUp(app, reason: "Agneta was reset") }
     }
 
+    /// Quitting: every app's connection closes before the engines stop, so an app hears that Agneta went away (its
+    /// sessions end with the connection), never that an engine stopped, which the engines' exits would otherwise
+    /// report to apps still connected (`engineGone`).
+    public func hangUpAll(reason: String) async {
+        for app in apps.values { await hangUp(app, reason: reason) }
+    }
+
     /// Closes an app's peer and its connection; the connection's `serve` then cleans up.
     func hangUp(_ app: App, reason: String) async {
         await app.peer.close(reason)
