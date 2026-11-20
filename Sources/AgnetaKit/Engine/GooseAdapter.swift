@@ -96,11 +96,15 @@ public struct GooseAdapter: EngineAdapter {
         if kind == .claude { return nil }
         let developer = Self.extensions(servers: [], policy: policy).first
         let tools = developer?["available_tools"]?.arrayValue?.compactMap(\.stringValue) ?? []
-        return Set(tools.compactMap { Self.developerGroup[$0] } + [.skills])
+        var groups = Set(tools.compactMap { Self.developerGroup[$0] } + [.skills])
+        // Goose reads files through its shell; `tree` and `read_image` alone list folders and show images.
+        if !tools.contains("shell") { groups.remove(.read) }
+        return groups
     }
 
     /// On a Claude plan Goose's model is Claude Code with all its own tools, which Goose's settings don't reach. With a
-    /// model API every group is a developer tool or never enabled, but skills, which Goose always offers.
+    /// model API every group is a developer tool or never enabled, but skills, which Goose always offers; and reading
+    /// files is its shell's.
     public func builtinsRefusal(_ policy: SessionPolicy, kind: AccountKind?) -> String? {
         guard policy.builtins != nil else { return nil }
         if kind == .claude {
@@ -110,6 +114,9 @@ public struct GooseAdapter: EngineAdapter {
         if !policy.allows(.skills) {
             return
                 "Goose always offers its load_skill tool and built-in skills: keep skills in builtins, or use another engine"
+        }
+        if policy.tools != .appOnly, policy.allows(.read), !policy.allows(.execute) {
+            return "Goose reads files only through its shell: keep execute with read"
         }
         return nil
     }

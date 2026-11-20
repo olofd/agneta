@@ -195,6 +195,7 @@ extension EngineAdapter {
     public func appToolsUpfront(_ policy: SessionPolicy, kind: AccountKind?) -> Bool? { nil }
     public func sessionsStored(stateRoot: URL, sessions: [String]) -> Set<String>? { nil }
     public func builtinGroups(_ policy: SessionPolicy, kind: AccountKind?) -> Set<BuiltinGroup>? { nil }
+    public func vouchedToolName(in update: JSONValue) -> String? { toolIdentity(in: update).tool }
     /// An engine that doesn't say how to narrow its tools can't: a narrowed session on it is refused.
     public func builtinsRefusal(_ policy: SessionPolicy, kind: AccountKind?) -> String? {
         policy.builtins == nil ? nil : "\(displayName) can't narrow its own tools"
@@ -269,6 +270,9 @@ public protocol EngineAdapter: Sendable {
     /// Whether the app's MCP tools (their descriptions and schemas) are in the model's first request under the policy's
     /// `appTools` on this kind of account, as measured on the versions docs/ENGINES.md names; nil when not known.
     func appToolsUpfront(_ policy: SessionPolicy, kind: AccountKind?) -> Bool?
+    /// A built-in tool's name as the engine's own fields give it, never text the model writes (a command's title), for
+    /// answering permission requests by name (BuiltinTools). Default: `toolIdentity`'s.
+    func vouchedToolName(in update: JSONValue) -> String?
     /// The groups of its own tools the engine offers a session under the policy (`builtins` applied) on this kind of
     /// account, as measured on the versions docs/ENGINES.md names; nil when not known.
     func builtinGroups(_ policy: SessionPolicy, kind: AccountKind?) -> Set<BuiltinGroup>?

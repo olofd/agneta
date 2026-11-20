@@ -613,8 +613,13 @@ extension Router {
 
     /// `_meta.agneta.builtins` in a session's reply: the groups of the engine's own tools the session has, as its engine
     /// is configured (null when Agneta doesn't know: Goose on a Claude plan).
-    static func builtins(_ policy: SessionPolicy, engine: any EngineAdapter, kind: AccountKind?) -> JSONValue {
-        engine.builtinGroups(policy, kind: kind).map { .array($0.sorted().map { .string($0.rawValue) }) } ?? .null
+    /// A shared engine (`dedicated` false) has no broker, so no shell.
+    static func builtins(_ policy: SessionPolicy, engine: any EngineAdapter, kind: AccountKind?, dedicated: Bool)
+        -> JSONValue
+    {
+        guard var groups = engine.builtinGroups(policy, kind: kind) else { return .null }
+        if !dedicated { groups.remove(.execute) }
+        return .array(groups.sorted().map { .string($0.rawValue) })
     }
 
     /// `agneta/trace/read`: a page of one of this app's own tasks, running or finished.

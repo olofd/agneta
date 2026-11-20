@@ -319,7 +319,8 @@ extension Router {
             "account": .string(plan.account), "dedicatedEngine": .bool(lease.dedicated),
             "capabilities": Self.capabilities(lease.engine), "sandbox": .string(plan.sandbox.rawValue),
             "appTools": Self.appTools(plan.policy, engine: lease.engine, kind: accounts[plan.account]?.kind),
-            "builtins": Self.builtins(plan.policy, engine: lease.engine, kind: accounts[plan.account]?.kind)
+            "builtins": Self.builtins(
+                plan.policy, engine: lease.engine, kind: accounts[plan.account]?.kind, dedicated: lease.dedicated)
         ]
         agneta.merge(extra) { _, new in new }
         return (id.map { result.setting("sessionId", to: .string($0)) } ?? result).setting(
@@ -734,7 +735,8 @@ extension Router {
                 "toolEnvironment": .array(policy.toolEnvironment.keys.sorted().map(JSONValue.string)),
                 // The groups the app kept (null: no narrowing), and those the engine offers (null: not known).
                 "builtins": policy.builtins.map { .array($0.sorted().map { .string($0.rawValue) }) } ?? .null,
-                "builtinsOffered": Self.builtins(policy, engine: lease.engine, kind: account?.kind)
+                "builtinsOffered": Self.builtins(
+                    policy, engine: lease.engine, kind: account?.kind, dedicated: lease.dedicated)
             ],
             "request": request ?? .null,
             "engineResult": result,

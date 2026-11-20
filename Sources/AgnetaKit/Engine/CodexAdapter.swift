@@ -220,22 +220,34 @@ public struct CodexAdapter: EngineAdapter {
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// What Codex offers: `view_image` (read), `apply_patch` (edit, refused below workspace tools), Agneta's shell,
-    /// web search under developer access, and unless narrowed its subagents, bundled skills and goals and questions,
-    /// at every tools level (measured on 0.167.0).
+    /// What Codex offers: Agneta's shell, through which it reads files too (its only other reading tool is `view_image`,
+    /// which goes with `read`); `apply_patch` (edit), offered at every tools level but answered only under `workspace`
+    /// tools (below them Agneta refuses each call, as it does under `read` without `builtins`); web search under developer
+    /// access; and unless narrowed its subagents, bundled skills, goals and questions, at every tools level (measured on
+    /// 0.167.0).
     public func builtinGroups(_ policy: SessionPolicy, kind: AccountKind?) -> Set<BuiltinGroup>? {
         var groups = Set(BuiltinGroup.allCases.filter(policy.allows))
         if policy.tools != .workspace { groups.remove(.edit) }
-        if !brokersShell(policy) { groups.remove(.execute) }
+        if !brokersShell(policy) { groups.subtract([.execute, .read]) }
         if policy.sandbox != .developer { groups.remove(.web) }
         return groups
     }
 
-    /// No setting turns `apply_patch` off, so workspace tools can't leave out `edit`.
+    /// No setting turns `apply_patch` off, so workspace tools can't leave out `edit`; and Codex reads files only
+    /// through its shell, so `read` needs `execute`.
     public func builtinsRefusal(_ policy: SessionPolicy, kind: AccountKind?) -> String? {
-        guard policy.tools == .workspace, !policy.allows(.edit) else { return nil }
-        return "Codex always offers its apply_patch edit tool: keep edit in builtins, or ask for read tools"
+        guard policy.builtins != nil else { return nil }
+        if policy.tools == .workspace, !policy.allows(.edit) {
+            return "Codex always offers its apply_patch edit tool: keep edit in builtins, or ask for read tools"
+        }
+        if policy.tools != .appOnly, policy.allows(.read), !policy.allows(.execute) {
+            return "Codex reads files only through its shell: keep execute with read"
+        }
+        return nil
     }
+
+    /// Only Codex's own field: a command's title is text the model writes.
+    public func vouchedToolName(in update: JSONValue) -> String? { update["_meta"]?["codex"]?["toolName"]?.stringValue }
 
     /// Codex's own instructions describe its own shell, which is off on the contained path: without a word on it, the
     /// model worked around commands rather than use Agneta's (measured in Replica Bench: builds and probes skipped).

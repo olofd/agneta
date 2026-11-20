@@ -80,8 +80,9 @@ extension Router {
                     if let server = identity.server {
                         sessions[id]?.toolServers[call] = server
                     }
-                    // A built-in's permission request carries only its title and kind: its name comes from here.
-                    else if let tool = identity.tool {
+                    // A built-in's permission request carries only its title and kind: its name comes from here, as
+                    // the adapter vouches for it.
+                    else if let tool = session.lease.engine.vouchedToolName(in: update) {
                         sessions[id]?.toolNames[call] = tool
                     }
                 }

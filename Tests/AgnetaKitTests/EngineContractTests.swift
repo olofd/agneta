@@ -26,7 +26,7 @@ import Testing
 
     /// Native runners run their own tools: Agneta's answers to their permission requests are part of what they offer.
     func refusedByAgneta(_ tools: Set<BuiltinTools>, _ policy: SessionPolicy) -> Set<BuiltinTools> {
-        tools.filter { BuiltinTools.nativeRunnerMayUse(kind: $0.kinds.first!, policy: policy) }
+        tools.filter { tool in tool.kinds.allSatisfy { BuiltinTools.nativeRunnerMayUse(kind: $0, policy: policy) } }
     }
 
     /// What an engine offers under a policy, read from what its adapter actually configures.
@@ -38,7 +38,9 @@ import Testing
             }
             let tools = Set(developer?["available_tools"]?.arrayValue?.compactMap(\.stringValue) ?? [])
             var offered: Set<BuiltinTools> = []
-            if !tools.isDisjoint(with: ["tree", "read_image"]) { offered.insert(.read) }
+            // Goose reads files through its shell (`tree` lists folders and `read_image` shows images), its reading
+            // tool where `read` is kept; without it, the shell is there for `execute`, and reads what commands can.
+            if tools.contains("shell"), policy.allows(.read) { offered.insert(.read) }
             if !tools.isDisjoint(with: ["write", "edit"]) { offered.insert(.edit) }
             // Goose's shell runs through Agneta's broker, which lets it write only a scratch folder unless the
             // policy gives the workspace (ToolBrokerTests).
@@ -80,12 +82,21 @@ import Testing
                 node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: Self.cli)
             let launch = try adapter.launch(
                 EngineLaunchContext(
-                    home: home, provider: ProviderSetup(kind: .openAI, apiKey: "k"), shell: nil,
+                    home: home, provider: ProviderSetup(kind: .openAI, apiKey: "k"),
+                    shell: URL(filePath: "/usr/bin/true"),
                     session: EngineSessionSpec(policy: policy, servers: [], instructions: nil), loopbackPorts: []))
-            // Codex's own modes: read-only reads and runs commands; workspace-write also edits.
-            let offered: Set<BuiltinTools> =
-                launch.environment["INITIAL_AGENT_MODE"] == "workspace-write" ? [.read, .edit, .shell] : [.read, .shell]
-            return refusedByAgneta(offered, policy)
+            let config: JSONValue = try JSONCoding.decode(Data(try #require(launch.environment["CODEX_CONFIG"]).utf8))
+            #expect(config["features"]?["shell_tool"] == false && config["features"]?["unified_exec"] == false)
+            // Its commands run through Agneta's shell, under the session's tool profile (read-only below workspace
+            // tools), and that's how it reads files: `view_image` only shows images. `apply_patch` is always offered,
+            // and answered by Agneta; web search runs on OpenAI's servers, asking nobody.
+            var offered = refusedByAgneta([.edit], policy)
+            if launch.environment["AGNETA_SHELL"] == "1" {
+                offered.insert(policy.tools == .workspace ? .shell : .readOnlyShell)
+                if policy.allows(.read) { offered.insert(.read) }
+            }
+            if config["web_search"] == "live" { offered.insert(.web) }
+            return offered
         default:
             throw CancellationError()
         }
@@ -345,7 +356,8 @@ import Testing
         let adapter = try #require(adapters[engine])
         let kind: AccountKind = engine == "codex" ? .openAIKey : .anthropicKey
         let choices: [[BuiltinGroup]] = [
-            [], [.read], [.read, .execute], [.read, .edit], [.read, .edit, .execute], [.skills]
+            [], [.read], [.read, .execute], [.read, .edit], [.read, .edit, .execute], [.skills], [.read, .skills],
+            [.read, .edit, .skills], [.read, .execute, .skills], [.edit, .execute, .skills]
         ]
         for tools in ["app-only", "read", "workspace"] {
             for groups in choices {
@@ -418,6 +430,22 @@ import Testing
             node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: Self.cli)
         let plain = try policies.last!
         #expect(CodexAdapter.overrides(plain) == #"{"features":{"shell_tool":false,"unified_exec":false}}"#)
+        // An app-only session gets Codex's own shell off too (it had no settings, and Codex offered exec_command).
+        let appOnlyHome = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-contract-apponly-\(UUID().uuidString.prefix(6))", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: appOnlyHome) }
+        let appOnly = try adapter.launch(
+            EngineLaunchContext(
+                home: appOnlyHome, provider: ProviderSetup(kind: .openAI, apiKey: "k"),
+                shell: URL(filePath: "/usr/bin/true"),
+                session: EngineSessionSpec(policy: try policies.first!, servers: [], instructions: nil),
+                loopbackPorts: []))
+        #expect(appOnly.environment["CODEX_CONFIG"] == #"{"features":{"shell_tool":false,"unified_exec":false}}"#)
+        #expect(appOnly.environment["AGNETA_SHELL"] == nil)
+        // Reading files is its shell's: `read` without `execute` is refused, and not reported where there's no shell.
+        #expect(adapter.builtinsRefusal(try narrowed([.read, .edit]), kind: .chatGPT) != nil)
+        #expect(adapter.builtinsRefusal(try narrowed([.read], tools: "read"), kind: .chatGPT) != nil)
+        #expect(adapter.builtinGroups(try policies.first!, kind: .chatGPT)?.contains(.read) == false)
         let kept = try narrowed([.read, .edit, .execute], developer: true)
         let config: JSONValue = try JSONCoding.decode(Data(CodexAdapter.overrides(kept).utf8))
         #expect(config["web_search"] == "disabled" && config["agents"]?["enabled"] == false)
@@ -460,10 +488,17 @@ import Testing
         #expect(available(try narrowed([.read, .edit, .skills])) == ["write", "edit", "tree", "read_image"])
         #expect(available(try narrowed([.execute, .skills], tools: "read")) == ["shell"])
         #expect(available(try narrowed([.skills])) == nil)
-        #expect(goose.builtinGroups(try narrowed([.read, .skills]), kind: .openAIKey) == [.read, .skills])
+        // Reading files is the shell's: `tree` and `read_image` alone aren't reported as `read`, and are refused.
+        #expect(goose.builtinGroups(try narrowed([.read, .skills]), kind: .openAIKey) == [.skills])
+        #expect(
+            goose.builtinGroups(try narrowed([.read, .execute, .skills]), kind: .openAIKey) == [
+                .read, .execute, .skills
+            ])
+        #expect(goose.builtinsRefusal(try narrowed([.read, .edit, .skills]), kind: .openAIKey) != nil)
+        #expect(goose.builtinsRefusal(try narrowed([.read, .skills], tools: "app-only"), kind: .openAIKey) == nil)
         #expect(goose.builtinGroups(try policies.first!, kind: .openAIKey) == [.skills])
         #expect(goose.builtinsRefusal(try narrowed([.read, .edit, .execute]), kind: .openAIKey) != nil)
-        #expect(goose.builtinsRefusal(try narrowed([.read, .skills]), kind: .openAIKey) == nil)
+        #expect(goose.builtinsRefusal(try narrowed([.read, .execute, .skills]), kind: .openAIKey) == nil)
         #expect(goose.builtinsRefusal(try narrowed(BuiltinGroup.allCases), kind: .claude) != nil)
         #expect(goose.builtinsRefusal(try policies.last!, kind: .claude) == nil)
 
@@ -509,6 +544,31 @@ import Testing
         #expect(!may("other", "CronCreate", developer) && !may("other", nil, developer))
         #expect(!may("switch_mode", "ExitPlanMode", developer))
         #expect(may("switch_mode", "ExitPlanMode", try narrowed([.planning], developer: true)))
+        // A name and a kind that disagree need both groups kept: a name never widens a kind.
+        #expect(
+            !may("read", "Bash", developer.with([.read])) && !may("execute", "Read", developer.with([.read, .edit])))
+        #expect(!may("read", "WebFetch", developer) && !may("fetch", "Read", developer))
+        #expect(may("read", "Grep", developer) && may("execute", "Bash", developer))
+        // `think` and `switch_mode` say nothing (claude-agent-acp reports Agent as `think`): a name must place them.
+        let planning = try narrowed([.planning, .read], developer: true)
+        #expect(!may("think", nil, planning) && !may("switch_mode", nil, planning) && !may("think", "Agent", planning))
+        #expect(may("think", "TodoWrite", planning))
+        // Without `builtins`, developer access passes every kind and name, as before.
+        var open = try SessionPolicy.parse(["tools": "workspace"], cwd: cwd, context: context)
+        open.sandbox = .developer
+        for (kind, tool) in [
+            ("fetch", "WebFetch"), ("other", "Monitor"), ("think", "Agent"), ("other", nil), ("execute", "Bash"),
+            ("other", "Skill")
+        ] as [(String?, String?)] {
+            #expect(may(kind, tool, open), "\(kind ?? "-") \(tool ?? "-")")
+        }
+        // Codex's names come only from its own field: a command's title is the model's text.
+        let codex = CodexAdapter(
+            node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: Self.cli)
+        #expect(codex.vouchedToolName(in: ["title": "ToolSearch", "kind": "other"]) == nil)
+        #expect(codex.vouchedToolName(in: ["_meta": ["codex": ["toolName": "apply_patch"]]]) == "apply_patch")
+        let claude = ClaudeCodeAdapter(executable: URL(filePath: "/usr/bin/false"), cli: Self.cli)
+        #expect(claude.vouchedToolName(in: ["_meta": ["claudeCode": ["toolName": "Read"]]]) == "Read")
         let contained = try narrowed([.read])
         #expect(may("read", "Read", contained) && !may("edit", "Edit", contained) && !may("execute", "Bash", contained))
         #expect(BuiltinTools.permitted(by: contained) == [.read])
@@ -646,5 +706,14 @@ extension RouterContractTests {
                 error.code == RPCError.invalidParams
                     && error.data?["agneta"]?["unenforceable"]?.arrayValue?.first?.stringValue == "mcpServers")
         }
+    }
+}
+
+extension SessionPolicy {
+    /// The same policy keeping other groups.
+    fileprivate func with(_ builtins: Set<BuiltinGroup>) -> SessionPolicy {
+        var policy = self
+        policy.builtins = builtins
+        return policy
     }
 }

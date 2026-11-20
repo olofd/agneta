@@ -84,9 +84,7 @@ public enum BuiltinTools: String, CaseIterable, Sendable {
     public static func nativeRunnerMayUse(
         kind: String?, tool: String? = nil, policy: SessionPolicy, brokered: Bool = false
     ) -> Bool {
-        if let groups = policy.builtins, !(tool.map(BuiltinGroup.infrastructure.contains) ?? false) {
-            guard let group = BuiltinGroup.of(kind: kind, tool: tool), groups.contains(group) else { return false }
-        }
+        if let groups = policy.builtins, !BuiltinGroup.kept(kind: kind, tool: tool, in: groups) { return false }
         if policy.sandbox == .developer { return true }
         guard let kind else { return false }
         if inertKinds.contains(kind) { return true }
@@ -151,19 +149,28 @@ public enum BuiltinGroup: String, CaseIterable, Sendable, Comparable {
         return table
     }()
 
-    /// The group of a tool a native runner asks about: by its name where known, else by its ACP kind. Nil for `other`
-    /// without a known name, a missing kind, or one ACP doesn't define: it can't be placed, so a narrowed session
-    /// refuses it.
-    public static func of(kind: String?, tool: String?) -> BuiltinGroup? {
-        if let tool, let group = named[tool] { return group }
+    /// The group an ACP kind that names what a tool does belongs to; nil for `other`, `think`, `switch_mode`, a missing
+    /// kind and one ACP doesn't define, which don't say.
+    public static func of(kind: String?) -> BuiltinGroup? {
         switch kind {
-        case "read", "search": return .read
-        case "edit", "delete", "move": return .edit
-        case "execute": return .execute
-        case "fetch": return .web
-        case "think", "switch_mode": return .planning
-        default: return nil
+        case "read", "search": .read
+        case "edit", "delete", "move": .edit
+        case "execute": .execute
+        case "fetch": .web
+        default: nil
         }
+    }
+
+    /// Whether a native runner's request is inside the kept groups. A kind that says what the tool does decides, and a
+    /// known name must agree with it (both groups kept): a name alone, which an adapter reads from the engine's own
+    /// fields, never widens a kind. A kind that doesn't say (`other`, `think`, `switch_mode`, none) needs a known name
+    /// in a kept group, or one of the tools that only load the app's tools: claude-agent-acp reports Agent as `think`,
+    /// so `think` alone proves nothing, and such a request is refused.
+    public static func kept(kind: String?, tool: String?, in groups: Set<BuiltinGroup>) -> Bool {
+        let named = tool.flatMap { Self.named[$0] }
+        if let group = of(kind: kind) { return groups.contains(group) && named.map(groups.contains) ?? true }
+        if let tool, infrastructure.contains(tool) { return true }
+        return named.map(groups.contains) ?? false
     }
 
     /// `["read", "edit", …]`, or nothing for no narrowing. Anything else is refused, naming the field.
