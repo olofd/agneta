@@ -78,7 +78,7 @@ extension Router {
     func authorize(
         app appID: UUID, grant: Grant, account: String?, engine requested: String? = nil, resuming: Bool = false,
         cwd: String?,
-        policy value: JSONValue?, sent: Bool,
+        policy value: JSONValue?, sent: Bool, appTools: JSONValue? = nil,
         servers: [JSONValue], instructions: String?
     ) async -> Result<Plan, RPCError> {
         guard let account, grant.accounts.contains(account), accounts[account] != nil else {
@@ -102,6 +102,11 @@ extension Router {
         switch Self.fit(policy, sent: sent, grant: grant) {
         case .success(let fitted): policy = fitted
         case .failure(let refusal): return .failure(refusal)
+        }
+        do { policy.appTools = try AppToolsLoad.parse(appTools) } catch let rejection as PolicyRejection {
+            return .failure(rejection.rpcError)
+        } catch {
+            return .failure(RPCError(code: RPCError.invalidParams, message: "Invalid \(AppToolsLoad.key)"))
         }
         if let refusal = Self.refuseServers(servers) { return .failure(refusal) }
         let engine: any EngineAdapter
@@ -308,7 +313,8 @@ extension Router {
     ) -> JSONValue {
         var agneta: [String: JSONValue] = [
             "account": .string(plan.account), "dedicatedEngine": .bool(lease.dedicated),
-            "capabilities": Self.capabilities(lease.engine), "sandbox": .string(plan.sandbox.rawValue)
+            "capabilities": Self.capabilities(lease.engine), "sandbox": .string(plan.sandbox.rawValue),
+            "appTools": Self.appTools(plan.policy, engine: lease.engine)
         ]
         agneta.merge(extra) { _, new in new }
         return (id.map { result.setting("sessionId", to: .string($0)) } ?? result).setting(
@@ -337,7 +343,7 @@ extension Router {
         switch await authorize(
             app: appID, grant: grant, account: requested ?? grant.accounts.first { accounts[$0] != nil },
             engine: params?["_meta"]?["agneta"]?["engine"]?.stringValue, cwd: params?["cwd"]?.stringValue,
-            policy: meta?[SessionPolicy.key], sent: meta?[SessionPolicy.key] != nil,
+            policy: meta?[SessionPolicy.key], sent: meta?[SessionPolicy.key] != nil, appTools: meta?[AppToolsLoad.key],
             servers: params?["mcpServers"]?.arrayValue ?? [], instructions: instructions)
         {
         case .success(let authorized): plan = authorized
@@ -435,13 +441,15 @@ extension Router {
         }
         let original = meta["request"]
         let policyValue = params?["_meta"]?[SessionPolicy.key] ?? original?["_meta"]?[SessionPolicy.key]
+        let appTools = params?["_meta"]?[AppToolsLoad.key] ?? original?["_meta"]?[AppToolsLoad.key]
         let plan: Plan, lease: EngineLease
         switch await authorize(
             app: appID, grant: grant, account: meta["account"]?["id"]?.stringValue,
             engine: meta["engine"]?["id"]?.stringValue,
             resuming: true,
             cwd: params?["cwd"]?.stringValue ?? original?["cwd"]?.stringValue,
-            policy: policyValue, sent: policyValue != nil, servers: params?["mcpServers"]?.arrayValue ?? [],
+            policy: policyValue, sent: policyValue != nil, appTools: appTools,
+            servers: params?["mcpServers"]?.arrayValue ?? [],
             instructions: params?["_meta"]?["agneta/instructions"]?["text"]?.stringValue
                 ?? meta["instructions"]?.stringValue)
         {
@@ -519,13 +527,14 @@ extension Router {
             policyValue = policyValue.setting(
                 "tools", to: .string((grant.tools.rank < SessionPolicy.Tools.read.rank ? grant.tools : .read).rawValue))
         }
+        let appTools = params?["_meta"]?[AppToolsLoad.key] ?? original?["_meta"]?[AppToolsLoad.key]
         let cwd = params?["cwd"]?.stringValue ?? original?["cwd"]?.stringValue
         let plan: Plan, lease: EngineLease
         switch await authorize(
             app: appID, grant: grant, account: meta["account"]?["id"]?.stringValue,
             engine: meta["engine"]?["id"]?.stringValue,
             resuming: true, cwd: cwd,
-            policy: policyValue, sent: true,
+            policy: policyValue, sent: true, appTools: appTools,
             servers: params?["mcpServers"]?.arrayValue ?? [],
             instructions: params?["_meta"]?["agneta/instructions"]?["text"]?.stringValue
                 ?? meta["instructions"]?.stringValue)
@@ -610,8 +619,10 @@ extension Router {
             // Ended while the engine loaded it: end() has let it go, and it gets no trace or announcement.
             guard current(id, generation) else { return .failure(Self.endedWhileOpening) }
             var request = (params ?? [:]).setting("cwd", to: cwd.map(JSONValue.string) ?? .null)
-            request = request.setting(
-                "_meta", to: (request["_meta"] ?? [:]).setting(SessionPolicy.key, to: policyValue))
+            // The trace keeps what the fork runs with, so loading it later gets the same.
+            var recorded = (request["_meta"] ?? [:]).setting(SessionPolicy.key, to: policyValue)
+            if let appTools { recorded = recorded.setting(AppToolsLoad.key, to: appTools) }
+            request = request.setting("_meta", to: recorded)
             openTrace(
                 traces, task: id, grant: grant, accountID: plan.account, lease: lease, engineSession: engineSession,
                 policy: plan.policy, sandbox: plan.sandbox, request: request, result: result,

@@ -173,6 +173,7 @@ extension EngineAdapter {
     public var reservedToolServers: Set<String> { [] }
     public func brokersShell(_ policy: SessionPolicy) -> Bool { false }
     public func sessionsDeleted(stateRoot: URL) -> String? { nil }
+    public func appToolsUpfront(_ policy: SessionPolicy) -> Bool? { nil }
 }
 
 public protocol EngineAdapter: Sendable {
@@ -235,6 +236,9 @@ public protocol EngineAdapter: Sendable {
     /// Whether this engine's own shell commands run through Agneta's broker under the policy, so a native runner's
     /// `execute` request is for a brokered command (Claude Code's Bash behind its shell prefix).
     func brokersShell(_ policy: SessionPolicy) -> Bool
+    /// Whether the app's MCP tools (their descriptions and schemas) are in the model's first request under the policy's
+    /// `appTools`, as measured on the pinned or minimum engine version (docs/ENGINES.md); nil when not known.
+    func appToolsUpfront(_ policy: SessionPolicy) -> Bool?
     func permitsMode(_ mode: String) -> Bool
     /// A model call reported in the stream instead (a notification), as a usage row (keys as `UsageLedger`,
     /// plus `id` to recognize repeats), or nil.

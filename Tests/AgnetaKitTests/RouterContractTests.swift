@@ -109,6 +109,10 @@ actor FakeEngines: EngineSource {
 
     /// The engine each open was for.
     private(set) var askedEngines: [String] = []
+    /// The policy each open was for.
+    private(set) var askedPolicies: [SessionPolicy] = []
+    /// The params of every `session/new` and `session/load` the engines got, in order.
+    private(set) var opening: [(method: String, params: JSONValue)] = []
     /// What the engine was asked to set (`session/set_config_option`): config id = value, in order.
     private(set) var configSets: [String] = []
     /// The model and effort it offers, and what's current, as a real engine lists them (Router+Settings).
@@ -135,6 +139,7 @@ actor FakeEngines: EngineSource {
     ) async throws -> EngineLease {
         opened += 1
         askedEngines.append(adapter.id)
+        askedPolicies.append(policy)
         if openDelay > .zero { try? await Task.sleep(for: openDelay) }
         let gate = Gate()
         gates.append(gate)
@@ -170,6 +175,7 @@ actor FakeEngines: EngineSource {
         func update(_ update: JSONValue) async {
             try? await engine.notify("session/update", ["sessionId": session, "update": update])
         }
+        if method == "session/new" || method == "session/load" { opening.append((method, params ?? .null)) }
         switch method {
         case "session/new":
             // As real engines may: an update for the new session before the answer that names it.
@@ -266,6 +272,10 @@ actor FakeEngines: EngineSource {
         case "session/load":
             try? await Task.sleep(for: loadDelay)
             return .success(["models": ["currentModelId": "fake-model"], "configOptions": []])
+        case "_goose/unstable/session/export":
+            return .success(["data": ["copied": session]])
+        case "_goose/unstable/session/import":
+            return .success(["sessionId": .string("e\(n)-imported"), "messageCount": 2])
         case "session/close":
             switch close {
             case .answer: return .success([:])
@@ -1428,6 +1438,89 @@ actor FakeEngines: EngineSource {
             "agneta/steer", ["sessionId": .string(session), "prompt": [["type": "text", "text": "finish"]]])
         #expect(try await first.value["stopReason"]?.stringValue == "end_turn")
         #expect(try await app.prompt(session, "hello")["stopReason"]?.stringValue == "end_turn")
+    }
+
+    /// `agneta/appTools` reaches the engine as its own configuration (Claude Code: tool search off, no ToolSearch) and
+    /// is reported in the reply; a load or fork that sends none keeps the original's, and a fork's own load keeps the
+    /// fork's. Without it nothing changes, and anything but `{"load": "always" | "engine"}` is refused.
+    @Test func appToolsLoadUpFrontWhenAsked() async throws {
+        let stack = try await Stack.start(port: 47640)
+        defer { stack.stop() }
+        let claude = ClaudeCodeAdapter(
+            executable: URL(filePath: "/usr/bin/false"),
+            cli: InstalledCLI(path: URL(filePath: "/usr/bin/false"), version: "2", source: "path"))
+        await stack.router.setCatalog(EngineCatalog(ready: [Self.goose, claude]))
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Tools")
+        let cwd = JSONValue.string(stack.root.appending(path: "work").path(percentEncoded: false))
+        let always: JSONValue = ["load": "always"]
+        func open(_ account: String, _ appTools: JSONValue?) async throws -> JSONValue {
+            var meta: JSONValue = [
+                SessionPolicy.key: ["tools": "app-only", "approval": "never-ask"],
+                "agneta": ["account": .string(account)]
+            ]
+            if let appTools { meta = meta.setting(AppToolsLoad.key, to: appTools) }
+            return try await app.request("session/new", ["cwd": cwd, "mcpServers": [], "_meta": meta])
+        }
+        func lastOptions() async -> JSONValue? {
+            await stack.engines.opening.last?.params["_meta"]?["claudeCode"]?["options"]
+        }
+
+        // Claude Code's own behaviour unless asked: deferred behind ToolSearch.
+        let plain = try await open("native", nil)
+        #expect(plain["_meta"]?["agneta"]?["appTools"] == ["load": "engine", "upfront": false])
+        var options = await lastOptions()
+        #expect(options?["tools"] == ["ToolSearch"] && options?["env"] == nil)
+
+        // Asked for: tool search off, ToolSearch gone, and the same on a load that sends no `_meta`.
+        let upfront = try await open("native", always)
+        let session = try #require(upfront["sessionId"]?.stringValue)
+        #expect(upfront["_meta"]?["agneta"]?["appTools"] == ["load": "always", "upfront": true])
+        options = await lastOptions()
+        #expect(options?["tools"] == [] && options?["env"] == ["ENABLE_TOOL_SEARCH": "false"])
+        _ = try await app.request("session/close", ["sessionId": .string(session)])
+        let loaded = try await app.request(
+            "session/load", ["sessionId": .string(session), "cwd": cwd, "mcpServers": []])
+        #expect(loaded["_meta"]?["agneta"]?["appTools"]?["load"] == "always")
+        #expect(await stack.engines.opening.last?.method == "session/load")
+        #expect(await lastOptions()?["env"] == ["ENABLE_TOOL_SEARCH": "false"])
+
+        // A fork keeps the original's, and so does a later load of the fork; Goose has its tools up front anyway.
+        let original = try #require(try await open("brokered", always)["sessionId"]?.stringValue)
+        let fork = try await app.request("agneta/fork", ["sessionId": .string(original), "mcpServers": []])
+        let forked = try #require(fork["sessionId"]?.stringValue)
+        #expect(fork["_meta"]?["agneta"]?["appTools"] == ["load": "always", "upfront": true])
+        #expect(await stack.engines.askedPolicies.last?.appTools == .always)
+        _ = try await app.request("session/close", ["sessionId": .string(forked)])
+        _ = try await app.request("session/load", ["sessionId": .string(forked), "cwd": cwd, "mcpServers": []])
+        #expect(await stack.engines.askedPolicies.last?.appTools == .always)
+        // Its own `_meta` wins.
+        let own = try await app.request(
+            "agneta/fork",
+            ["sessionId": .string(original), "mcpServers": [], "_meta": [AppToolsLoad.key: ["load": "engine"]]])
+        #expect(own["_meta"]?["agneta"]?["appTools"]?["load"] == "engine")
+
+        // Refused on every path, naming the extension.
+        for value: JSONValue in ["always", ["load": "sometimes"], ["load": 1], ["load": "always", "defer": false]] {
+            for (method, params) in [
+                ("session/new", ["cwd": cwd, "mcpServers": [], "_meta": ["agneta": ["account": "native"]]]),
+                ("session/load", ["sessionId": .string(session), "cwd": cwd, "mcpServers": []]),
+                ("agneta/fork", ["sessionId": .string(original), "mcpServers": []])
+            ] as [(String, JSONValue)] {
+                _ = try? await app.request("session/close", ["sessionId": .string(session)])
+                let sent = params.setting("_meta", to: (params["_meta"] ?? [:]).setting(AppToolsLoad.key, to: value))
+                do {
+                    _ = try await app.request(method, sent)
+                    Issue.record("\(method) took \(value)")
+                } catch let error as RPCError {
+                    #expect(
+                        error.code == RPCError.invalidParams
+                            && error.data?["agneta"]?["unenforceable"] == [.string(AppToolsLoad.key)],
+                        "\(method) \(value): \(error.message)")
+                }
+            }
+        }
     }
 
     /// Modes that stop asking are refused where Agneta gates calls from the questions.

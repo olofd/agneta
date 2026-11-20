@@ -125,6 +125,7 @@ What the user allows an app is two lists: the **providers** (each an account: a 
 | `agneta/setup` | `agneta/setup`: Agneta's add-provider window, for the user to connect one |
 | `agneta/task` | A title and a stop warning shown in Agneta's menu |
 | `agneta/instructions` | Instructions at start, and `agneta/instructions/set` between turns |
+| `agneta/appTools` | The app's MCP tools in the model's context from the first request, on every engine ([`agneta/appTools`](#agnetaapptools)) |
 | `agneta/steer` | `agneta/steer` during a turn |
 | `agneta/usage` | Each prompt result's usage: model calls, tokens, cost, and what the numbers mean |
 | `agneta/limit` | Which limit stopped a turn: the policy's, or one the user set for the app |
@@ -191,6 +192,7 @@ The user can limit each app in Settings → Apps. Every limit is optional, and n
                         "limits": {"maxTurns": 200, "maxSeconds": 1800}},
     "agneta/task": {"title": "Tidying the project notes", "stopWarning": "Example App keeps the work so far"},
     "agneta/instructions": {"text": "You are Example App's assistant…"},
+    "agneta/appTools": {"load": "always"},
     "agneta/trace": {"live": true}
   }
 }
@@ -302,6 +304,20 @@ A narrowed grant stops a session that no longer fits, too. What's left: if your 
 
 The app's own MCP servers (`mcpServers`, which the engine calls) aren't affected by any of this.
 
+### `agneta/appTools`
+
+How the engine offers your MCP tools to the model. `{"load": "always"}` puts every one of them, with its description and schema, in the model's context from the first request, on every engine: ask for it when your tools are central to the task and their descriptions carry the instructions for it. `{"load": "engine"}`, or leaving it out, keeps each engine's own behaviour ([ENGINES.md](ENGINES.md)):
+
+| Engine | `engine` (the default) | `always` |
+| --- | --- | --- |
+| Claude Code | Deferred behind its tool search: the model sees only your tools' names, and loads each with `ToolSearch` before its first call | Up front: tool search is off for the session, and `ToolSearch` isn't offered |
+| Codex, Goose, OpenCode | Up front | Up front (nothing changes) |
+
+- Tools up front take context on every request, about as much as their descriptions and schemas; that's what Claude Code's deferral saves.
+- Anything else (another `load`, another field, a value that isn't an object) is refused with `-32602` and `data.agneta.unenforceable: ["agneta/appTools"]`.
+- `session/load` and `agneta/fork` keep the original's unless their `_meta` sets it.
+- The result says what the session got, in `_meta.agneta.appTools` ([The result](#the-result)).
+
 ### Instructions
 
 `agneta/instructions.text`, or ACP's `systemPrompt`, sets the session's instructions. Goose, OpenCode and Claude Code use them as the system prompt; Codex appends them to its own instructions, which say how to use its tools ([ENGINES.md](ENGINES.md)).
@@ -309,7 +325,7 @@ The app's own MCP servers (`mcpServers`, which the engine calls) aren't affected
 ### The result
 
 - `sessionId`: Agneta's id, never the engine's.
-- `_meta.agneta`: `account`, `dedicatedEngine` (whether the session has an engine process of its own), `sandbox` (the mode the task really got, [Sandbox](#sandbox)), and `capabilities`:
+- `_meta.agneta`: `account`, `dedicatedEngine` (whether the session has an engine process of its own), `sandbox` (the mode the task really got, [Sandbox](#sandbox)), `appTools` (`{"load", "upfront"}`: the [`agneta/appTools`](#agnetaapptools) it runs with, and whether your tools are in the model's first request on this engine, `null` if Agneta doesn't know), and `capabilities`:
 
 | Field | Meaning |
 | --- | --- |
@@ -388,7 +404,7 @@ The result:
 **Waiting for room.** At most 8 turns run at once, at most 3 per account, and no more of an app's than the user's `atOnce` limit for it; up to 32 more wait. A turn waits only behind earlier turns that want the same room (on the same account, unless that one waits for its own app's limit; or of the same app, when that one waits for the app's limit), so a busy account, or an app at its own limit, never holds up another. A waiting turn's app gets `agneta/queued {"sessionId", "position", "waitingFor"}`, where `waitingFor` is `app` (its own `atOnce` limit: say "waiting for your limit of tasks at once"), `account` or `agneta`, and the prompt simply returns later. `session/cancel` takes a waiting turn out at once (`cancelled`). A prompt when the queue is full fails with `-32012`.
 
 **Resuming.** `session/load {"sessionId", "cwd", "mcpServers", "_meta"?}` reopens one of the app's earlier tasks after a close or an Agneta restart, within the history retention.
-- Pass the tool servers again, since their bearers are per session. The policy and instructions default to the original ones; `_meta` may set new ones, and ask for live trace delivery.
+- Pass the tool servers again, since their bearers are per session. The policy, instructions and `agneta/appTools` default to the original ones; `_meta` may set new ones, and ask for live trace delivery.
 - The engine returns to the same engine home and replays the conversation as `session/update`s before the result. The next turn sees the whole history, and the trace continues with the next sequence numbers.
 - The result's `_meta.agneta.resumed` is true.
 - It passes the same checks as `session/new`: the provider (granted, not paused), the engine (still allowed), the policy against the grant, the tool servers and the cost limit.
@@ -400,7 +416,7 @@ The result:
 **Forking.** `agneta/fork {"sessionId", "mcpServers", "cwd"?, "_meta"?}` starts a new task with a copy of one of the app's tasks, open or finished: for example, to ask about a run without changing it.
 - The new task has its own id, engine and trace. Its result's `_meta.agneta.forkOf` names the source. Prompts to it never touch the original.
 - Its policy is `_meta`'s if given; otherwise it's the original's with `tools: "read"`.
-- It keeps the original's instructions unless `_meta["agneta/instructions"]` sets new ones.
+- It keeps the original's instructions unless `_meta["agneta/instructions"]` sets new ones, and its `agneta/appTools` unless `_meta` sets that.
 - It passes the same checks as `session/new`, and like a load it needs the engine that saved the original. Its cost starts from zero: it's a task of its own.
 
 **Pause.** The user can pause an account in Agneta's menu. Then nothing new starts on it: `session/new`, `session/load`, `agneta/fork` and `session/prompt` fail with `-32013` and `data.agneta.paused`, and so does a prompt that was waiting in the queue. A turn already running finishes. Open sessions stay open and take turns again once the user resumes the account.
@@ -422,7 +438,7 @@ The result:
 With `approval: "ask-app"`, the engine's `session/request_permission` requests reach the app with Agneta's session id. Agneta applies two rules:
 - **"Always" becomes "once".** An engine may keep an "always" answer beyond the session (OpenCode keeps it for the whole project), so Agneta answers with the matching "once" option. Where the engine offers no "once" option, the call is declined.
 - **Native runners are checked first.** Claude Code and Codex run their own tools, so Agneta answers each request for a built-in tool by its contract with every engine (`BuiltinTools`), before the app is asked: nothing built in under `app-only`; reading and searching (`read`, `search`) under `read`; also editing (`edit`, `delete`, `move`) under `workspace`; and never `fetch` while the network is `none`, nor `execute` apart from Claude Code's Bash, whose commands run through Agneta's broker. Under developer access the request goes to the app (or the policy answers) whatever its kind. Kinds that run nothing of their own (`think`, `switch_mode`) pass. `other` passes only for a tool known by name to run nothing (finding deferred tools, a to-do list, a question, plan mode): adapters report every tool without a reporter of their own as `other`, Claude Code's Monitor (which runs commands) among them. A request with no kind, or one ACP doesn't define, is refused, since Agneta can't tell what it would run.
-- **Claude Code offers only the tools the policy names.** Agneta passes the exact built-in set (`tools`): none but tool search under `app-only`; `Read`, `Glob`, `Grep` under `read`; also `Edit`, `Write`, `NotebookEdit` under `workspace`; plus `Bash` (with `TaskStop` and `Agent`) whenever tools go beyond `app-only`, its commands run through Agneta's broker by Claude Code's shell prefix, never inside the engine's sandbox; Claude Code's own set under developer access, without the tools that reach the claude.ai account or devices, and Monitor and PowerShell. Every session, a resumed one included, is set to the `default` mode, which asks (the adapter starts in `auto`, which doesn't), and gets the same options on resume.
+- **Claude Code offers only the tools the policy names.** Agneta passes the exact built-in set (`tools`): none but tool search under `app-only` (and no tool search when [`agneta/appTools`](#agnetaapptools) is `always`); `Read`, `Glob`, `Grep` under `read`; also `Edit`, `Write`, `NotebookEdit` under `workspace`; plus `Bash` (with `TaskStop` and `Agent`) whenever tools go beyond `app-only`, its commands run through Agneta's broker by Claude Code's shell prefix, never inside the engine's sandbox; Claude Code's own set under developer access, without the tools that reach the claude.ai account or devices, and Monitor and PowerShell. Every session, a resumed one included, is set to the `default` mode, which asks (the adapter starts in `auto`, which doesn't), and gets the same options on resume.
 - **The app's own tools are the app's.** A request for a tool of one of the app's MCP servers isn't refused by that contract (Codex asks for those as `execute`). Agneta trusts only what the engine's adapter vouches for: Codex's own MCP approval marker, Claude Code's tool names. A server can't take a name an engine uses for its own tools (Claude Code's `workspace` and `acp`; Codex's `codex_apps` and `agneta`, its shell): `session/new` refuses it with `-32602` and `unenforceable: ["mcpServers"]`.
 
 Every decision is in the trace's `permission` records: who decided (`asked-app`, `allowed-by-policy`, `refused-by-policy`), the answer, and how long it took.

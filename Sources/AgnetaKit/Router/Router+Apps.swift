@@ -601,6 +601,15 @@ extension Router {
         (try? JSONCoding.decode(JSONCoding.encode(SessionCapabilities(engine)))) ?? [:]
     }
 
+    /// `_meta.agneta.appTools` in a session's reply: the `load` it runs with, and whether the app's tools are in the
+    /// model's first request on this engine (`upfront`, null when not known).
+    static func appTools(_ policy: SessionPolicy, engine: any EngineAdapter) -> JSONValue {
+        [
+            "load": .string(policy.appTools.rawValue),
+            "upfront": engine.appToolsUpfront(policy).map(JSONValue.bool) ?? .null
+        ]
+    }
+
     /// `agneta/trace/read`: a page of one of this app's own tasks, running or finished.
     func readTrace(grant: Grant, params: JSONValue?) async -> Result<JSONValue, RPCError> {
         guard let traces else { return .failure(RPCError(code: RPCError.methodNotFound, message: "Traces are off")) }
@@ -663,7 +672,8 @@ extension Router {
     static let extensions = [
         SessionPolicy.key, "agneta/access", "agneta/catalog", "agneta/setup", "agneta/task", "agneta/instructions",
         "agneta/steer", "agneta/usage",
-        "agneta/trace", "agneta/limit", "agneta/queue", "agneta/rateLimited", "agneta/fork", "agneta/appLimits"
+        "agneta/trace", "agneta/limit", "agneta/queue", "agneta/rateLimited", "agneta/fork", "agneta/appLimits",
+        AppToolsLoad.key
     ]
 
     static func newToken() -> String { SecureRandom.token() }

@@ -165,16 +165,28 @@ public struct ClaudeCodeAdapter: EngineAdapter {
     /// exactly these, so a tool a later version adds stays off until it's named here (the app's MCP tools aren't
     /// affected; measured on 2.1.325). Commands aren't among them: Claude Code runs the ones it judges read-only
     /// without asking, inside the engine's sandbox, which reaches port 443 (measured), so Bash waits for the broker.
-    /// `ToolSearch` only loads deferred tools, the app's among them. Developer access gets Claude Code's own set.
+    /// `ToolSearch` only loads deferred tools, the app's among them, so it goes when nothing is deferred
+    /// (`agneta/appTools` `always`). Developer access gets Claude Code's own set.
     static func tools(_ policy: SessionPolicy) -> [String]? {
         if policy.sandbox == .developer { return nil }
         // Bash (and stopping its background commands) only through the broker; Monitor never on this path.
         let shell = shellBrokered(policy) ? ["Bash", "TaskStop", "Agent"] : []
+        let search = policy.appTools == .always ? [] : ["ToolSearch"]
         switch policy.tools {
-        case .appOnly: return ["ToolSearch"]
-        case .read: return ["Read", "Glob", "Grep", "ToolSearch"] + shell
-        case .workspace: return ["Read", "Glob", "Grep", "Edit", "Write", "NotebookEdit", "ToolSearch"] + shell
+        case .appOnly: return search
+        case .read: return ["Read", "Glob", "Grep"] + search + shell
+        case .workspace: return ["Read", "Glob", "Grep", "Edit", "Write", "NotebookEdit"] + search + shell
         }
+    }
+
+    /// Claude Code's own variables for the session's query, merged over the engine's environment by the adapter
+    /// (`options.env`). Tool search defers every MCP tool by default: only names reach the model, each loaded with
+    /// ToolSearch before its first call (measured on 2.1.326, with 3 tools as with 35). `ENABLE_TOOL_SEARCH=false` sends
+    /// every one with its description and schema from the first request, and no deferral placeholder; leaving
+    /// ToolSearch out of `tools` alone loads them too but keeps a placeholder `defer_loading` entry, and `auto` loads
+    /// them below its threshold while still telling the model they're deferred (both measured), so neither is used.
+    static func environment(_ policy: SessionPolicy) -> [String: String] {
+        policy.appTools == .always ? ["ENABLE_TOOL_SEARCH": "false"] : [:]
     }
 
     /// A second net under the allowlist: the built-ins that run commands or code, fetch, or act beyond the session
@@ -215,6 +227,8 @@ public struct ClaudeCodeAdapter: EngineAdapter {
             "disallowedTools": .array(Self.disallowed(policy).map(JSONValue.string))
         ]
         if let tools = Self.tools(policy) { options["tools"] = .array(tools.map(JSONValue.string)) }
+        let environment = Self.environment(policy)
+        if !environment.isEmpty { options["env"] = .object(environment.mapValues(JSONValue.string)) }
         var meta: [String: JSONValue] = [
             "claudeCode": [
                 "options": .object(options),
@@ -285,6 +299,9 @@ public struct ClaudeCodeAdapter: EngineAdapter {
     public var reservedToolServers: Set<String> { ["workspace", "acp"] }
 
     public func brokersShell(_ policy: SessionPolicy) -> Bool { Self.shellBrokered(policy) }
+
+    /// Deferred behind tool search unless the app asked for them up front.
+    public func appToolsUpfront(_ policy: SessionPolicy) -> Bool? { policy.appTools == .always }
 
     public func exportSession(_ engineSession: String) -> EngineRequest? { nil }
     public func importSession(_ exported: JSONValue) -> EngineRequest? { nil }

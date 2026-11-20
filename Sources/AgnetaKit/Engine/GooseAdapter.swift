@@ -130,6 +130,9 @@ public struct GooseAdapter: EngineAdapter {
         return .some(run.stringValue)
     }
 
+    /// Goose sends every MCP tool with each request (measured on 1.59.2): `agneta/appTools` changes nothing here.
+    public func appToolsUpfront(_ policy: SessionPolicy) -> Bool? { true }
+
     /// Goose names the tool and the model response in `_meta.goose`, and prefixes an MCP server's
     /// tools with the server's name (`app__echo`); the app's own name is the bare one.
     public func toolIdentity(in update: JSONValue) -> (tool: String?, server: String?, message: String?) {

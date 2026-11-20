@@ -77,6 +77,9 @@ public struct SessionPolicy: Sendable, Equatable {
     public func caches(scratch: URL) -> URL {
         buildCaches ?? scratch.appending(path: "caches", directoryHint: .isDirectory)
     }
+    /// How the engine offers the app's MCP tools (`_meta["agneta/appTools"]`, AppToolsLoad): set by the router from that
+    /// extension, never from `agneta/policy`, and carried here because every engine call already takes the policy.
+    public var appTools: AppToolsLoad = .engine
     /// The policy's folders as they were checked when it was parsed (resolved, refused if protected), recorded then:
     /// sandbox profiles write these without resolving them again. Empty for a policy built in code.
     public var checkedPaths: Set<String> = []

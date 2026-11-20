@@ -182,6 +182,9 @@ public struct OpenCodeAdapter: EngineAdapter {
 
     public func activeRun(in update: JSONValue) -> String?? { nil }
 
+    /// OpenCode sends every MCP tool with each request (measured on 2.3.0): `agneta/appTools` changes nothing here.
+    public func appToolsUpfront(_ policy: SessionPolicy) -> Bool? { true }
+
     /// OpenCode names an MCP tool `<server>_<tool>` (measured: `app_echo`) and its own tools without a server.
     public func toolIdentity(in update: JSONValue) -> (tool: String?, server: String?, message: String?) {
         guard let name = update["name"]?.stringValue else { return (nil, nil, nil) }
