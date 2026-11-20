@@ -239,16 +239,35 @@ import Testing
         let adapter = CodexAdapter(
             node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: Self.cli)
         let servers: [JSONValue] = [["type": "http", "name": "app", "url": "http://127.0.0.1:1/mcp"]]
-        func config(_ policy: SessionPolicy, shell: URL?) throws -> JSONValue? {
-            let launch = try adapter.launch(
+        func raw(_ policy: SessionPolicy, shell: URL?) throws -> String? {
+            try adapter.launch(
                 EngineLaunchContext(
                     home: home, provider: ProviderSetup(kind: .openAI, apiKey: "k"), shell: shell,
-                    session: EngineSessionSpec(policy: policy, servers: servers, instructions: nil), loopbackPorts: []))
-            return try launch.environment["CODEX_CONFIG"].map { try JSONCoding.decode(Data($0.utf8)) }
+                    session: EngineSessionSpec(policy: policy, servers: servers, instructions: nil), loopbackPorts: [])
+            ).environment["CODEX_CONFIG"]
+        }
+        func config(_ policy: SessionPolicy, shell: URL?) throws -> JSONValue? {
+            try raw(policy, shell: shell).map { try JSONCoding.decode(Data($0.utf8)) }
         }
         var workspace = try #require(try policies.first { $0.tools == .workspace })
         let shell = URL(filePath: "/usr/bin/true")
-        #expect(try config(workspace, shell: shell) == ["features": ["shell_tool": false, "unified_exec": false]])
+        // Byte for byte what Agneta sent before `agneta/appTools`, contained and under developer access (web search on).
+        #expect(try raw(workspace, shell: shell) == #"{"features":{"shell_tool":false,"unified_exec":false}}"#)
+        var developer = workspace
+        developer.sandbox = .developer
+        #expect(
+            try raw(developer, shell: shell)
+                == #"{"features":{"shell_tool":false,"unified_exec":false},"web_search":"live"}"#)
+        developer.appTools = .always
+        #expect(
+            try config(developer, shell: shell)
+                == [
+                    "features": [
+                        "shell_tool": false, "unified_exec": false,
+                        "code_mode": ["direct_only_tool_namespaces": ["mcp__app"]]
+                    ],
+                    "web_search": "live"
+                ])
         #expect(try config(workspace, shell: nil) == nil)
         #expect(adapter.appToolsUpfront(workspace, kind: .openAIKey) == false)
         workspace.appTools = .always
@@ -265,6 +284,14 @@ import Testing
                 "features": ["code_mode": ["direct_only_tool_namespaces": ["mcp__app"]]]
             ])
         #expect(adapter.appToolsUpfront(workspace, kind: .chatGPT) == true)
+        // Named as Codex names a server's namespace (measured for `my-app` and `a.b`).
+        #expect(
+            ["app", "my-app", "a.b", "mcp__x", "", "é"].map(CodexAdapter.namespace(of:)) == [
+                "mcp__app", "mcp__my_app", "mcp__a_b", "mcp__x", "mcp___", "mcp___"
+            ])
+        // The feature that would defer them anyway stays off.
+        let toml = try String(contentsOf: home.appending(path: "codex/config.toml"), encoding: .utf8)
+        #expect(toml.contains("code_mode_only_strict_3p_tools = false"))
     }
 
     /// Goose on a Claude plan runs Claude Code as its model (claude-acp), which inherits Goose's environment: `always`

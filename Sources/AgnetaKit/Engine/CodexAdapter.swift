@@ -69,6 +69,9 @@ public struct CodexAdapter: EngineAdapter {
             # rollouts (.jsonl.zst) would escape Agneta's deletion and usage reading, which read .jsonl.
             memories = false
             local_thread_store_compression = false
+            # Off by default (under development in 0.166 and 0.167); pinned, since it defers every third-party tool
+            # whatever `agneta/appTools` names in `direct_only_tool_namespaces`.
+            code_mode_only_strict_3p_tools = false
 
             [analytics]
             enabled = false
@@ -244,14 +247,25 @@ public struct CodexAdapter: EngineAdapter {
     /// in `direct_only_tool_namespaces` (`directNamespaces`), which bypasses deferral.
     public func appToolsUpfront(_ policy: SessionPolicy, kind: AccountKind?) -> Bool? { policy.appTools == .always }
 
-    /// For `agneta/appTools` `always`: the app's servers as Codex names their namespaces (`mcp__<server>`), set as
+    /// For `agneta/appTools` `always`: the app's servers as Codex names their namespaces (`namespace(of:)`), set as
     /// `features.code_mode.direct_only_tool_namespaces`, which "bypass deferral" and stay top-level tools with every
-    /// description (measured on 0.167.0 through codex-acp 2.7.0, gpt-6.1-sol: all 35 tools in the first request).
-    /// Nil otherwise. Agneta's own shell server isn't named: it isn't the app's.
+    /// description (measured on 0.167.0 through codex-acp 2.7.0, gpt-6.1-sol: all 35 tools in the first request; 0.166.0's
+    /// source has the same setting and deferral code). Nil otherwise. Agneta's own shell server isn't named: it isn't the
+    /// app's.
     static func directNamespaces(_ session: EngineSessionSpec) -> [String]? {
         guard session.policy.appTools == .always else { return nil }
-        let names = session.servers.compactMap { $0["name"]?.stringValue }.map { "mcp__" + $0 }
+        let names = session.servers.compactMap { $0["name"]?.stringValue }.map(namespace(of:))
         return names.isEmpty ? nil : names
+    }
+
+    /// The namespace Codex gives a server's tools: every character but an ASCII letter, digit or `_` becomes `_` (an empty
+    /// name `_`), behind `mcp__` unless it starts with it (`sanitize_responses_api_tool_name` and
+    /// `callable_namespace_with_prefix` in 0.166.0 and 0.167.0; measured: `my-app` is `mcp__my_app`, `a.b` is
+    /// `mcp__a_b`). Two servers that come out the same get a hash suffix from Codex, which this doesn't name.
+    static func namespace(of server: String) -> String {
+        let sanitized = String(server.map { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") ? $0 : "_" })
+        let name = sanitized.isEmpty ? "_" : sanitized
+        return name.hasPrefix("mcp__") ? name : "mcp__" + name
     }
 
     /// Measured: an app's tool is `mcp.<server>.<tool>`; built-ins by their own name.

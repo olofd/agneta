@@ -202,6 +202,7 @@ final class TestClock: @unchecked Sendable {
         let first = try await stack.session(app, account: "brokered")
         _ = try await stack.session(app, account: "brokered")
         // A fork that fails (this engine can't export) isn't counted.
+        await stack.engines.exporting(false)
         #expect(
             await Self.refusal { try await app.request("agneta/fork", ["sessionId": .string(first), "mcpServers": []]) }
                 != nil)
