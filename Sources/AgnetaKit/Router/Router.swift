@@ -192,6 +192,8 @@ public actor Router {
     struct App {
         var peer: RPCPeer
         var grant: Grant?
+        /// The connection's ports (the app's, Agneta's), to find the processes holding it (ToolReach).
+        var ports: (client: Int, server: Int)?
         /// Closes the connection itself, not only the peer: a closed peer on a live socket would leave
         /// the app connected.
         var close: @Sendable () -> Void = {}
@@ -246,6 +248,8 @@ public actor Router {
     let approve: Approve
     let context: PolicyContext
     let traces: Traces?
+    /// How the processes serving a contained session's sockets and ports are found (ToolReach): the system's, or a test's.
+    let reach: ToolReach.Lookup
 
     /// How many turns may run at once. Further prompts wait in order.
     public struct Concurrency: Sendable {
@@ -313,6 +317,8 @@ public actor Router {
     enum Admission { case admitted, cancelled, paused }
     var waiting: [Waiter] = []
     var loading: Set<String> = []
+    /// Reach checks waiting for their grant's running one, by grant (present while one runs).
+    var reachChecks: [String: [CheckedContinuation<Void, Never>]] = [:]
     /// Sessions being opened, by lease: an engine may speak of a new session before its answer names it.
     var openingOn: [String: Int] = [:]
     /// What an engine said about a session not yet registered, by lease and engine session, delivered once it is.
@@ -329,8 +335,9 @@ public actor Router {
         context: PolicyContext, engines: EngineSource, traces: Traces? = nil, concurrency: Concurrency = .init(),
         commit: Commit? = nil,
         now: @escaping @Sendable () -> Date = { Date() }, calendar: Calendar = .autoupdatingCurrent,
-        approve: @escaping Approve
+        reach: ToolReach.Lookup = .system, approve: @escaping Approve
     ) {
+        self.reach = reach
         self.now = now
         self.calendar = calendar
         self.commit = commit
@@ -429,6 +436,7 @@ public actor Router {
     static func fits(account: String, engine: String, policy: SessionPolicy, sandbox: Sandbox, grant: Grant) -> Bool {
         grant.accounts.contains(account) && grant.engines.allows(engine)
             && GrantScope.check(policy, against: grant) == nil && sandbox <= grant.ceiling
+            && GrantScope.reach(policy, against: grant, sandbox: sandbox) == nil
     }
 
     /// What an app may use, as it sees it (AccessReport): each provider it may use, with the engines its tasks there
@@ -701,11 +709,15 @@ public actor Router {
     /// Stops a session from Agneta's UI. The app sees the turn end as cancelled by the user.
     public func stop(_ id: String) async { await stop(id, byLimit: nil) }
 
-    /// Stops a session: by the user, or by a limit the user set for its app (`byLimit`), which the app hears as
-    /// `stoppedBy: "limit"` with the limit, and its running prompt's answer names.
-    func stop(_ id: String, byLimit hit: LimitHit?) async {
+    /// Stops a session: by the user, by a limit the user set for its app (`byLimit`), which the app hears as
+    /// `stoppedBy: "limit"` with the limit, and its running prompt's answer names, or because a socket or port it
+    /// reaches is no longer served by its app (`reach`, the reason: `stoppedBy: "reach"`).
+    func stop(_ id: String, byLimit hit: LimitHit?, reach: String? = nil) async {
         guard let session = sessions[id] else { return }
-        traces?.session(id)?.writer.record("lifecycle", ["event": "stop", "by": hit == nil ? "user" : "limit"])
+        let by: JSONValue = reach != nil ? "reach" : hit == nil ? "user" : "limit"
+        var record: [String: JSONValue] = ["event": "stop", "by": by]
+        if let reach { record["reason"] = .string(reach) }
+        traces?.session(id)?.writer.record("lifecycle", record)
         // Its running prompt is answered as stopped by the limit (and only a running one: nothing is left for a later).
         if let hit, inFlight[id] != nil { enforcedLimits[id] = hit }
         // The app hears who stopped it before the engine answers the cancelled prompt, so its turn ends as stopped by
@@ -713,12 +725,19 @@ public actor Router {
         // stopped reading mustn't hold up Stop.
         if let app = apps[session.app] {
             let peer = app.peer
-            let base: JSONValue = ["sessionId": .string(id), "stoppedBy": hit == nil ? "user" : "limit"]
+            var base: JSONValue = ["sessionId": .string(id), "stoppedBy": by]
+            if let reach { base = base.setting("reason", to: .string(reach)) }
             let params = hit.map { base.setting("limit", to: $0.report) } ?? base
             await Self.bounded(seconds: 1) { try? await peer.notify("agneta/sessionStopped", params) }
         }
         await Self.closeOnEngine(session)
         await end(id, .stopped)
+    }
+
+    /// The broker refused a command on `lease`'s engine: a contained session's socket or port is no longer served by
+    /// its app (ToolReach). Every session on that engine stops, and its app is told why.
+    public func reachLost(lease: String, reason: String) async {
+        for (id, session) in sessions where session.lease.key == lease { await stop(id, byLimit: nil, reach: reason) }
     }
 
     /// Tells the engine a session is over: cancel its turn, then close it, within 5 s together. A stuck engine

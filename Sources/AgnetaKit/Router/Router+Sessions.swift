@@ -71,14 +71,16 @@ extension Router {
 
     /// Every check a session passes before an engine starts: an account the app was granted, not paused; an engine
     /// the grant allows that the account's provider supports and that's here (`taskEngine`); a policy that parses and
-    /// fits the grant; tool servers Agneta can confine; and a cost limit only where the engine reports cost (on
+    /// fits the grant, a contained one reaching only its app's own sockets and ports or sockets in its folders
+    /// (ToolReach); tool servers Agneta can confine; and a cost limit only where the engine reports cost (on
     /// another it would silently never trip). `sent`: the policy came from the app (or the task
     /// it resumes), so it's held to the grant as it is; one Agneta supplies gets no more tools than granted.
     func authorize(
-        grant: Grant, account: String?, engine requested: String? = nil, resuming: Bool = false, cwd: String?,
+        app appID: UUID, grant: Grant, account: String?, engine requested: String? = nil, resuming: Bool = false,
+        cwd: String?,
         policy value: JSONValue?, sent: Bool,
         servers: [JSONValue], instructions: String?
-    ) -> Result<Plan, RPCError> {
+    ) async -> Result<Plan, RPCError> {
         guard let account, grant.accounts.contains(account), accounts[account] != nil else {
             return .failure(
                 RPCError(code: RPCError.invalidParams, message: "This app isn't allowed to use that account"))
@@ -149,10 +151,62 @@ extension Router {
             policy.buildCaches = root.realFileURL.appending(
                 path: ".build-caches/\(grant.id)", directoryHint: .isDirectory)
         }
+        // A contained task's sockets and ports: within its folders, or the app's own (ToolReach). Last, since it waits:
+        // the probes run off the router (one app's slow or silent servers never hold up another's), and nothing after
+        // them reads the router's state. What a later step needs is checked again after its own waits (`refusal`).
+        let unresolved = effective == .contained ? ToolReach.unresolved(policy, grant: grant) : []
+        if unresolved.count > ToolReach.most {
+            return .failure(
+                PolicyRejection(
+                    field: policy.toolPorts.count >= policy.toolSockets.count ? "toolPorts" : "toolSockets",
+                    reason:
+                        "a contained session may name at most \(ToolReach.most) sockets and ports beyond its folders, "
+                        + "not \(unresolved.count)"
+                ).rpcError)
+        }
+        if !unresolved.isEmpty {
+            let app = reachingApp(appID, grant: grant)
+            // One check per app at a time: an app opening many sessions at once can't flood the probes' threads.
+            await beginReachCheck(grant.id)
+            policy.servedByApp = await ToolReach.served(unresolved, by: app, lookup: reach)
+            endReachCheck(grant.id)
+            policy.reachCheck = ToolReach.Check(app: app, name: grant.app, endpoints: unresolved)
+        }
+        if let refusal = GrantScope.reach(policy, against: grant, sandbox: effective) {
+            return .failure(refusal.rpcError)
+        }
         return .success(
             Plan(
                 account: account, engine: engine, policy: policy, servers: servers, instructions: instructions,
                 sandbox: effective))
+    }
+
+    /// Waits until no other reach check of this grant's is running, then holds the turn.
+    func beginReachCheck(_ grant: String) async {
+        guard reachChecks[grant] != nil else {
+            reachChecks[grant] = []
+            return
+        }
+        await withCheckedContinuation { reachChecks[grant, default: []].append($0) }
+    }
+
+    /// Hands the turn to the grant's next waiting check, or frees it.
+    func endReachCheck(_ grant: String) {
+        guard var waiting = reachChecks[grant], !waiting.isEmpty else {
+            reachChecks[grant] = nil
+            return
+        }
+        let next = waiting.removeFirst()
+        reachChecks[grant] = waiting
+        next.resume()
+    }
+
+    /// Who counts as the app for what it serves: a verified grant's team, or the processes holding its connection now,
+    /// as instances (a pid reused later is another process).
+    func reachingApp(_ appID: UUID, grant: Grant) -> ToolReach.App {
+        if grant.verified, let team = grant.team { return ToolReach.App(team: team, processes: []) }
+        let pids = apps[appID]?.ports.map { reach.connection($0.client, $0.server) } ?? []
+        return ToolReach.App(team: nil, processes: pids.compactMap(reach.instance))
     }
 
     /// The refusal for anything new on a paused account, or nil when it isn't paused.
@@ -280,8 +334,8 @@ extension Router {
                 separator: "\n")
         let plan: Plan, lease: EngineLease
         // Without an account named: the first one the app may use that's here.
-        switch authorize(
-            grant: grant, account: requested ?? grant.accounts.first { accounts[$0] != nil },
+        switch await authorize(
+            app: appID, grant: grant, account: requested ?? grant.accounts.first { accounts[$0] != nil },
             engine: params?["_meta"]?["agneta"]?["engine"]?.stringValue, cwd: params?["cwd"]?.stringValue,
             policy: meta?[SessionPolicy.key], sent: meta?[SessionPolicy.key] != nil,
             servers: params?["mcpServers"]?.arrayValue ?? [], instructions: instructions)
@@ -382,8 +436,9 @@ extension Router {
         let original = meta["request"]
         let policyValue = params?["_meta"]?[SessionPolicy.key] ?? original?["_meta"]?[SessionPolicy.key]
         let plan: Plan, lease: EngineLease
-        switch authorize(
-            grant: grant, account: meta["account"]?["id"]?.stringValue, engine: meta["engine"]?["id"]?.stringValue,
+        switch await authorize(
+            app: appID, grant: grant, account: meta["account"]?["id"]?.stringValue,
+            engine: meta["engine"]?["id"]?.stringValue,
             resuming: true,
             cwd: params?["cwd"]?.stringValue ?? original?["cwd"]?.stringValue,
             policy: policyValue, sent: policyValue != nil, servers: params?["mcpServers"]?.arrayValue ?? [],
@@ -466,8 +521,9 @@ extension Router {
         }
         let cwd = params?["cwd"]?.stringValue ?? original?["cwd"]?.stringValue
         let plan: Plan, lease: EngineLease
-        switch authorize(
-            grant: grant, account: meta["account"]?["id"]?.stringValue, engine: meta["engine"]?["id"]?.stringValue,
+        switch await authorize(
+            app: appID, grant: grant, account: meta["account"]?["id"]?.stringValue,
+            engine: meta["engine"]?["id"]?.stringValue,
             resuming: true, cwd: cwd,
             policy: policyValue, sent: true,
             servers: params?["mcpServers"]?.arrayValue ?? [],

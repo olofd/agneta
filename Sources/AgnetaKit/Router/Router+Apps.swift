@@ -14,7 +14,9 @@ extension Router {
         guard !shutDown, apps.values.count(where: { $0.grant == nil }) < concurrency.unpaired else {
             connection.close(); return
         }
-        apps[id] = App(peer: peer, grant: nil, close: { connection.close() })
+        apps[id] = App(
+            peer: peer, grant: nil, ports: port.flatMap { client in serverPort.map { (client, $0) } },
+            close: { connection.close() })
         let unpairedFor = concurrency.unpairedFor
         Task { [weak self] in
             try? await Task.sleep(for: unpairedFor)

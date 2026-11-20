@@ -81,8 +81,8 @@ export type TurnEvent =
   | { type: 'queued'; position: number; waitingFor?: QueuedParams['waitingFor'] }
   /** The provider's limit stopped the turn; the turn then fails with `RateLimitedError`. */
   | { type: 'rateLimited'; details: RateLimitDetails }
-  /** The session was stopped while the turn ran. */
-  | { type: 'stopped'; stoppedBy: StoppedBy };
+  /** The session was stopped while the turn ran; `detail` says why when Agneta did (`reach`: the socket or port). */
+  | { type: 'stopped'; stoppedBy: StoppedBy; detail?: string };
 
 export interface TurnResult {
   stopReason: StopReason;
@@ -236,8 +236,11 @@ export class Turn implements PromiseLike<TurnResult>, AsyncIterable<TurnEvent> {
 /** How a session ended. */
 export type SessionEnd =
   | { reason: 'closed' }
-  /** Stopped in Agneta (`agneta/sessionStopped`): by the user, by the engine exiting, or by a limit Agneta enforced. */
-  | { reason: 'stopped'; stoppedBy: StoppedBy }
+  /**
+   * Stopped in Agneta (`agneta/sessionStopped`): by the user, by the engine exiting, by a limit Agneta enforced, or
+   * because a contained session's socket or port is no longer served by your app (`reach`, with why in `detail`).
+   */
+  | { reason: 'stopped'; stoppedBy: StoppedBy; detail?: string }
   /** The connection closed: Agneta ends a connection's sessions with it. Load the session again to go on. */
   | { reason: 'disconnected'; error: ConnectionClosedError };
 
@@ -506,10 +509,13 @@ export class Session extends Emitter<SessionEvents> {
         this.emit('rateLimited', details);
         return;
       }
-      case 'agneta/sessionStopped':
-        this.#turn?.push({ type: 'stopped', stoppedBy: params.stoppedBy });
-        this.end({ reason: 'stopped', stoppedBy: params.stoppedBy });
+      case 'agneta/sessionStopped': {
+        // Agneta's reason, when it gives one, is the detail: `reason` already says how the session ended.
+        const detail = typeof params.reason === 'string' ? { detail: params.reason } : {};
+        this.#turn?.push({ type: 'stopped', stoppedBy: params.stoppedBy, ...detail });
+        this.end({ reason: 'stopped', stoppedBy: params.stoppedBy, ...detail });
         return;
+      }
       case 'agneta/trace':
         if (Array.isArray(params.records) && params.records.length) this.emit('trace', params.records);
         if (params.overflow && typeof params.overflow.after === 'number') this.emit('traceOverflow', params.overflow.after);

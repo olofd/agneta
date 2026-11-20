@@ -21,9 +21,13 @@ public final class ToolBroker: @unchecked Sendable {
     public struct Grant: Sendable {
         public var profile: String
         public var environment: [String: String]
-        public init(profile: String, environment: [String: String]) {
+        /// Checked before each command: why the session may no longer run commands, or nil. A contained session's
+        /// sockets and ports must still be served by its app (ToolReach.Check).
+        public var reach: (@Sendable () -> String?)?
+        public init(profile: String, environment: [String: String], reach: (@Sendable () -> String?)? = nil) {
             self.profile = profile
             self.environment = environment
+            self.reach = reach
         }
     }
 
@@ -31,6 +35,8 @@ public final class ToolBroker: @unchecked Sendable {
     private let resolve: @Sendable (_ token: String, _ cwd: URL) -> Grant?
     /// Each command's outcome for the task trace: command, cwd, exit status or signal, timing, output sizes.
     private let report: @Sendable (_ token: String, _ fields: [String: JSONValue]) -> Void
+    /// A token's session failed its grant's `reach` check: its commands are stopped, and its session must stop too.
+    private let lost: @Sendable (_ token: String, _ reason: String) -> Void
     private let shell: String
     /// `agneta-shell`, run as each command's group holder (`--hold`), so what a command starts in the background lives
     /// on until its engine ends; without it, a command's group ends with the command.
@@ -41,6 +47,10 @@ public final class ToolBroker: @unchecked Sendable {
     private let registryLock = NSLock()
     private var running: [String: [UUID: ChildProcess]] = [:]
     private var revoked: Set<String> = []
+    /// Tokens whose grant's `reach` is being checked while their commands or background jobs run.
+    private var watching: Set<String> = []
+    /// How often that is: a background job started by an earlier command can connect at any time.
+    private let watchEvery: Duration
     /// Set once Agneta stops: every command has been ended and none starts again.
     private var stopped = false
 
@@ -49,8 +59,12 @@ public final class ToolBroker: @unchecked Sendable {
     public init(
         socketPath: String, shell: String = "/bin/bash", holder: String? = nil,
         resolve: @escaping @Sendable (_ token: String, _ cwd: URL) -> Grant?,
-        report: @escaping @Sendable (_ token: String, _ fields: [String: JSONValue]) -> Void = { _, _ in }
+        report: @escaping @Sendable (_ token: String, _ fields: [String: JSONValue]) -> Void = { _, _ in },
+        lost: @escaping @Sendable (_ token: String, _ reason: String) -> Void = { _, _ in },
+        watchEvery: Duration = .seconds(1)
     ) {
+        self.watchEvery = watchEvery
+        self.lost = lost
         self.socketPath = socketPath
         self.shell = shell
         self.holder = holder
@@ -117,6 +131,40 @@ public final class ToolBroker: @unchecked Sendable {
         return children.count
     }
 
+    /// While a token's commands or background jobs run, asks its grant's `reach` again every `watchEvery`: a job an
+    /// earlier command left running (`(sleep 5; nc localhost 8125) &`) passed that command's check and can connect
+    /// whenever it likes. On a loss its commands stop and its session is reported lost, as before a command.
+    private func watch(_ token: String, reach: @escaping @Sendable () -> String?) {
+        guard registryLock.withLock({ watching.insert(token).inserted }) else { return }
+        let every = Double(watchEvery.components.seconds) + Double(watchEvery.components.attoseconds) / 1e18
+        Thread { [weak self] in
+            while true {
+                Thread.sleep(forTimeInterval: every)
+                guard let self else { return }
+                let live = self.registryLock.withLock { () -> Bool in
+                    let live = !self.stopped && !self.revoked.contains(token) && !(self.running[token]?.isEmpty ?? true)
+                    if !live { self.watching.remove(token) }
+                    return live
+                }
+                guard live else { return }
+                guard let reason = reach() else { continue }
+                // Everything may have ended while it was asked: nothing to stop, and no session to report.
+                let still = self.registryLock.withLock { () -> Bool in
+                    let still =
+                        !self.stopped && !self.revoked.contains(token) && !(self.running[token]?.isEmpty ?? true)
+                    if !still { self.watching.remove(token) }
+                    return still
+                }
+                guard still else { return }
+                self.stopCommands(token: token)
+                self.registryLock.withLock { _ = self.watching.remove(token) }
+                self.report(token, ["refused": .string(reason), "while": "running"])
+                self.lost(token, reason)
+                return
+            }
+        }.start()
+    }
+
     /// How many commands a token's engine has running now.
     public func runningCommands(token: String) -> Int { registryLock.withLock { running[token]?.count ?? 0 } }
 
@@ -165,6 +213,17 @@ public final class ToolBroker: @unchecked Sendable {
             report(request.token, fields)
             return
         }
+        // What the session reaches beyond its folders is still its app's: a server replaced by another program's since
+        // the last command ends the session, its running commands with it, before this one can reach it.
+        if let reason = grant.reach?() {
+            stopCommands(token: request.token)
+            _ = reply("e " + Data("agneta: \(reason)\n".utf8).base64EncodedString())
+            _ = reply("x 126")
+            fields["refused"] = .string(reason)
+            report(request.token, fields)
+            lost(request.token, reason)
+            return
+        }
         // The command's group: its holder's when there is one (background jobs live on), else its own.
         var holding: ChildProcess?
         let child: ChildProcess
@@ -196,6 +255,7 @@ public final class ToolBroker: @unchecked Sendable {
             return true
         }
         if !admitted { ender.signalGroup(SIGKILL) }
+        if admitted, let reach = grant.reach { watch(request.token, reach: reach) }
         defer { if keeper == nil { registryLock.withLock { _ = running[request.token]?.removeValue(forKey: id) } } }
         if let keeper {
             let token = request.token

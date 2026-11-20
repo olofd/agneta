@@ -326,7 +326,7 @@ actor FakeEngines: EngineSource {
         static func start(
             port: UInt16, concurrency: Router.Concurrency = .init(), appWorkspaces: Bool = false,
             commit: Router.Commit? = nil,
-            clock: TestClock? = nil, calendar: Calendar = .autoupdatingCurrent,
+            clock: TestClock? = nil, calendar: Calendar = .autoupdatingCurrent, reach: ToolReach.Lookup = .system,
             approve: Router.Approve? = nil
         ) async throws -> Stack {
             let root = FileManager.default.temporaryDirectory.appending(
@@ -341,7 +341,7 @@ actor FakeEngines: EngineSource {
                     agnetaRoots: [root.appending(path: "agneta")],
                     appWorkspaces: appWorkspaces ? root.appending(path: "apps", directoryHint: .isDirectory) : nil),
                 engines: engines, traces: traces, concurrency: concurrency, commit: commit,
-                now: { clock?.now ?? Date() }, calendar: calendar
+                now: { clock?.now ?? Date() }, calendar: calendar, reach: reach
             ) { request in
                 PairingCodes.shared.add(request.code)
                 return await approve?(request) ?? Router.PairingAnswer(accounts: ["brokered", "native"], remember: true)

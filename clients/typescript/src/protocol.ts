@@ -253,9 +253,9 @@ export interface Policy {
   denied?: string[];
   /** Variables for shell commands (some names are refused: see the protocol). */
   toolEnvironment?: Record<string, string>;
-  /** Loopback ports shell commands may reach. */
+  /** Loopback ports shell commands may reach. In a contained session, only ports your app serves itself (start them first). */
   toolPorts?: number[];
-  /** Unix sockets shell commands may reach. */
+  /** Unix sockets shell commands may reach. In a contained session, only those in granted folders or your app serves itself. */
   toolSockets?: string[];
   limits?: PolicyLimits;
 }
@@ -448,14 +448,19 @@ export interface QueuedParams {
   waitingFor?: 'app' | 'account' | 'agneta';
 }
 
-/** Who ended a session: the user (Stop in Agneta's menu), the engine (it exited), or a policy limit Agneta enforced. */
-export type StoppedBy = 'user' | 'engine' | 'limit';
+/**
+ * Who ended a session: the user (Stop in Agneta's menu), the engine (it exited), a policy limit Agneta enforced, or
+ * Agneta because a contained session's socket or port is no longer served by your app (`reach`, with `reason`).
+ */
+export type StoppedBy = 'user' | 'engine' | 'limit' | 'reach';
 
 export interface SessionStoppedParams {
   sessionId: string;
   stoppedBy: StoppedBy;
   /** For `limit` when the user's spending limit for the app stopped it (Codex on an API key can't be counted): which, and why. */
   limit?: LimitHit & { reason?: string };
+  /** For `reach`: which socket or port your app no longer serves. */
+  reason?: string;
 }
 
 export interface RateLimitDetails {
