@@ -158,18 +158,18 @@ cp "$app/Contents/Resources/AppIcon.icns" "$staging/.VolumeIcon.icns"
 mkdir "$staging/.background"
 cp packaging/dmg/background.tiff "$staging/.background/background.tiff"
 cp packaging/dmg/DS_Store "$staging/.DS_Store"
+# Asks Spotlight and fseventsd to leave the volume alone, one suspect for what keeps it busy on a fresh runner (both
+# markers are their documented opt-outs). They ship in the DMG as empty hidden files, beside .DS_Store.
+touch "$staging/.metadata_never_index"
+mkdir -p "$staging/.fseventsd"
+touch "$staging/.fseventsd/no_log"
 writable=$(mktemp -u "${TMPDIR:-/tmp}/agneta-dmg-rw-XXXX").dmg
 mount=$(mktemp -d "${TMPDIR:-/tmp}/agneta-dmg-mount-XXXX")
 hdiutil create -quiet -volname Agneta -srcfolder "$staging" -fs HFS+ -format UDRW -ov "$writable"
 hdiutil attach -quiet -nobrowse -noautoopen -mountpoint "$mount" "$writable"
 xcrun SetFile -a C "$mount"
-# Spotlight and fseventsd can still hold a volume just mounted on a fresh runner (hdiutil exits 16, busy): wait for
-# them a few times, then force it, which is safe here since the writable image is thrown away after the convert.
-for attempt in 1 2 3 4 5; do
-  hdiutil detach -quiet "$mount" && break
-  [[ $attempt == 5 ]] && { echo "the DMG's volume stayed busy: forcing it off" >&2; hdiutil detach -quiet -force "$mount"; break; }
-  echo "the DMG's volume is busy (attempt $attempt): waiting" >&2; sleep $((attempt * 2))
-done
+# Something can still hold a volume just mounted on a fresh runner: scripts/dev/detach waits it out and says what.
+scripts/dev/detach "$mount"
 hdiutil convert -quiet "$writable" -format ULFO -ov -o "$out/$name.dmg"
 rm -f "$writable"; rmdir "$mount" 2>/dev/null || true
 if [[ -n "$identity" ]]; then

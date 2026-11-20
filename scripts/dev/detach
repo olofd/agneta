@@ -1,0 +1,27 @@
+#!/bin/bash
+# Detaches a mounted disk image, waiting out whatever still holds it. On a fresh CI runner something can keep a
+# just-mounted volume busy (hdiutil exits 16) past several plain detaches and even a forced one: 0.4.0's and 0.5.0's
+# Intel release builds failed so. The holder hasn't been seen yet, so the first busy attempt and a final failure
+# print what holds the volume (root's processes too, through passwordless sudo where there is one, as on GitHub's
+# runners) and what is attached. A forced detach is safe for the images we make: a writable one thrown away after
+# its convert, or a read-only one we only copied out of.
+#   scripts/dev/detach <mount point>
+set -euo pipefail
+mount=${1:?usage: detach <mount point>}
+holders() {
+  echo "what holds $mount:" >&2
+  sudo -n lsof +D "$mount" >&2 2>/dev/null || lsof +D "$mount" >&2 2>/dev/null || true
+  hdiutil info >&2 || true
+}
+for attempt in 1 2 3 4 5 6 7 8; do
+  if (( attempt <= 4 )); then hdiutil detach -quiet "$mount" && exit 0
+  else hdiutil detach -quiet -force "$mount" && exit 0
+  fi
+  (( attempt == 1 )) && holders
+  (( attempt == 8 )) && break
+  echo "the volume at $mount is busy (attempt $attempt of 8$( (( attempt >= 4 )) && echo ', forcing')): waiting" >&2
+  sleep $((attempt * 2))
+done
+echo "the volume at $mount never came off" >&2
+holders
+exit 1

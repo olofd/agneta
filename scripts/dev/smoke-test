@@ -60,7 +60,7 @@ if [[ "$source" == *.dmg ]]; then
   mounted="$work/mount"
   [[ -L "$work/mount/Applications" ]] || fail "the DMG has no link to Applications"
   ditto "$work/mount/Agneta.app" "$app"
-  hdiutil detach -quiet "$mounted"; mounted=""
+  scripts/dev/detach "$mounted"; mounted=""
 else
   ditto "$source" "$app"
 fi
