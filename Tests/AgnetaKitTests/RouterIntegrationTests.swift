@@ -83,6 +83,17 @@ final class AppClient: @unchecked Sendable {
         }
     }
 
+    /// No answer from Agneta within `answerWithin`: a test that would wait for ever fails instead, naming the request.
+    /// Not an RPCError, so it never passes for a refusal a test expects.
+    struct Unanswered: Error, CustomStringConvertible {
+        let method: String
+        var description: String { "Agneta didn't answer \(method) within \(Int(AppClient.answerWithin)) s" }
+    }
+
+    /// Twice the longest Agneta itself waits within a request (a minute, for an engine to start or a check of an app's
+    /// sockets and ports).
+    static let answerWithin: TimeInterval = 120
+
     func request(_ method: String, _ params: JSONValue) async throws -> JSONValue {
         let id = lock.withLock {
             defer { nextID += 1 }; return nextID
@@ -94,6 +105,11 @@ final class AppClient: @unchecked Sendable {
                 return closed
             }
             guard !isClosed else { continuation.resume(throwing: RPCPeer.PeerError.closed("socket")); return }
+            DispatchQueue.global().asyncAfter(deadline: .now() + Self.answerWithin) { [weak self] in
+                guard let self else { return }
+                self.lock.withLock { self.waiting.removeValue(forKey: id) }?.resume(
+                    throwing: Unanswered(method: method))
+            }
             task.send(.string(String(decoding: data, as: UTF8.self))) { [weak self] error in
                 guard let error, let self else { return }
                 self.lock.withLock { self.waiting.removeValue(forKey: id) }?.resume(throwing: error)
