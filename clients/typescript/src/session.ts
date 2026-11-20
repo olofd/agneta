@@ -370,6 +370,8 @@ export class Session extends Emitter<SessionEvents> {
   get sandbox(): SandboxLevel { return this.raw._meta?.agneta?.sandbox; }
   /** How the engine offers your MCP tools: the `load` it runs with, and whether they're in the model's first request. */
   get appTools(): SessionResultAgneta['appTools'] { return this.raw._meta?.agneta?.appTools; }
+  /** The groups of the engine's own tools it has (`policy.builtins` applied); null when Agneta doesn't know. */
+  get builtins(): SessionResultAgneta['builtins'] { return this.raw._meta?.agneta?.builtins; }
   /** Whether it has an engine process of its own. */
   get dedicatedEngine(): boolean { return this.raw._meta?.agneta?.dedicatedEngine === true; }
   /** Opened with `session/load`. */

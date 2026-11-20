@@ -258,7 +258,19 @@ export interface Policy {
   /** Unix sockets shell commands may reach. In a contained session, only those in granted folders or your app serves itself. */
   toolSockets?: string[];
   limits?: PolicyLimits;
+  /**
+   * The groups of the engine's own tools the session keeps, the same names on every engine. Only narrows: what `tools`,
+   * `sandbox` and `network` don't give stays out. Without it, everything they give. An engine that can't honour it is
+   * refused with `UnenforceableError` (`fields: ['builtins']`).
+   */
+  builtins?: BuiltinGroup[];
 }
+
+/**
+ * A group of an engine's own tools (`builtins` in the policy): reading, editing, shell commands, the web, the engine's
+ * own subagents, skills, and tools that run nothing (to-do lists, plans, questions).
+ */
+export type BuiltinGroup = 'read' | 'edit' | 'execute' | 'web' | 'subagents' | 'skills' | 'planning';
 
 export interface PolicyLimits {
   /** Model calls within one prompt (default 200). */
@@ -339,6 +351,8 @@ export interface SessionResultAgneta {
   sandbox: SandboxLevel;
   /** The `agneta/appTools` it runs with, and whether the app's tools are in the model's first request (null: not known). */
   appTools?: { load: AppToolsLoad; upfront: boolean | null };
+  /** The groups of the engine's own tools the session has, with the policy's `builtins` applied (null: not known). */
+  builtins?: BuiltinGroup[] | null;
   /** `session/load`: true. */
   resumed?: boolean;
   /** `agneta/fork`: the source task. */

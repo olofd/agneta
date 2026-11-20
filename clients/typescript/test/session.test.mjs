@@ -333,6 +333,24 @@ test('appTools asks for the app\'s tools up front on new, load and fork, and rea
   assert.equal(agneta.calls('agneta/fork')[1].params._meta, undefined);
 });
 
+test('policy.builtins narrows the engine\'s own tools, and session.builtins reads what the session has', async (t) => {
+  const { agneta, client } = await setUp(t, {
+    handlers: {
+      'session/new': (message, peer, state) => ({ result: { sessionId: `s${++state.sessions}`, _meta: { agneta: { account: 'p1', dedicatedEngine: true, sandbox: 'developer', capabilities: { engine: 'claude-code' }, builtins: ['read', 'edit', 'execute'] } } } })
+    }
+  });
+  const session = await client.newSession({ policy: { tools: 'workspace', builtins: ['read', 'edit', 'execute'] } });
+  assert.deepEqual(agneta.calls('session/new')[0].params._meta['agneta/policy'], { tools: 'workspace', builtins: ['read', 'edit', 'execute'] });
+  assert.deepEqual(session.builtins, ['read', 'edit', 'execute']);
+  // Refused where the engine can't honour it: the field and the reason, typed.
+  const refusing = await setUp(t, {
+    handlers: {
+      'session/new': () => ({ error: { code: -32602, message: "Agneta can't enforce builtins: Goose always offers its load_skill tool", data: { agneta: { unenforceable: ['builtins'], reason: 'Goose always offers its load_skill tool' } } } })
+    }
+  });
+  await assert.rejects(refusing.client.newSession({ policy: { builtins: ['read'] } }), (error) => error instanceof UnenforceableError && error.fields[0] === 'builtins');
+});
+
 test('fork, close, mode and instructions', async (t) => {
   const { agneta, client } = await setUp(t);
   const session = await client.newSession();

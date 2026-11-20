@@ -222,7 +222,8 @@ const session = await client.newSession({
     tools: 'workspace', sandbox: 'contained', network: 'none', approval: 'ask-app',
     readable: [], writable: [], readOnly: [], denied: [],
     toolEnvironment: { CARGO_HOME: '/…' }, toolPorts: [port], toolSockets: [],
-    limits: { maxTurns: 100, maxSeconds: 900, maxCostUSD: 2 }
+    limits: { maxTurns: 100, maxSeconds: 900, maxCostUSD: 2 },
+    builtins: ['read', 'edit', 'execute']  // only these of the engine's own tools: no web, subagents or skills
   },
   task: { title: 'Tidying the project notes', stopWarning: 'Example App keeps the work so far' },
   instructions: 'You are Example App\'s assistant.',
@@ -234,6 +235,7 @@ session.id;              // Agneta's id
 session.engine;          // 'claude-code'
 session.sandbox;         // what the task really got
 session.appTools;        // { load: 'always', upfront: true }: whether your tools are in the model's first request
+session.builtins;        // ['read', 'edit', 'execute']: the groups of the engine's own tools it has
 session.capabilities;    // { engine, steer, fork, instructionsBetweenTurns, reportsCost }: check before offering them
 session.configOptions;   // the engine's own settings
 ```
@@ -241,6 +243,7 @@ session.configOptions;   // the engine's own settings
 - **Every option is optional.** With none, the session runs in your app's workspace with `workspace` tools (no more than granted), the grant's sandbox and `ask-app` approval. Anything Agneta can't enforce is refused with `UnenforceableError`, naming the `fields` and the `reason`.
 - **Your tools** are MCP servers your app runs on loopback (Streamable HTTP), each with a fresh bearer per session. `httpMcpServer({ name, url, token })` builds the registration.
 - **Your tools up front:** Claude Code and Codex defer MCP tools behind their tool search by default, so the model sees only their names until it loads them (so does Goose on a Claude plan, whose model is Claude Code). When your tools are central to the task and their descriptions are its instructions, pass `appTools: 'always'` (`_meta["agneta/appTools"]`): every engine then has them, descriptions and schemas, from the first request (OpenCode and Goose on an API key always do). `session.appTools` says what the session got; `loadSession` and `fork` keep the original's unless given ([the protocol](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md#agnetaapptools)).
+- **Only some of the engine's own tools:** under developer access an engine brings its whole set (Claude Code's web fetch and search, subagents, skills, plan mode). `policy.builtins` keeps only the groups you name (`read`, `edit`, `execute`, `web`, `subagents`, `skills`, `planning`), on every engine and in both modes, never more than `tools` and `sandbox` give. An engine that can't honour it is refused with `UnenforceableError` and why (Goose always offers its skills; Codex always offers `apply_patch`); name an engine that can. `session.builtins` says what the session has; `loadSession` and `fork` keep it with the policy ([the protocol](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md#narrowing-the-built-in-tools)).
 - **An engine still downloading** (`-32015`) is waited out: the client tries again every 2 s for up to 10 minutes, calling `onDownloadProgress({ engine, received, total })` and emitting `engineDownloading`. `waitForDownload: false` fails at once with `EngineDownloadingError`; a number sets the wait in ms.
 - **More `_meta` or params:** `meta` merges keys into `_meta`, and `params` adds top-level params, for anything this API doesn't name.
 - Opening a session times out after 180 s per attempt (`timeouts.session`).
