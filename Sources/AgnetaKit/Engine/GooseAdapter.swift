@@ -175,6 +175,35 @@ public struct GooseAdapter: EngineAdapter {
     /// and a checkpoint that truncates the log leave no file with it. None changes a row, SQLite allows them beside
     /// Goose's own connection, and Goose went on opening and running sessions after them; while it's mid-write
     /// they wait up to 2 s, then report the log in use.
+    /// Read-only, from the session's row and its messages (1.59.2's schema; any other can't tell). A missing database
+    /// holds none. Measured: asked to delete a session it doesn't have, Goose answers -32603 "Internal error" with
+    /// data "Session not found"; that answer isn't relied on, since this reads what its storage says.
+    public func sessionStored(stateRoot: URL, session: String) -> Bool? {
+        let file = stateRoot.appending(path: "data/sessions/sessions.db").path(percentEncoded: false)
+        guard FileManager.default.fileExists(atPath: file) else { return false }
+        guard URL(filePath: file).realFileURL.path(percentEncoded: false) == file else { return nil }
+        do {
+            var configuration = Configuration()
+            configuration.readonly = true
+            configuration.busyMode = .timeout(2)
+            let queue = try DatabaseQueue(path: file, configuration: configuration)
+            defer { try? queue.close() }
+            return try queue.read { db -> Bool? in
+                guard try Set(db.columns(in: "sessions").map(\.name)).contains("id"),
+                    try Set(db.columns(in: "messages").map(\.name)).contains("session_id")
+                else { return nil }
+                return try Bool.fetchOne(
+                    db,
+                    sql: """
+                        SELECT EXISTS (SELECT 1 FROM sessions WHERE id = ?)
+                            OR EXISTS (SELECT 1 FROM messages WHERE session_id = ?)
+                        """, arguments: [session, session])
+            }
+        } catch {
+            return nil
+        }
+    }
+
     public func sessionsDeleted(stateRoot: URL) -> String? {
         let file = stateRoot.appending(path: "data/sessions/sessions.db").path(percentEncoded: false)
         guard FileManager.default.fileExists(atPath: file) else { return nil }

@@ -352,9 +352,9 @@ struct RouterIntegrationTests {
             #expect(left.all == ["0 "])
             #expect(holding().isEmpty)
             #expect(await stack.runtime.pendingConversations.isEmpty)
-            // Asking again finds nothing to delete, and says so rather than failing silently.
+            // Asked again, its storage says it's gone: nothing to delete, nothing to ask Goose, and done.
             let again = await stack.runtime.router.deleteConversations([conversation])
-            #expect(again.deleted == 0 && !again.problems.isEmpty)
+            #expect(again.deleted == 0 && again.problems.isEmpty && again.done == [conversation])
 
             let next = try await app.newSession(cwd: try stack.workspace("F"), tools: "app-only")
             let reply = try await app.prompt(next, "hello")

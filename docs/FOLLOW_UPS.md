@@ -175,5 +175,5 @@ Tagged 0.3.0 as it was; the fixes go to 0.3.1. Real and fixed: pairing again lef
 
 Left for later:
 - **A wedged shared engine.** A limit ends the session and answers the prompt, but a shared engine (Goose without built-in tools) that ignores the cancel keeps running, for every app on that account. Restarting it would stop the others' sessions; decide whether a limit may.
-- **Shared engines' conversations.** Done after 0.4.0: Goose 1.59.2 has `session/delete`, so the engine is asked, then its database is rewritten so no file keeps the words, and a session id it deleted is never used again in that process (Goose reuses them broken). See [ENGINES.md](ENGINES.md).
+- **Shared engines' conversations.** Done after 0.4.0: Goose 1.59.2 has `session/delete`, so the engine is asked, then its database is rewritten so no file keeps the words, and a session id it was asked to delete is never used again in that process (Goose reuses them broken). See [ENGINES.md](ENGINES.md).
 - **From the review's product ideas:** a support matrix (plan × engine × what works), an operator runbook, more end-to-end tests against the real engines. The matrix is now the capability matrix of the example app [Replica Bench](../examples/replica-bench/README.md).

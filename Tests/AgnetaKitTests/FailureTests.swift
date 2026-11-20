@@ -77,9 +77,10 @@ extension RouterIntegrationTests {
         }
     }
 
-    /// A shared engine that stops answering (frozen here) can't hold up deleting a conversation, nor every deletion
-    /// after it: the pass ends within `deleteWithin`, says why, and keeps the conversation queued. The engine serves
-    /// again once it answers.
+    /// A shared engine that stops answering (frozen here) can't hold up deleting conversations, nor every deletion
+    /// after them: the pass ends within `deleteWithin` however many are queued, says why once, and keeps them all
+    /// queued. Once it answers again (deleting the one it was asked for, late), asking again deletes the rest and
+    /// clears its storage, and the engine serves on.
     @Test func aFrozenSharedEngineCantHoldUpDeletingAConversation() async throws {
         let stack = try await Stack.start(port: 47636, modelPort: 47637)
         do {
@@ -90,16 +91,24 @@ extension RouterIntegrationTests {
             let app = AppClient(port: stack.port)
             defer { app.close() }
             try await app.pairAndInitialize("Frozen")
-            let shared = try await Self.sharedTask(stack, app, "numbat-\(UUID().uuidString.prefix(6))")
-            let pid = try Self.enginePID(stack, shared.task)
+            let words = ["numbat", "quoll"].map { "\($0)-\(UUID().uuidString.prefix(6))" }
+            var tasks: [(task: String, conversation: Router.SharedConversation, database: URL)] = []
+            for told in words { tasks.append(try await Self.sharedTask(stack, app, told)) }
+            let pid = try Self.enginePID(stack, tasks[0].task)
             kill(pid, SIGSTOP)
             let started = ContinuousClock.now
             await stack.runtime.clearHistory()
             await stack.runtime.conversationsSettled()
             kill(pid, SIGCONT)
             #expect(ContinuousClock.now - started < Router.deleteWithin + .seconds(5), "the deletion waited on Goose")
-            #expect(await stack.runtime.pendingConversations == [shared.conversation])
-            #expect(left.all.count == 1 && left.all.last?.hasPrefix("1 Goose didn't delete a session") == true)
+            #expect(Set(await stack.runtime.pendingConversations) == Set(tasks.map(\.conversation)))
+            #expect(left.all == ["2 Goose didn't answer within 10 s"])
+
+            await stack.runtime.retryForgetting()
+            await stack.runtime.conversationsSettled()
+            #expect(await stack.runtime.pendingConversations.isEmpty)
+            #expect(left.all.last == "0 ")
+            for told in words { #expect(Self.holding(told, in: tasks[0].database).isEmpty, "\(told)") }
             let next = try await app.newSession(cwd: try stack.workspace("Shared"), tools: "app-only")
             #expect(try await app.prompt(next, "hello")["stopReason"]?.stringValue == "end_turn")
         } catch {

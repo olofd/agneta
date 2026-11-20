@@ -71,13 +71,14 @@ extension Router {
                 outcome.problems.append("\(group.count) on \(adapter.displayName): \(error.message)")
                 continue
             }
-            // Deleted now or before: what its storage still holds of them is cleared next.
-            var deleted: Set<SharedConversation> = []
-            for conversation in group {
-                if conversation.deleted == true {
-                    deleted.insert(conversation)
-                    continue
-                }
+            // Deleted now or before: what its storage still holds of them is cleared next. One whose rows its storage
+            // no longer has is deleted already (an answer to an earlier ask that came too late), so isn't asked again.
+            func gone(_ conversation: SharedConversation) -> Bool {
+                lease.stateRoot.flatMap { lease.engine.sessionStored(stateRoot: $0, session: conversation.session) }
+                    == false
+            }
+            var deleted = Set(group.filter { $0.deleted == true || gone($0) })
+            for conversation in group.filter({ !deleted.contains($0) }) {
                 // Asked is as good as deleted for a new session's id: one that answers late may still delete it.
                 deletedSessions[Self.process(lease), default: []].insert(conversation.session)
                 do {
@@ -89,10 +90,21 @@ extension Router {
                     deleted.insert(conversation)
                 } catch let error as RPCError where error.code == RPCError.methodNotFound {
                     outcome.problems.append("\(adapter.displayName) can't delete a session")
-                    outcome.done.formUnion(group) // asking again can't help
+                    // Asking again can't help; those it deleted before still have their storage cleared.
+                    outcome.done.formUnion(group.filter { !deleted.contains($0) })
+                    break
+                } catch is EngineSupervisor.TimedOut {
+                    // Stuck, or busy past the bound: the rest wait for the next pass rather than as long again each.
+                    outcome.problems.append(
+                        "\(adapter.displayName) didn't answer within \(Self.deleteWithin.components.seconds) s")
                     break
                 } catch {
-                    outcome.problems.append("\(adapter.displayName) didn't delete a session: \(error)")
+                    // Deleted meanwhile (an earlier ask's late answer): it says the session isn't there.
+                    if gone(conversation) {
+                        deleted.insert(conversation)
+                    } else {
+                        outcome.problems.append("\(adapter.displayName) didn't delete a session: \(error)")
+                    }
                 }
             }
             // A storage that couldn't be cleared (another connection held its log, say) still holds their words: they
