@@ -230,6 +230,43 @@ import Testing
         #expect(goose.appToolsUpfront(developer, kind: .claude) == false)
     }
 
+    /// Codex defers MCP tools on every model in its catalog; `always` names the app's servers as namespaces that bypass
+    /// deferral (`features.code_mode.direct_only_tool_namespaces`), beside the shell's own settings, in CODEX_CONFIG.
+    @Test func codexNamesTheAppsServersDirectWhenAsked() throws {
+        let home = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-contract-codex-\(UUID().uuidString.prefix(6))", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let adapter = CodexAdapter(
+            node: URL(filePath: "/usr/bin/false"), script: URL(filePath: "/x/index.js"), cli: Self.cli)
+        let servers: [JSONValue] = [["type": "http", "name": "app", "url": "http://127.0.0.1:1/mcp"]]
+        func config(_ policy: SessionPolicy, shell: URL?) throws -> JSONValue? {
+            let launch = try adapter.launch(
+                EngineLaunchContext(
+                    home: home, provider: ProviderSetup(kind: .openAI, apiKey: "k"), shell: shell,
+                    session: EngineSessionSpec(policy: policy, servers: servers, instructions: nil), loopbackPorts: []))
+            return try launch.environment["CODEX_CONFIG"].map { try JSONCoding.decode(Data($0.utf8)) }
+        }
+        var workspace = try #require(try policies.first { $0.tools == .workspace })
+        let shell = URL(filePath: "/usr/bin/true")
+        #expect(try config(workspace, shell: shell) == ["features": ["shell_tool": false, "unified_exec": false]])
+        #expect(try config(workspace, shell: nil) == nil)
+        #expect(adapter.appToolsUpfront(workspace, kind: .openAIKey) == false)
+        workspace.appTools = .always
+        #expect(
+            try config(workspace, shell: shell)
+                == [
+                    "features": [
+                        "shell_tool": false, "unified_exec": false,
+                        "code_mode": ["direct_only_tool_namespaces": ["mcp__app"]]
+                    ]
+                ])
+        #expect(
+            try config(workspace, shell: nil) == [
+                "features": ["code_mode": ["direct_only_tool_namespaces": ["mcp__app"]]]
+            ])
+        #expect(adapter.appToolsUpfront(workspace, kind: .chatGPT) == true)
+    }
+
     /// Goose on a Claude plan runs Claude Code as its model (claude-acp), which inherits Goose's environment: `always`
     /// turns its tool search off there too, and nothing changes without it.
     @Test func gooseOnAPlanPassesToolSearchOffToClaudeCode() throws {

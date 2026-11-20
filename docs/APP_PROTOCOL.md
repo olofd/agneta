@@ -312,9 +312,10 @@ How the engine offers your MCP tools to the model. `{"load": "always"}` puts eve
 | --- | --- | --- |
 | Claude Code | Deferred behind its tool search: the model sees only your tools' names, and loads each with `ToolSearch` before its first call | Up front: tool search is off for the session, and `ToolSearch` isn't offered |
 | Goose on a Claude plan (its model is Claude Code) | Deferred, as on Claude Code | Up front: tool search is off for the session's Claude Code |
-| Codex, OpenCode, Goose on an API key | Up front | Up front (nothing changes) |
+| Codex | Deferred behind its tool search, on every model it lists: the model sees only your servers' names | Up front: your servers are named as namespaces that bypass deferral |
+| OpenCode, Goose on an API key | Up front | Up front (nothing changes) |
 
-- Tools up front take context on every request, about as much as their descriptions and schemas; that's what Claude Code's deferral saves.
+- Tools up front take context on every request, about as much as their descriptions and schemas; that's what deferral saves.
 - Anything else (another `load`, another field, a value that isn't an object) is refused with `-32602` and `data.agneta.unenforceable: ["agneta/appTools"]`.
 - `session/load` and `agneta/fork` keep the original's unless their `_meta` sets it. An explicit `null` (or `{}`) means `engine`, there as on `session/new`.
 - The result says what the session got, in `_meta.agneta.appTools` ([The result](#the-result)).

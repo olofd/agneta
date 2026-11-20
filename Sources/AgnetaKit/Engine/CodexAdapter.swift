@@ -138,15 +138,24 @@ public struct CodexAdapter: EngineAdapter {
             context.session?.policy.tools == .workspace ? "workspace-write" : "read-only"
         // Codex's own command tools off, Agneta's shell instead: the server in config.toml offers its tool to this
         // process only (AGNETA_SHELL), running in the session's workspace through this engine's broker token.
+        var config: [String: JSONValue] = [:], features: [String: JSONValue] = [:]
         if context.shell != nil, let policy = context.session?.policy, brokersShell(policy) {
+            features["shell_tool"] = false
+            features["unified_exec"] = false
             // Web search runs on OpenAI's servers, which no sandbox reaches: on under developer access, as in Codex
             // itself; off when contained (the account's config.toml has it off).
-            environment["CODEX_CONFIG"] =
-                policy.sandbox == .developer
-                ? #"{"features":{"shell_tool":false,"unified_exec":false},"web_search":"live"}"#
-                : #"{"features":{"shell_tool":false,"unified_exec":false}}"#
+            if policy.sandbox == .developer { config["web_search"] = "live" }
             environment["AGNETA_SHELL"] = "1"
             environment["AGNETA_SHELL_CWD"] = policy.workspace.path(percentEncoded: false)
+        }
+        if let session = context.session, let namespaces = Self.directNamespaces(session) {
+            features["code_mode"] = ["direct_only_tool_namespaces": .array(namespaces.map(JSONValue.string))]
+        }
+        if !features.isEmpty { config["features"] = .object(features) }
+        // Merged into the session's config by codex-acp (CODEX_CONFIG).
+        if !config.isEmpty {
+            environment["CODEX_CONFIG"] = String(
+                decoding: try JSONCoding.encode(JSONValue.object(config)), as: UTF8.self)
         }
         // Developer access: its commands run as in a terminal, through Agneta's shell in the widened profile, finding the
         // user's toolchains. The mode stays one that asks before edits, so an app that answers permissions is asked.
@@ -229,9 +238,21 @@ public struct CodexAdapter: EngineAdapter {
 
     public func activeRun(in update: JSONValue) -> String?? { nil }
 
-    /// A configured MCP server's tools go to the model up front, as one namespace with every description (measured on
-    /// Codex 0.167.0: 35 tools, no `tool_search`). Codex's own tool search is for ChatGPT apps (`codex_apps`).
-    public func appToolsUpfront(_ policy: SessionPolicy, kind: AccountKind?) -> Bool? { true }
+    /// Codex defers every MCP server's tools on a model with its tool search, which every model in its catalog has
+    /// (measured on 0.167.0, its default gpt-6.1-sol: only "Deferred tool namespaces: mcp__app" in the first request;
+    /// a model outside the catalog, such as gpt-5.1-codex, gets them up front). `always` names the app's servers
+    /// in `direct_only_tool_namespaces` (`directNamespaces`), which bypasses deferral.
+    public func appToolsUpfront(_ policy: SessionPolicy, kind: AccountKind?) -> Bool? { policy.appTools == .always }
+
+    /// For `agneta/appTools` `always`: the app's servers as Codex names their namespaces (`mcp__<server>`), set as
+    /// `features.code_mode.direct_only_tool_namespaces`, which "bypass deferral" and stay top-level tools with every
+    /// description (measured on 0.167.0 through codex-acp 2.7.0, gpt-6.1-sol: all 35 tools in the first request).
+    /// Nil otherwise. Agneta's own shell server isn't named: it isn't the app's.
+    static func directNamespaces(_ session: EngineSessionSpec) -> [String]? {
+        guard session.policy.appTools == .always else { return nil }
+        let names = session.servers.compactMap { $0["name"]?.stringValue }.map { "mcp__" + $0 }
+        return names.isEmpty ? nil : names
+    }
 
     /// Measured: an app's tool is `mcp.<server>.<tool>`; built-ins by their own name.
     public func toolIdentity(in update: JSONValue) -> (tool: String?, server: String?, message: String?) {
