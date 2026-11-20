@@ -129,6 +129,14 @@ import Testing
         try account.append(Self.line("msg_new", output: 20, stop: "end_turn"), to: account.transcript)
         #expect(ledger.read().usage.map { $0["id"]?.stringValue } == ["msg_new"])
 
+        // A file there at resume that drops out of a listing and comes back starts where it stood then.
+        let away = account.project.appending(path: "away.jsonl")
+        try account.append(Self.line("msg_sub_new", output: 5, stop: "end_turn"), to: account.subagent)
+        try FileManager.default.moveItem(at: account.subagent, to: away)
+        #expect(ledger.read().usage.isEmpty)
+        try FileManager.default.moveItem(at: away, to: account.subagent)
+        #expect(ledger.read().usage.map { $0["id"]?.stringValue } == ["msg_sub_new"])
+
         // Replaced by a shorter file: what's there is taken as read, so earlier turns aren't counted again.
         try (Self.line("msg_old", output: 10, stop: "end_turn")).write(
             to: account.transcript, atomically: true, encoding: .utf8)
@@ -192,6 +200,32 @@ import Testing
             second.count == 904
                 && second.first?["id"]?.stringValue == "msg_\(ClaudeCodeTranscriptLedger.maxRowsPerRead)")
         #expect(ledger.read().usage.isEmpty)
+    }
+
+    /// Lines decoded per read are capped whether or not they give a new call (here the same call over and over), and
+    /// a folder listing looks at no more than `maxNames` entries, kept or not.
+    @Test func decodesAndListingsAreCapped() throws {
+        let account = try Account()
+        defer { account.remove() }
+        let max = ClaudeCodeTranscriptLedger.maxRowsPerRead
+        try String(repeating: Self.line("msg_same", output: 1, stop: "end_turn"), count: max + 10)
+            .write(to: account.transcript, atomically: true, encoding: .utf8)
+        let ledger = try account.ledger()
+        #expect(ledger.read().usage.count == 1)
+        #expect(ledger.takeNotice() != nil)
+        #expect(ledger.read().usage.isEmpty && ledger.takeNotice() == nil)
+
+        let junk = account.config.appending(path: "junk", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: junk, withIntermediateDirectories: true)
+        for n in 0..<(ClaudeCodeTranscriptLedger.maxNames + 100) {
+            #expect(
+                FileManager.default.createFile(
+                    atPath: junk.appending(path: "j\(n)").path(percentEncoded: false), contents: nil))
+        }
+        let fd = open(junk.path(percentEncoded: false), O_RDONLY | O_DIRECTORY)
+        defer { close(fd) }
+        let listed = ClaudeCodeTranscriptLedger.names(in: fd) { $0.hasSuffix(".jsonl") }
+        #expect(listed.names.isEmpty && listed.examined == ClaudeCodeTranscriptLedger.maxNames)
     }
 
     static let adapter = ClaudeCodeAdapter(

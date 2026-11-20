@@ -28,8 +28,8 @@ final class ClaudeCodeTranscriptLedger: UsageLedger, @unchecked Sendable {
     /// sorting first can hide a real subagent's calls: no worse than forging its lines, which the engine also can.
     static let maxSubagents = 256
     static let maxNames = 4096
-    /// New calls given per read (the rest are read at the next), and in all: the ids kept to report each once stay
-    /// bounded, however many lines are planted.
+    /// Assistant lines decoded per read (the rest are read at the next), and calls given in all: the work per read
+    /// and the ids kept to report each once stay bounded, however many lines are planted.
     static let maxRowsPerRead = 4096
     static let maxCalls = 65_536
     private let lock = NSLock()
@@ -37,7 +37,10 @@ final class ClaudeCodeTranscriptLedger: UsageLedger, @unchecked Sendable {
     private var files: [String: (offset: Int64, partial: Data, discarding: Bool)] = [:] // by path below the folder
     private var reported: Set<String> = []
     private var skipWhenFound = false
-    private var notice: String?
+    private var notices: [String] = []
+    /// Where each file stood when a resumed session was opened: one that drops out of a listing and comes back
+    /// starts there again, not at 0, so earlier turns aren't counted again.
+    private var resumedAt: [String: Int64] = [:]
     private var noticed = false
     private var noticedTotal = false
 
@@ -52,10 +55,7 @@ final class ClaudeCodeTranscriptLedger: UsageLedger, @unchecked Sendable {
     var completesStreamRows: Bool { true }
 
     func takeNotice() -> String? {
-        lock.withLock {
-            defer { notice = nil }
-            return notice
-        }
+        lock.withLock { notices.isEmpty ? nil : notices.removeFirst() }
     }
 
     /// What the reader holds between reads (for tests): unfinished lines' bytes and files followed.
@@ -98,29 +98,31 @@ final class ClaudeCodeTranscriptLedger: UsageLedger, @unchecked Sendable {
         return Int64(info.st_size)
     }
 
-    /// Up to `maxNames` entries of a folder that pass `keep`, sorted.
-    private static func names(in folder: Int32, keep: (String) -> Bool = { _ in true }) -> [String] {
+    /// The entries that pass `keep` among a folder's first `maxNames`, sorted.
+    static func names(in folder: Int32, keep: (String) -> Bool = { _ in true }) -> (names: [String], examined: Int) {
         let copy = dup(folder)
-        guard copy >= 0 else { return [] }
+        guard copy >= 0 else { return ([], 0) }
         guard let directory = fdopendir(copy) else {
             close(copy)
-            return []
+            return ([], 0)
         }
         defer { closedir(directory) }
         var names: [String] = []
-        while names.count < maxNames, let entry = readdir(directory) {
+        var examined = 0
+        while examined < maxNames, let entry = readdir(directory) {
+            examined += 1
             let name = withUnsafeBytes(of: entry.pointee.d_name) {
                 String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self)
             }
             if name != "." && name != ".." && keep(name) { names.append(name) }
         }
-        return names.sorted()
+        return (names.sorted(), examined)
     }
 
     /// The folder holding `<session>.jsonl`: the preferred one, else any. Found once.
     private func locate(_ projects: Int32, device: dev_t) -> String? {
         if let folder { return folder }
-        for name in [preferredFolder].compactMap({ $0 }) + Self.names(in: projects) {
+        for name in [preferredFolder].compactMap({ $0 }) + Self.names(in: projects).names {
             guard let fd = Self.openFolder(name, in: projects, device: device) else { continue }
             defer { close(fd) }
             if Self.regularSize("\(session).jsonl", in: fd, device: device) != nil {
@@ -144,7 +146,7 @@ final class ClaudeCodeTranscriptLedger: UsageLedger, @unchecked Sendable {
         defer { close(sessionFolder) }
         guard let subagents = Self.openFolder("subagents", in: sessionFolder, device: device) else { return }
         defer { close(subagents) }
-        for name in Self.names(in: subagents, keep: { $0.hasSuffix(".jsonl") }).prefix(Self.maxSubagents) {
+        for name in Self.names(in: subagents, keep: { $0.hasSuffix(".jsonl") }).names.prefix(Self.maxSubagents) {
             if let size = Self.regularSize(name, in: subagents, device: device) {
                 body("subagents/\(name)", subagents, name, size)
             }
@@ -191,6 +193,7 @@ final class ClaudeCodeTranscriptLedger: UsageLedger, @unchecked Sendable {
     private func skipToEnds(_ projects: Int32, _ folder: String, device: dev_t) {
         files = [:]
         transcripts(projects, folder, device: device) { path, _, _, size in files[path] = (size, Data(), false) }
+        resumedAt = files.mapValues(\.offset)
     }
 
     func read() -> (messages: [[String: JSONValue]], usage: [[String: JSONValue]], problem: String?) {
@@ -207,13 +210,17 @@ final class ClaudeCodeTranscriptLedger: UsageLedger, @unchecked Sendable {
             var listed: Set<String> = []
             var budget = Self.maxReadPerPoll
             var buffered = files.values.reduce(0) { $0 + $1.partial.count }
+            var attempts = 0 // lines decoded: duplicates and unfinished calls count too
             transcripts(projects, folder, device: device) { path, holder, name, size in
                 listed.insert(path)
-                var state = files[path] ?? (0, Data(), false)
+                var state = files[path] ?? (resumedAt[path] ?? 0, Data(), false)
                 // Replaced by a shorter file: what's there now is taken as read, so nothing is counted twice.
-                if size < state.offset { state = (size, Data(), false) }
+                if size < state.offset {
+                    buffered -= state.partial.count
+                    state = (size, Data(), false)
+                }
                 defer { files[path] = state }
-                guard budget > 0, usage.count < Self.maxRowsPerRead, reported.count < Self.maxCalls,
+                guard budget > 0, attempts < Self.maxRowsPerRead, reported.count < Self.maxCalls,
                     size > state.offset,
                     var data = Self.readNew(
                         name, in: holder, device: device, from: state.offset, count: min(Self.chunk, budget))
@@ -230,30 +237,34 @@ final class ClaudeCodeTranscriptLedger: UsageLedger, @unchecked Sendable {
                 state.partial.append(data)
                 var start = state.partial.startIndex
                 var from = state.partial.startIndex + unscanned
-                while usage.count < Self.maxRowsPerRead, reported.count < Self.maxCalls,
+                while attempts < Self.maxRowsPerRead, reported.count < Self.maxCalls,
                     let newline = state.partial[from...].firstIndex(of: UInt8(ascii: "\n"))
                 {
-                    if let row = Self.call(state.partial[start..<newline]), let id = row["id"]?.stringValue,
-                        reported.insert(id).inserted
-                    {
-                        usage.append(row)
+                    let line = state.partial[start..<newline]
+                    if Self.mayBeCall(line) {
+                        attempts += 1
+                        if let row = Self.call(line), let id = row["id"]?.stringValue, reported.insert(id).inserted {
+                            usage.append(row)
+                        }
                     }
                     start = state.partial.index(after: newline)
                     from = start
                 }
-                if usage.count >= Self.maxRowsPerRead || reported.count >= Self.maxCalls {
+                if attempts >= Self.maxRowsPerRead || reported.count >= Self.maxCalls {
                     // At a cap: what's after the last line read is read again next time (at the total, never).
                     state.offset -= Int64(state.partial.endIndex - start)
                     state.partial = Data()
                     if reported.count >= Self.maxCalls {
                         if !noticedTotal {
                             noticedTotal = true
-                            notice = "Claude Code's transcript gave \(Self.maxCalls) calls; later ones aren't read"
+                            notices.append(
+                                "Claude Code's transcript gave \(Self.maxCalls) calls; later ones aren't read")
                         }
                     } else if !noticed {
                         noticed = true
-                        notice =
-                            "Claude Code's transcript gave more than \(Self.maxRowsPerRead) calls at once; the rest are read later"
+                        notices.append(
+                            "Claude Code's transcript had more than \(Self.maxRowsPerRead) assistant lines at once; the rest are read later"
+                        )
                     }
                     return
                 }
@@ -271,10 +282,12 @@ final class ClaudeCodeTranscriptLedger: UsageLedger, @unchecked Sendable {
 
     private static let assistantMarker = Data(#""type":"assistant""#.utf8)
 
+    /// Whether a line can be an assistant message: tool results (most of the file's bytes) are never decoded.
+    static func mayBeCall(_ line: Data) -> Bool { line.range(of: assistantMarker) != nil }
+
     /// One transcript line as a final call's usage row, or nil.
     static func call(_ line: Data) -> [String: JSONValue]? {
-        // Tool results (most of the file's bytes) never need decoding.
-        guard line.range(of: assistantMarker) != nil, let record = try? JSONCoding.decode(Data(line)),
+        guard mayBeCall(line), let record = try? JSONCoding.decode(Data(line)),
             record["type"]?.stringValue == "assistant", let message = record["message"],
             let id = message["id"]?.stringValue, id.utf8.count <= 256, let usage = message["usage"],
             usage.objectValue != nil,
