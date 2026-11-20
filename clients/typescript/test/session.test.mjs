@@ -191,6 +191,27 @@ test('the user\'s Stop ends the session; the turn ends with stoppedBy', async (t
   assert.equal(client.session(session.id), undefined);
 });
 
+test('a contained session whose socket or port the app stopped serving: why reaches ended and the turn', async (t) => {
+  const why = 'loopback port 8125 is served by another program now, not Example, so this contained session was stopped';
+  const { client } = await setUp(t, {
+    handlers: {
+      'session/prompt': (message, peer) => new Promise((resolve) => {
+        peer.notify('agneta/sessionStopped', { sessionId: message.params.sessionId, stoppedBy: 'reach', reason: why });
+        setTimeout(() => resolve({ result: { stopReason: 'cancelled' } }), 10);
+      })
+    }
+  });
+  const session = await client.newSession();
+  const ended = session.next('ended');
+  const turn = session.prompt('Go');
+  const events = [];
+  for await (const event of turn) events.push(event);
+  const result = await turn;
+  assert.deepEqual((await ended)[0], { reason: 'stopped', stoppedBy: 'reach', detail: why });
+  assert.deepEqual(events.find((event) => event.type === 'stopped'), { type: 'stopped', stoppedBy: 'reach', detail: why });
+  assert.equal(result.stoppedBy, 'reach');
+});
+
 test('a limit Agneta enforced: the result says so, and the session ended', async (t) => {
   const { client } = await setUp(t, {
     handlers: {

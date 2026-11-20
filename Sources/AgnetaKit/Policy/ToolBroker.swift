@@ -47,6 +47,10 @@ public final class ToolBroker: @unchecked Sendable {
     private let registryLock = NSLock()
     private var running: [String: [UUID: ChildProcess]] = [:]
     private var revoked: Set<String> = []
+    /// Tokens whose grant's `reach` is being checked while their commands or background jobs run.
+    private var watching: Set<String> = []
+    /// How often that is: a background job started by an earlier command can connect at any time.
+    private let watchEvery: Duration
     /// Set once Agneta stops: every command has been ended and none starts again.
     private var stopped = false
 
@@ -56,8 +60,10 @@ public final class ToolBroker: @unchecked Sendable {
         socketPath: String, shell: String = "/bin/bash", holder: String? = nil,
         resolve: @escaping @Sendable (_ token: String, _ cwd: URL) -> Grant?,
         report: @escaping @Sendable (_ token: String, _ fields: [String: JSONValue]) -> Void = { _, _ in },
-        lost: @escaping @Sendable (_ token: String, _ reason: String) -> Void = { _, _ in }
+        lost: @escaping @Sendable (_ token: String, _ reason: String) -> Void = { _, _ in },
+        watchEvery: Duration = .seconds(1)
     ) {
+        self.watchEvery = watchEvery
         self.lost = lost
         self.socketPath = socketPath
         self.shell = shell
@@ -123,6 +129,32 @@ public final class ToolBroker: @unchecked Sendable {
         }
         for child in children { child.signalGroup(SIGKILL) }
         return children.count
+    }
+
+    /// While a token's commands or background jobs run, asks its grant's `reach` again every `watchEvery`: a job an
+    /// earlier command left running (`(sleep 5; nc localhost 8125) &`) passed that command's check and can connect
+    /// whenever it likes. On a loss its commands stop and its session is reported lost, as before a command.
+    private func watch(_ token: String, reach: @escaping @Sendable () -> String?) {
+        guard registryLock.withLock({ watching.insert(token).inserted }) else { return }
+        let every = Double(watchEvery.components.seconds) + Double(watchEvery.components.attoseconds) / 1e18
+        Thread { [weak self] in
+            while true {
+                Thread.sleep(forTimeInterval: every)
+                guard let self else { return }
+                let live = self.registryLock.withLock { () -> Bool in
+                    let live = !self.stopped && !self.revoked.contains(token) && !(self.running[token]?.isEmpty ?? true)
+                    if !live { self.watching.remove(token) }
+                    return live
+                }
+                guard live else { return }
+                guard let reason = reach() else { continue }
+                self.stopCommands(token: token)
+                self.registryLock.withLock { _ = self.watching.remove(token) }
+                self.report(token, ["refused": .string(reason), "while": "running"])
+                self.lost(token, reason)
+                return
+            }
+        }.start()
     }
 
     /// How many commands a token's engine has running now.
@@ -215,6 +247,7 @@ public final class ToolBroker: @unchecked Sendable {
             return true
         }
         if !admitted { ender.signalGroup(SIGKILL) }
+        if admitted, let reach = grant.reach { watch(request.token, reach: reach) }
         defer { if keeper == nil { registryLock.withLock { _ = running[request.token]?.removeValue(forKey: id) } } }
         if let keeper {
             let token = request.token

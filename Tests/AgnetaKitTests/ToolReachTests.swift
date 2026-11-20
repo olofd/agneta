@@ -45,21 +45,34 @@ final class ReachListener: @unchecked Sendable {
     /// Stops listening but leaves the socket's file, as a server that died would (Docker Desktop's, once it's quit).
     func closeKeepingFile() { acceptor?.stop() }
 
-    /// Accepts and drains connections until stopped, then closes the listening socket itself (from its own thread, so
-    /// the descriptor can't be reused under it).
+    /// How a server in this process takes connections: drained until the client closes (the default), accepted only
+    /// after a delay (a busy server), closed as soon as accepted, or never accepted at all.
+    enum Accepting: Sendable { case drain, late(Double), closeAtOnce, never }
+
+    /// Accepts connections as `accepting` says until stopped, then closes the listening socket itself (from its own
+    /// thread, so the descriptor can't be reused under it).
     final class Acceptor: @unchecked Sendable {
         private let lock = NSLock()
         private var stopping = false
         private let done = DispatchSemaphore(value: 0)
 
-        init(_ fd: Int32) {
+        init(_ fd: Int32, accepting: Accepting = .drain) {
             _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
             Thread { [self] in
                 while !lock.withLock({ stopping }) {
                     var poller = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
                     guard poll(&poller, 1, 50) == 1 else { continue }
+                    switch accepting {
+                    case .never: continue
+                    case .late(let seconds): Thread.sleep(forTimeInterval: seconds)
+                    default: break
+                    }
                     let client = accept(fd, nil, nil)
                     guard client >= 0 else { continue }
+                    if case .closeAtOnce = accepting {
+                        close(client)
+                        continue
+                    }
                     _ = fcntl(client, F_SETFL, fcntl(client, F_GETFL) & ~O_NONBLOCK)
                     Thread {
                         var buffer = [UInt8](repeating: 0, count: 256)
@@ -109,9 +122,9 @@ final class ReachListener: @unchecked Sendable {
     }
 
     /// This process listening on a loopback port the kernel picks: no other program can take it first.
-    static func port() throws -> ReachListener {
+    static func port(accepting: Accepting = .drain) throws -> ReachListener {
         let (fd, port) = try listen(port: 0)
-        return ReachListener(endpoint: .port(port), pid: getpid(), acceptor: Acceptor(fd))
+        return ReachListener(endpoint: .port(port), pid: getpid(), acceptor: Acceptor(fd, accepting: accepting))
     }
 
     /// The most a socket's path may hold (sun_path, less its terminating NUL): longer is refused, never cut short.
@@ -425,6 +438,69 @@ extension RouterContractTests {
         }
     }
 
+    /// The probes wait on servers, so they never run on the router: an app naming its most ports, each listening and
+    /// never accepting, has its session checked (and allowed: the app's own listeners say so) while another app's
+    /// session opens at once. Beyond the most, the policy is refused before anything is probed.
+    @Test func oneAppsSilentServersDontHoldUpAnother() async throws {
+        let stack = try await Stack.start(port: 47725, approve: Self.contained)
+        defer { stack.stop() }
+        let slow = AppClient(port: stack.port)
+        defer { slow.close() }
+        try await slow.pairAndInitialize("Slow")
+        let other = AppClient(port: stack.port)
+        defer { other.close() }
+        try await other.pairAndInitialize("Other")
+        let silent = try (0..<ToolReach.most).map { _ in try ReachListener.port(accepting: .never) }
+        defer { for listener in silent { listener.stop() } }
+
+        let started = ContinuousClock.now
+        async let checked = Self.reaching(stack, slow, ports: silent.map(\.port))
+        try await Task.sleep(for: .milliseconds(30))
+        let quick = ContinuousClock.now
+        let opened = await Self.reaching(stack, other)
+        let otherTook = ContinuousClock.now - quick
+        #expect(opened.level == "contained" && otherTook < .seconds(1), "\(opened) after \(otherTook)")
+        let result = await checked
+        #expect(result.level == "contained" && ContinuousClock.now - started < .seconds(4), "\(result)")
+
+        let one = try ReachListener.port()
+        defer { one.stop() }
+        let tooMany = await Self.reaching(stack, slow, ports: Array(repeating: one.port, count: ToolReach.most + 1))
+        #expect(
+            tooMany.field == "toolPorts" && tooMany.reason?.contains("at most \(ToolReach.most)") == true, "\(tooMany)")
+    }
+
+    /// The same with servers that take a second each to answer (through the lookup): the probes run together, under
+    /// one deadline, and off the router, so another app's session opens at once.
+    @Test func slowProbesRunTogetherAndOffTheRouter() async throws {
+        var slowLookup = ToolReach.Lookup.system
+        slowLookup.answer = { endpoint in
+            Thread.sleep(forTimeInterval: 1)
+            return ToolReach.Lookup.system.answer(endpoint)
+        }
+        let stack = try await Stack.start(port: 47726, reach: slowLookup, approve: Self.contained)
+        defer { stack.stop() }
+        let slow = AppClient(port: stack.port)
+        defer { slow.close() }
+        try await slow.pairAndInitialize("Slow")
+        let other = AppClient(port: stack.port)
+        defer { other.close() }
+        try await other.pairAndInitialize("Other")
+        let servers = try (0..<ToolReach.most).map { _ in try ReachListener.port() }
+        defer { for server in servers { server.stop() } }
+
+        let started = ContinuousClock.now
+        async let checked = Self.reaching(stack, slow, ports: servers.map(\.port))
+        try await Task.sleep(for: .milliseconds(100))
+        let quick = ContinuousClock.now
+        let opened = await Self.reaching(stack, other)
+        let otherTook = ContinuousClock.now - quick
+        #expect(opened.level == "contained" && otherTook < .milliseconds(500), "\(opened) after \(otherTook)")
+        let result = await checked
+        let took = ContinuousClock.now - started
+        #expect(result.level == "contained" && took < .seconds(3), "\(result) after \(took)")
+    }
+
     /// Developer access reaches every local server, as a terminal does: the socket and port a contained task of the
     /// same app is refused are allowed to its developer tasks, unchanged.
     @Test func developerAccessStillReachesAnyLocalServer() async throws {
@@ -582,13 +658,58 @@ extension RouterContractTests {
         }
     }
 
-    /// Before each command the broker asks again; `lost` names the first endpoint the app no longer serves.
-    @Test func aCheckNamesWhatItsAppNoLongerServes() {
+    /// Before each command the broker asks again; `lost` names the first endpoint the app no longer serves, and what
+    /// serves it now, for the reason the app is given.
+    @Test func aCheckNamesWhatItsAppNoLongerServes() throws {
         let check = ToolReach.Check(app: Self.app, name: "Example", endpoints: [.port(1), .socket("/s.sock")])
-        #expect(ToolReach.lost(check, lookup: Self.lookup(holders: [.port(1): [10], .socket("/s.sock"): [11]])) == nil)
         #expect(
-            ToolReach.lost(check, lookup: Self.lookup(holders: [.port(1): [10], .socket("/s.sock"): [20]]))
-                == .socket("/s.sock"))
+            ToolReach.lost(
+                check, lookup: Self.lookup(holders: [.port(1): [10], .socket("/s.sock"): [11]]), retry: .zero)
+                == nil)
+        let lost = try #require(
+            ToolReach.lost(
+                check, lookup: Self.lookup(holders: [.port(1): [10], .socket("/s.sock"): [20]]), retry: .zero))
+        #expect(lost.0 == .socket("/s.sock") && lost.1 == .other)
+        #expect(ToolReach.reason(lost.0, lost.1, app: "Example").contains("/s.sock is served by another program now"))
+        let gone = try #require(
+            ToolReach.lost(check, lookup: Self.lookup(holders: [.socket("/s.sock"): [11]]), retry: .zero))
+        #expect(gone.0 == .port(1) && gone.1 == .nothing)
+    }
+
+    /// A busy server can miss one look: a re-check tries again before stopping the session, and when it does stop,
+    /// it says the server didn't answer in time rather than that another program took it.
+    @Test func aReCheckTriesAgainBeforeStopping() throws {
+        let check = ToolReach.Check(app: Self.app, name: "Example", endpoints: [.port(1)])
+        let counter = Counter()
+        let slow = Self.lookup(answers: [:], holders: [:]).with { _ in
+            counter.next() == 1 ? .unidentified : Self.peers(10)
+        }
+        #expect(ToolReach.lost(check, lookup: slow, retry: .milliseconds(10)) == nil)
+        let silent = Self.lookup(answers: [.port(1): .unidentified])
+        let lost = try #require(ToolReach.lost(check, lookup: silent, retry: .milliseconds(10)))
+        #expect(lost.1 == .unidentified)
+        #expect(ToolReach.reason(lost.0, lost.1, app: "Example").contains("didn't answer in time"))
+    }
+
+    /// Servers of the app's that are slow to accept, that close a connection at once, or that never accept: the
+    /// listening socket the kernel records still says they're the app's, so none is refused or stopped by mistake.
+    @Test func aSlowOrQuickServerOfTheAppStaysServed() throws {
+        let late = try ReachListener.port(accepting: .late(1.5))
+        defer { late.stop() }
+        let quick = try ReachListener.port(accepting: .closeAtOnce)
+        defer { quick.stop() }
+        let never = try ReachListener.port(accepting: .never)
+        defer { never.stop() }
+        let app = ToolReach.App(team: nil, processes: [try #require(PeerIdentity.instance(of: getpid()))])
+        for _ in 0..<3 {
+            let started = ContinuousClock.now
+            let served = ToolReach.served([late.endpoint, quick.endpoint, never.endpoint], by: app, lookup: .system)
+            #expect(served == [late.endpoint, quick.endpoint, never.endpoint])
+            #expect(ContinuousClock.now - started < .seconds(2))
+        }
+        // Another app's check: not this process, so none of them is its.
+        let other = ToolReach.App(team: nil, processes: [ToolReach.Instance(pid: 1, started: 0)])
+        #expect(ToolReach.served([late.endpoint, quick.endpoint, never.endpoint], by: other, lookup: .system).isEmpty)
     }
 
     /// The grant's side, as rechecked when the grant changes: a socket in a granted folder needs no listener, one
@@ -707,5 +828,14 @@ extension RouterContractTests {
         #expect(after == before)
         #expect(try !connects(allowed.path, profile: before))
         #expect(try !connects(other.path, profile: after))
+    }
+}
+
+extension ToolReach.Lookup {
+    /// The same lookup, answering connections with `answer`.
+    func with(answer: @escaping @Sendable (ToolReach.Endpoint) -> ToolReach.Answer) -> ToolReach.Lookup {
+        var lookup = self
+        lookup.answer = answer
+        return lookup
     }
 }

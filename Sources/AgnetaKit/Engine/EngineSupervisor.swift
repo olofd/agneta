@@ -323,9 +323,7 @@ public actor EngineSupervisor: EngineSource {
             if let check = policy.reachCheck {
                 let lookup = configuration.reach
                 grant?.reach = {
-                    ToolReach.lost(check, lookup: lookup).map {
-                        "\($0) is no longer served by \(check.name), so this contained session was stopped"
-                    }
+                    ToolReach.lost(check, lookup: lookup).map { ToolReach.reason($0.0, $0.1, app: check.name) }
                 }
             }
             grants.set(token: token, grant: grant!, workspace: policy.workspace, lease: key)

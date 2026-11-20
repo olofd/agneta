@@ -16,10 +16,11 @@
 // connection to Agneta, or one it started. Processes are compared as instances (a pid and its start time, or the
 // audit token), so a reused pid is never taken for the app.
 //
-// Checked when a session opens, is loaded or forked, and again before each command the broker runs: a server that
-// went away and was replaced by another program's stops the session. Between two commands, a command already running
-// keeps what it connected to (docs/APP_PROTOCOL.md, Tool ports and sockets). Developer access reaches every local
-// server, as a terminal does, and isn't checked.
+// Checked when a session opens, is loaded or forked (off the router: the probes wait on servers), and again by the
+// broker before each command and about every second while commands or background jobs run: a server that went away
+// and was replaced by another program's stops the session. In between, for up to about a second and a half, a running
+// command can reach what took its place (docs/APP_PROTOCOL.md, Tool ports and sockets). Developer access reaches
+// every local server, as a terminal does, and isn't checked.
 import Darwin
 import Foundation
 import Security
@@ -129,11 +130,41 @@ public enum ToolReach {
             }
     }
 
-    /// Of `endpoints`, those the app serves itself: a connection there reached the app, as the kernel says, and every
-    /// process the scan finds bound there is the app too.
-    public static func served(_ endpoints: [Endpoint], by app: App, lookup: Lookup) -> Set<Endpoint> {
-        guard !endpoints.isEmpty else { return [] }
-        let holders = lookup.listeners(Set(endpoints))
+    /// The most sockets and ports beyond its folders a contained policy may name: each is probed when the session
+    /// opens and before each command.
+    public static let most = 16
+
+    /// What a probe found an endpoint to be.
+    public enum Verdict: Hashable, Sendable {
+        case served
+        /// Nothing accepted a connection there.
+        case nothing
+        /// Something did, but who couldn't be told in time (or at all).
+        case unidentified
+        /// Another program serves it, or shares it with the app.
+        case other
+    }
+
+    /// How long all of a check's probes may take together; one not done by then is unidentified.
+    static let deadline: Duration = .seconds(3)
+    /// How long a re-check waits before trying a failed endpoint again: a busy server may just have been slow.
+    public static let retryAfter: Duration = .milliseconds(500)
+
+    /// Each endpoint's verdict. The probes run at once, on threads of their own, within `deadline` together: the
+    /// caller waits, so it must never be an actor others wait on (the router awaits `served(_:by:lookup:) async`).
+    public static func verdicts(_ endpoints: [Endpoint], by app: App, lookup: Lookup) -> [Endpoint: Verdict] {
+        guard !endpoints.isEmpty else { return [:] }
+        let unique = Array(Set(endpoints))
+        let holders = lookup.listeners(Set(unique))
+        let answers = Answers()
+        let group = DispatchGroup()
+        for endpoint in unique {
+            DispatchQueue.global(qos: .userInitiated).async(group: group) {
+                answers.set(endpoint, lookup.answer(endpoint))
+            }
+        }
+        _ = group.wait(timeout: .now() + .milliseconds(Int(deadline.components.seconds * 1000)))
+        let found = answers.all
         var known: [Peer: Bool] = [:]
         func isApp(_ peer: Peer) -> Bool {
             if let answer = known[peer] { return answer }
@@ -141,17 +172,65 @@ public enum ToolReach {
             known[peer] = answer
             return answer
         }
-        return Set(
-            endpoints.filter { endpoint in
-                guard case .peers(let peers) = lookup.answer(endpoint), !peers.isEmpty else { return false }
-                return peers.allSatisfy(isApp) && (holders[endpoint] ?? []).allSatisfy { isApp(Peer(pid: $0)) }
-            })
+        var verdicts: [Endpoint: Verdict] = [:]
+        for endpoint in unique {
+            switch found[endpoint] ?? .unidentified {
+            case .nothing: verdicts[endpoint] = .nothing
+            case .unidentified: verdicts[endpoint] = .unidentified
+            case .peers(let peers) where peers.isEmpty: verdicts[endpoint] = .unidentified
+            case .peers(let peers):
+                let all = peers.allSatisfy(isApp) && (holders[endpoint] ?? []).allSatisfy { isApp(Peer(pid: $0)) }
+                verdicts[endpoint] = all ? .served : .other
+            }
+        }
+        return verdicts
     }
 
-    /// The first of a check's endpoints its app no longer serves, or nil while it serves them all.
-    public static func lost(_ check: Check, lookup: Lookup) -> Endpoint? {
-        let served = served(check.endpoints, by: check.app, lookup: lookup)
-        return check.endpoints.first { !served.contains($0) }
+    /// Answers arriving from the probes' threads; one that comes after the deadline is ignored.
+    private final class Answers: @unchecked Sendable {
+        private let lock = NSLock()
+        private var answers: [Endpoint: Answer] = [:]
+        func set(_ endpoint: Endpoint, _ answer: Answer) { lock.withLock { answers[endpoint] = answer } }
+        var all: [Endpoint: Answer] { lock.withLock { answers } }
+    }
+
+    /// Of `endpoints`, those the app serves itself: a connection there reached the app, as the kernel says, and every
+    /// process the scan finds bound there is the app too.
+    public static func served(_ endpoints: [Endpoint], by app: App, lookup: Lookup) -> Set<Endpoint> {
+        Set(verdicts(endpoints, by: app, lookup: lookup).filter { $0.value == .served }.keys)
+    }
+
+    /// The same, off the caller's thread: an actor awaiting it goes on serving others meanwhile.
+    public static func served(_ endpoints: [Endpoint], by app: App, lookup: Lookup) async -> Set<Endpoint> {
+        await withCheckedContinuation { done in
+            DispatchQueue.global(qos: .userInitiated).async {
+                done.resume(returning: served(endpoints, by: app, lookup: lookup))
+            }
+        }
+    }
+
+    /// The first of a check's endpoints its app no longer serves, with what was found, or nil while it serves them
+    /// all. An endpoint that fails is tried once more after `retry`, so a server that was only slow isn't taken for
+    /// gone.
+    public static func lost(_ check: Check, lookup: Lookup, retry: Duration = retryAfter) -> (Endpoint, Verdict)? {
+        let first = verdicts(check.endpoints, by: check.app, lookup: lookup)
+        let failing = check.endpoints.filter { first[$0] != .served }
+        guard !failing.isEmpty else { return nil }
+        Thread.sleep(forTimeInterval: Double(retry.components.attoseconds) / 1e18 + Double(retry.components.seconds))
+        let again = verdicts(failing, by: check.app, lookup: lookup)
+        return failing.first { again[$0] != .served }.map { ($0, again[$0] ?? .unidentified) }
+    }
+
+    /// Why a session stopped: which endpoint, and what serves it now.
+    public static func reason(_ endpoint: Endpoint, _ verdict: Verdict, app: String) -> String {
+        let what: String
+        switch verdict {
+        case .served: what = "is served by \(app)"
+        case .nothing: what = "is no longer served by \(app): nothing listens there now"
+        case .unidentified: what = "didn't answer in time, so Agneta couldn't tell that \(app) still serves it"
+        case .other: what = "is served by another program now, not \(app)"
+        }
+        return "\(endpoint) \(what), so this contained session was stopped"
     }
 
     /// Whether `peer` is the app, as one process instance throughout: its pid read the same before and after, and its
@@ -186,8 +265,11 @@ public enum ToolReach {
 
 extension PeerIdentity {
     /// Whom a connection to `endpoint` reaches. A socket: its listener, by the kernel's audit token for the connection.
-    /// A port: the processes holding the far end of a connection to 127.0.0.1 and to ::1 (each address may have a
-    /// listener of its own), found by the connection's own ports once one accepts it.
+    /// A port: on 127.0.0.1 and on ::1 (each may have a listener of its own), the process holding the far end of
+    /// Agneta's connection once it accepts it, or, when it doesn't in time (a busy server, or one that closes at once),
+    /// the processes holding the listening sockets that cover that address. Those are the kernel's records of port
+    /// and address, not a string the process chose, and another user can't bind there beside them (measured on every
+    /// way of binding), so they say who serves it.
     public static func answer(_ endpoint: ToolReach.Endpoint) -> ToolReach.Answer {
         switch endpoint {
         case .socket(let path): return unixPeer(path)
@@ -201,8 +283,9 @@ extension PeerIdentity {
         }
     }
 
-    /// How long a port's server has to accept Agneta's connection, and the wait between looks.
-    static let acceptWithin: Duration = .seconds(1)
+    /// How long a connection may take to complete (a full queue), and the waits before looking for who accepted it.
+    static let connectWithin: Duration = .milliseconds(500)
+    static let acceptLooks: [Duration] = [.milliseconds(20), .milliseconds(150)]
 
     static func unixPeer(_ path: String) -> ToolReach.Answer {
         var address = sockaddr_un()
@@ -264,7 +347,9 @@ extension PeerIdentity {
         if status != 0 {
             guard errno == EINPROGRESS else { return unreachable.contains(errno) ? .nothing : .unidentified }
             var poller = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-            guard poll(&poller, 1, Int32(acceptWithin.components.seconds * 1000)) == 1 else { return .unidentified }
+            // No answer to the connection (its queue is full): its listener still says who serves it.
+            let within = Int32(connectWithin.components.attoseconds / 1_000_000_000_000_000)
+            guard poll(&poller, 1, within) == 1 else { return listening(port: port, family: family) }
             var error: Int32 = 0
             var size = socklen_t(MemoryLayout<Int32>.size)
             guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size) == 0 else { return .unidentified }
@@ -280,14 +365,56 @@ extension PeerIdentity {
             // sin_port and sin6_port sit at the same offset, in network order.
             Int(UInt16(bigEndian: raw.load(fromByteOffset: 2, as: UInt16.self)))
         }
-        // Until the server accepts, the connection is in its listening socket's queue, held by no process.
-        let deadline = ContinuousClock.now + acceptWithin
-        repeat {
+        // Until the server accepts, the connection is in its listening socket's queue, held by no process; one that
+        // accepts and closes at once may be gone by the time it's looked for. Either way its listener answers.
+        for wait in acceptLooks {
+            usleep(useconds_t(wait.components.attoseconds / 1_000_000_000_000))
             let pids = allPids().filter { owns(pid: $0, port: port, serverPort: client) }
             if !pids.isEmpty { return .peers(Set(pids.map { ToolReach.Peer(pid: $0) })) }
-            usleep(10_000)
-        } while ContinuousClock.now < deadline
-        return .unidentified
+        }
+        return listening(port: port, family: family)
+    }
+
+    /// The processes holding a listening socket on `port` that a connection to `family`'s loopback address reaches:
+    /// bound to that address or to the family's wildcard (an IPv6 wildcard socket may take IPv4 too). Unidentified
+    /// when none can be seen (root's and other users' can't).
+    static func listening(port: Int, family: Int32) -> ToolReach.Answer {
+        var found = Set<ToolReach.Peer>()
+        for pid in allPids() where listens(pid: pid, port: port, family: family) {
+            found.insert(ToolReach.Peer(pid: pid))
+        }
+        return found.isEmpty ? .unidentified : .peers(found)
+    }
+
+    static func listens(pid: pid_t, port: Int, family: Int32) -> Bool {
+        let size = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+        guard size > 0 else { return false }
+        let stride = MemoryLayout<proc_fdinfo>.stride
+        var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(size) / stride + 8)
+        let used = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, &fds, Int32(fds.count * stride))
+        guard used > 0 else { return false }
+        for fd in fds.prefix(Int(used) / stride) where fd.proc_fdtype == UInt32(PROX_FDTYPE_SOCKET) {
+            var info = socket_fdinfo()
+            let got = proc_pidfdinfo(
+                pid, fd.proc_fd, PROC_PIDFDSOCKETINFO, &info, Int32(MemoryLayout<socket_fdinfo>.size))
+            guard got == Int32(MemoryLayout<socket_fdinfo>.size), info.psi.soi_kind == Int32(SOCKINFO_TCP) else {
+                continue
+            }
+            let tcp = info.psi.soi_proto.pri_tcp
+            let local = Int(UInt16(bigEndian: UInt16(truncatingIfNeeded: tcp.tcpsi_ini.insi_lport)))
+            guard tcp.tcpsi_state == TSI_S_LISTEN, local == port else { continue }
+            let flags = Int32(tcp.tcpsi_ini.insi_vflag)
+            var six = tcp.tcpsi_ini.insi_laddr.ina_6
+            let bytes = withUnsafeBytes(of: &six) { Array($0) }
+            let anySix = bytes.allSatisfy { $0 == 0 }
+            if flags & INI_IPV6 != 0 {
+                if anySix || (family == AF_INET6 && bytes == Array(repeating: 0, count: 15) + [1]) { return true }
+            } else if family == AF_INET, flags & INI_IPV4 != 0 {
+                let four = UInt32(bigEndian: tcp.tcpsi_ini.insi_laddr.ina_46.i46a_addr4.s_addr)
+                if four == 0 || four == 0x7f00_0001 { return true }
+            }
+        }
+        return false
     }
 
     /// A probe connection: never blocking Agneta, never a SIGPIPE.

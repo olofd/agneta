@@ -255,7 +255,7 @@ review.forkOf;      // the source's id
 
 A task resumes only on the engine that saved it: if your app may no longer use it, `EngineRefusedError` (with the current `access`); if the engine stores sessions differently now, `StateChangedError`. Instructions appended with `setInstructions` aren't restored.
 
-**Ending.** `await session.close()` ends it (`session/close`). A session also ends when the user presses Stop in Agneta, when its engine exits, when Agneta enforced a limit (`agneta/sessionStopped`), or when the connection closes: `session.ended` and the `ended` event say which (`{ reason: 'closed' | 'stopped' | 'disconnected', stoppedBy? }`). Show a user's Stop as stopped, not as an error; after an engine stop, load the session again.
+**Ending.** `await session.close()` ends it (`session/close`). A session also ends when the user presses Stop in Agneta, when its engine exits, when Agneta enforced a limit, when a contained session's socket or port is no longer served by your app (`reach`; all `agneta/sessionStopped`), or when the connection closes: `session.ended` and the `ended` event say which (`{ reason: 'closed' | 'stopped' | 'disconnected', stoppedBy?, detail? }`, `detail` naming the socket or port for `reach`). Show a user's Stop as stopped, not as an error; after an engine stop, load the session again.
 
 ## Turns
 
@@ -416,7 +416,7 @@ try { await session.prompt(text); } catch (error) {
 | `queued`, `rateLimited` | position; `{ account, message, resetsAt }` |
 | `trace`, `traceOverflow` | records; `after` |
 | `configOptions`, `mode` | the options; the mode id |
-| `ended` | `{ reason, stoppedBy?, error? }` |
+| `ended` | `{ reason, stoppedBy?, detail?, error? }` |
 
 ## The raw layer
 

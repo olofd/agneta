@@ -51,7 +51,9 @@ extension ToolBrokerTests {
                 guard token == "t0ken", cwd.isInside(workspace) else { return nil }
                 return .init(
                     profile: profile, environment: ["PATH": "/usr/bin:/bin"],
-                    reach: { ToolReach.lost(check, lookup: .system).map { "\($0) is no longer served by Example" } })
+                    reach: {
+                        ToolReach.lost(check, lookup: .system).map { ToolReach.reason($0.0, $0.1, app: "Example") }
+                    })
             }, report: { _, fields in reports.add(fields) }, lost: lost.add)
         try broker.start()
         defer { broker.stop() }
@@ -63,12 +65,61 @@ extension ToolBrokerTests {
         let other = try await ReachListener.nc(port: own.port, unrelated: true)
         defer { other.stop() }
         let refused = try await Self.shell("echo again", broker: broker, cwd: workspace)
-        #expect(refused.status == 126 && refused.err.contains("port \(own.port) is no longer served"), "\(refused)")
+        #expect(
+            refused.status == 126 && refused.err.contains("port \(own.port) is served by another program now"),
+            "\(refused)")
         #expect(lost.all.map(\.token) == ["t0ken"] && lost.all.first?.reason.contains("port \(own.port)") == true)
         for _ in 0..<50 where reports.all.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
-        #expect(reports.all.last?["refused"]?.stringValue?.contains("no longer served") == true)
+        #expect(reports.all.last?["refused"]?.stringValue?.contains("another program") == true)
         // Its engine runs nothing more, whatever serves the port next.
         #expect(try await Self.shell("echo later", broker: broker, cwd: workspace).status == 126)
+    }
+}
+
+extension ToolBrokerTests {
+    /// A background job passed its command's check and can connect whenever it likes, so while a session's commands
+    /// or jobs run the broker asks again about every second: once the app's server is replaced, the job is stopped
+    /// and the session reported lost, with no further command.
+    @Test func aBackgroundJobIsStoppedOnceTheAppsServerIsReplaced() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "agneta-reach-job-\(UUID().uuidString.prefix(8))", directoryHint: .isDirectory
+        ).realFileURL
+        let workspace = root.appending(path: "work", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let own = try ReachListener.port()
+        defer { own.stop() }
+        let me = try #require(PeerIdentity.instance(of: getpid()))
+        let check = ToolReach.Check(
+            app: ToolReach.App(team: nil, processes: [me]), name: "Example", endpoints: [own.endpoint])
+        let profile = SandboxProfile(kind: .tool, writable: [workspace], denied: [], loopbackPorts: [own.port]).render()
+        let lost = LostReach()
+        let broker = ToolBroker(
+            socketPath: root.appending(path: "b.sock").path(percentEncoded: false),
+            holder: Self.shell.path(percentEncoded: false),
+            resolve: { token, cwd in
+                guard token == "t0ken", cwd.isInside(workspace) else { return nil }
+                return .init(
+                    profile: profile, environment: ["PATH": "/usr/bin:/bin"],
+                    reach: {
+                        ToolReach.lost(check, lookup: .system, retry: .milliseconds(50)).map {
+                            ToolReach.reason($0.0, $0.1, app: "Example")
+                        }
+                    })
+            }, lost: lost.add, watchEvery: .milliseconds(200))
+        try broker.start()
+        defer { broker.stop() }
+
+        #expect(try await Self.shell("sleep 30 >/dev/null 2>&1 &", broker: broker, cwd: workspace).status == 0)
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(broker.runningCommands(token: "t0ken") == 1 && lost.all.isEmpty)
+
+        own.stop()
+        let other = try await ReachListener.nc(port: own.port, unrelated: true)
+        defer { other.stop() }
+        for _ in 0..<100 where lost.all.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(lost.all.first?.reason.contains("port \(own.port) is served by another program now") == true)
+        #expect(broker.runningCommands(token: "t0ken") == 0)
     }
 }
 
@@ -108,7 +159,9 @@ extension RouterIntegrationTests {
             }
             let stopped = try #require(app.notifications("agneta/sessionStopped").first)
             #expect(stopped["stoppedBy"]?.stringValue == "reach" && stopped["sessionId"]?.stringValue == session)
-            #expect(stopped["reason"]?.stringValue?.contains("port \(own.port) is no longer served by Reach") == true)
+            #expect(
+                stopped["reason"]?.stringValue?.contains("port \(own.port) is served by another program now, not Reach")
+                    == true)
             #expect(!app.toolOutput(session).contains("second-ran"))
         } catch {
             await stack.stop()
