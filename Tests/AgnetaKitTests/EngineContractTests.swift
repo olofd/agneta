@@ -502,6 +502,17 @@ import Testing
         #expect(goose.builtinsRefusal(try narrowed(BuiltinGroup.allCases), kind: .claude) != nil)
         #expect(goose.builtinsRefusal(try policies.last!, kind: .claude) == nil)
 
+        // A shared engine has no shell, so no reading either on Goose, with or without a narrowing.
+        let read = try SessionPolicy.parse(
+            ["tools": "read"], cwd: FileManager.default.temporaryDirectory.path(percentEncoded: false), context: context
+        )
+        #expect(Router.builtins(read, engine: goose, kind: .openAIKey, dedicated: false) == ["skills"])
+        #expect(
+            Router.builtins(read, engine: goose, kind: .openAIKey, dedicated: true) == ["read", "execute", "skills"])
+        #expect(
+            Router.builtins(try narrowed([.read, .execute, .skills]), engine: goose, kind: .openAIKey, dedicated: false)
+                == ["skills"])
+
         let opencode = OpenCodeAdapter(executable: URL(filePath: "/usr/bin/false"))
         func open(_ policy: SessionPolicy) -> [String] {
             (OpenCodeAdapter.permissions(policy: policy, servers: []).arrayValue ?? []).dropFirst().compactMap {

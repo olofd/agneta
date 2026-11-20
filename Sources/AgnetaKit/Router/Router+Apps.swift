@@ -613,12 +613,14 @@ extension Router {
 
     /// `_meta.agneta.builtins` in a session's reply: the groups of the engine's own tools the session has, as its engine
     /// is configured (null when Agneta doesn't know: Goose on a Claude plan).
-    /// A shared engine (`dedicated` false) has no broker, so no shell.
+    /// A shared engine (`dedicated` false) has no broker, so no shell: it's reported as the same policy without
+    /// `execute`, which also drops `read` where an engine reads only through its shell (Goose, Codex).
     static func builtins(_ policy: SessionPolicy, engine: any EngineAdapter, kind: AccountKind?, dedicated: Bool)
         -> JSONValue
     {
-        guard var groups = engine.builtinGroups(policy, kind: kind) else { return .null }
-        if !dedicated { groups.remove(.execute) }
+        var policy = policy
+        if !dedicated { policy.builtins = (policy.builtins ?? Set(BuiltinGroup.allCases)).subtracting([.execute]) }
+        guard let groups = engine.builtinGroups(policy, kind: kind) else { return .null }
         return .array(groups.sorted().map { .string($0.rawValue) })
     }
 

@@ -122,7 +122,9 @@ public enum BuiltinGroup: String, CaseIterable, Sendable, Comparable {
         allCases.firstIndex(of: a)! < allCases.firstIndex(of: b)!
     }
 
-    /// Tools that only offer the app's own tools (loading deferred ones), kept whatever the narrowing.
+    /// Tools that only offer the app's own tools (loading deferred ones), kept whatever the narrowing. Their permission
+    /// requests are exempt only when their kind doesn't say what they do: claude-agent-acp 0.107.2 reports ToolSearch as
+    /// `other`.
     public static let infrastructure: Set<String> = ["ToolSearch"]
 
     /// Engines' own tools by name (Claude Code's, older names included, and Codex's), for the tools a narrowed session
@@ -169,6 +171,8 @@ public enum BuiltinGroup: String, CaseIterable, Sendable, Comparable {
     public static func kept(kind: String?, tool: String?, in groups: Set<BuiltinGroup>) -> Bool {
         let named = tool.flatMap { Self.named[$0] }
         if let group = of(kind: kind) { return groups.contains(group) && named.map(groups.contains) ?? true }
+        // Tool search arrives as `other` (claude-agent-acp reports every tool without a reporter of its own that way):
+        // the exemption holds only for a kind that doesn't say, never against one that does.
         if let tool, infrastructure.contains(tool) { return true }
         return named.map(groups.contains) ?? false
     }

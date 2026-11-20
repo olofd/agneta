@@ -246,7 +246,10 @@ public struct CodexAdapter: EngineAdapter {
         return nil
     }
 
-    /// Only Codex's own field: a command's title is text the model writes.
+    /// Only Codex's own field, which codex-acp 2.7.0 doesn't send (measured: a built-in's tool call carries only a kind,
+    /// a title such as `spawnAgent`, and its input; a command's title is the command the model wrote). So no Codex
+    /// built-in is known by name: under `builtins` its requests are judged by kind alone, and one of kind `other` or
+    /// `think` is refused. Without `builtins` nothing changes (`other` already passes only for a known name).
     public func vouchedToolName(in update: JSONValue) -> String? { update["_meta"]?["codex"]?["toolName"]?.stringValue }
 
     /// Codex's own instructions describe its own shell, which is off on the contained path: without a word on it, the
