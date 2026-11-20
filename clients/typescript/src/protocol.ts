@@ -216,7 +216,7 @@ export interface InitializeParams {
 export type AgnetaExtension =
   | 'agneta/policy' | 'agneta/access' | 'agneta/catalog' | 'agneta/setup' | 'agneta/task' | 'agneta/instructions'
   | 'agneta/steer' | 'agneta/usage' | 'agneta/limit' | 'agneta/queue' | 'agneta/fork' | 'agneta/rateLimited' | 'agneta/trace'
-  | 'agneta/appLimits'
+  | 'agneta/appLimits' | 'agneta/appTools'
   | (string & {});
 
 export interface InitializeResult {
@@ -276,6 +276,13 @@ export interface TaskInfo {
   stopWarning?: string;
 }
 
+/**
+ * How the engine offers the app's MCP tools (`_meta["agneta/appTools"]`). `always`: every tool, with its description and
+ * schema, in the model's context from the first request, on every engine (Claude Code otherwise defers them behind its
+ * tool search). `engine` (the default): each engine's own behaviour.
+ */
+export type AppToolsLoad = 'always' | 'engine';
+
 /** `_meta["agneta/trace"]`: live trace delivery. */
 export interface TraceDelivery {
   live: boolean;
@@ -289,6 +296,7 @@ export interface SessionRequestMeta {
   'agneta/policy'?: Policy;
   'agneta/task'?: TaskInfo;
   'agneta/instructions'?: { text: string };
+  'agneta/appTools'?: { load: AppToolsLoad };
   'agneta/trace'?: TraceDelivery;
   [key: string]: unknown;
 }
@@ -329,6 +337,8 @@ export interface SessionResultAgneta {
   capabilities: SessionCapabilities;
   /** The mode the task really got. */
   sandbox: SandboxLevel;
+  /** The `agneta/appTools` it runs with, and whether the app's tools are in the model's first request (null: not known). */
+  appTools?: { load: AppToolsLoad; upfront: boolean | null };
   /** `session/load`: true. */
   resumed?: boolean;
   /** `agneta/fork`: the source task. */

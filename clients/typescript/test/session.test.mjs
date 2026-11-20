@@ -315,6 +315,24 @@ test('updates that arrive before session/new answers are kept in history; a load
   assert.deepEqual(agneta.calls('session/load')[0].params, { sessionId: 's-old', cwd: workspace, mcpServers: [], _meta: { 'agneta/policy': { tools: 'read' } } });
 });
 
+test('appTools asks for the app\'s tools up front on new, load and fork, and reads what the session got', async (t) => {
+  const { agneta, client } = await setUp(t, {
+    handlers: {
+      'session/new': (message, peer, state) => ({ result: { sessionId: `s${++state.sessions}`, _meta: { agneta: { account: 'p1', dedicatedEngine: true, sandbox: 'contained', capabilities: { engine: 'claude-code' }, appTools: { load: 'always', upfront: true } } } } })
+    }
+  });
+  const session = await client.newSession({ appTools: 'always' });
+  assert.deepEqual(agneta.calls('session/new')[0].params._meta, { 'agneta/appTools': { load: 'always' } });
+  assert.deepEqual(session.appTools, { load: 'always', upfront: true });
+  await client.loadSession('s-old', { mcpServers: [], appTools: 'engine' });
+  assert.deepEqual(agneta.calls('session/load')[0].params._meta, { 'agneta/appTools': { load: 'engine' } });
+  await session.fork({ appTools: 'always' });
+  assert.deepEqual(agneta.calls('agneta/fork')[0].params._meta, { 'agneta/appTools': { load: 'always' } });
+  // Not given: nothing sent, so Agneta keeps the original's.
+  await session.fork();
+  assert.equal(agneta.calls('agneta/fork')[1].params._meta, undefined);
+});
+
 test('fork, close, mode and instructions', async (t) => {
   const { agneta, client } = await setUp(t);
   const session = await client.newSession();

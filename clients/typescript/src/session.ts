@@ -9,8 +9,8 @@ import type { Connection, RequestOptions } from './connection.js';
 import { Emitter } from './emitter.js';
 import { TimeoutError, TurnBusyError, type ConnectionClosedError, type DownloadProgress } from './errors.js';
 import type {
-  AgnetaRequests, AgnetaUsage, EngineId, LimitHit, Policy, PromptResult, QueuedParams, RateLimitDetails, SandboxLevel,
-  SessionCapabilities, SessionRequestMeta, SessionResult, SteerResult, StoppedBy, TaskInfo, TraceDelivery,
+  AgnetaRequests, AgnetaUsage, AppToolsLoad, EngineId, LimitHit, Policy, PromptResult, QueuedParams, RateLimitDetails, SandboxLevel,
+  SessionCapabilities, SessionRequestMeta, SessionResult, SessionResultAgneta, SteerResult, StoppedBy, TaskInfo, TraceDelivery,
   TraceReadParams, TraceReadResult, TraceRecord, TraceRecordType
 } from './protocol.js';
 
@@ -279,6 +279,12 @@ export interface SessionOptionsBase {
   task?: TaskInfo | string;
   /** `_meta["agneta/instructions"]`. */
   instructions?: string;
+  /**
+   * `_meta["agneta/appTools"]`: `'always'` puts your MCP tools (descriptions and schemas) in the model's context from the
+   * first request, on every engine; Claude Code otherwise defers them behind its tool search. Load and fork keep the
+   * original's unless given.
+   */
+  appTools?: AppToolsLoad;
   /** `_meta["agneta/trace"]`: `true` for live trace records. */
   trace?: boolean | TraceDelivery;
   /** The app's own tool servers: loopback Streamable HTTP, each with a bearer (`httpMcpServer`). */
@@ -362,6 +368,8 @@ export class Session extends Emitter<SessionEvents> {
   get engine(): EngineId { return this.capabilities?.engine; }
   /** The mode the task really got. */
   get sandbox(): SandboxLevel { return this.raw._meta?.agneta?.sandbox; }
+  /** How the engine offers your MCP tools: the `load` it runs with, and whether they're in the model's first request. */
+  get appTools(): SessionResultAgneta['appTools'] { return this.raw._meta?.agneta?.appTools; }
   /** Whether it has an engine process of its own. */
   get dedicatedEngine(): boolean { return this.raw._meta?.agneta?.dedicatedEngine === true; }
   /** Opened with `session/load`. */

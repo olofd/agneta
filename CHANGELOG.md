@@ -2,6 +2,12 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
+## Unreleased
+
+**For apps**
+
+- **Your MCP tools up front, on every engine** ([`agneta/appTools`](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md#agnetaapptools)), additive. Claude Code defers MCP tools behind its tool search: the model sees only their names, and loads each with `ToolSearch` before its first call, so an app whose tool descriptions are the instructions for its job saw them used less than when Claude Code ran with tool search off. `_meta["agneta/appTools"]: {"load": "always"}` on `session/new`, `session/load` or `agneta/fork` turns tool search off for that Claude Code session and leaves `ToolSearch` out, so every tool's description and schema is in the first request; Codex, Goose and OpenCode already send them all. Without it nothing changes. A load or fork keeps the original's; anything else is refused with `-32602`. The reply's `_meta.agneta.appTools` says what the session got (`load`, and `upfront`: whether the tools are in the model's first request). `@agneta/client` takes it as `appTools: 'always'` and reads `session.appTools`.
+
 ## 0.5.0 (2026-11-20)
 
 **For you**

@@ -226,18 +226,21 @@ const session = await client.newSession({
   },
   task: { title: 'Tidying the project notes', stopWarning: 'Example App keeps the work so far' },
   instructions: 'You are Example App\'s assistant.',
+  appTools: 'always',                // your MCP tools in the model's context from the start, on every engine
   trace: true,                       // live trace records; or { live: true, include: ['acp'] }
   permissions: (request) => 'allow'  // this session's permission requests
 });
 session.id;              // Agneta's id
 session.engine;          // 'claude-code'
 session.sandbox;         // what the task really got
+session.appTools;        // { load: 'always', upfront: true }: whether your tools are in the model's first request
 session.capabilities;    // { engine, steer, fork, instructionsBetweenTurns, reportsCost }: check before offering them
 session.configOptions;   // the engine's own settings
 ```
 
 - **Every option is optional.** With none, the session runs in your app's workspace with `workspace` tools (no more than granted), the grant's sandbox and `ask-app` approval. Anything Agneta can't enforce is refused with `UnenforceableError`, naming the `fields` and the `reason`.
 - **Your tools** are MCP servers your app runs on loopback (Streamable HTTP), each with a fresh bearer per session. `httpMcpServer({ name, url, token })` builds the registration.
+- **Your tools up front:** Claude Code defers MCP tools behind its tool search by default, so the model sees only their names until it loads each one. When your tools are central to the task and their descriptions are its instructions, pass `appTools: 'always'` (`_meta["agneta/appTools"]`): every engine then has them, descriptions and schemas, from the first request (Codex, Goose and OpenCode always do). `session.appTools` says what the session got; `loadSession` and `fork` keep the original's unless given ([the protocol](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md#agnetaapptools)).
 - **An engine still downloading** (`-32015`) is waited out: the client tries again every 2 s for up to 10 minutes, calling `onDownloadProgress({ engine, received, total })` and emitting `engineDownloading`. `waitForDownload: false` fails at once with `EngineDownloadingError`; a number sets the wait in ms.
 - **More `_meta` or params:** `meta` merges keys into `_meta`, and `params` adds top-level params, for anything this API doesn't name.
 - Opening a session times out after 180 s per attempt (`timeouts.session`).

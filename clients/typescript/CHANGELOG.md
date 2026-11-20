@@ -11,7 +11,7 @@ The first version: Agneta's whole app protocol ([docs/APP_PROTOCOL.md](https://g
 - **Before pairing:** `catalog()`, `setup()`, `waitForProvider()`, and `connect({ setup })`.
 - **Pairing:** the scope's `tools`, `folders`, `providers`, `engines` and `sandbox`, the pairing code, Allow Once and Always Allow, `unmet`; token stores in memory, in a file, and encrypted with Electron's `safeStorage`; a token Agneta no longer accepts is forgotten.
 - **Access:** the access report kept current by `agneta/accessChanged`, with `chooseProvider` and `providerEngines`.
-- **Sessions:** new, load (with the replayed history), fork and close, with the account, engine, every policy field, task, instructions, live trace and MCP servers; engine downloads waited out with progress.
+- **Sessions:** new, load (with the replayed history), fork and close, with the account, engine, every policy field, task, instructions, live trace and MCP servers; engine downloads waited out with progress. `appTools: 'always'` puts the app's MCP tools in the model's context from the first request (`agneta/appTools`), and `session.appTools` says what the session got.
 - **Turns:** a turn is a promise and an async iterable of its events (updates, queued, rate limited, stopped), with its text, thought, merged tool calls, usage and limit; cancel, steer, and a signal to cancel.
 - **Settings:** model, effort and mode by ACP category; instructions between turns.
 - **Permissions:** answered per session or per client, declined without a handler.

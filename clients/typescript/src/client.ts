@@ -711,6 +711,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     if (options.policy) meta['agneta/policy'] = options.policy;
     if (options.task) meta['agneta/task'] = typeof options.task === 'string' ? { title: options.task } : options.task;
     if (options.instructions !== undefined) meta['agneta/instructions'] = { text: options.instructions };
+    if (options.appTools) meta['agneta/appTools'] = { load: options.appTools };
     if (options.trace) meta['agneta/trace'] = options.trace === true ? { live: true } : options.trace;
     Object.assign(meta, options.meta);
     return Object.keys(meta).length ? meta : undefined;
