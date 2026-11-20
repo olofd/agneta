@@ -449,6 +449,7 @@ extension Router {
                 // The session may have ended (or been reopened) while the engine worked: the result goes back, but
                 // the router's state and the record of turns belong to the session as it is now.
                 guard current(id, generation) else { return .success(result.setting("sessionId", to: .string(id))) }
+                let limited = sessions[id]?.limitHit != nil
                 if let hit = sessions[id]?.limitHit {
                     // ACP has a stop reason for too many model turns; time and cost stop as cancelled, with the reason beside it.
                     if hit.limit == "maxTurns" { result = result.setting("stopReason", to: "max_turn_requests") }
@@ -458,7 +459,7 @@ extension Router {
                 }
                 let reason = result["stopReason"]?.stringValue ?? "end_turn"
                 sessions[id]?.activeRun = nil
-                if let summary = await trace?.turnEnded(stopReason: reason, usage: result["usage"]) {
+                if let summary = await trace?.turnEnded(stopReason: reason, usage: result["usage"], cutOff: limited) {
                     noteTokens(id, summary)
                     result = result.setting(
                         "_meta",

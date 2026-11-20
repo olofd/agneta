@@ -683,7 +683,10 @@ extension Router {
         let report = onEvent
         trace.onPlanUsage { limits in report(.planUsage(account: accountID, limits: limits)) }
         if let root = lease.stateRoot {
-            trace.follow(lease.engine.ledger(stateRoot: root, engineSession: engineSession), resumed: resumed)
+            trace.follow(
+                lease.engine.ledger(
+                    stateRoot: root, engineSession: engineSession, workspace: sessions[task]?.policy.workspace),
+                resumed: resumed)
         }
         return trace
     }

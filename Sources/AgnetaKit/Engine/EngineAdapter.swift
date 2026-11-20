@@ -159,10 +159,14 @@ public protocol UsageLedger: Sendable {
     /// Whether these records later give the final row for a call the stream reported partial (same `id`): the
     /// trace then holds a partial row back until its final one is read (Claude Code's transcript).
     var completesStreamRows: Bool { get }
+    /// On resume, starts after what's already recorded without reading it (cheaply, as on the router); false when
+    /// the reader can't, and the trace reads it all once to skip it.
+    func startAfterExisting() -> Bool
 }
 
 extension UsageLedger {
     public var completesStreamRows: Bool { false }
+    public func startAfterExisting() -> Bool { false }
 }
 
 extension EngineAdapter {
@@ -173,6 +177,9 @@ extension EngineAdapter {
         loadSession(engineSession, cwd: cwd, servers: servers, policy: policy)
     }
     public func modelCall(fromNotification method: String, params: JSONValue?) -> [String: JSONValue]? { nil }
+    public func ledger(stateRoot: URL, engineSession: String, workspace: URL?) -> (any UsageLedger)? {
+        ledger(stateRoot: stateRoot, engineSession: engineSession)
+    }
     public func permitsMode(_ mode: String) -> Bool { true }
     public var stateFormat: String { "\(id)/1" }
     public func permissionServer(_ params: JSONValue?, calls: [String: String]) -> String? {
@@ -232,6 +239,8 @@ public protocol EngineAdapter: Sendable {
 
     /// The engine's own per-call usage records for a session, under its state root.
     func ledger(stateRoot: URL, engineSession: String) -> (any UsageLedger)?
+    /// The same, knowing the session's workspace (where an engine names its records after it).
+    func ledger(stateRoot: URL, engineSession: String, workspace: URL?) -> (any UsageLedger)?
     /// After the engine deleted sessions (`session/delete`): clears what its storage under the state root still holds
     /// of them. Nil when done, else why not.
     func sessionsDeleted(stateRoot: URL) -> String?

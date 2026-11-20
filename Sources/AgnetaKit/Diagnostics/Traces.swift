@@ -281,9 +281,21 @@ public final class TraceSession: @unchecked Sendable {
     private var poller: Task<Void, Never>?
     /// How often the engine's records are read while a turn runs.
     var pollInterval: Duration = .seconds(2)
-    /// Partial rows from the stream held back until the engine's records give their final row (by id), oldest
-    /// first, each with its agent thread and, once that thread has moved on to its next call, when to give up.
-    private var held: [(id: String, row: [String: JSONValue], thread: String, due: ContinuousClock.Instant?)] = []
+    /// A partial row from the stream held back until the engine's records give its final row (by id): its agent
+    /// thread, when it was taken, and, once that thread has moved on to its next call, when to give up.
+    private struct Held {
+        var id: String
+        var row: [String: JSONValue]
+        var thread: String
+        var taken: ContinuousClock.Instant
+        var due: ContinuousClock.Instant?
+    }
+    private var held: [Held] = [] // oldest first
+    /// When the engine's records last gave rows, and whether they've stopped giving the held ones: a row given up
+    /// on with nothing read since it was taken (the transcript moved, or isn't written). Until they give rows again,
+    /// stream rows are recorded at once, so a missing transcript costs one late call, not every call and turn.
+    private var lastDelivery: ContinuousClock.Instant?
+    private var recordsAbsent = false
     /// How long a held row waits for its final one after its thread's next call began (the call had ended by then;
     /// its final row is written about 100 ms after it ends, and read at the next poll).
     var holdAfterNext: Duration = .seconds(5)
@@ -305,7 +317,7 @@ public final class TraceSession: @unchecked Sendable {
     /// earlier turns (and the trace already has it), so the reader starts after it: a resumed task's first turn
     /// counts only its own calls.
     public func follow(_ ledger: (any UsageLedger)?, resumed: Bool = false) {
-        if resumed, let ledger {
+        if resumed, let ledger, !ledger.startAfterExisting() {
             let earlier = ledger.read()
             lock.withLock { for row in earlier.usage { if let id = row["id"]?.stringValue { seenCalls.insert(id) } } }
         }
@@ -430,9 +442,12 @@ public final class TraceSession: @unchecked Sendable {
         startPolling()
     }
 
-    /// Reads the engine ledger one last time, then writes the turn summary.
+    /// Reads the engine ledger one last time, then writes the turn summary. `cutOff`: Agneta stopped the turn (a
+    /// limit), whatever the stop reason says, so its last call never gets a final row.
     @discardableResult
-    public func turnEnded(stopReason: String, usage: JSONValue?, error: String? = nil) async -> [String: JSONValue] {
+    public func turnEnded(stopReason: String, usage: JSONValue?, error: String? = nil, cutOff: Bool = false) async
+        -> [String: JSONValue]
+    {
         // The last read waits for a poll still in flight: rows it has read but not yet counted belong to this turn,
         // and the ledger hands each row out only once.
         let inFlight = lock.withLock { () -> Task<Void, Never>? in
@@ -442,22 +457,30 @@ public final class TraceSession: @unchecked Sendable {
         inFlight?.cancel()
         await inFlight?.value
         await pollLedger()
-        // The last call's final row lands just after the result: wait for it a little, reading off the router. A call
-        // cut off (cancelled, or the engine failed) never gets one.
-        if !["error", "cancelled"].contains(stopReason), lock.withLock({ !held.isEmpty }) {
+        // Each thread's last call's final row lands just after the result: wait for those a little, reading off the
+        // router (its earlier calls ended long ago). A call cut off (cancelled, a limit, the engine failed) never gets one.
+        let cut = cutOff || ["error", "cancelled"].contains(stopReason)
+        func waiting() -> Bool { lock.withLock { !recordsAbsent && held.contains { $0.due == nil } } }
+        if !cut, waiting() {
             let deadline = ContinuousClock.now + finalGrace
-            while ContinuousClock.now < deadline, lock.withLock({ !held.isEmpty }) {
+            while ContinuousClock.now < deadline, waiting() {
                 try? await Task.sleep(for: .milliseconds(25))
                 await pollLedger()
             }
         }
-        release(all: true)
-        let (started, first, calls, n, totals):
-            (ContinuousClock.Instant?, ContinuousClock.Instant?, [JSONValue], Int, [String: [String: Double]]?) =
-                lock.withLock {
-                    defer { turnStarted = nil; turnTotals = nil }
-                    return (turnStarted, firstToken, turnModelCalls, turns, turnTotals)
-                }
+        // What's still held goes out as it is, and the turn stops holding, in one step: a row arriving now is
+        // recorded at once.
+        let (started, left): (ContinuousClock.Instant?, [Held]) = lock.withLock {
+            defer { turnStarted = nil; held = [] }
+            if !cut { giveUp(held) }
+            return (turnStarted, held)
+        }
+        for row in left { record(modelCall: row.row) }
+        let (first, calls, n, totals): (ContinuousClock.Instant?, [JSONValue], Int, [String: [String: Double]]?) =
+            lock.withLock {
+                defer { turnTotals = nil }
+                return (firstToken, turnModelCalls, turns, turnTotals)
+            }
         func ms(_ from: ContinuousClock.Instant?, _ to: ContinuousClock.Instant?) -> JSONValue {
             guard let from, let to else { return .null }
             let duration = to - from
@@ -529,19 +552,27 @@ public final class TraceSession: @unchecked Sendable {
             writer.record("lifecycle", ["event": "engine-db-unavailable", "reason": .string(problem)])
         }
         for message in rows.messages { writer.record("engine.message", message) }
+        if !rows.usage.isEmpty {
+            lock.withLock {
+                lastDelivery = ContinuousClock.now
+                recordsAbsent = false
+            }
+        }
         for usage in rows.usage { ingest(modelCall: usage) }
-        release(all: false)
+        // Held rows whose final one didn't come in time go out as they are, partial.
+        let now = ContinuousClock.now
+        let due = lock.withLock { () -> [Held] in
+            let out = held.filter { $0.due.map { $0 <= now } ?? false }
+            held.removeAll { $0.due.map { $0 <= now } ?? false }
+            giveUp(out)
+            return out
+        }
+        for row in due { record(modelCall: row.row) }
     }
 
-    /// Held rows whose final one didn't come in time (all of them at the turn's end) go out as they are, partial.
-    private func release(all: Bool) {
-        let now = ContinuousClock.now
-        let due = lock.withLock { () -> [[String: JSONValue]] in
-            let out = held.filter { all || ($0.due.map { $0 <= now } ?? false) }
-            held.removeAll { all || ($0.due.map { $0 <= now } ?? false) }
-            return out.map(\.row)
-        }
-        for row in due { record(modelCall: row) }
+    /// Rows given up on: when the records gave nothing since one was taken, they've stopped giving them. Under the lock.
+    private func giveUp(_ rows: [Held]) {
+        if rows.contains(where: { row in lastDelivery.map { $0 < row.taken } ?? true }) { recordsAbsent = true }
     }
 
     /// Holds a partial row from the stream when the engine's records will give the call's final one: the same
@@ -549,14 +580,17 @@ public final class TraceSession: @unchecked Sendable {
     private func hold(_ usage: [String: JSONValue]) -> Bool {
         guard usage["output_partial"] == .bool(true), let id = usage["id"]?.stringValue else { return false }
         return lock.withLock {
-            guard ledger?.completesStreamRows == true, turnStarted != nil, !seenCalls.contains(id) else { return false }
+            guard ledger?.completesStreamRows == true, !recordsAbsent, turnStarted != nil, !seenCalls.contains(id)
+            else {
+                return false
+            }
             if held.contains(where: { $0.id == id }) { return true }
             let thread = usage["parent"]?.stringValue ?? ""
-            let due = ContinuousClock.now + holdAfterNext
+            let now = ContinuousClock.now
             for index in held.indices where held[index].thread == thread && held[index].due == nil {
-                held[index].due = due
+                held[index].due = now + holdAfterNext
             }
-            held.append((id, usage, thread, nil))
+            held.append(Held(id: id, row: usage, thread: thread, taken: now, due: nil))
             return true
         }
     }
@@ -652,8 +686,14 @@ public final class TraceSession: @unchecked Sendable {
         }
     }
 
+    /// Ends the trace. Calls still held (a session ended mid-turn) go out first, as they are.
     func close() {
         lock.withLock { poller }?.cancel()
+        let left = lock.withLock {
+            defer { held = [] }
+            return held
+        }
+        for row in left { record(modelCall: row.row) }
         writer.close()
     }
 }

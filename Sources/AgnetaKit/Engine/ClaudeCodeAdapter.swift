@@ -93,8 +93,7 @@ public struct ClaudeCodeAdapter: EngineAdapter {
         // named as Claude Code names it (every non-alphanumeric character of the cwd becomes "-"), stays open.
         if let workspace = context.session?.policy.workspace {
             let projects = config.appending(path: "projects", directoryHint: .isDirectory)
-            let own = workspace.realFileURL.path(percentEncoded: false).trimmingSuffix("/")
-                .replacingOccurrences(of: "[^A-Za-z0-9]", with: "-", options: .regularExpression)
+            let own = Self.projectFolder(workspace)
             launch.denied = [projects]
             launch.exceptions = [projects.appending(path: own, directoryHint: .isDirectory)]
         }
@@ -104,6 +103,13 @@ public struct ClaudeCodeAdapter: EngineAdapter {
             launch.readOnly += ClaudeCodeSignIn.trustedSettings.map { config.appending(path: $0) }
         }
         return launch
+    }
+
+    /// The project folder Claude Code keeps a workspace's transcripts in: every non-alphanumeric character of its real
+    /// path becomes "-".
+    static func projectFolder(_ workspace: URL) -> String {
+        workspace.realFileURL.path(percentEncoded: false).trimmingSuffix("/")
+            .replacingOccurrences(of: "[^A-Za-z0-9]", with: "-", options: .regularExpression)
     }
 
     /// A session's transcript and its subagents' folder, in each project folder of the account's config.
@@ -309,7 +315,12 @@ public struct ClaudeCodeAdapter: EngineAdapter {
     public func importedSession(_ result: JSONValue) -> String? { nil }
     /// The session's own transcript, in the account's config (`stateRoot`): each call's final usage.
     public func ledger(stateRoot: URL, engineSession: String) -> (any UsageLedger)? {
-        ClaudeCodeTranscriptLedger(config: stateRoot, session: engineSession)
+        ledger(stateRoot: stateRoot, engineSession: engineSession, workspace: nil)
+    }
+
+    public func ledger(stateRoot: URL, engineSession: String, workspace: URL?) -> (any UsageLedger)? {
+        ClaudeCodeTranscriptLedger(
+            config: stateRoot, session: engineSession, preferredFolder: workspace.map(Self.projectFolder))
     }
 
     /// `_claude/sdkMessage`. An assistant message is one model call: its id, model, input and cache tokens are

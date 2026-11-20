@@ -1,15 +1,19 @@
 // Claude Code's per-call usage from its session transcript, and how the trace completes the stream's partial rows
 // with it. The lines follow the shape measured on Claude Code 2.1.326 through claude-agent-acp 0.107.2 (against a
 // fake Messages API: no account), abridged to the keys that matter; the values are made up.
+import Darwin
 import Foundation
 import Testing
 
 @testable import AgnetaKit
 
 @Suite struct ClaudeCodeLedgerTests {
+    static let session = "5d0c6a1e-0000-4000-8000-000000000001"
+
     /// One transcript line for one content block of an assistant message, as Claude Code writes it.
     static func line(
-        _ id: String, block: String = "text", output: Int, stop: String? = "tool_use", model: String = "claude-haiku-5-5"
+        _ id: String, block: String = "text", output: Int, stop: String? = "tool_use",
+        model: String = "claude-haiku-5-5"
     ) -> String {
         let stopValue = stop.map { "\"\($0)\"" } ?? "null"
         return
@@ -31,8 +35,9 @@ import Testing
             project = config.appending(path: "projects/-private-tmp-work", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         }
-        var transcript: URL { project.appending(path: "s.jsonl") }
-        var subagent: URL { project.appending(path: "s/subagents/agent-a1.jsonl") }
+        var transcript: URL { project.appending(path: "\(session).jsonl") }
+        var subagents: URL { project.appending(path: "\(session)/subagents", directoryHint: .isDirectory) }
+        var subagent: URL { subagents.appending(path: "agent-a1.jsonl") }
         func append(_ text: String, to file: URL) throws {
             try FileManager.default.createDirectory(
                 at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -44,13 +49,16 @@ import Testing
             try handle.write(contentsOf: Data(text.utf8))
             try handle.close()
         }
+        func ledger() throws -> ClaudeCodeTranscriptLedger {
+            try #require(ClaudeCodeTranscriptLedger(config: config, session: session))
+        }
         func remove() { try? FileManager.default.removeItem(at: config) }
     }
 
     @Test func readsEachFinalCallOnceIncrementally() throws {
         let account = try Account()
         defer { account.remove() }
-        let ledger = ClaudeCodeTranscriptLedger(config: account.config, session: "s")
+        let ledger = try account.ledger()
         #expect(ledger.read().usage.isEmpty) // no transcript yet
         try account.append(
             #"{"type":"queue-operation","operation":"enqueue"}"# + "\n" + Self.line("msg_a", output: 321)
@@ -63,7 +71,8 @@ import Testing
         #expect(first.map { $0["id"]?.stringValue } == ["msg_a"])
         #expect(first[0]["output_tokens"]?.intValue == 321 && first[0]["input_tokens"]?.intValue == 3)
         #expect(first[0]["cache_read_tokens"]?.intValue == 900 && first[0]["cache_write_tokens"]?.intValue == 40)
-        #expect(first[0]["output_partial"] == .bool(false) && first[0]["basis"]?.stringValue == "engine-transcript")
+        #expect(first[0]["output_partial"] == JSONValue.bool(false))
+        #expect(first[0]["basis"]?.stringValue == "engine-transcript")
         #expect(first[0]["model"]?.stringValue == "claude-haiku-5-5")
 
         try account.append(
@@ -75,25 +84,72 @@ import Testing
         #expect(ledger.read().usage.isEmpty)
     }
 
+    /// The session's folder is the engine's to write: a FIFO (which would block an open), a link to a device, to
+    /// another task's transcript or in place of a folder are all left alone, and reading never hangs.
+    @Test(.timeLimit(.minutes(1))) func plantedFilesAreSkippedWithoutHanging() throws {
+        let account = try Account()
+        defer { account.remove() }
+        try account.append(Self.line("msg_a", output: 321), to: account.transcript)
+        try FileManager.default.createDirectory(at: account.subagents, withIntermediateDirectories: true)
+        #expect(mkfifo(account.subagents.appending(path: "agent-fifo.jsonl").path(percentEncoded: false), 0o600) == 0)
+        try FileManager.default.createSymbolicLink(
+            at: account.subagents.appending(path: "agent-zero.jsonl"), withDestinationURL: URL(filePath: "/dev/zero"))
+        let other = account.config.appending(path: "projects/-other/other.jsonl")
+        try account.append(Self.line("msg_other", output: 999), to: other)
+        try FileManager.default.createSymbolicLink(
+            at: account.subagents.appending(path: "agent-other.jsonl"), withDestinationURL: other)
+        try account.append(Self.line("msg_sub", output: 77), to: account.subagent)
+        let ledger = try account.ledger()
+        #expect(ledger.read().usage.map { $0["id"]?.stringValue } == ["msg_a", "msg_sub"])
+
+        // A session folder that's a link to another task's: not followed.
+        try FileManager.default.removeItem(at: account.project.appending(path: Self.session))
+        try FileManager.default.createSymbolicLink(
+            at: account.project.appending(path: Self.session),
+            withDestinationURL: account.config.appending(path: "projects/-other", directoryHint: .isDirectory))
+        try account.append(Self.line("msg_b", output: 5, stop: "end_turn"), to: account.transcript)
+        #expect(ledger.read().usage.map { $0["id"]?.stringValue } == ["msg_b"])
+
+        // The transcript itself swapped for a FIFO: skipped too.
+        try FileManager.default.removeItem(at: account.transcript)
+        #expect(mkfifo(account.transcript.path(percentEncoded: false), 0o600) == 0)
+        #expect(ledger.read().usage.isEmpty)
+
+        #expect(ClaudeCodeTranscriptLedger(config: account.config, session: "../../etc") == nil) // not a UUID
+    }
+
+    /// On resume, what's there is skipped by its size, without reading it; later lines are read.
+    @Test func aResumedLedgerStartsAfterWhatsThere() throws {
+        let account = try Account()
+        defer { account.remove() }
+        try account.append(Self.line("msg_old", output: 10, stop: "end_turn"), to: account.transcript)
+        try account.append(Self.line("msg_old_sub", output: 10, stop: "end_turn"), to: account.subagent)
+        let ledger = try account.ledger()
+        #expect(ledger.startAfterExisting())
+        try account.append(Self.line("msg_new", output: 20, stop: "end_turn"), to: account.transcript)
+        #expect(ledger.read().usage.map { $0["id"]?.stringValue } == ["msg_new"])
+    }
+
     static let adapter = ClaudeCodeAdapter(
         executable: URL(filePath: "/x"), cli: InstalledCLI(path: URL(filePath: "/y"), version: nil, source: "path"))
 
     static func trace(_ account: Account) -> (Traces, TraceSession) {
         let traces = Traces(folder: account.config.appending(path: "traces", directoryHint: .isDirectory))
-        let session = traces.open(task: "t1", lease: "l", engineSession: "s")
-        session.follow(adapter.ledger(stateRoot: account.config, engineSession: "s"))
-        session.pollInterval = .seconds(60) // the test reads when it means to
-        return (traces, session)
+        let trace = traces.open(task: "t1", lease: "l", engineSession: "s")
+        trace.follow(adapter.ledger(stateRoot: account.config, engineSession: session))
+        trace.pollInterval = .seconds(60) // the test reads when it means to
+        return (traces, trace)
     }
 
-    static func feed(_ session: TraceSession, _ params: JSONValue) {
+    static func feed(_ trace: TraceSession, _ params: JSONValue) {
         if let row = adapter.modelCall(fromNotification: "_claude/sdkMessage", params: params) {
-            session.ingest(modelCall: row)
+            trace.ingest(modelCall: row)
         }
     }
 
     static func modelCalls(_ traces: Traces) -> [JSONValue] {
-        (traces.records(task: "t1") ?? []).filter { $0["kind"]?.stringValue == "model-call" }
+        traces.session("t1")?.writer.flush()
+        return (traces.records(task: "t1") ?? []).filter { $0["kind"]?.stringValue == "model-call" }
     }
 
     /// The stream's partial rows wait for the transcript's final ones: each call is recorded once, complete, while
@@ -101,27 +157,28 @@ import Testing
     @Test func streamRowsWaitForTheTranscriptsFinalRows() async throws {
         let account = try Account()
         defer { account.remove() }
-        let (traces, session) = Self.trace(account)
-        session.turnStarted(prompt: nil)
-        Self.feed(session, ClaudeCodeUsageTests.assistant("msg_a", output: 2))
-        Self.feed(session, ClaudeCodeUsageTests.assistant("msg_a", output: 2)) // its next content block
-        Self.feed(session, ClaudeCodeUsageTests.assistant("msg_b", output: 2))
-        #expect(session.progress.turnModelCalls == 2) // held rows count toward the turn's limit
+        let (traces, trace) = Self.trace(account)
+        trace.turnStarted(prompt: nil)
+        Self.feed(trace, ClaudeCodeUsageTests.assistant("msg_a", output: 2))
+        Self.feed(trace, ClaudeCodeUsageTests.assistant("msg_a", output: 2)) // its next content block
+        Self.feed(trace, ClaudeCodeUsageTests.assistant("msg_b", output: 2))
+        #expect(trace.progress.turnModelCalls == 2) // held rows count toward the turn's limit
         try account.append(
-            Self.line("msg_a", output: 321) + Self.line("msg_a", block: "tool_use", output: 321), to: account.transcript)
-        await session.pollLedger()
-        session.writer.flush()
+            Self.line("msg_a", output: 321) + Self.line("msg_a", block: "tool_use", output: 321), to: account.transcript
+        )
+        await trace.pollLedger()
         let live = Self.modelCalls(traces)
         #expect(live.count == 1)
-        #expect(live.first?["output"]?.intValue == 321 && live.first?["outputPartial"] == .bool(false))
+        #expect(live.first?["output"]?.intValue == 321 && live.first?["outputPartial"] == JSONValue.bool(false))
         #expect(live.first?["basis"]?.stringValue == "engine-transcript")
 
-        Self.feed(session, ClaudeCodeUsageTests.result(input: 6, output: 450, cacheRead: 1800, cacheWrite: 80, cost: 0.002))
+        Self.feed(
+            trace, ClaudeCodeUsageTests.result(input: 6, output: 450, cacheRead: 1800, cacheWrite: 80, cost: 0.002))
         let late = Task {
             try? await Task.sleep(for: .milliseconds(60))
             try? account.append(Self.line("msg_b", output: 123, stop: "end_turn"), to: account.transcript)
         }
-        let turn = await session.turnEnded(stopReason: "end_turn", usage: nil)
+        let turn = await trace.turnEnded(stopReason: "end_turn", usage: nil)
         await late.value
         #expect(turn["modelCalls"]?.intValue == 2)
         #expect(turn["callLedger"]?["output"]?.intValue == 444) // every call's final count
@@ -129,38 +186,77 @@ import Testing
         #expect(turn["basis"]?.stringValue == "engine-turn-totals")
         let calls = Self.modelCalls(traces)
         #expect(calls.map { $0["output"]?.intValue } == [321, 123])
-        #expect(calls.allSatisfy { $0["outputPartial"] == .bool(false) })
+        #expect(calls.allSatisfy { $0["outputPartial"] == JSONValue.bool(false) })
         traces.close(task: "t1")
     }
 
     /// No transcript line in time: the stream's rows go out as they are, partial, once their thread's next call has
     /// begun (after `holdAfterNext`) or at the turn's end (after `finalGrace`). A subagent's calls are a thread of
-    /// their own, so the session's next call doesn't hurry them.
+    /// their own, so the session's next call doesn't hurry them. With nothing read at all, later rows aren't held.
     @Test func withoutTheTranscriptStreamRowsGoOutPartial() async throws {
         let account = try Account()
         defer { account.remove() }
-        let (traces, session) = Self.trace(account)
-        session.holdAfterNext = .zero
-        session.finalGrace = .milliseconds(50)
-        session.turnStarted(prompt: nil)
+        let (traces, trace) = Self.trace(account)
+        trace.holdAfterNext = .zero
+        trace.finalGrace = .milliseconds(50)
+        trace.turnStarted(prompt: nil)
         func subagent(_ id: String) -> JSONValue {
             ClaudeCodeUsageTests.assistant(id, output: 3).setting(
                 "message",
                 to: (ClaudeCodeUsageTests.assistant(id, output: 3)["message"] ?? [:]).setting(
                     "parent_tool_use_id", to: "toolu_1"))
         }
-        Self.feed(session, ClaudeCodeUsageTests.assistant("msg_a", output: 2))
-        Self.feed(session, subagent("msg_s1"))
-        Self.feed(session, ClaudeCodeUsageTests.assistant("msg_b", output: 2)) // msg_a has ended
-        await session.pollLedger()
-        session.writer.flush()
+        Self.feed(trace, ClaudeCodeUsageTests.assistant("msg_a", output: 2))
+        Self.feed(trace, subagent("msg_s1"))
+        Self.feed(trace, ClaudeCodeUsageTests.assistant("msg_b", output: 2)) // msg_a has ended
+        await trace.pollLedger()
         let early = Self.modelCalls(traces)
         #expect(early.map { $0["output"]?.intValue } == [2])
-        #expect(early.first?["outputPartial"] == .bool(true) && early.first?["basis"]?.stringValue == "engine-stream")
+        #expect(early.first?["outputPartial"] == JSONValue.bool(true))
+        #expect(early.first?["basis"]?.stringValue == "engine-stream")
 
-        let turn = await session.turnEnded(stopReason: "end_turn", usage: nil)
-        #expect(turn["modelCalls"]?.intValue == 3)
-        #expect(Self.modelCalls(traces).allSatisfy { $0["outputPartial"] == .bool(true) })
+        // Given up on with nothing read: the next calls are recorded at once, and the turn's end doesn't wait.
+        Self.feed(trace, ClaudeCodeUsageTests.assistant("msg_c", output: 2))
+        #expect(Self.modelCalls(traces).count == 2)
+        trace.finalGrace = .seconds(30)
+        let turn = await trace.turnEnded(stopReason: "end_turn", usage: nil)
+        #expect(turn["modelCalls"]?.intValue == 4)
+        #expect(Self.modelCalls(traces).allSatisfy { $0["outputPartial"] == JSONValue.bool(true) })
+
+        // Once the transcript gives rows again, rows are held again.
+        try account.append(Self.line("msg_c", output: 50, stop: "end_turn"), to: account.transcript)
+        trace.turnStarted(prompt: nil)
+        await trace.pollLedger()
+        Self.feed(trace, ClaudeCodeUsageTests.assistant("msg_d", output: 2))
+        #expect(Self.modelCalls(traces).count == 4)
+        try account.append(Self.line("msg_d", output: 60, stop: "end_turn"), to: account.transcript)
+        let next = await trace.turnEnded(stopReason: "end_turn", usage: nil)
+        #expect(next["ledger"]?["output"]?.intValue == 60)
+        #expect(Self.modelCalls(traces).last?["outputPartial"] == JSONValue.bool(false))
         traces.close(task: "t1")
+    }
+
+    /// A turn Agneta stopped (a limit: `max_turn_requests` for maxTurns) isn't waited for, and a session ended
+    /// mid-turn records what was still held.
+    @Test func cutOffTurnsAndClosedSessionsDontWaitOrLoseCalls() async throws {
+        let account = try Account()
+        defer { account.remove() }
+        let (traces, trace) = Self.trace(account)
+        trace.finalGrace = .seconds(30)
+        try account.append(Self.line("msg_0", output: 1, stop: "end_turn"), to: account.transcript)
+        trace.turnStarted(prompt: nil)
+        await trace.pollLedger() // the transcript is there
+        Self.feed(trace, ClaudeCodeUsageTests.assistant("msg_a", output: 2))
+        let started = ContinuousClock.now
+        let turn = await trace.turnEnded(stopReason: "max_turn_requests", usage: nil, cutOff: true)
+        #expect(ContinuousClock.now - started < .seconds(5))
+        #expect(turn["modelCalls"]?.intValue == 2)
+
+        trace.turnStarted(prompt: nil)
+        Self.feed(trace, ClaudeCodeUsageTests.assistant("msg_b", output: 2))
+        #expect(Self.modelCalls(traces).count == 2) // held
+        traces.close(task: "t1")
+        let calls = (traces.records(task: "t1") ?? []).filter { $0["kind"]?.stringValue == "model-call" }
+        #expect(calls.map { $0["outputPartial"] } == [.bool(false), .bool(true), .bool(true)])
     }
 }
