@@ -191,7 +191,7 @@ case "tasks":
     let history = (try? database.history(limit: limit)) ?? []
     let names =
         (try? FileManager.default.contentsOfDirectory(atPath: store.tracesFolder.path(percentEncoded: false))) ?? []
-    let ended = Set(history.map(\.id))
+    let ended = (try? database.endedTaskIDs()) ?? Set(history.map(\.id))
     let running = names.filter { $0.hasSuffix(".jsonl") }.map { String($0.dropLast(6)) }.filter { !ended.contains($0) }
     for id in running { print("\(id)  running or unfinished") }
     for task in history {

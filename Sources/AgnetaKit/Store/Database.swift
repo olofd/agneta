@@ -394,6 +394,14 @@ public final class AgnetaDatabase: Sendable {
         }
     }
 
+    /// The ids of every ended task, whatever its age: whether a trace's task is still running can't be read from a page
+    /// of history (agneta-diag listed every task older than its limit as running).
+    public func endedTaskIDs() throws -> Set<String> {
+        try queue.read { db in
+            Set(try String.fetchAll(db, sql: "SELECT id FROM sessions WHERE ended IS NOT NULL"))
+        }
+    }
+
     /// Ended tasks, newest first.
     public func history(limit: Int = 500) throws -> [TaskRecord] {
         try queue.read { db in

@@ -72,6 +72,22 @@ private func temporaryFolder() throws -> URL {
         #expect(record.outcome == .finished)
     }
 
+    /// Whether a task ended is answered for every task, not from a page of history: agneta-diag listed every task older
+    /// than its listing limit as still running.
+    @Test func endedTaskIDsCoverEveryEndedTaskWhateverTheHistoryPage() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let database = try AgnetaDatabase(file: folder.appending(path: "agneta.sqlite"))
+        let start = Date()
+        for (n, id) in ["old", "newer", "newest", "running"].enumerated() {
+            let started = start.addingTimeInterval(Double(n))
+            try database.taskStarted(TaskRecord(id: id, app: "Example App", account: "a1", title: id, started: started))
+        }
+        for id in ["old", "newer", "newest"] { try database.taskEnded(id, outcome: .finished) }
+        #expect(try database.history(limit: 1).map(\.id) == ["newest"])
+        #expect(try database.endedTaskIDs() == ["old", "newer", "newest"])
+    }
+
     @Test func unfinishedTasksBecomeInterruptedAndRetentionPrunes() throws {
         let folder = try temporaryFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
