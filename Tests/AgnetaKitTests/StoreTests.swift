@@ -233,6 +233,31 @@ private func temporaryFolder() throws -> URL {
 }
 
 @Suite struct EngineHomeTests {
+    @Test func anIncompleteTraceInventoryDefersOrphanDeletion() throws {
+        let root = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let traces = Traces(folder: root.appending(path: "Traces"))
+        let home = EngineHomes.home(root: root, key: "account/retained")
+        let orphan = EngineHomes.home(root: root, key: "account/orphan")
+        for url in [home, orphan] {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        func sweep() -> [String] { EngineHomes.sweep(root: root, traces: traces, before: .distantFuture, keep: []) }
+
+        // The trace directory is unavailable, then returns with one incomplete trace.
+        #expect(sweep().isEmpty)
+        try FileManager.default.createDirectory(at: traces.folder, withIntermediateDirectories: true)
+        try Data().write(to: traces.file(for: "task"))
+        #expect(sweep().isEmpty)
+        #expect(FileManager.default.fileExists(atPath: home.path))
+
+        let session = traces.open(task: "task", lease: "account/retained", engineSession: "e")
+        session.writer.record("meta", ["engine": ["key": "account/retained"]])
+        traces.close(task: "task")
+        #expect(sweep() == ["account-orphan"])
+        #expect(FileManager.default.fileExists(atPath: home.path))
+    }
+
     @Test func homesFollowTheirTasksAccountsAndAge() throws {
         let root = FileManager.default.temporaryDirectory.appending(
             path: "agneta-homes-\(UUID().uuidString)", directoryHint: .isDirectory)

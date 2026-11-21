@@ -78,20 +78,23 @@ public enum EngineHomes {
         var referenced: Set<String> = keep.map { $0.replacingOccurrences(of: "/", with: "-") }.reduce(into: []) {
             $0.insert($1)
         }
-        let traceNames =
-            (try? FileManager.default.contentsOfDirectory(atPath: traces.folder.path(percentEncoded: false))) ?? []
+        // No candidate is known to be an orphan until every retained trace has been accounted for.
+        guard
+            let traceNames = try? FileManager.default.contentsOfDirectory(
+                atPath: traces.folder.path(percentEncoded: false))
+        else { return [] }
         for name in traceNames where name.hasSuffix(".jsonl") {
-            if let key = traces.meta(task: String(name.dropLast(6)))?["engine"]?["key"]?.stringValue {
-                referenced.insert(key.replacingOccurrences(of: "/", with: "-"))
-            }
+            guard let key = traces.meta(task: String(name.dropLast(6)))?["engine"]?["key"]?.stringValue
+            else { return [] }
+            referenced.insert(key.replacingOccurrences(of: "/", with: "-"))
         }
         var removed: [String] = []
         for name in names where !referenced.contains(name) {
             let url = base.appending(path: name, directoryHint: .isDirectory)
-            let modified =
-                (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-                ?? .distantPast
-            guard modified < before else { continue }
+            guard
+                let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                modified < before
+            else { continue }
             if (try? FileManager.default.removeItem(at: url)) != nil { removed.append(name) }
         }
         return removed
