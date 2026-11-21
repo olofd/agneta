@@ -1,0 +1,16 @@
+#!/bin/bash
+set -euo pipefail
+[[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::The tap needs a stable version tag"; exit 1; }
+if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease \
+  | jq -e --arg tag "$TAG" '.tagName == $tag and .isDraft == false and .isPrerelease == false' >/dev/null; then
+  echo "::error::Could not verify a published stable release for $TAG"
+  exit 1
+fi
+version=${TAG#v}
+gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt --dir "$RUNNER_TEMP"
+sum() { awk -v file="Agneta-$version-$1.dmg" '$2 == file { print $1 }' "$RUNNER_TEMP/SHA256SUMS.txt"; }
+arm=$(sum arm64) intel=$(sum x86_64)
+[[ $arm =~ ^[[:xdigit:]]{64}$ && $intel =~ ^[[:xdigit:]]{64}$ ]] || { echo "::error::SHA256SUMS.txt lacks a DMG"; exit 1; }
+sed -e "s/@VERSION@/$version/" -e "s/@SHA256_ARM64@/$arm/" -e "s/@SHA256_X86_64@/$intel/" \
+  packaging/homebrew/agneta.rb > "$RUNNER_TEMP/agneta.rb"
+echo "VERSION=$version" >> "$GITHUB_ENV"

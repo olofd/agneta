@@ -26,16 +26,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
-        run: |
-          set -euo pipefail
-          version=${TAG#v}
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt --dir "$RUNNER_TEMP"
-          sum() { awk -v file="Agneta-$version-$1.dmg" '$2 == file { print $1 }' "$RUNNER_TEMP/SHA256SUMS.txt"; }
-          arm=$(sum arm64) intel=$(sum x86_64)
-          [[ ${#arm} == 64 && ${#intel} == 64 ]] || { echo "::error::SHA256SUMS.txt lacks a DMG"; exit 1; }
-          sed -e "s/@VERSION@/$version/" -e "s/@SHA256_ARM64@/$arm/" -e "s/@SHA256_X86_64@/$intel/" \
-            packaging/homebrew/agneta.rb > "$RUNNER_TEMP/agneta.rb"
-          echo "VERSION=$version" >> "$GITHUB_ENV"
+        run: scripts/dev/fill-homebrew-cask
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: olofd/homebrew-tap

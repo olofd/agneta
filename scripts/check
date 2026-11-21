@@ -102,6 +102,7 @@ check_python() {
   while IFS= read -r file; do files+=("$file"); done < <(scripts/dev/check-files list python | list)
   scripts/dev/check-files python || failed=1
   python3 -m unittest discover -s scripts/dev/tests -p test_check_files.py || failed=1
+  python3 -m unittest discover -s scripts/dev/tests -p test_release_metadata.py || failed=1
   if command -v ruff > /dev/null; then
     echo "$(ruff --version) on ${#files[@]} files"
     tool ruff ruff check --quiet --no-cache "${files[@]}" || failed=1
