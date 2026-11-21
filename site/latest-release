@@ -1,0 +1,14 @@
+#!/bin/bash
+# Writes the metadata consumed by site/build.py, or an empty file before the first published release.
+set -euo pipefail
+file="$RUNNER_TEMP/release.json"
+if gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$file"; then
+  jq -e '(.tag_name | type == "string" and length > 0) and (.assets | type == "array")' "$file" >/dev/null
+elif gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 1 --json tagName \
+  | jq -e '. == []' >/dev/null; then
+  echo "No published stable release yet; the page links to the releases list."
+  : > "$file"
+else
+  echo "::error::Could not read the latest published release; keeping the existing site."
+  exit 1
+fi

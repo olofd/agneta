@@ -51,3 +51,28 @@ esac
         result = self.run_step("scripts/dev/fill-homebrew-cask")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('version "1.0.0"', output.read_text(encoding="utf-8"))
+
+    def test_pages_fallback_requires_a_confirmed_empty_release_list(self):
+        self.mock_gh("""
+case "$1 $2" in
+  'api repos/example/test/releases/latest') echo "$LATEST"; exit "$API_STATUS" ;;
+  'release list') echo "$RELEASES"; exit "$LIST_STATUS" ;;
+  *) exit 2 ;;
+esac
+""")
+        step = "site/latest-release"
+        output = self.root / "release.json"
+        release = json.dumps(dict(tag_name="v1.0.0", assets=[]))
+        self.env.update(LATEST=release, API_STATUS="0", LIST_STATUS="1", RELEASES="[]")
+        self.assertEqual(self.run_step(step).returncode, 0)
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), json.loads(release))
+
+        self.env["LATEST"] = "{}"
+        self.assertNotEqual(self.run_step(step).returncode, 0)
+        self.env.update(LATEST="", API_STATUS="1")
+        self.assertNotEqual(self.run_step(step).returncode, 0)
+        self.env.update(LIST_STATUS="0", RELEASES='[{"tagName":"v1.0.0"}]')
+        self.assertNotEqual(self.run_step(step).returncode, 0)
+        self.env["RELEASES"] = "[]"
+        self.assertEqual(self.run_step(step).returncode, 0)
+        self.assertEqual(output.read_bytes(), b"")
