@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   connect, httpMcpServer, chooseProvider, configSetting, findConfigOption, permissionResponse, providerEngines,
-  AbortedError, TimeoutError, EngineDownloadingError, NoTurnRunningError, RateLimitedError, TurnBusyError, UnenforceableError, PausedError
+  AbortedError, InvalidParamsError, TimeoutError, EngineDownloadingError, NoTurnRunningError, RateLimitedError, TurnBusyError, UnenforceableError, PausedError
 } from '../dist/index.js';
 import { agnetaLike, accessReport, standIn, workspace } from './stand-in.mjs';
 
@@ -168,6 +168,12 @@ test('steering a running turn, and NoTurnRunningError without one', async (t) =>
   assert.deepEqual(agneta.calls('agneta/steer').at(-1).params, { sessionId: 's1', prompt: [{ type: 'text', text: 'Also this' }] });
   finish();
   await turn;
+  const next = session.prompt('Another turn');
+  await assert.rejects(turn.steer('Too late'), NoTurnRunningError);
+  await next.steer('For this turn');
+  assert.equal(agneta.calls('agneta/steer').length, 3);
+  finish();
+  await next;
 });
 
 test('the user\'s Stop ends the session; the turn ends with stoppedBy', async (t) => {
@@ -379,6 +385,37 @@ test('a close with a lost reply can reconcile an already closed session', async 
   assert.equal(closed, true);
   assert.deepEqual(session.ended, { reason: 'closed' });
   assert.equal(client.session(session.id), undefined);
+});
+
+test('an ended handle cannot submit work to a resumed session', async (t) => {
+  const { agneta, client } = await setUp(t);
+  const old = await client.newSession();
+  await old.close();
+  const current = await client.loadSession(old.id);
+  await assert.rejects(old.prompt('stale').result, InvalidParamsError);
+  await assert.rejects(old.steer('stale'), InvalidParamsError);
+  await assert.rejects(old.setMode('plan'), InvalidParamsError);
+  await assert.rejects(old.setModel('opus'), InvalidParamsError);
+  await assert.rejects(old.setInstructions('stale'), InvalidParamsError);
+  old.cancel();
+  assert.equal((await current.prompt('current')).text, 'Hello there.');
+  assert.equal(agneta.calls('session/prompt').length, 1);
+  for (const method of ['agneta/steer', 'session/set_mode', 'session/set_config_option', 'agneta/instructions/set', 'session/cancel']) {
+    assert.equal(agneta.calls(method).length, 0, method);
+  }
+  assert.equal((await old.readTrace()).complete, true);
+  assert.equal((await old.fork()).forkOf, old.id);
+});
+
+test('loading after a lost close reply retires the earlier handle', async (t) => {
+  const { agneta, client } = await setUp(t, { handlers: { 'session/close': () => null } });
+  const old = await client.newSession();
+  await assert.rejects(old.close({ timeout: 50 }), TimeoutError);
+  const current = await client.loadSession(old.id);
+  assert.deepEqual(old.ended, { reason: 'closed' });
+  await old.close();
+  assert.equal(agneta.calls('session/close').length, 1);
+  assert.equal(client.session(current.id), current);
 });
 
 test('fork, close, mode and instructions', async (t) => {

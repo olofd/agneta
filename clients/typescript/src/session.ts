@@ -7,7 +7,7 @@ import type {
 import { configSetting, findConfigOption, type ConfigSetting } from './config.js';
 import type { Connection, RequestOptions } from './connection.js';
 import { Emitter } from './emitter.js';
-import { InvalidParamsError, TimeoutError, TurnBusyError, type ConnectionClosedError, type DownloadProgress } from './errors.js';
+import { InvalidParamsError, NoTurnRunningError, TimeoutError, TurnBusyError, type ConnectionClosedError, type DownloadProgress } from './errors.js';
 import type {
   AgnetaRequests, AgnetaUsage, AppToolsLoad, EngineId, LimitHit, Policy, PromptResult, QueuedParams, RateLimitDetails, SandboxLevel,
   SessionCapabilities, SessionRequestMeta, SessionResult, SessionResultAgneta, SteerResult, StoppedBy, TaskInfo, TraceDelivery,
@@ -156,6 +156,9 @@ export class Turn implements PromiseLike<TurnResult>, AsyncIterable<TurnEvent> {
 
   /** Adds input to the running turn (`agneta/steer`). */
   steer(input: PromptInput, options?: RequestOptions): Promise<SteerResult> {
+    if (this.#done || this.session.turn !== this) {
+      return Promise.reject(new NoTurnRunningError({ code: -32010, message: 'This turn has ended' }, 'agneta/steer'));
+    }
     return this.session.steer(input, options);
   }
 
@@ -410,7 +413,7 @@ export class Session extends Emitter<SessionEvents> {
       const onAbort = () => this.cancel();
       signal?.addEventListener('abort', onAbort, { once: true });
       if (signal?.aborted) queueMicrotask(onAbort);
-      return this.#host.connection.request('session/prompt', { sessionId: this.id, prompt: promptBlocks(input), ...(meta ? { _meta: meta } : {}) },
+      return this.#request('session/prompt', { sessionId: this.id, prompt: promptBlocks(input), ...(meta ? { _meta: meta } : {}) },
         { timeout: options.timeout ?? this.#host.timeouts.prompt })
         // Timed out here: the turn still runs in Agneta, so it's cancelled there too (else the next prompt is busy).
         .catch((error) => { if (error instanceof TimeoutError) this.cancel(); throw error; })
@@ -562,9 +565,13 @@ export class Session extends Emitter<SessionEvents> {
     return this.setConfigOption(option.id, value, options);
   }
 
-  #request<M extends 'agneta/steer' | 'session/close' | 'session/set_config_option' | 'session/set_mode' | 'agneta/instructions/set'>(
+  #request<M extends 'session/prompt' | 'agneta/steer' | 'session/close' | 'session/set_config_option' | 'session/set_mode' | 'agneta/instructions/set'>(
     method: M, params: AgnetaRequests[M]['params'], options?: RequestOptions
   ): Promise<AgnetaRequests[M]['result']> {
+    if (this.#ended) {
+      return Promise.reject(this.#ended.reason === 'disconnected' ? this.#ended.error
+        : new InvalidParamsError({ code: -32602, message: 'This session handle has ended' }, method));
+    }
     return this.#host.connection.request(method, params, { timeout: this.#host.timeouts.request, ...options });
   }
 }

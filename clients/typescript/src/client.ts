@@ -750,7 +750,9 @@ export class AgnetaClient extends Emitter<ClientEvents> {
       session.end({ reason: 'disconnected', error: new ConnectionClosedError(undefined, 'closed while the session opened') });
       throw new ConnectionClosedError(undefined, 'closed while the session opened');
     }
+    const previous = this.#sessions.get(id);
     this.#sessions.set(id, session);
+    previous?.end({ reason: 'closed' });
     // The rest of what came early (live trace records, a queue place, a stop), to the listeners given in `on`.
     for (const { method, params } of early) if (method !== 'session/update') session.receive(method, params);
     return session;
