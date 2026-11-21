@@ -4,6 +4,8 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 ## 0.6.0 (2026-11-21)
 
+0.5.0 was not published as a release of its own: updating from 0.4.0 brings its changes too, listed under [0.5.0](https://github.com/olofd/agneta/blob/main/CHANGELOG.md#050-2026-11-20) in the changelog (per-app limits, sandbox modes for each app, moving to Applications, and more).
+
 **For you**
 
 - **Clearing history gets through when Goose answers late.** A shared Goose that deleted a conversation only after Agneta had stopped waiting kept it on the list for good: asked again, Goose said the session wasn't there, and Try Again couldn't clear it. Agneta now reads Goose's database first and only clears what's left of one it no longer has.
