@@ -106,8 +106,11 @@ import Testing
         // of its own, so following the link would show it.
         try FileManager.default.removeItem(at: account.project.appending(path: Self.session))
         let otherTask = account.config.appending(path: "projects/-other", directoryHint: .isDirectory)
-        try account.append(Self.line("msg_other", output: 6, stop: "end_turn"), to: otherTask.appending(path: "subagents/agent-x.jsonl"))
-        try FileManager.default.createSymbolicLink(at: account.project.appending(path: Self.session), withDestinationURL: otherTask)
+        try account.append(
+            Self.line("msg_other", output: 6, stop: "end_turn"),
+            to: otherTask.appending(path: "subagents/agent-x.jsonl"))
+        try FileManager.default.createSymbolicLink(
+            at: account.project.appending(path: Self.session), withDestinationURL: otherTask)
         try account.append(Self.line("msg_b", output: 5, stop: "end_turn"), to: account.transcript)
         #expect(ledger.read().usage.map { $0["id"]?.stringValue } == ["msg_b"])
 
