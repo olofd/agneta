@@ -2,6 +2,23 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
+## Unreleased
+
+**For you**
+
+- **One app's task no longer shows another's engine output.** A shared engine's error output went into every task's trace on that engine, whichever app ran it; it now stays in Agneta's log.
+- **Engine homes left by a crash are cleaned up again.** A crash or a full disk before a task's trace was complete stopped the cleanup of unused engine homes for good; now a trace whose owner can't be read only defers it while it may still be written.
+- **A task whose trace can't be made says so** to whatever watches the task, as a trace that fails later does.
+- **`agneta-diag tasks` reads the task database without changing it,** and waits out a moment the host holds it; `agneta-diag tail -f` follows a resumed task to its current end.
+
+**For apps**
+
+- **A paused account starts nothing new, even mid-open.** An account paused while a session was opening or loading could still get that session; Agneta now checks again before replying and refuses with `-32013`, as a prompt is.
+- **Reading a trace never holds up other apps.** A large trace's page was read on the router; it now reads in bounded steps beside it, and the owner check still runs.
+- **Trace exports keep a call's token counts** (`input` in a model call and in a turn's ledger) when content is redacted; tool inputs are still removed.
+- **`@agneta/client`:** a `close()` that fails or times out leaves the session open, so it can be closed again; a later `loadSession` ends the earlier handle and takes over, its replay going to the new one. An ended handle refuses `prompt`, `steer`, `setMode`, config and instructions, and a finished turn's `steer` rejects with `NoTurnRunningError`.
+- **The examples:** Project Chat streams a reply as it's written and says why Agneta stopped a session; Replica Bench keeps a stopped session's reason on screen.
+
 ## 0.6.0 (2026-11-21)
 
 0.5.0 was not published as a release of its own: updating from 0.4.0 brings its changes too, listed under [0.5.0](https://github.com/olofd/agneta/blob/main/CHANGELOG.md#050-2026-11-20) in the changelog (per-app limits, sandbox modes for each app, moving to Applications, and more).

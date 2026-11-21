@@ -98,6 +98,9 @@ public final class AgnetaDatabase: Sendable {
         self.file = file
         var configuration = Configuration()
         configuration.readonly = true
+        // The host may be writing: wait out its lock for up to 5 s rather than
+        // fail a `tasks` call with "database is locked" (the 0.7.0 review).
+        configuration.busyMode = .timeout(5)
         queue = try DatabaseQueue(path: file.path(percentEncoded: false), configuration: configuration)
         let migrator = Self.migrator
         try queue.read { db in
