@@ -75,7 +75,10 @@ import Testing
         // The engine read the note naming the tool, after the app's own words; Agneta's field didn't reach it.
         let blocks = try #require(await stack.engines.prompts.last)
         #expect(
-            blocks.count == 2 && blocks[1]["text"]?.stringValue?.contains("call the tool submit_result once") == true)
+            blocks.count == 2
+                && blocks[1]["text"]?.stringValue?.contains(
+                    "call the tool submit_result (from the agneta-result tools) once") == true
+        )
         // The trace has the turn's result from asked to final.
         let events = try results(stack, session).map { $0["event"]?.stringValue }
         #expect(events == ["asked", "submitted", "final"])

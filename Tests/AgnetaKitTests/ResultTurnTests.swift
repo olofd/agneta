@@ -314,7 +314,9 @@ import Testing
         #expect(
             ResultWording.answer(.refused(issues: [], left: 1), tool: "x", schema: t.schema).text.contains(
                 "(1 attempt left)"))
-        #expect(ResultWording.note(tool: "submit_invoice").contains("call the tool submit_invoice once"))
+        #expect(
+            ResultWording.note(tool: "submit_invoice").contains(
+                "call the tool submit_invoice (from the agneta-result tools) once"))
     }
 
     @Test func quotesOnlyShortSchemaPartsWithoutAnnotations() throws {

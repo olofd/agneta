@@ -167,8 +167,10 @@ public enum ResultOutcome: Sendable, Equatable {
 public enum ResultWording {
     /// Added to a prompt that asks for a result.
     public static func note(tool: String) -> String {
-        "When your work for this request is done, call the tool \(tool) once, with the result as its arguments. "
-            + "Don't call it before then."
+        // Engines show the tool under their own prefixes (mcp__agneta-result__…, agneta-result__…): named by its own
+        // name and its server, which every engine keeps.
+        "When your work for this request is done, call the tool \(tool) (from the \(ResultServer.name) tools) once, "
+            + "with the result as its arguments. Don't call it before then."
     }
 
     /// Told to a call made while no turn asks for a result.

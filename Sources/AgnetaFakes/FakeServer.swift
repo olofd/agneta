@@ -276,7 +276,9 @@ extension FakeServer {
             let rest = raw[call.upperBound...]
             if let space = rest.firstIndex(of: " ") {
                 let name = String(rest[..<space])
-                let json = rest[rest.index(after: space)...].components(separatedBy: "\n<turn-context>")[0]
+                // The arguments are the rest of the line: what follows (an engine's turn context, Agneta's note on a
+                // prompt that asks for a result) isn't part of them.
+                let json = rest[rest.index(after: space)...].components(separatedBy: "\n")[0]
                 return ("", name, (try? JSONSerialization.jsonObject(with: Data(json.utf8))) ?? [String: Any]())
             }
         }

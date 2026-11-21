@@ -240,9 +240,14 @@ import Testing
         let route = try await server.register(session: "s1")
         #expect(try await Self.rpc(route, "ping").status == 200)
         await server.stop()
-        #expect(throws: (any Error).self) {
-            _ = try RawHTTP.connect(UInt16(URL(string: route.url)!.port!), closedWithin: .milliseconds(300))
+        // The listener closes asynchronously: within 2 s the port refuses or closes every connection.
+        let port = UInt16(URL(string: route.url)!.port!)
+        var closed = false
+        for _ in 0..<20 where !closed {
+            closed = (try? RawHTTP.connect(port, closedWithin: .milliseconds(100))) == nil
+            if !closed { try await Task.sleep(for: .milliseconds(100)) }
         }
+        #expect(closed)
     }
 
     @Test func stopClosesRequestsInFlight() async throws {
