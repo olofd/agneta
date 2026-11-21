@@ -17,7 +17,6 @@ import Testing
     let home = try #require(
         env["AGNETA_REAL_PROBE_HOME"].map { URL(filePath: $0, directoryHint: .isDirectory) },
         "Set AGNETA_REAL_PROBE_HOME to the folder holding the probe's sign-ins")
-    let accounts = AgnetaStore(root: home).accountsFolder
     let root = FileManager.default.temporaryDirectory.appending(
         path: "agneta-real-\(UUID().uuidString.prefix(6))", directoryHint: .isDirectory
     ).realFileURL
@@ -26,58 +25,8 @@ import Testing
     let mcp = try await FakeServer.mcp(
         port: 47489, bearer: "realprobe-bearer-123", log: root.appending(path: "mcp.log"))
     defer { mcp.stop() }
-    // The pinned adapter version, installed (and verified) where the app would keep it.
-    let adapterPath = try await RuntimeInstaller(
-        lockFile: GooseHarness.repo.appending(path: "Engines/runtimes.lock"),
-        runtimes: AgnetaStore(root: home).runtimesFolder
-    ).install("claude-agent-acp")
     let traces = Traces(folder: root.appending(path: "agneta/Traces", directoryHint: .isDirectory))
-    let goose = GooseAdapter(executable: GooseHarness.goose)
-    let claudeCLI = try #require(CLILocator.claudeCode().first, "Claude Code isn't installed")
-    let claudeCode = ClaudeCodeAdapter(executable: adapterPath, cli: claudeCLI)
-    print("PROBE Claude Code:", claudeCLI.label)
-    let bin = GooseHarness.repo.appending(path: "Engines/bin/\(GooseHarness.arch)")
-    let codex = CLILocator.codex().first(where: \.supported).map {
-        CodexAdapter(
-            node: bin.appending(path: "node-runtime/bin/node"), script: bin.appending(path: "codex-acp/dist/index.js"),
-            cli: $0)
-    }
-    let supervisor = EngineSupervisor(
-        .init(shellTool: BuiltTools.shell, root: root.appending(path: "agneta"), traces: traces),
-        accounts: [
-            "codex": ProviderSetup(
-                kind: .chatGPT,
-                subscription: SubscriptionAccount(
-                    route: .chatGPT, home: accounts.appending(path: "chatgpt", directoryHint: .isDirectory))),
-            "claude-direct": ProviderSetup(
-                kind: .claudeCode,
-                subscription: SubscriptionAccount(
-                    route: .claudeCode, home: accounts.appending(path: "claude", directoryHint: .isDirectory),
-                    adapter: adapterPath)),
-            "claude": ProviderSetup(
-                kind: .claudeCode,
-                subscription: SubscriptionAccount(
-                    route: .claudeCode, home: accounts.appending(path: "claude", directoryHint: .isDirectory),
-                    adapter: adapterPath, claudeCode: claudeCLI.path))
-        ])
-    let router = Router(
-        context: PolicyContext(
-            userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [root.appending(path: "agneta")]),
-        engines: supervisor, traces: traces
-    ) { _ in Router.PairingAnswer(accounts: ["claude", "claude-direct", "codex"], remember: true) }
-    // "claude" runs on Goose (its default here), "claude-direct" asks for Claude Code: both are the one Claude plan.
-    await router.setCatalog(
-        EngineCatalog(
-            ready: [goose, claudeCode] + (codex.map { [$0] } ?? []),
-            defaults: ProviderEngines(selected: [.claude: "goose"])))
-    await router.add(account: "claude", label: "Claude", runner: .native, kind: .claude, billing: "subscription")
-    await router.add(
-        account: "claude-direct", label: "Claude (Claude Code)", runner: .native, kind: .claude, billing: "subscription"
-    )
-    if codex != nil {
-        await router.add(
-            account: "codex", label: "ChatGPT (Codex)", runner: .native, kind: .chatGPT, billing: "subscription")
-    }
+    let (router, supervisor) = try await realProbeStack(home: home, root: root, traces: traces)
     let server = try WebSocketServer(port: 47488)
     try await server.start()
     defer { server.stop() }
@@ -163,4 +112,63 @@ import Testing
         } catch { print("PROBE \(account) failed:", error) }
     }
     await supervisor.stopAll()
+}
+
+/// The real probes' stack: Agneta's router and supervisor over the sign-ins in `home` (laid out like Agneta's own data),
+/// with its data under `root` and its traces in `traces`. Codex is there when it's installed and supported.
+func realProbeStack(home: URL, root: URL, traces: Traces) async throws -> (router: Router, supervisor: EngineSupervisor)
+{
+    let accounts = AgnetaStore(root: home).accountsFolder
+    // The pinned adapter version, installed (and verified) where the app would keep it.
+    let adapterPath = try await RuntimeInstaller(
+        lockFile: GooseHarness.repo.appending(path: "Engines/runtimes.lock"),
+        runtimes: AgnetaStore(root: home).runtimesFolder
+    ).install("claude-agent-acp")
+    let goose = GooseAdapter(executable: GooseHarness.goose)
+    let claudeCLI = try #require(CLILocator.claudeCode().first, "Claude Code isn't installed")
+    let claudeCode = ClaudeCodeAdapter(executable: adapterPath, cli: claudeCLI)
+    print("PROBE Claude Code:", claudeCLI.label)
+    let bin = GooseHarness.repo.appending(path: "Engines/bin/\(GooseHarness.arch)")
+    let codex = CLILocator.codex().first(where: \.supported).map {
+        CodexAdapter(
+            node: bin.appending(path: "node-runtime/bin/node"), script: bin.appending(path: "codex-acp/dist/index.js"),
+            cli: $0)
+    }
+    let supervisor = EngineSupervisor(
+        .init(shellTool: BuiltTools.shell, root: root.appending(path: "agneta"), traces: traces),
+        accounts: [
+            "codex": ProviderSetup(
+                kind: .chatGPT,
+                subscription: SubscriptionAccount(
+                    route: .chatGPT, home: accounts.appending(path: "chatgpt", directoryHint: .isDirectory))),
+            "claude-direct": ProviderSetup(
+                kind: .claudeCode,
+                subscription: SubscriptionAccount(
+                    route: .claudeCode, home: accounts.appending(path: "claude", directoryHint: .isDirectory),
+                    adapter: adapterPath)),
+            "claude": ProviderSetup(
+                kind: .claudeCode,
+                subscription: SubscriptionAccount(
+                    route: .claudeCode, home: accounts.appending(path: "claude", directoryHint: .isDirectory),
+                    adapter: adapterPath, claudeCode: claudeCLI.path))
+        ])
+    let router = Router(
+        context: PolicyContext(
+            userHome: FileManager.default.homeDirectoryForCurrentUser, agnetaRoots: [root.appending(path: "agneta")]),
+        engines: supervisor, traces: traces
+    ) { _ in Router.PairingAnswer(accounts: ["claude", "claude-direct", "codex"], remember: true) }
+    // "claude" runs on Goose (its default here), "claude-direct" asks for Claude Code: both are the one Claude plan.
+    await router.setCatalog(
+        EngineCatalog(
+            ready: [goose, claudeCode] + (codex.map { [$0] } ?? []),
+            defaults: ProviderEngines(selected: [.claude: "goose"])))
+    await router.add(account: "claude", label: "Claude", runner: .native, kind: .claude, billing: "subscription")
+    await router.add(
+        account: "claude-direct", label: "Claude (Claude Code)", runner: .native, kind: .claude, billing: "subscription"
+    )
+    if codex != nil {
+        await router.add(
+            account: "codex", label: "ChatGPT (Codex)", runner: .native, kind: .chatGPT, billing: "subscription")
+    }
+    return (router, supervisor)
 }
