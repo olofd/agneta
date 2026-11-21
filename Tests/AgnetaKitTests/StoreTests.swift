@@ -239,12 +239,17 @@ private func temporaryFolder() throws -> URL {
         let traces = Traces(folder: root.appending(path: "Traces"))
         let home = EngineHomes.home(root: root, key: "account/retained")
         let orphan = EngineHomes.home(root: root, key: "account/orphan")
+        // Homes two days old; the sweep takes those older than a day, as the runtime does with its history period.
+        let old = Date().addingTimeInterval(-2 * 86_400)
         for url in [home, orphan] {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: url.path)
         }
-        func sweep() -> [String] { EngineHomes.sweep(root: root, traces: traces, before: .distantFuture, keep: []) }
+        func sweep() -> [String] {
+            EngineHomes.sweep(root: root, traces: traces, before: Date().addingTimeInterval(-86_400), keep: [])
+        }
 
-        // The trace directory is unavailable, then returns with one incomplete trace.
+        // The trace directory is unavailable, then returns with one incomplete trace, made just now.
         #expect(sweep().isEmpty)
         try FileManager.default.createDirectory(at: traces.folder, withIntermediateDirectories: true)
         try Data().write(to: traces.file(for: "task"))
@@ -256,6 +261,25 @@ private func temporaryFolder() throws -> URL {
         traces.close(task: "task")
         #expect(sweep() == ["account-orphan"])
         #expect(FileManager.default.fileExists(atPath: home.path))
+    }
+
+    /// A trace left without its owner by a crash or a full disk stops the sweep only while it is recent: an old one
+    /// can never be loaded, and before, it kept every orphaned home forever.
+    @Test func anOldTraceWithoutItsOwnerNoLongerStopsTheSweep() throws {
+        let root = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let traces = Traces(folder: root.appending(path: "Traces"))
+        let old = Date().addingTimeInterval(-2 * 86_400)
+        let orphan = EngineHomes.home(root: root, key: "account/orphan")
+        try FileManager.default.createDirectory(at: orphan, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: orphan.path)
+        try FileManager.default.createDirectory(at: traces.folder, withIntermediateDirectories: true)
+        try Data().write(to: traces.file(for: "crashed"))
+        try FileManager.default.setAttributes(
+            [.modificationDate: old], ofItemAtPath: traces.file(for: "crashed").path)
+        #expect(
+            EngineHomes.sweep(root: root, traces: traces, before: Date().addingTimeInterval(-86_400), keep: [])
+                == ["account-orphan"])
     }
 
     @Test func homesFollowTheirTasksAccountsAndAge() throws {

@@ -84,8 +84,16 @@ public enum EngineHomes {
                 atPath: traces.folder.path(percentEncoded: false))
         else { return [] }
         for name in traceNames where name.hasSuffix(".jsonl") {
-            guard let key = traces.meta(task: String(name.dropLast(6)))?["engine"]?["key"]?.stringValue
-            else { return [] }
+            guard let key = traces.meta(task: String(name.dropLast(6)))?["engine"]?["key"]?.stringValue else {
+                // A trace without a readable owner defers the sweep while it may still be written (its meta comes
+                // right after the file is made). An older one, left by a crash or a full disk before its meta, can
+                // never be loaded (a load finds a task by that record), so it holds no engine home in use: it no
+                // longer stops the sweep, which otherwise stayed off for good (the 0.7.0 review).
+                let file = traces.folder.appending(path: name)
+                let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+                if let modified, modified < before { continue }
+                return []
+            }
             referenced.insert(key.replacingOccurrences(of: "/", with: "-"))
         }
         var removed: [String] = []
