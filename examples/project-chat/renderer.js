@@ -165,5 +165,21 @@ async function loadAgnetas() {
   render(await chat.state());
 }
 
+let refreshingReply = false;
 chat.onChange(render);
+chat.onReplyText(({ index, offset, text }) => {
+  const row = messages.children[index];
+  const node = row?.lastChild?.firstChild;
+  if (row?.className !== 'assistant' || node?.length !== offset) {
+    // A reloaded window can subscribe halfway through a reply. Its snapshot includes all text so far.
+    if (!refreshingReply) {
+      refreshingReply = true;
+      run(chat.state().then(render).finally(() => { refreshingReply = false; }));
+    }
+    return;
+  }
+  const nearBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 56;
+  node.appendData(text);
+  if (nearBottom) thread.scrollTop = thread.scrollHeight;
+});
 run(loadAgnetas());

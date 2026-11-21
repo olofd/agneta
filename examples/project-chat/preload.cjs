@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('projectChat', {
   disconnect: () => ipcRenderer.invoke('chat:disconnect'),
   save: () => ipcRenderer.invoke('chat:save'),
   dismiss: () => ipcRenderer.invoke('chat:dismiss'),
+  onReplyText(listener) {
+    ipcRenderer.on('chat:reply-text', (_event, append) => listener(append));
+  },
   onChange(listener) {
     ipcRenderer.on('chat:state-changed', (_event, state) => listener(state));
   }

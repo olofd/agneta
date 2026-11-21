@@ -128,8 +128,10 @@ function setUp() {
 /** A chat with the Agneta in use, showing in `opened`. */
 function startChat(opened) {
   const current = new ProjectChat(agneta.port, { tokens: tokensFor(agneta.port), environment, name: agneta.name });
-  current.on('change', (state) => {
-    if (!opened.isDestroyed()) opened.webContents.send('chat:state-changed', state);
+  current.on('change', (state, append) => {
+    if (opened.isDestroyed()) return;
+    if (append) opened.webContents.send('chat:reply-text', append);
+    else opened.webContents.send('chat:state-changed', state);
   });
   chat = current;
   return current;

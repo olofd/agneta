@@ -390,8 +390,13 @@ export class ProjectChat extends EventEmitter {
         if (this.#session !== session || this.view.phase !== 'running') continue;
         if (reply !== this.view.messages.at(-1)) reply = null;
         if (reply) {
+          const offset = reply.text.length;
           reply.text += piece;
-          this.#update({ status: 'Receiving reply…' });
+          if (this.view.status === 'Receiving reply…') {
+            this.emit('change', this.view, { index: this.view.messages.length - 1, offset, text: piece });
+          } else {
+            this.#update({ status: 'Receiving reply…' });
+          }
         } else {
           reply = this.#message('assistant', piece, { status: 'Receiving reply…' });
         }
