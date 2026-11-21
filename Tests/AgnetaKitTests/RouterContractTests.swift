@@ -898,7 +898,10 @@ actor FakeEngines: EngineSource {
         let initialize = try await app.request(
             "initialize", ["protocolVersion": 1, "_meta": ["agneta": ["token": .string(app.token ?? "")]]])
         let extensions = Set(initialize["_meta"]?["agneta"]?["extensions"]?.arrayValue?.compactMap(\.stringValue) ?? [])
-        #expect(extensions.isSuperset(of: ["agneta/usage", "agneta/trace", "agneta/steer", "agneta/instructions"]))
+        #expect(
+            extensions.isSuperset(of: [
+                "agneta/usage", "agneta/trace", "agneta/steer", "agneta/instructions", "agneta/result"
+            ]))
 
         let session = try await stack.session(app, account: "native")
         let result = try await app.prompt(session, "hello")

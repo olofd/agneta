@@ -738,7 +738,7 @@ extension Router {
         SessionPolicy.key, "agneta/access", "agneta/catalog", "agneta/setup", "agneta/task", "agneta/instructions",
         "agneta/steer", "agneta/usage",
         "agneta/trace", "agneta/limit", "agneta/queue", "agneta/rateLimited", "agneta/fork", "agneta/appLimits",
-        AppToolsLoad.key
+        AppToolsLoad.key, ResultDeclaration.key
     ]
 
     static func newToken() -> String { SecureRandom.token() }

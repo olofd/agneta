@@ -25,7 +25,8 @@ App (sandboxed or not) ──ACP over a local WebSocket, paired──▶ Agneta 
 | `Sources/AgnetaKit/` | Everything testable without a window: a Swift package library |
 | `  JSON/` | `JSONValue` (any JSON, lossless, 64-bit integers kept) and JSON-RPC 2.0 messages |
 | `  ACP/` | `RPCPeer`: one side of a JSON-RPC connection, transport-agnostic |
-| `  Transport/` | Newline-delimited stdio framing, the WebSocket server for apps, a minimal HTTP server for diagnostics |
+| `  Transport/` | Newline-delimited stdio framing, the WebSocket server for apps, a minimal HTTP server and the MCP framing of Agneta's own MCP servers (diagnostics, structured results) |
+| `  Results/` | [Structured results](APP_PROTOCOL.md#structured-results): the JSON Schema subset and its patterns (`ResultSchema`, `ResultPattern`), the validator, what a session declares and a turn asks (`ResultDeclaration`), a turn's result as a state machine (`ResultTurn`), and the result server. The router's part is `Router+Results` |
 | `  Runtime/` | `AgnetaRuntime`: the router, engines and records wired together; it records grants and task history, cleans up after a crash and applies retention |
 | `  Router/` | The router: its state, grants and access (`Router.swift`, `Access`, `AccessReport`), app connections, pairing and requests (`+Apps`), opening sessions (`+Sessions`), engine messages and permissions (`+Engines`), the turn queue and limits (`+Turns`), the limits the user sets for each app (`AppLimits`, `AppMeter`, `+AppLimits`), grant scopes, rate-limit detection |
 | `  Engine/` | `EngineAdapter` and one adapter per engine, `BuiltinTools` (the built-in tools each policy permits, the contract every engine is tested against), the supervisor, CLI discovery, usage readers, crash recovery |
@@ -130,6 +131,22 @@ Every engine's commands reach it through `agneta-shell`: Goose's and OpenCode's 
 - records the command, exit status, timing and output sizes in the task's trace.
 
 Claude Code and Codex run their other tools themselves. For them Agneta checks every permission request against the policy before anything runs, and refuses modes that would stop the engine asking ([APP_PROTOCOL.md](APP_PROTOCOL.md#permissions)).
+
+### Structured results
+
+A session that declares [structured results](APP_PROTOCOL.md#structured-results) gets one more MCP server, Agneta's own, through which the model submits a value. Three layers, each with one job:
+
+- **What a result is** (`Results/`, no I/O): the schema subset, compiled once when it's declared, refused whole when anything is outside it; the validator; and `ResultTurn`, a state machine that holds every rule about a turn's result (the first valid value wins, every call counts against the attempts, a turn that ended is final, one rule of precedence for the outcome), tested as tables.
+- **The result server**: MCP over HTTP on loopback, one listener for all of Agneta, started the first time a session declares results (an Agneta whose apps never use them has nothing new listening) and stopped for good on reset. Each session has its own route and a 32-byte bearer, of which only the hash is kept; the bearer is masked in traces from before the engine starts. An unknown route and a wrong bearer answer alike. It keeps only its routes; every answer is the router's.
+- **The router** (`Router+Results`): it registers the route before the engine starts (engines list a server's tools while the session is still opening), hands the engine the server beside the app's, notes on a prompt which tool to call, answers the tool's permission requests itself (it runs nothing; identified by the server the adapter vouches for, never by a title), tags its calls for the app, and puts the outcome in the reply. A session that declares nothing never reaches any of it.
+
+What keeps it safe and bounded:
+
+- **Checking runs off the router**, on a thread of its own with a large stack, since it recurses once per level of a value. A call counts as an attempt on the router's actor, is checked off it, and is recorded on it again against the same turn, so the first valid value still wins when calls arrive together, and a check that ends after its turn changes nothing.
+- **Every bound is checked:** a value nested more than 64 levels is refused before anything walks it, checking is charged for its work (a check, a key, an item, a stretch of string, a pattern match) and stops at a budget, patterns have their own time and a runaway match is stopped, and a schema whose choices would multiply the work is refused when it's declared. Past a bound a value is reported invalid, never passed unchecked.
+- **JSON is read at most 128 levels deep** anywhere in Agneta: decoding recurses per level, so a small message nested thousands deep would overflow a stack. A request that deep is answered with an error, and a reply that deep fails the request it answers, read from its top-level id without decoding the rest.
+- **App server names that would pass for the result server's** on some engine (`agneta_result`, `agneta-result__x`) are refused, so no app tool is allowed without asking or tagged as a result.
+- **What the model reads** from the result tool is short, bounded and escaped: a value's own keys can't forge a line of Agneta's.
 
 ### Credentials
 

@@ -126,6 +126,7 @@ What the user allows an app is two lists: the **providers** (each an account: a 
 | `agneta/task` | A title and a stop warning shown in Agneta's menu |
 | `agneta/instructions` | Instructions at start, and `agneta/instructions/set` between turns |
 | `agneta/appTools` | The app's MCP tools in the model's context from the first request, on every engine ([`agneta/appTools`](#agnetaapptools)) |
+| `agneta/result` | A value checked against the app's JSON Schema, from a turn ([Structured results](#structured-results)) |
 | `agneta/steer` | `agneta/steer` during a turn |
 | `agneta/usage` | Each prompt result's usage: model calls, tokens, cost, and what the numbers mean |
 | `agneta/limit` | Which limit stopped a turn: the policy's, or one the user set for the app |
@@ -365,6 +366,7 @@ How the engine offers your MCP tools to the model. `{"load": "always"}` puts eve
 | `instructionsBetweenTurns` | `agneta/instructions/set` works |
 | `reportsCost` | Per-call cost is known while the turn runs, so `maxCostUSD` can be enforced |
 
+- `_meta.agneta.results`, for a session that declared [structured results](#structured-results): `{"declared": [names], "every": name or null, "mechanism": "tool"}`.
 - `configOptions` and `modes`: the engine's own, passed through (model, thinking effort, mode, …).
 
 **Only Agneta's methods.** An app calls only the methods on this page. Anything else, including an engine's own methods, is refused with `-32601`, and notifications other than `session/cancel` are dropped: an engine's methods would bypass the checks made when the session started. Engine extras are reached through Agneta's methods (`agneta/steer`, `agneta/instructions/set`), which each engine's adapter maps.
@@ -463,6 +465,94 @@ The result:
 
 **Agneta quits.** The connection closes, with no `agneta/sessionStopped`: the app's sessions end with it, and their running turns fail. Connect again once Agneta is back, and resume a task with `session/load`.
 
+## Structured results
+
+A turn can return a value that matches a JSON Schema the app gives, checked by Agneta, the same on every engine: an invoice from a PDF, a form filled in from a conversation, a typed answer. The model returns it by calling a tool Agneta serves; Agneta validates every call and answers the model with what's wrong, so it can correct the value within the turn; the prompt's reply carries the result, or why there is none.
+
+### Declaring results
+
+Schemas are declared when a session opens (`session/new`, `session/load`, `agneta/fork`), because engines take their tools only then:
+
+```json
+"_meta": {"agneta/result": {
+  "schemas": {
+    "invoice": {"type": "object", "properties": {"number": {"type": "string"}, "total": {"type": "number"}},
+                "required": ["number", "total"], "additionalProperties": false},
+    "contact": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+  },
+  "every": "invoice"
+}}
+```
+
+- **`schemas`**: each named schema becomes a tool the model calls with the value as its arguments. Names are lowercase letters, digits and single underscores, starting with a letter, at most 32 characters; `any` is reserved.
+- **`every`** (optional): the schema every prompt asks for unless it opts out.
+- **The shorthand** `{"schema": {…}}` declares one schema named `result`, asked for on every prompt: a one-shot extraction.
+- **Limits:** at most 8 schemas, 32 KB together; each at most 16 KB. They're in the model's tool list on every call.
+- `session/load` and `agneta/fork` keep the original's declaration unless their `_meta` sets one.
+- The reply says what the session can ask for, in `_meta.agneta.results` ([The result](#the-result)).
+- Anything that doesn't fit (a bad name, an unknown field, a schema outside the subset below) is refused before an engine starts, with `-32602` and `data.agneta.unenforceable: ["agneta/result"]`, `data.agneta.reason` naming what and where.
+
+### Asking for a result
+
+`session/prompt` takes `_meta["agneta/result"]`:
+
+- `{"name": "contact"}`, with optionally `"attempts"`: how many calls of the result tools the model gets this turn, 1 to 10, default 3. Every call counts, a valid one and one of the wrong result's tool included.
+- `false`: no result this turn, in a session with `every`.
+- Nothing: the session's `every`, if it has one; otherwise an ordinary turn.
+
+Agneta adds a short note to the prompt saying which tool to call. A schema a session didn't declare can't be asked for in a prompt (`-32602`); declare it when the session opens.
+
+### The reply
+
+The prompt's reply gains `_meta["agneta/result"]`:
+
+```json
+{"stopReason": "end_turn",
+ "_meta": {"agneta/result": {"status": "valid", "name": "invoice", "mechanism": "tool", "attempts": 1,
+                             "value": {"number": "A-1042", "total": 129.5}},
+           "agneta/usage": {…}}}
+```
+
+| `status` | Meaning |
+| --- | --- |
+| `valid` | `value` matches the schema. The first valid value is final: a later call can't replace it |
+| `invalid` | The model's values didn't match, and the turn ended or its attempts ran out: `value` and `issues` are the last refused value's |
+| `missing` | No value: `reason` says why, and when a value was refused before, `value` and `issues` are the last one's |
+
+- **`reason`** (with `missing`): `stopped` (cancelled, Stop, a limit, or the turn was cancelled while queued), `refused` (the model refused), `truncated` (it ran out of output tokens), `not-submitted` (it ended without calling the tool).
+- **`issues`**: each `{"path", "keyword", "message", "schemaPath"}`, `path` a JSON Pointer into the value. At most 20.
+- **`valueOmitted`**: a refused value nested too deeply to carry back is left out and said so.
+- **`attempts`**: the calls of the session's result tools in the turn.
+- A missing or invalid result is still a successful reply: the turn ran and has usage. Errors keep their meaning; if the engine fails after a value was accepted, the error's `data["agneta/result"]` carries it.
+- While the turn runs, the result tool's calls arrive as ordinary `tool_call` updates, tagged `update._meta.agneta.result: {"name"}`, so an app can show or hide them.
+- Agneta answers the result tool's permission requests itself (it runs nothing), whatever `approval` says.
+
+### What a schema may say
+
+JSON Schema 2020-12, in a subset every engine can honour. Anything outside it is refused, naming the keyword and where it is, never quietly ignored, so a value Agneta calls valid is valid against the whole schema.
+
+- **Supported:** `type` (a name or a list, `null` included), `properties`, `required`, `additionalProperties`, `patternProperties`, `propertyNames`, `minProperties`, `maxProperties`, `items`, `prefixItems`, `minItems`, `maxItems`, `uniqueItems`, `enum`, `const`, `allOf`, `anyOf`, `oneOf`, `not`, `$ref` to a schema within this one (`#`, `#/$defs/…`, any JSON Pointer), `$defs`, `definitions`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minLength`, `maxLength`, `pattern`.
+- **Accepted, not enforced:** `title`, `description`, `default`, `examples`, `format`, `$comment`, `deprecated`, `readOnly`, `writeOnly`, `$schema` (2020-12 or draft-07, read with 2020-12's meaning), `$id` at the root.
+- **Refused:** references to other documents, `$dynamicRef`, `$anchor`, `if`/`then`/`else`, `dependentSchemas`, `dependentRequired`, `contains`, `unevaluated*`, content keywords, keywords beside `$ref` (put them in `allOf`), and any keyword Agneta doesn't know.
+- **The root** must be `"type": "object"`.
+- **Patterns** are ECMA-262: `$` is the end of the value (never before a final newline), and `\d`, `\w` and `\b` are ASCII. Syntax other engines have but ECMA-262 doesn't (inline flags, possessive quantifiers, `\A`, `\z`) is refused.
+- **Equality** is JSON's: `1` and `1.0` are equal, strings compare by code point, and `multipleOf` is exact.
+- **Bounds:** a value nested more than 64 levels, or one that would take too long to check (a pattern that backtracks without end, a huge value against a schema of many choices), is refused as `limit`. A schema whose `anyOf`, `oneOf`, `allOf`, `not` and `$ref` choices add up to more than 1,000 checks for one value is refused when declared.
+
+### Engines
+
+The value reaches Agneta through an MCP tool on every engine, and Agneta checks it the same way. How an engine handles a call before it reaches Agneta differs, measured on the pinned versions ([ENGINES.md](ENGINES.md)):
+
+- **Goose** passes every call on: the model reads Agneta's issues.
+- **OpenCode** checks the arguments against the tool's schema itself and refuses a call that doesn't fit before it reaches Agneta; the model reads OpenCode's message, and if it never sends a valid value the reply is `missing` with `not-submitted`.
+- Engines may show the model less of a schema than they're given; Agneta's issues quote the part a value broke.
+
+### What to trust
+
+- **Valid isn't true.** A valid value matches the schema; whether it's right about the source is the model's work. Text in a document the model reads can steer what it submits: treat the value as untrusted input.
+- **Schemas go to the provider** with every model call, and providers may cache them: keep user data out of them.
+- **A subagent of the engine's** can call the result tool too: it's the session's.
+
 ## Permissions
 
 With `approval: "ask-app"`, the engine's `session/request_permission` requests reach the app with Agneta's session id. Agneta applies two rules:
@@ -497,5 +587,5 @@ Every record has `v`, `seq` (gapless), `t` (UTC with microseconds), `mono` (nano
 | `-32015` | What the engine needs is still downloading (`data.agneta.engineDownloading`: `engine`, `received`, `total` bytes); try again shortly |
 | `-32016` | The limit you set for this app in Agneta is reached (`data.agneta.appLimit`: `limit`, `max`, `used`, `period`, `resetsAt`, `whenReached`); show it as the user's choice, with when it resets ([Limits the user sets](#limits-the-user-sets)) |
 | `-32601` | Not a method Agneta offers; engines' own methods aren't reachable |
-| `-32602` | Invalid parameters. For a policy, server list or mode, `data.agneta.unenforceable` names the field. "Unknown session" also uses it: another app's session, or an ended one |
+| `-32602` | Invalid parameters. For a policy, server list, mode or `agneta/result`, `data.agneta.unenforceable` names the field. "Unknown session" also uses it: another app's session, or an ended one |
 | `-32603` | Agneta couldn't do it: the engine didn't start (no answer within 60 s) or stopped, or the app disconnected meanwhile |

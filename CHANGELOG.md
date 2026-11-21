@@ -2,6 +2,18 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
+## Unreleased
+
+**For apps**
+
+- **Structured results** (`agneta/result`, in `initialize`'s extensions). A session declares JSON Schemas when it opens; a prompt asks for one by name, or every prompt does; the model submits the value through a tool Agneta serves, Agneta checks it against the schema the same way on every engine and answers the model with what's wrong, and the prompt's reply carries `_meta["agneta/result"]`: `valid` with the value, or `invalid` or `missing` with why ([APP_PROTOCOL.md](docs/APP_PROTOCOL.md#structured-results)). Schemas are a documented subset of JSON Schema 2020-12; anything outside it is refused, never ignored. Additive: an app that doesn't use it sees nothing new, and Agneta listens on nothing new until a session declares results.
+- **App server names that would pass for Agneta's result server** (`agneta-result`, `agneta_result`, `agneta-result__…`, any case) are refused with `-32602`, as engines' own server names already are.
+
+**Fixes**
+
+- **A message nested more than 128 levels deep no longer stops Agneta.** Decoding it recursed past the stack: an app, an engine or a model's tool call could crash Agneta with under 1 KB. It's refused before decoding; a request that deep is answered with `-32600`, and a reply that deep fails the request it answers instead of leaving it waiting.
+- **Agneta's local HTTP servers** give a request 2 s to arrive and then hold its connection until it's answered, so idle connections can't block real requests, and refuse malformed header names. The diagnostics server answers MCP's version negotiation and malformed requests as the spec says.
+
 ## 0.7.0 (2026-11-21)
 
 **For you**
