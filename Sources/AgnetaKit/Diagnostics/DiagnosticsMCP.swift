@@ -38,50 +38,28 @@ public final class DiagnosticsMCP: @unchecked Sendable {
     func handle(_ request: LocalHTTPServer.Request) async -> LocalHTTPServer.Response {
         guard request.path.split(separator: "?").first == "/mcp" else { return .init(status: 404) }
         guard request.method == "POST" else { return .init(status: 405, headers: ["Allow": "POST"]) }
-        guard authorized(request.headers["authorization"]) else {
+        guard MCPHTTP.authorized(request.headers["authorization"], tokenHash: tokenHash) else {
             return .init(
                 status: 401, headers: ["Content-Type": "application/json", "WWW-Authenticate": "Bearer"],
                 body: Data(#"{"error":"Create a diagnostics token in Agneta's Settings → Advanced"}"#.utf8))
         }
-        guard let message = try? JSONCoding.decode(request.body), let method = message["method"]?.stringValue else {
-            return .init(
-                status: 400,
-                body: Data(#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}"#.utf8))
-        }
-        guard let id = message["id"] else { return .init(status: 202) } // a notification, e.g. notifications/initialized
-        let result: Result<JSONValue, RPCError>
-        switch method {
-        case "initialize":
-            result = .success([
-                "protocolVersion": message["params"]?["protocolVersion"] ?? "2025-06-18",
-                "capabilities": ["tools": [:]], "serverInfo": ["name": "agneta-diagnostics", "version": "1"],
-                "instructions":
-                    "Read Agneta's task traces: list_tasks, then task_summary, tool_calls, model_calls, read_trace or tail."
-            ])
-        case "ping": result = .success([:])
-        case "tools/list": result = .success(["tools": .array(Self.tools)])
-        case "tools/call":
-            let name = message["params"]?["name"]?.stringValue ?? ""
-            let arguments = message["params"]?["arguments"] ?? [:]
-            do {
-                let text = try await call(name, arguments)
-                result = .success(["content": [["type": "text", "text": .string(text)]]])
-            } catch let error as RPCError {
-                result = .success(["content": [["type": "text", "text": .string(error.message)]], "isError": true])
-            } catch {
-                result = .success(["content": [["type": "text", "text": .string("\(error)")]], "isError": true])
-            }
-        default: result = .failure(RPCError(code: RPCError.methodNotFound, message: "Method not found: \(method)"))
-        }
-        let body = (try? RPCMessage.response(id: RPCID(id) ?? .int(0), result: result).encoded()) ?? Data()
-        return .init(status: 200, body: body)
-    }
-
-    private func authorized(_ header: String?) -> Bool {
-        guard let header, header.lowercased().hasPrefix("bearer ") else { return false }
-        let given = Data(SHA256.hash(data: Data(header.dropFirst(7).trimmingCharacters(in: .whitespaces).utf8)))
-        // Constant-time comparison of the hashes.
-        return given.count == tokenHash.count && zip(given, tokenHash).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
+        return await MCPHTTP.respond(
+            request,
+            server: MCPHTTP.Server(
+                name: "agneta-diagnostics",
+                instructions:
+                    "Read Agneta's task traces: list_tasks, then task_summary, tool_calls, model_calls, read_trace or tail.",
+                tools: { Self.tools },
+                call: { [weak self] name, arguments in
+                    guard let self else { return ("Agneta is stopping", true) }
+                    do {
+                        return (try await self.call(name, arguments), false)
+                    } catch let error as RPCError {
+                        return (error.message, true)
+                    } catch {
+                        return ("\(error)", true)
+                    }
+                }))
     }
 
     // MARK: Tools

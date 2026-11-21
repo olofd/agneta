@@ -1,6 +1,6 @@
-// A minimal HTTP/1.1 server on loopback for the diagnostics MCP server
-// (Streamable HTTP, JSON responses). One request per connection, bodies capped,
-// browser requests (with an Origin) refused.
+// A minimal HTTP/1.1 server on loopback for Agneta's own MCP servers (diagnostics, structured results; Streamable
+// HTTP, JSON responses). One request per connection, bodies capped, browser requests (with an Origin) refused. Port 0
+// takes a free port, which `port` reports once started.
 import Foundation
 import Network
 
@@ -30,23 +30,27 @@ public final class LocalHTTPServer: @unchecked Sendable {
 
     private let listener: NWListener
     private let handler: Handler
-    public let port: UInt16
+    private var bound: UInt16
+    /// The port it listens on: the one asked for, or once started, the one the system gave for port 0.
+    public var port: UInt16 { lock.withLock { bound } }
 
     public init(port: UInt16, handler: @escaping Handler) throws {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!)
-        parameters.allowLocalEndpointReuse = true
+        parameters.allowLocalEndpointReuse = port != 0
         listener = try NWListener(using: parameters)
         self.handler = handler
-        self.port = port
+        bound = port
     }
 
     public func start() async throws {
         let started = OnceFlag()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            listener.stateUpdateHandler = { state in
+            listener.stateUpdateHandler = { [weak self] state in
                 switch state {
-                case .ready: if started.take() { continuation.resume() }
+                case .ready:
+                    if let self, let given = self.listener.port?.rawValue { self.lock.withLock { self.bound = given } }
+                    if started.take() { continuation.resume() }
                 case .failed(let error): if started.take() { continuation.resume(throwing: error) }
                 default: break
                 }
@@ -105,7 +109,7 @@ public final class LocalHTTPServer: @unchecked Sendable {
                         response = Response(status: 400, body: Data(#"{"error":"bad request"}"#.utf8))
                     } else if request.headers["origin"] != nil {
                         response = Response(
-                            status: 403, body: Data(#"{"error":"browsers can't use Agneta's diagnostics"}"#.utf8))
+                            status: 403, body: Data(#"{"error":"browsers can't use Agneta's local servers"}"#.utf8))
                     } else {
                         response = await handler(request)
                     }
