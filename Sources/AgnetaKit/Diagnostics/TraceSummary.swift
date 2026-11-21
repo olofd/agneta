@@ -251,7 +251,8 @@ public struct TraceRedactor: Sendable {
         case .object(let fields):
             let toolEvent = ["tool-call", "tool-input"].contains(fields["kind"]?.stringValue ?? "")
             var out: [String: JSONValue] = [:]
-            let usage = (eventKind == "model-call" && path.isEmpty)
+            let usage =
+                (eventKind == "model-call" && path.isEmpty)
                 || (eventKind == "turn" && (path == ["ledger"] || path == ["callLedger"]))
             for (key, field) in fields {
                 if usage && key == "input" && field.intValue != nil {
