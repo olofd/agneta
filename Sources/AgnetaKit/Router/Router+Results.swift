@@ -59,8 +59,11 @@ extension Router: ResultSessions {
     func openResult(_ id: String, _ turn: ResultTurn, generation: UUID) {
         resultTurns[id] = (generation, turn)
         traces?.session(id)?.writer.record(
-            "result", ["event": "asked", "name": .string(turn.request.name), "tool": .string(turn.tool),
-                "attempts": .int(Int64(turn.request.attempts))])
+            "result",
+            [
+                "event": "asked", "name": .string(turn.request.name), "tool": .string(turn.tool),
+                "attempts": .int(Int64(turn.request.attempts))
+            ])
     }
 
     /// The prompt as the engine gets it: the note saying which tool to call added, and Agneta's own field taken out.
@@ -158,8 +161,24 @@ extension Router: ResultSessions {
             trace?.writer.record("result", ["event": "not-asked", "tool": .string(tool)])
             return (ResultWording.notAsked, true)
         }
-        let answer = open.turn.submit(tool: tool, arguments: arguments)
-        resultTurns[id] = open
+        // Counted on the actor, checked off it (on a large stack, without holding up the router), recorded on it
+        // again, against the same turn: one that ended meanwhile is told so.
+        let answer: ResultTurn.Answer
+        switch open.turn.reserve(tool: tool) {
+        case .answered(let early):
+            answer = early
+            resultTurns[id] = open
+        case .check(let ticket):
+            resultTurns[id] = open
+            let issues = await open.turn.schema.checked(arguments)
+            guard var now = resultTurns[id], now.generation == open.generation, now.turn.id == open.turn.id else {
+                trace?.writer.record("result", ["event": "too-late", "tool": .string(tool)])
+                return ResultWording.answer(.notAsked, tool: open.turn.tool, schema: open.turn.schema)
+            }
+            answer = now.turn.complete(ticket, value: arguments, issues: issues)
+            resultTurns[id] = now
+            open = now
+        }
         var fields: [String: JSONValue] = [
             "event": "submitted", "tool": .string(tool), "attempt": .int(Int64(open.turn.submissions)),
             "value": Self.traced(arguments)
@@ -186,14 +205,24 @@ extension Router: ResultSessions {
             && session.lease.engine.permissionServer(params, calls: session.toolServers) == ResultServer.name
     }
 
-    /// A result tool's call, tagged for the app (`_meta.agneta.result`) so it can tell it from the model's work.
-    static func taggingResult(_ params: JSONValue?, in session: Session) -> JSONValue? {
-        guard session.results != nil, let update = params?["update"], let call = update["toolCallId"]?.stringValue,
-            (session.lease.engine.toolIdentity(in: update).server ?? session.toolServers[call]) == ResultServer.name
+    /// A result tool's call, tagged for the app (`_meta.agneta.result`) so it can tell it from the model's work: every
+    /// update of the call, its last one included. `session` is the session as it was before this update.
+    func tagResultCall(_ id: String, _ params: JSONValue?, session: Session) -> JSONValue? {
+        guard session.results != nil, let update = params?["update"], let call = update["toolCallId"]?.stringValue
         else { return params }
-        let name = session.lease.engine.toolIdentity(in: update).tool.flatMap { session.results?.name(forTool: $0) }
+        let identity = session.lease.engine.toolIdentity(in: update)
+        let known = session.resultCalls[call]
+        guard known != nil || (identity.server ?? session.toolServers[call]) == ResultServer.name else { return params }
+        let name = known ?? identity.tool.flatMap { session.results?.name(forTool: $0) }
+        if ["completed", "failed"].contains(update["status"]?.stringValue ?? "") {
+            sessions[id]?.resultCalls[call] = nil
+        } else if let name {
+            sessions[id]?.resultCalls[call] = name
+        }
         let meta = (update["_meta"] ?? [:]).setting(
-            "agneta", to: (update["_meta"]?["agneta"] ?? [:]).setting("result", to: ["name": name.map(JSONValue.string) ?? .null]))
+            "agneta",
+            to: (update["_meta"]?["agneta"] ?? [:]).setting("result", to: ["name": name.map(JSONValue.string) ?? .null])
+        )
         return params?.setting("update", to: update.setting("_meta", to: meta))
     }
 }

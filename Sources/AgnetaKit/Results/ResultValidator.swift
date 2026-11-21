@@ -1,9 +1,11 @@
 // Structured results: checking a value against its compiled schema.
 //
 // One validator for every engine and mechanism, so "valid" means the same everywhere. It's pure and total: it never
-// throws, and its work is bounded (a count of schema checks and a time for patterns), so a hostile value or schema
-// can't hold up the router. Past a bound the value is reported invalid, never passed unchecked. Issues are
-// deterministic (properties in key order) and worded for the model, which reads them to correct itself.
+// throws, and its work is bounded, so a hostile value or schema can't hold anything up. Work is charged as it's done
+// (a check, each key, item and stretch of string, each pattern match), pattern matching has its own time, and checking
+// recurses once per level of the value, so it runs on a thread with a large stack (`checked`) and stops at a depth.
+// Past any bound the value is reported invalid, never passed unchecked. Issues are deterministic (properties in key
+// order) and worded for the model, which reads them to correct itself.
 import Foundation
 
 /// One way a value doesn't match its schema.
@@ -27,38 +29,52 @@ public struct ResultIssue: Sendable, Equatable, Codable {
 
 extension ResultSchema {
     public struct ValidationLimits: Sendable, Equatable {
-        /// Schema checks one validation may make; anyOf and oneOf over large values multiply them.
+        /// Units of work one validation may do: a check, a key, an item, 64 characters of a string, a pattern match.
         public var checks: Int
-        /// Time all of a validation's pattern matching may take together.
+        /// Time all of a validation's pattern matching may take together, counted as it's spent.
         public var patternTime: Duration
-        /// Issues reported at most; the model fixes them in one attempt, so more than a screenful only adds noise.
+        /// Issues reported at most (at least 1); the model fixes them in one attempt, so more only adds noise.
         public var issues: Int
-        /// How deeply a value's arrays and objects may nest. Checking recurses a few calls per level, on whatever
-        /// thread the caller runs (the router's, with a small stack), so a value nested deeper is reported, never
-        /// walked into. Real results nest a handful of levels.
+        /// How deeply the value's arrays and objects may nest before checking stops.
         public var depth: Int
+        /// How deeply checks may nest (the value's levels and the schema's references together).
+        public var nesting: Int
 
-        public init(checks: Int, patternTime: Duration, issues: Int, depth: Int = 32) {
+        public init(checks: Int, patternTime: Duration, issues: Int, depth: Int = 64, nesting: Int = 512) {
             self.checks = checks
             self.patternTime = patternTime
             self.issues = issues
             self.depth = depth
+            self.nesting = nesting
         }
 
-        public static let standard = ValidationLimits(
-            checks: 2_000_000, patternTime: .milliseconds(250), issues: 20, depth: 32)
+        public static let standard = ValidationLimits(checks: 2_000_000, patternTime: .milliseconds(250), issues: 20)
     }
 
-    /// The ways `value` doesn't match: empty when it does.
+    /// The stack `checked` validates on: enough for `nesting` checks in a debug build, with room to spare.
+    static let stackSize = 64 << 20
+
+    /// The ways `value` doesn't match, checked on a thread of its own with a large stack: checking recurses once per
+    /// level of the value, and the router's threads have small stacks. What the router calls.
+    public func checked(_ value: JSONValue, limits: ValidationLimits = .standard) async -> [ResultIssue] {
+        await withCheckedContinuation { (continuation: CheckedContinuation<[ResultIssue], Never>) in
+            let thread = Thread { continuation.resume(returning: self.validate(value, limits: limits)) }
+            thread.stackSize = Self.stackSize
+            thread.name = "agneta.result-validation"
+            thread.start()
+        }
+    }
+
+    /// The ways `value` doesn't match: empty when it does. On the caller's thread: fine for shallow values and tests;
+    /// anything that came from outside goes through `checked`.
     public func validate(_ value: JSONValue, limits: ValidationLimits = .standard) -> [ResultIssue] {
-        var evaluator = Evaluator(
-            nodes: nodes, checksLeft: limits.checks, deadline: ContinuousClock.now + limits.patternTime,
-            maxDepth: limits.depth)
+        let cap = max(1, limits.issues)
+        var evaluator = Evaluator(nodes: nodes, limits: limits)
         var issues: [ResultIssue] = []
-        evaluator.check(0, value, path: "", into: &issues, cap: limits.issues)
+        evaluator.check(0, value, path: "", into: &issues, cap: cap)
         if let stopped = evaluator.stopped {
             // Whatever was found before the bound, the value wasn't fully checked: it isn't valid.
-            issues = Array(issues.prefix(limits.issues - 1)) + [stopped]
+            issues = Array(issues.prefix(cap - 1)) + [stopped]
         }
         return issues
     }
@@ -66,26 +82,49 @@ extension ResultSchema {
 
 private struct Evaluator {
     let nodes: [ResultSchema.Node]
-    var checksLeft: Int
-    let deadline: ContinuousClock.Instant
-    let maxDepth: Int
+    let limits: ResultSchema.ValidationLimits
+    var workLeft: Int
+    var patternLeft: Duration
     /// Set when checking stopped at a bound: the issue that says so.
     var stopped: ResultIssue?
-    /// How deep in the value the check now is.
+    /// How deep in the value, and how deeply nested in checks, it is now.
     var depth = 0
+    var nesting = 0
+
+    init(nodes: [ResultSchema.Node], limits: ResultSchema.ValidationLimits) {
+        self.nodes = nodes
+        self.limits = limits
+        workLeft = limits.checks
+        patternLeft = limits.patternTime
+    }
+
+    mutating func stop(_ path: String, _ message: String, _ node: ResultSchema.Node) {
+        if stopped == nil {
+            stopped = ResultIssue(path: path, keyword: "limit", message: message, schemaPath: node.pointer)
+        }
+    }
+
+    /// Spends `units` of work, or stops checking when there are none left.
+    mutating func charge(_ units: Int, _ path: String, _ node: ResultSchema.Node) -> Bool {
+        workLeft -= units
+        guard workLeft >= 0 else {
+            stop(path, "the value is too large or complex to check within Agneta's limits", node)
+            return false
+        }
+        return true
+    }
 
     /// Adds the ways `value` doesn't match node `index` to `issues`, up to `cap` of them.
     mutating func check(_ index: Int, _ value: JSONValue, path: String, into issues: inout [ResultIssue], cap: Int) {
         guard stopped == nil, issues.count < cap else { return }
-        checksLeft -= 1
-        guard checksLeft >= 0 else {
-            stopped = ResultIssue(
-                path: path, keyword: "limit",
-                message: "the value is too large or complex to check within Agneta's limits",
-                schemaPath: nodes[index].pointer)
+        let node = nodes[index]
+        nesting += 1
+        defer { nesting -= 1 }
+        guard nesting <= limits.nesting else {
+            stop(path, "the schema's references nest too deeply to check this value", node)
             return
         }
-        let node = nodes[index]
+        guard charge(1, path, node) else { return }
         func add(_ keyword: String, _ message: String) {
             Self.push(&issues, cap: cap, path: path, node: node, keyword: keyword, message: message)
         }
@@ -102,11 +141,14 @@ private struct Evaluator {
             add("type", "expected \(Self.describe(types)), got \(Self.describe(value))")
             return // the other keywords would only repeat that it's the wrong kind of value
         }
-        if let values = node.enumValues, !values.contains(where: { JSONEquality.equal($0, value) }) {
-            add(
-                "enum",
-                "must be one of \(values.prefix(10).map(Self.preview).joined(separator: ", "))"
-                    + (values.count > 10 ? ", … (\(values.count) in all)" : ""))
+        if let values = node.enumValues {
+            guard charge(values.count, path, node) else { return }
+            if !values.contains(where: { JSONEquality.equal($0, value) }) {
+                add(
+                    "enum",
+                    "must be one of \(values.prefix(10).map(Self.preview).joined(separator: ", "))"
+                        + (values.count > 10 ? ", … (\(values.count) in all)" : ""))
+            }
         }
         if let constant = node.constant, !JSONEquality.equal(constant, value) {
             add("const", "must be \(Self.preview(constant))")
@@ -120,26 +162,43 @@ private struct Evaluator {
         }
         for child in node.allOf { check(child, value, path: path, into: &issues, cap: cap) }
         if !node.anyOf.isEmpty {
-            let branches = node.anyOf.map { attempt($0, value, path: path) }
-            if !branches.contains(where: \.isEmpty), stopped == nil {
-                add("anyOf", "doesn't match any of the \(node.anyOf.count) allowed forms" + Self.closest(branches))
-                issues.append(
-                    contentsOf: (branches.min { $0.count < $1.count } ?? []).prefix(max(0, cap - issues.count)))
+            // In order, stopping at the first form that matches; when none does, every form's issues are known.
+            var failed: [[ResultIssue]] = []
+            for child in node.anyOf {
+                let found = attempt(child, value, path: path)
+                if found.isEmpty || stopped != nil { break }
+                failed.append(found)
+            }
+            if failed.count == node.anyOf.count, stopped == nil {
+                let best = Self.closest(failed, at: path)
+                add(
+                    "anyOf",
+                    "doesn't match any of the \(node.anyOf.count) allowed forms; the closest, form #\(best + 1), fails as follows"
+                )
+                issues.append(contentsOf: failed[best].prefix(max(0, cap - issues.count)))
             }
         }
         if !node.oneOf.isEmpty {
-            let branches = node.oneOf.map { attempt($0, value, path: path) }
-            let passing = branches.indices.filter { branches[$0].isEmpty }
+            // Until a second form matches.
+            var results: [[ResultIssue]] = []
+            for child in node.oneOf {
+                results.append(attempt(child, value, path: path))
+                if stopped != nil || results.filter(\.isEmpty).count > 1 { break }
+            }
+            let passing = results.indices.filter { results[$0].isEmpty }
             if stopped == nil {
                 if passing.isEmpty {
-                    add("oneOf", "doesn't match any of the \(node.oneOf.count) allowed forms" + Self.closest(branches))
-                    issues.append(
-                        contentsOf: (branches.min { $0.count < $1.count } ?? []).prefix(max(0, cap - issues.count)))
+                    let best = Self.closest(results, at: path)
+                    add(
+                        "oneOf",
+                        "doesn't match any of the \(node.oneOf.count) allowed forms; the closest, form #\(best + 1), fails as follows"
+                    )
+                    issues.append(contentsOf: results[best].prefix(max(0, cap - issues.count)))
                 } else if passing.count > 1 {
                     add(
                         "oneOf",
-                        "matches \(passing.count) of the allowed forms (\(passing.map { "#\($0 + 1)" }.joined(separator: ", "))) but must match exactly one"
-                    )
+                        "matches more than one of the allowed forms (#\(passing[0] + 1) and #\(passing[1] + 1)) but must "
+                            + "match exactly one")
                 }
             }
         }
@@ -155,14 +214,27 @@ private struct Evaluator {
         return found
     }
 
+    /// One level deeper into the value, or false (and checking stopped) past the bound.
+    mutating func descend(at: String, node: ResultSchema.Node) -> Bool {
+        guard depth < limits.depth else {
+            stop(at, "the value nests more than \(limits.depth) levels deep, more than Agneta checks", node)
+            return false
+        }
+        depth += 1
+        return true
+    }
+
     mutating func checkObject(
         _ node: ResultSchema.Node, _ fields: [String: JSONValue], path: String, into issues: inout [ResultIssue],
         cap: Int
     ) {
+        guard node.constrainsObjects, charge(fields.count, path, node) else { return }
         func add(_ keyword: String, _ message: String, _ at: String) {
             Self.push(&issues, cap: cap, path: at, node: node, keyword: keyword, message: message)
         }
-        for name in node.required where fields[name] == nil {
+        // Names compared by their code points (JSON Schema's equality), not Swift's canonical equivalence.
+        let present = Set(fields.keys.map { Data($0.utf8) })
+        for name in node.required where !present.contains(Data(name.utf8)) {
             add("required", "is missing the required property \(Self.quoted(name))", path)
         }
         if let least = node.minProperties, fields.count < least {
@@ -176,18 +248,23 @@ private struct Evaluator {
             guard descend(at: at, node: node) else { return }
             defer { depth -= 1 }
             if let names = node.propertyNames {
-                check(names, .string(name), path: at, into: &issues, cap: cap)
+                // About the name, not the value: said so, or the model would change the value.
+                var found: [ResultIssue] = []
+                check(names, .string(name), path: at, into: &found, cap: max(1, cap - issues.count))
+                issues.append(
+                    contentsOf: found.map {
+                        var issue = $0
+                        if issue.keyword != "limit" { issue.message = "the property's name " + issue.message }
+                        return issue
+                    })
             }
             var matched = false
-            if let child = node.properties[name] {
+            if let child = node.properties[Data(name.utf8)] {
                 matched = true
                 check(child, value, path: at, into: &issues, cap: cap)
             }
             for (pattern, child) in node.patternProperties {
-                guard let hit = pattern.matches(name, deadline: deadline) else {
-                    timedOut(at: at, pattern: pattern, node: node)
-                    return
-                }
+                guard let hit = match(pattern, name, at: at, node: node) else { return }
                 if hit {
                     matched = true
                     check(child, value, path: at, into: &issues, cap: cap)
@@ -207,38 +284,32 @@ private struct Evaluator {
     mutating func checkArray(
         _ node: ResultSchema.Node, _ items: [JSONValue], path: String, into issues: inout [ResultIssue], cap: Int
     ) {
-        func add(_ keyword: String, _ message: String, _ at: String) {
-            Self.push(&issues, cap: cap, path: at, node: node, keyword: keyword, message: message)
+        guard node.constrainsArrays, charge(items.count, path, node) else { return }
+        func add(_ keyword: String, _ message: String) {
+            Self.push(&issues, cap: cap, path: path, node: node, keyword: keyword, message: message)
         }
         if let least = node.minItems, items.count < least {
-            add("minItems", "must have at least \(least) items, has \(items.count)", path)
+            add("minItems", "must have at least \(least) items, has \(items.count)")
         }
         if let most = node.maxItems, items.count > most {
-            add("maxItems", "must have at most \(most) items, has \(items.count)", path)
+            add("maxItems", "must have at most \(most) items, has \(items.count)")
         }
         for (i, item) in items.enumerated() {
+            guard let child = i < node.prefixItems.count ? node.prefixItems[i] : node.items else { continue }
             guard descend(at: path + "/\(i)", node: node) else { return }
             defer { depth -= 1 }
-            let child = i < node.prefixItems.count ? node.prefixItems[i] : node.items
-            if let child { check(child, item, path: path + "/\(i)", into: &issues, cap: cap) }
+            check(child, item, path: path + "/\(i)", into: &issues, cap: cap)
             if stopped != nil || issues.count >= cap { return }
         }
         if node.uniqueItems {
-            // One pass over each item's canonical form (JSON equality: 1 and 1.0 alike, keys in order), not every
-            // pair: a long array stays linear.
-            var seen: [String: Int] = [:]
+            // One pass over each item's canonical form, keyed by its bytes (equal exactly when JSON equality says so),
+            // not every pair: a long array stays linear.
+            var seen: [Data: Int] = [:]
             for (i, item) in items.enumerated() {
-                checksLeft -= 1
-                if checksLeft < 0 {
-                    stopped = ResultIssue(
-                        path: path, keyword: "limit",
-                        message: "the value is too large or complex to check within Agneta's limits",
-                        schemaPath: node.pointer + "/uniqueItems")
-                    return
-                }
-                let key = JSONEquality.canonical(item)
+                let key = Data(JSONEquality.canonical(item).utf8)
+                guard charge(1 + key.count / 64, path, node) else { return }
                 if let first = seen[key] {
-                    add("uniqueItems", "items \(first) and \(i) are the same; every item must be different", path)
+                    add("uniqueItems", "items \(first) and \(i) are the same; every item must be different")
                     break
                 }
                 seen[key] = i
@@ -249,69 +320,67 @@ private struct Evaluator {
     func checkNumber(
         _ node: ResultSchema.Node, _ value: JSONValue, path: String, into issues: inout [ResultIssue], cap: Int
     ) {
-        func add(_ keyword: String, _ message: String, _ at: String) {
+        func add(_ keyword: String, _ message: String) {
             Self.push(&issues, cap: cap, path: path, node: node, keyword: keyword, message: message)
         }
         let shown = Self.preview(value)
         if let bound = node.minimum, JSONNumber.compare(value, bound) < 0 {
-            add("minimum", "must be at least \(Self.preview(bound)), is \(shown)", "")
+            add("minimum", "must be at least \(Self.preview(bound)), is \(shown)")
         }
         if let bound = node.maximum, JSONNumber.compare(value, bound) > 0 {
-            add("maximum", "must be at most \(Self.preview(bound)), is \(shown)", "")
+            add("maximum", "must be at most \(Self.preview(bound)), is \(shown)")
         }
         if let bound = node.exclusiveMinimum, JSONNumber.compare(value, bound) <= 0 {
-            add("exclusiveMinimum", "must be more than \(Self.preview(bound)), is \(shown)", "")
+            add("exclusiveMinimum", "must be more than \(Self.preview(bound)), is \(shown)")
         }
         if let bound = node.exclusiveMaximum, JSONNumber.compare(value, bound) >= 0 {
-            add("exclusiveMaximum", "must be less than \(Self.preview(bound)), is \(shown)", "")
+            add("exclusiveMaximum", "must be less than \(Self.preview(bound)), is \(shown)")
         }
         if let step = node.multipleOf, !JSONNumber.isMultiple(value, of: step) {
-            add("multipleOf", "must be a multiple of \(Self.preview(step)), is \(shown)", "")
+            add("multipleOf", "must be a multiple of \(Self.preview(step)), is \(shown)")
         }
     }
 
     mutating func checkString(
         _ node: ResultSchema.Node, _ string: String, path: String, into issues: inout [ResultIssue], cap: Int
     ) {
-        func add(_ keyword: String, _ message: String, _ at: String) {
+        func add(_ keyword: String, _ message: String) {
             Self.push(&issues, cap: cap, path: path, node: node, keyword: keyword, message: message)
         }
-        // JSON Schema counts characters as Unicode code points.
-        let length = string.unicodeScalars.count
-        if let least = node.minLength, length < least {
-            add("minLength", "must be at least \(least) characters long, is \(length)", "")
-        }
-        if let most = node.maxLength, length > most {
-            add("maxLength", "must be at most \(most) characters long, is \(length)", "")
+        if node.minLength != nil || node.maxLength != nil {
+            // JSON Schema counts characters as Unicode code points; counting is charged by the string's length.
+            guard charge(1 + string.utf8.count / 64, path, node) else { return }
+            let length = string.unicodeScalars.count
+            if let least = node.minLength, length < least {
+                add("minLength", "must be at least \(least) characters long, is \(length)")
+            }
+            if let most = node.maxLength, length > most {
+                add("maxLength", "must be at most \(most) characters long, is \(length)")
+            }
         }
         if let pattern = node.pattern {
-            switch pattern.matches(string, deadline: deadline) {
+            switch match(pattern, string, at: path, node: node) {
             case true?: break
-            case false?: add("pattern", "must match the pattern \(Self.quoted(pattern.source, limit: 200))", "")
-            case nil: timedOut(at: path, pattern: pattern, node: node)
+            case false?: add("pattern", "must match the pattern \(Self.quoted(pattern.source, limit: 200))")
+            case nil: break // stopped
             }
         }
     }
 
-    /// One level deeper into the value, or false (and checking stopped) past the bound.
-    mutating func descend(at: String, node: ResultSchema.Node) -> Bool {
-        depth += 1
-        guard depth <= maxDepth else {
-            depth -= 1
-            stopped = ResultIssue(
-                path: at, keyword: "limit",
-                message: "the value nests more than \(maxDepth) levels deep, more than Agneta checks",
-                schemaPath: node.pointer)
-            return false
+    /// Matches a pattern, charging the work and the time it actually takes; nil (and checking stopped) when the
+    /// pattern time runs out.
+    mutating func match(_ pattern: Pattern, _ string: String, at: String, node: ResultSchema.Node) -> Bool? {
+        guard charge(1 + string.utf8.count / 256, at, node) else { return nil }
+        let started = ContinuousClock.now
+        let hit = pattern.matches(string, deadline: started + patternLeft)
+        patternLeft -= ContinuousClock.now - started
+        guard let hit else {
+            stop(
+                at, "checking the pattern \(Self.quoted(pattern.source, limit: 200)) took longer than Agneta allows",
+                node)
+            return nil
         }
-        return true
-    }
-
-    mutating func timedOut(at: String?, pattern: Pattern, node: ResultSchema.Node) {
-        stopped = ResultIssue(
-            path: at ?? "", keyword: "limit",
-            message: "checking the pattern \(Self.quoted(pattern.source, limit: 200)) took longer than Agneta allows",
-            schemaPath: node.pointer)
+        return hit
     }
 
     static func push(
@@ -375,7 +444,8 @@ private struct Evaluator {
             case "\r": out += "\\r"
             case "\t": out += "\\t"
             case "\"": out += "\\\""
-            case _ where scalar.value < 0x20 || scalar.value == 0x7f || scalar.value == 0x2028 || scalar.value == 0x2029:
+            case _
+            where scalar.value < 0x20 || scalar.value == 0x7f || scalar.value == 0x2028 || scalar.value == 0x2029:
                 out += String(format: "\\u%04x", scalar.value)
             default: out.unicodeScalars.append(scalar)
             }
@@ -395,10 +465,24 @@ private struct Evaluator {
         return text.count > 60 ? String(text.prefix(57)) + "…" : text
     }
 
-    /// For anyOf and oneOf: which form came closest, whose issues follow.
-    static func closest(_ branches: [[ResultIssue]]) -> String {
-        guard let best = branches.indices.min(by: { branches[$0].count < branches[$1].count }) else { return "" }
-        return "; the closest, form #\(best + 1), fails as follows"
+    /// For anyOf and oneOf: the form to show the model when none matched. Forms whose type matched come first (a
+    /// type mismatch is one issue, which would otherwise always look closest: an object missing a field would be told
+    /// to be null), then the one with the fewest issues, then the first.
+    static func closest(_ branches: [[ResultIssue]], at path: String) -> Int {
+        func typeMismatch(_ issues: [ResultIssue]) -> Bool {
+            guard let first = issues.first else { return false }
+            return first.keyword == "type" && first.path == path
+        }
+        var best = 0
+        for index in branches.indices.dropFirst() {
+            let (mismatch, bestMismatch) = (typeMismatch(branches[index]), typeMismatch(branches[best]))
+            if mismatch != bestMismatch {
+                if !mismatch { best = index }
+            } else if branches[index].count < branches[best].count {
+                best = index
+            }
+        }
+        return best
     }
 }
 
@@ -434,68 +518,124 @@ enum JSONNumber {
         return fraction > 0 ? -1 : (fraction < 0 ? 1 : 0)
     }
 
-    /// Whether `value` is a whole multiple of `step` (> 0). Decimal arithmetic where it can represent both, so 0.0075
-    /// is a multiple of 0.0001; a quotient too large for any number is not a multiple.
+    /// Whether `value` is a whole multiple of `step` (> 0), exactly, as written: each number is a decimal significand
+    /// (at most 19 digits) times a power of ten, and divisibility is decided in integer arithmetic, so 0.0075 is a
+    /// multiple of 0.0001, and 1e100 isn't a multiple of 3.
     static func isMultiple(_ value: JSONValue, of step: JSONValue) -> Bool {
         if case .int(let x) = value, case .int(let s) = step { return x % s == 0 }
-        guard let x = double(value), let s = double(step), s > 0 else { return false }
-        if let dx = Decimal(string: text(value)), let ds = Decimal(string: text(step)), !dx.isNaN, !ds.isNaN, ds != 0 {
-            var quotient = dx / ds, rounded = Decimal()
-            if !quotient.isNaN {
-                NSDecimalRound(&rounded, &quotient, 0, .plain)
-                return rounded == quotient
+        guard let (a, p) = decimal(value), let (b, q) = decimal(step), b > 0 else { return false }
+        if a == 0 { return true }
+        if p >= q {
+            // a·10^(p−q) ≡ 0 (mod b)
+            return mulMod(a % b, powMod(10, p - q, b), b) == 0
+        }
+        // a must be divisible by b·10^(q−p), which, being more than a, it can't be unless it divides exactly.
+        var divisor = b
+        for _ in 0..<(q - p) {
+            let (next, overflow) = divisor.multipliedReportingOverflow(by: 10)
+            if overflow { return false }
+            divisor = next
+        }
+        return a % divisor == 0
+    }
+
+    /// The number as (significand, exponent): its magnitude is significand · 10^exponent, significand without
+    /// trailing zeros. From the shortest decimal that reads back as the same double, which is what the JSON held.
+    static func decimal(_ value: JSONValue) -> (UInt64, Int)? {
+        let text: String
+        switch value {
+        case .int(let n): return normalized(n.magnitude, 0)
+        case .double(let d) where d.isFinite: text = "\(d.magnitude)"
+        default: return nil
+        }
+        var digits = "", exponent = 0, seenPoint = false
+        var index = text.startIndex
+        while index < text.endIndex {
+            let c = text[index]
+            if c == "e" || c == "E" {
+                exponent += Int(text[text.index(after: index)...]) ?? 0
+                break
             }
+            if c == "." {
+                seenPoint = true
+            } else if c.wholeNumberValue != nil {
+                digits.append(c)
+                if seenPoint { exponent -= 1 }
+            }
+            index = text.index(after: index)
         }
-        let quotient = x / s
-        guard quotient.isFinite else { return false }
-        return quotient.rounded() == quotient
+        let trimmed = digits.drop { $0 == "0" }
+        guard let significand = UInt64(trimmed.isEmpty ? "0" : String(trimmed)) else { return nil }
+        return normalized(significand, exponent)
     }
 
-    private static func double(_ value: JSONValue) -> Double? {
-        switch value {
-        case .int(let n): Double(n)
-        case .double(let d): d
-        default: nil
+    private static func normalized(_ significand: UInt64, _ exponent: Int) -> (UInt64, Int) {
+        var (s, e) = (significand, exponent)
+        while s != 0, s % 10 == 0 {
+            s /= 10
+            e += 1
         }
+        return (s, e)
     }
 
-    private static func text(_ value: JSONValue) -> String {
-        switch value {
-        case .int(let n): "\(n)"
-        case .double(let d): "\(d)"
-        default: ""
+    static func mulMod(_ a: UInt64, _ b: UInt64, _ m: UInt64) -> UInt64 {
+        let product = a.multipliedFullWidth(by: b)
+        return m.dividingFullWidth((product.high, product.low)).remainder
+    }
+
+    static func powMod(_ base: UInt64, _ exponent: Int, _ m: UInt64) -> UInt64 {
+        var result: UInt64 = 1 % m, b = base % m, e = exponent
+        while e > 0 {
+            if e & 1 == 1 { result = mulMod(result, b, m) }
+            b = mulMod(b, b, m)
+            e >>= 1
         }
+        return result
     }
 }
 
-/// JSON equality as JSON Schema means it: 1 and 1.0 are equal, objects regardless of key order.
+/// JSON equality as JSON Schema means it: 1 and 1.0 are equal, objects regardless of key order, strings by their code
+/// points (not Swift's canonical equivalence, which calls two spellings of "é" equal).
 enum JSONEquality {
     static func equal(_ a: JSONValue, _ b: JSONValue) -> Bool {
         switch (a, b) {
-        case (.int, .int), (.int, .double), (.double, .int), (.double, .double): JSONNumber.compare(a, b) == 0
-        case (.array(let x), .array(let y)): x.count == y.count && zip(x, y).allSatisfy { equal($0, $1) }
+        case (.int, .int), (.int, .double), (.double, .int), (.double, .double): return JSONNumber.compare(a, b) == 0
+        case (.string(let x), .string(let y)): return x.unicodeScalars.elementsEqual(y.unicodeScalars)
+        case (.array(let x), .array(let y)): return x.count == y.count && zip(x, y).allSatisfy { equal($0, $1) }
         case (.object(let x), .object(let y)):
-            x.count == y.count && x.allSatisfy { key, value in y[key].map { equal(value, $0) } ?? false }
-        default: a == b
+            guard x.count == y.count else { return false }
+            var others: [Data: JSONValue] = [:]
+            for (key, value) in y { others[Data(key.utf8)] = value }
+            return x.allSatisfy { key, value in others[Data(key.utf8)].map { equal(value, $0) } ?? false }
+        default: return a == b
         }
     }
 
-    /// A string equal for exactly the values `equal` calls equal: numbers in one form, keys sorted.
+    /// A string equal for exactly the values `equal` calls equal: numbers in one form, keys sorted by their bytes,
+    /// strings as their code points.
     static func canonical(_ value: JSONValue) -> String {
         switch value {
         case .null: return "null"
         case .bool(let b): return b ? "true" : "false"
         case .int(let n): return "\(n)"
         case .double(let d):
-            if d.rounded() == d, abs(d) < 9_223_372_036_854_775_808.0 { return "\(Int64(d))" }
+            if d.rounded() == d, d >= -9_223_372_036_854_775_808.0, d < 9_223_372_036_854_775_808.0 {
+                return "\(Int64(d))"
+            }
             return "\(d)"
         case .string(let s):
-            return (try? JSONCoding.encode(JSONValue.string(s))).flatMap { String(data: $0, encoding: .utf8) } ?? s
-        case .array(let items): return "[" + items.map(canonical).joined(separator: ",") + "]"
+            let points: [String] = s.unicodeScalars.map { String($0.value, radix: 16) }
+            return "\"\(points.joined(separator: ","))\""
+        case .array(let items):
+            let parts: [String] = items.map(canonical)
+            return "[\(parts.joined(separator: ","))]"
         case .object(let fields):
-            return "{"
-                + fields.keys.sorted().map { canonical(.string($0)) + ":" + canonical(fields[$0]!) }
-                .joined(separator: ",") + "}"
+            let keys: [String] = fields.keys.sorted { (a: String, b: String) -> Bool in
+                Data(a.utf8).lexicographicallyPrecedes(Data(b.utf8))
+            }
+            var parts: [String] = []
+            for key in keys { parts.append(canonical(.string(key)) + ":" + canonical(fields[key]!)) }
+            return "{\(parts.joined(separator: ","))}"
         }
     }
 }

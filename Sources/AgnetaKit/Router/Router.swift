@@ -224,6 +224,9 @@ public actor Router {
         var meter = ""
         /// The results it declared when it opened (agneta/result), if any.
         var results: ResultDeclaration?
+        /// Result tool calls in progress, by the engine's call id: the result each submits, for tagging its updates
+        /// (later updates of a call may not say which tool it is).
+        var resultCalls: [String: String] = [:]
         /// New every time a session is registered. Work that waited (a load, a fork, a prompt) checks it before
         /// touching the session again: meanwhile the session may have ended, or been reopened under the same id.
         let generation = UUID()

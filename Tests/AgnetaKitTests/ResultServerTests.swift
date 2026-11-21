@@ -159,7 +159,8 @@ import Testing
         let body = String(repeating: " ", count: 1 << 20)
         let at = try RawHTTP.send(
             port,
-            "POST \(path) HTTP/1.1\r\nAuthorization: Bearer \(route.bearer)\r\nContent-Length: \(1 << 20)\r\n\r\n" + body)
+            "POST \(path) HTTP/1.1\r\nAuthorization: Bearer \(route.bearer)\r\nContent-Length: \(1 << 20)\r\n\r\n"
+                + body)
         #expect(at.hasPrefix("HTTP/1.1 400") && at.contains("-32700"))
         await server.stop()
     }
@@ -225,13 +226,15 @@ import Testing
     }
 
     @Test func stoppingDuringTheStartLeavesNothingListening() async throws {
-        let server = ResultServer(sessions: Sessions())
-        async let started = server.port()
+        // The listener has started but isn't kept yet when the stop arrives.
+        let server = ResultServer(sessions: Sessions()) { try? await Task.sleep(for: .milliseconds(300)) }
+        let starting = Task { try await server.port() }
+        try await Task.sleep(for: .milliseconds(100))
         await server.stop()
-        let port = try? await started
-        if let port {
-            // If the start won, the stop that followed closed it.
-            #expect(throws: (any Error).self) { _ = try RawHTTP.connect(port, closedWithin: .milliseconds(300)) }
+        let outcome = await starting.result
+        guard case .failure = outcome else {
+            Issue.record("a start the stop overtook still gave a port")
+            return
         }
         // A later session starts it again.
         let route = try await server.register(session: "s1")

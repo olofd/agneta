@@ -53,8 +53,17 @@ public actor ResultServer {
     /// Route id → whose it is.
     private var routes: [String: Registration] = [:]
 
+    /// Runs once a listener has started, before it's kept (tests: to land a stop in between).
+    private let afterStart: (@Sendable () async -> Void)?
+
     public init(sessions: any ResultSessions) {
         self.sessions = sessions
+        afterStart = nil
+    }
+
+    init(sessions: any ResultSessions, afterStart: @escaping @Sendable () async -> Void) {
+        self.sessions = sessions
+        self.afterStart = afterStart
     }
 
     /// The listener's port, starting it on first use.
@@ -64,11 +73,13 @@ public actor ResultServer {
         http = nil
         if let starting { return try await starting.value }
         let generation = stops
+        let afterStart = self.afterStart
         let task = Task<UInt16, Error> { [weak self] in
             let server = try LocalHTTPServer(port: 0) { [weak self] request in
                 await self?.handle(request) ?? .init(status: 404)
             }
             try await server.start()
+            await afterStart?()
             guard let self, await self.started(server, generation: generation) else {
                 server.stop()
                 throw CancellationError()

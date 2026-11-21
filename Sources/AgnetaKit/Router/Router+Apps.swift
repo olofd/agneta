@@ -482,7 +482,8 @@ extension Router {
                     sessions[id]?.limitHit = nil
                 }
                 let reason = result["stopReason"]?.stringValue ?? "end_turn"
-                result = Self.withResult(result, closeResult(id, generation: generation, stopReason: reason, stopped: limited))
+                result = Self.withResult(
+                    result, closeResult(id, generation: generation, stopReason: reason, stopped: limited))
                 sessions[id]?.activeRun = nil
                 if let summary = await trace?.turnEnded(stopReason: reason, usage: result["usage"], cutOff: limited) {
                     noteTokens(id, summary)

@@ -108,7 +108,7 @@ import Testing
                 == "/properties/a/$schema")
         #expect(refusal(object([:], ["$id": "https://example.com/s"])) == nil)
         #expect(refusal(object(["a": ["$id": "x"]]))?.path == "/properties/a/$id")
-        #expect(refusal(object(["a": ["$defs": ["b": true]]]))?.path == "/properties/a/$defs")
+        #expect(refusal(object(["a": ["$defs": ["b": true]]])) == nil) // $defs may sit anywhere; references reach them
     }
 
     @Test func refusesMalformedKeywordValues() {
@@ -358,7 +358,8 @@ import Testing
         #expect(try valid(schema, 1))
         #expect(try valid(schema, 2.5))
         #expect(
-            try issues(schema, 3).first?.message == "matches 2 of the allowed forms (#1, #2) but must match exactly one"
+            try issues(schema, 3).first?.message
+                == "matches more than one of the allowed forms (#1 and #2) but must match exactly one"
         )
         #expect(try issues(schema, "x").first?.keyword == "oneOf")
     }
@@ -399,7 +400,8 @@ import Testing
         ])
         let big: JSONValue = ["xs": .array((0..<10_000).map { .int(Int64($0)) })]
         #expect(schema.validate(big).isEmpty)
-        let found = schema.validate(big, limits: .init(checks: 100, patternTime: .milliseconds(250), issues: 20, depth: 32))
+        let found = schema.validate(
+            big, limits: .init(checks: 100, patternTime: .milliseconds(250), issues: 20, depth: 32))
         #expect(found.last?.keyword == "limit")
         #expect(found.last?.message == "the value is too large or complex to check within Agneta's limits")
     }
@@ -439,7 +441,7 @@ import Testing
 
     /// A recursive schema and a value nested deeper than Agneta checks: reported as a limit, never walked into (on the
     /// router's small stack a deep walk would crash Agneta).
-    @Test func aValueNestedTooDeepIsReportedNotWalked() throws {
+    @Test func aValueNestedTooDeepIsReportedNotWalked() async throws {
         let schema = try compile([
             "type": "object", "properties": ["n": ["$ref": "#/$defs/node"]],
             "$defs": ["node": ["type": "object", "properties": ["n": ["$ref": "#/$defs/node"]]]]
@@ -449,19 +451,20 @@ import Testing
             for _ in 0..<levels { value = ["n": value] }
             return value
         }
-        #expect(schema.validate(nested(30)).isEmpty)
-        let deep = schema.validate(nested(200))
+        // Checked on its own large stack, as the router checks: the test's thread is as small as the router's.
+        #expect(await schema.checked(nested(60)).isEmpty)
+        let deep = await schema.checked(nested(200))
         #expect(deep.last?.keyword == "limit")
-        #expect(deep.last?.message.contains("more than 32 levels") == true)
+        #expect(deep.last?.message.contains("more than 64 levels") == true)
         // Arrays count as levels too.
         var list: JSONValue = []
         for _ in 0..<100 { list = [list] }
         let arrays = try compile(["type": "object", "properties": ["xs": true]]).validate(["xs": list])
         #expect(arrays.isEmpty) // `true` checks nothing inside, so nothing is walked
-        let walked = try compile([
+        let walked = try await compile([
             "type": "object", "properties": ["xs": ["$ref": "#/$defs/l"]],
             "$defs": ["l": ["type": "array", "items": ["$ref": "#/$defs/l"]]]
-        ]).validate(["xs": list])
+        ]).checked(["xs": list])
         #expect(walked.last?.keyword == "limit")
     }
 
@@ -493,8 +496,188 @@ import Testing
     }
 
     @Test func aDeepRPCMessageIsNotJSONToAgneta() {
-        let deep = #"{"jsonrpc":"2.0","method":"x","params":"# + String(repeating: "[", count: 5_000)
+        let deep =
+            #"{"jsonrpc":"2.0","method":"x","params":"# + String(repeating: "[", count: 5_000)
             + String(repeating: "]", count: 5_000) + "}"
         #expect(throws: (any Error).self) { _ = try RPCMessage.parse(Data(deep.utf8)) }
+    }
+}
+
+/// What the independent review of the validator found, each pinned.
+@Suite struct ResultSchemaReviewTests {
+    func compile(_ schema: JSONValue) throws -> ResultSchema { try ResultSchema.compile(schema) }
+    func object(_ v: JSONValue, _ extra: [String: JSONValue] = [:]) -> JSONValue {
+        var fields: [String: JSONValue] = ["type": "object", "properties": ["v": v]]
+        for (key, value) in extra { fields[key] = value }
+        return .object(fields)
+    }
+    func valid(_ v: JSONValue, _ value: JSONValue) throws -> Bool {
+        try compile(object(v)).validate(["v": value]).isEmpty
+    }
+    func refusal(_ schema: JSONValue) -> ResultSchemaRejection? {
+        do {
+            _ = try ResultSchema.compile(schema)
+            return nil
+        } catch { return error }
+    }
+
+    // Patterns mean what ECMA-262 means.
+    @Test func patternsFollowECMA262() throws {
+        #expect(try !valid(["type": "string", "pattern": "^[a-z]+$"], "abc\n")) // $ is the end, not before a newline
+        #expect(try valid(["type": "string", "pattern": "^[a-z]+$"], "abc"))
+        #expect(try !valid(["type": "string", "pattern": "^\\d+$"], "١٢")) // \d is ASCII
+        #expect(try valid(["type": "string", "pattern": "^\\d+$"], "12"))
+        #expect(try !valid(["type": "string", "pattern": "^\\w+$"], "é")) // \w is ASCII
+        #expect(try valid(["type": "string", "pattern": "^[\\w-]+$"], "a-b_1"))
+        #expect(try !valid(["type": "string", "pattern": "^.$"], "\u{2028}")) // . leaves out line terminators
+        #expect(try valid(["type": "string", "pattern": "^.$"], "\u{85}")) // ICU's . would leave out NEL; ECMA's doesn't
+        #expect(try valid(["type": "string", "pattern": "\\bcat\\b"], "a cat!"))
+        #expect(try !valid(["type": "string", "pattern": "\\bé"], "é")) // é isn't an ECMA word character: no boundary
+        #expect(try valid(["type": "string", "pattern": "^[[a]+$"], "[a[")) // [ in a class is a literal
+        #expect(try !valid(["type": "string", "pattern": "[]"], "x")) // the empty class matches nothing
+        #expect(try valid(["type": "string", "pattern": "^[^]$"], "\n"))
+        #expect(try valid(["type": "string", "pattern": "^(?<year>\\d{4})-(?:0[1-9]|1[0-2])$"], "2026-11"))
+        #expect(try valid(["type": "string", "pattern": "^\\u{1F600}$"], "😀"))
+        for icuOnly in ["(?i)a", "\\Aa", "a\\z", "a*+", "a++", "\\Qa\\E", "[\\D]", "\\h"] {
+            #expect(
+                refusal(object(["type": "string", "pattern": .string(icuOnly)]))?.reason.contains("pattern") == true,
+                "\(icuOnly)")
+        }
+    }
+
+    @Test func aBadlyEncodedRefIsRefusedNotTheRoot() {
+        let refused = refusal(object(["$ref": "#/$defs/50%"], ["$defs": ["50%": ["type": "integer"]]]))
+        #expect(refused?.reason.contains("isn't a valid URI fragment") == true)
+    }
+
+    @Test func refsReachAnySchemaInThisOne() throws {
+        let schema = try compile(
+            object(
+                ["$ref": "#/properties/w"], ["properties": ["v": ["$ref": "#/properties/w"], "w": ["type": "integer"]]])
+        )
+        #expect(schema.validate(["v": 1]).isEmpty && !schema.validate(["v": "x"]).isEmpty)
+        let nested = try compile(
+            object(
+                ["$ref": "#/properties/v/$defs/n"],
+                ["properties": ["v": ["$defs": ["n": ["type": "string"]], "type": "string"]]]))
+        #expect(nested.validate(["v": "s"]).isEmpty)
+        #expect(refusal(object(["$ref": "#/properties/missing"])) != nil)
+    }
+
+    @Test func aRootTypeListOfObjectIsAnObjectSchema() throws {
+        #expect(refusal(["type": ["object"], "properties": [:]]) == nil)
+    }
+
+    @Test func annotationsMustHaveTheirTypes() {
+        #expect(refusal(object(["description": 5]))?.reason.contains("a string") == true)
+        #expect(refusal(object(["format": ["x"]])) != nil)
+        #expect(refusal(object(["deprecated": "yes"])) != nil)
+        #expect(refusal(["type": "object", "$id": 5]) != nil)
+    }
+
+    @Test func choicesThatMultiplyAreRefusedAtCompile() {
+        // Each level's anyOf doubles: 2^12 checks per value from a schema of a few hundred bytes.
+        var defs: [String: JSONValue] = ["d12": ["type": "string"]]
+        for i in 0..<12 {
+            defs["d\(i)"] = ["anyOf": [["$ref": .string("#/$defs/d\(i + 1)")], ["$ref": .string("#/$defs/d\(i + 1)")]]]
+        }
+        let refused = refusal(object(["$ref": "#/$defs/d0"], ["$defs": .object(defs)]))
+        #expect(refused?.reason.contains("more than 1000 checks") == true)
+    }
+
+    @Test func longReferenceChainsAreRefusedWithoutRecursing() {
+        var defs: [String: JSONValue] = ["d400": ["type": "string"]]
+        for i in 0..<400 { defs["d\(i)"] = ["$ref": .string("#/$defs/d\(i + 1)")] }
+        // Under the size limit only because the limit is raised here: the chain must be refused for its length.
+        do {
+            _ = try ResultSchema.compile(
+                object(["$ref": "#/$defs/d0"], ["$defs": .object(defs)]),
+                limits: .init(bytes: 1 << 20, depth: 32, nodes: 1_000, enumValues: 1_000, patternLength: 1_000))
+            Issue.record("accepted a 400-link chain")
+        } catch {
+            #expect(error.reason.contains("more than 64 deep"))
+        }
+    }
+
+    @Test func workIsChargedForKeysAndLongStrings() throws {
+        let schema = try compile(object(["type": "object", "additionalProperties": ["type": "integer"]]))
+        let big = JSONValue.object(
+            Dictionary(uniqueKeysWithValues: (0..<5_000).map { ("k\($0)", JSONValue.int(Int64($0))) }))
+        #expect(schema.validate(["v": big]).isEmpty)
+        let small = ResultSchema.ValidationLimits(checks: 1_000, patternTime: .milliseconds(250), issues: 20)
+        #expect(schema.validate(["v": big], limits: small).last?.keyword == "limit")
+        let lengths = try compile(object(["type": "string", "maxLength": 2_000_000]))
+        #expect(
+            lengths.validate(["v": .string(String(repeating: "x", count: 1_000_000))], limits: small).last?.keyword
+                == "limit")
+    }
+
+    @Test func atLeastOneIssueIsAlwaysReported() throws {
+        let schema = try compile(object(["type": "string"]))
+        for cap in [0, -1, 1] {
+            #expect(
+                schema.validate(["v": 1], limits: .init(checks: 100, patternTime: .milliseconds(10), issues: cap)).count
+                    == 1)
+        }
+    }
+
+    @Test func patternTimeIsTheTimeSpentMatching() throws {
+        // Much work before a quick pattern doesn't count against the pattern's time.
+        let schema = try compile([
+            "type": "object",
+            "properties": [
+                "many": ["type": "object", "additionalProperties": ["type": "integer"]],
+                "z": ["type": "string", "pattern": "z"]
+            ]
+        ])
+        let many = JSONValue.object(Dictionary(uniqueKeysWithValues: (0..<50_000).map { ("k\($0)", JSONValue.int(1)) }))
+        let found = schema.validate(
+            ["many": many, "z": "zz"], limits: .init(checks: 2_000_000, patternTime: .milliseconds(5), issues: 20))
+        #expect(found.isEmpty)
+    }
+
+    @Test func multipleOfIsExact() throws {
+        let cases: [(JSONValue, JSONValue, Bool)] = [
+            (1e100, 3, false), (1e300, 7, false), (3e-5, 1e-5, true), (0.0075, 0.0001, true), (2e16, 3, false),
+            (3e16, 3, true), (1e40, 1e-40, true), (7, 0.5, true), (7.25, 0.5, false), (1e-200, 1e-201, true),
+            (.int(Int64.min), 2, true), (0, 0.3, true)
+        ]
+        for (value, step, expected) in cases {
+            #expect(JSONNumber.isMultiple(value, of: step) == expected, "\(value) multipleOf \(step)")
+        }
+    }
+
+    @Test func stringsCompareByCodePoints() throws {
+        let nfc = "\u{E9}", nfd = "e\u{301}"
+        #expect(try !valid(["enum": [.string(nfc)]], .string(nfd)))
+        #expect(try valid(["type": "array", "uniqueItems": true], [.string(nfc), .string(nfd)]))
+        let schema = try compile(
+            object(["type": "object", "properties": [.init(stringLiteral: nfc): true], "additionalProperties": false]))
+        #expect(!schema.validate(["v": [.init(stringLiteral: nfd): 1]]).isEmpty)
+        #expect(
+            try valid(["type": "array", "uniqueItems": true], [.int(Int64.min), .double(-9_223_372_036_854_775_808.0)])
+                == false)
+    }
+
+    @Test func theClosestFormIsOneWhoseTypeMatched() throws {
+        let schema = try compile(object(["anyOf": [["type": "null"], ["type": "object", "required": ["a", "b"]]]]))
+        let found = schema.validate(["v": ["a": "x"]])
+        #expect(found.first?.message.contains("form #2") == true)
+        #expect(found.dropFirst().first?.keyword == "required")
+    }
+
+    @Test func propertyNameIssuesSayTheyAreAboutTheName() throws {
+        let schema = try compile(object(["type": "object", "propertyNames": ["maxLength": 3]]))
+        #expect(
+            schema.validate(["v": ["long": 1]]).first?.message
+                == "the property's name must be at most 3 characters long, is 4")
+    }
+
+    @Test func anyOfStopsAtTheFirstMatch() throws {
+        // The second form would cost far more than the budget: it's never reached once the first matches.
+        let schema = try compile(object(["anyOf": [["type": "string"], ["type": "string", "pattern": "^(a+)+$"]]]))
+        let evil = JSONValue.string(String(repeating: "a", count: 40) + "!")
+        #expect(
+            schema.validate(["v": evil], limits: .init(checks: 100, patternTime: .milliseconds(1), issues: 20)).isEmpty)
     }
 }

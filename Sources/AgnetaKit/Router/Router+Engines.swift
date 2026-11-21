@@ -88,7 +88,7 @@ extension Router {
                 }
             }
         }
-        let tagged = method == "session/update" ? Self.taggingResult(params, in: sessions[id] ?? session) : params
+        let tagged = method == "session/update" ? tagResultCall(id, params, session: session) : params
         try? await app.peer.notify(method, tagged?.setting("sessionId", to: .string(id)))
     }
 

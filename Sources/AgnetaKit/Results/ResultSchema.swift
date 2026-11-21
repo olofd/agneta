@@ -63,7 +63,9 @@ public struct ResultSchema: Sendable {
         var oneOf: [Int] = []
         var not: Int?
         // Objects
-        var properties: [String: Int] = [:]
+        /// By the name's UTF-8 bytes: JSON Schema compares names by code points, and Swift's String equality would
+        /// call two spellings of "é" one name.
+        var properties: [Data: Int] = [:]
         var patternProperties: [(Pattern, Int)] = []
         var additionalProperties: Int?
         var propertyNames: Int?
@@ -86,6 +88,19 @@ public struct ResultSchema: Sendable {
         var minLength: Int?
         var maxLength: Int?
         var pattern: Pattern?
+
+        /// Whether it says anything about an object's members (else checking an object needn't walk them).
+        var constrainsObjects: Bool {
+            if !properties.isEmpty || !patternProperties.isEmpty || !required.isEmpty { return true }
+            if additionalProperties != nil || propertyNames != nil { return true }
+            return minProperties != nil || maxProperties != nil
+        }
+
+        /// Whether it says anything about an array's items.
+        var constrainsArrays: Bool {
+            if !prefixItems.isEmpty || uniqueItems { return true }
+            return items != nil || minItems != nil || maxItems != nil
+        }
     }
 
     /// The schema as the app sent it.
@@ -104,47 +119,17 @@ public struct ResultSchema: Sendable {
         guard case .object = schema else {
             throw ResultSchemaRejection(path: "", reason: "the schema's root must be an object schema")
         }
-        guard schema["type"] == "object" else {
+        guard schema["type"] == "object" || schema["type"] == ["object"] else {
             throw ResultSchemaRejection(
                 path: "", reason: #"the schema's root must have "type": "object" (a result is an object)"#)
         }
         var compiler = Compiler(limits: limits)
         let root = try compiler.compile(schema, pointer: "", depth: 0, isRoot: true)
         try compiler.resolveReferences()
-        try compiler.refuseCyclesThatDontDescend()
+        let order = try compiler.refuseCyclesThatDontDescend()
+        try compiler.boundWork(order)
         precondition(root == 0)
         return ResultSchema(source: schema, nodes: compiler.nodes)
-    }
-}
-
-/// A compiled `pattern`: ECMA-262 as ICU reads it (the differences are in docs/APP_PROTOCOL.md). Searches anywhere in
-/// the string, as JSON Schema says. NSRegularExpression is immutable and safe to share across threads.
-final class Pattern: @unchecked Sendable {
-    let source: String
-    private let regex: NSRegularExpression
-
-    init?(_ source: String) {
-        guard let regex = try? NSRegularExpression(pattern: source) else { return nil }
-        self.source = source
-        self.regex = regex
-    }
-
-    /// Whether `string` has a match, or nil when finding out would run past `deadline` (a pattern that backtracks
-    /// without end): matching is stopped there, never left to run.
-    func matches(_ string: String, deadline: ContinuousClock.Instant) -> Bool? {
-        var found = false, timedOut = false
-        regex.enumerateMatches(
-            in: string, options: [.reportProgress], range: NSRange(string.startIndex..., in: string)
-        ) { match, _, stop in
-            if match != nil {
-                found = true
-                stop.pointee = true
-            } else if ContinuousClock.now > deadline {
-                timedOut = true
-                stop.pointee = true
-            }
-        }
-        return found ? true : (timedOut ? nil : false)
     }
 }
 
@@ -159,8 +144,10 @@ private struct Compiler {
 
     init(limits: ResultSchema.Limits) { self.limits = limits }
 
-    static let annotations: Set<String> = [
-        "title", "description", "default", "examples", "format", "$comment", "deprecated", "readOnly", "writeOnly"
+    /// Keywords that describe and don't constrain: accepted, with the JSON type each must have, and not enforced.
+    static let annotations: [String: String] = [
+        "title": "string", "description": "string", "default": "", "examples": "array", "format": "string",
+        "$comment": "string", "deprecated": "boolean", "readOnly": "boolean", "writeOnly": "boolean"
     ]
     /// Keywords that may stand beside `$ref`: annotations only, so `$ref` means the same in every draft.
     static let applicators: Set<String> = [
@@ -226,7 +213,17 @@ private struct Compiler {
         _ key: String, _ value: JSONValue, at: String, node: ResultSchema.Node, index: Int, depth: Int,
         isRoot: Bool
     ) throws(ResultSchemaRejection) {
-        if Self.annotations.contains(key) { return }
+        if let kind = Self.annotations[key] {
+            let fits: Bool =
+                switch kind {
+                case "string": value.stringValue != nil
+                case "array": value.arrayValue != nil
+                case "boolean": value.boolValue != nil
+                default: true
+                }
+            guard fits else { throw notA("a \(kind)", at) }
+            return
+        }
         switch key {
         case "$schema":
             guard isRoot else { throw ResultSchemaRejection(path: at, reason: #""$schema" belongs at the root"#) }
@@ -238,14 +235,12 @@ private struct Compiler {
                 throw ResultSchemaRejection(path: at, reason: "only JSON Schema 2020-12 and draft-07 are supported")
             }
         case "$id":
+            guard value.stringValue != nil else { throw notA("a string", at) }
             guard isRoot else {
                 throw ResultSchemaRejection(
                     path: at, reason: #""$id" inside a schema changes what "$ref" points to; keep it at the root"#)
             }
         case "$defs", "definitions":
-            guard isRoot else {
-                throw ResultSchemaRejection(path: at, reason: #"keep "\#(key)" at the root of the schema"#)
-            }
             guard let defs = value.objectValue else { throw notA("an object of schemas", at) }
             for name in defs.keys.sorted() {
                 _ = try compile(defs[name]!, pointer: at + "/" + escape(name), depth: depth + 1)
@@ -278,7 +273,8 @@ private struct Compiler {
         case "properties":
             guard let fields = value.objectValue else { throw notA("an object of schemas", at) }
             for name in fields.keys.sorted() {
-                node.properties[name] = try compile(fields[name]!, pointer: at + "/" + escape(name), depth: depth + 1)
+                node.properties[Data(name.utf8)] = try compile(
+                    fields[name]!, pointer: at + "/" + escape(name), depth: depth + 1)
             }
         case "patternProperties":
             guard let fields = value.objectValue else { throw notA("an object of schemas", at) }
@@ -365,7 +361,9 @@ private struct Compiler {
     }
 
     private func count(_ value: JSONValue, at: String) throws(ResultSchemaRejection) -> Int {
-        guard let n = value.intValue, n >= 0, n <= Int64(Int32.max) else { throw notA("a whole number, 0 or more", at) }
+        guard let n = value.intValue, n >= 0, n <= Int64(Int32.max) else {
+            throw notA("a whole number from 0 to \(Int32.max)", at)
+        }
         return Int(n)
     }
 
@@ -386,17 +384,19 @@ private struct Compiler {
             throw ResultSchemaRejection(
                 path: at, reason: "the pattern is longer than \(limits.patternLength) characters")
         }
-        guard let pattern = Pattern(source) else {
-            throw ResultSchemaRejection(path: at, reason: "the pattern isn't a regular expression Agneta can read")
+        switch Pattern.compile(source) {
+        case .success(let pattern): return pattern
+        case .failure(let refusal):
+            throw ResultSchemaRejection(path: at, reason: "the pattern can't be used: " + refusal.reason)
         }
-        return pattern
     }
 
     private func notA(_ what: String, _ at: String) -> ResultSchemaRejection {
         ResultSchemaRejection(path: at, reason: "must be \(what)")
     }
 
-    /// Points every `$ref` at its schema: `#`, or a schema under the root's `$defs` or `definitions`.
+    /// Points every `$ref` at its schema: any schema in this one, by JSON Pointer (`#`, `#/$defs/…`,
+    /// `#/properties/…`), never another document.
     mutating func resolveReferences() throws(ResultSchemaRejection) {
         for reference in references {
             guard reference.target.hasPrefix("#") else {
@@ -404,24 +404,68 @@ private struct Compiler {
                     path: reference.pointer,
                     reason: "only references within the schema (#/$defs/…) are supported, never another document")
             }
-            let fragment = String(reference.target.dropFirst()).removingPercentEncoding ?? ""
-            let parts = fragment.split(separator: "/", omittingEmptySubsequences: false)
-            let defs = parts.count == 3 && parts[0].isEmpty && (parts[1] == "$defs" || parts[1] == "definitions")
-            guard fragment.isEmpty || defs, let target = byPointer[fragment] else {
+            // The fragment is URI-encoded; one that doesn't decode is refused, never read as some other pointer.
+            guard let fragment = String(reference.target.dropFirst()).removingPercentEncoding else {
+                throw ResultSchemaRejection(
+                    path: reference.pointer, reason: "\"\(reference.target)\" isn't a valid URI fragment")
+            }
+            guard fragment.isEmpty || fragment.hasPrefix("/"), let target = byPointer[fragment] else {
                 throw ResultSchemaRejection(
                     path: reference.pointer,
-                    reason: "\"\(reference.target)\" must be \"#\" or name a schema in the root's $defs")
+                    reason: "\"\(reference.target)\" doesn't point at a schema in this one (#, or #/$defs/<name>)")
             }
             nodes[reference.node].reference = target
         }
     }
 
+    /// The most one value position may cost to check: the checks its `$ref`, `allOf`, `anyOf`, `oneOf` and `not` lead
+    /// to before looking inside the value. A schema of 1 KB whose anyOf branches double at every level would otherwise
+    /// cost millions of checks per value; and how deep those in-place chains go is what checking recurses through.
+    static let maxFanOut = 1_000
+    static let maxChain = 64
+
+    /// Refuses a schema whose in-place applicators multiply past `maxFanOut` checks, or chain deeper than `maxChain`.
+    /// Reads nodes in `order` (each after what it leads to), so it never recurses.
+    func boundWork(_ order: [Int]) throws(ResultSchemaRejection) {
+        var cost = Array(repeating: 1, count: nodes.count)
+        var chain = Array(repeating: 0, count: nodes.count)
+        for index in order {
+            let node = nodes[index]
+            var total = 1, longest = 0
+            for next in [node.reference, node.not].compactMap({ $0 }) + node.allOf + node.anyOf + node.oneOf {
+                total = min(total + cost[next], Int.max / 2)
+                longest = max(longest, chain[next] + 1)
+            }
+            guard total <= Self.maxFanOut else {
+                throw ResultSchemaRejection(
+                    path: node.pointer,
+                    reason: "its anyOf, oneOf, allOf, not and $ref choices add up to more than \(Self.maxFanOut) "
+                        + "checks for one value; simplify them")
+            }
+            guard longest <= Self.maxChain else {
+                throw ResultSchemaRejection(
+                    path: node.pointer, reason: "its $ref and applicator chains are more than \(Self.maxChain) deep")
+            }
+            cost[index] = total
+            chain[index] = longest
+        }
+    }
+
     /// Refuses a schema that reaches itself without looking inside the value (`{"$ref": "#"}` at the root, or
     /// `anyOf` back to itself): checking a value against it would never end.
-    func refuseCyclesThatDontDescend() throws(ResultSchemaRejection) {
+    /// Returns every node with what it leads to in place before it, the order `boundWork` reads them in.
+    func refuseCyclesThatDontDescend() throws(ResultSchemaRejection) -> [Int] {
+        var order: [Int] = []
         var state = [UInt8](repeating: 0, count: nodes.count) // 0 unseen, 1 on the path, 2 done
-        func visit(_ index: Int) throws(ResultSchemaRejection) {
+        // Bounded by the chain limit as it goes: the compiler runs on the router's small stack, and a chain of a
+        // thousand references mustn't recurse a thousand deep to find out it's too long.
+        func visit(_ index: Int, level: Int) throws(ResultSchemaRejection) {
             if state[index] == 2 { return }
+            guard level <= Self.maxChain else {
+                throw ResultSchemaRejection(
+                    path: nodes[index].pointer,
+                    reason: "its $ref and applicator chains are more than \(Self.maxChain) deep")
+            }
             if state[index] == 1 {
                 throw ResultSchemaRejection(
                     path: nodes[index].pointer,
@@ -430,11 +474,13 @@ private struct Compiler {
             state[index] = 1
             let node = nodes[index]
             for next in [node.reference, node.not].compactMap({ $0 }) + node.allOf + node.anyOf + node.oneOf {
-                try visit(next)
+                try visit(next, level: level + 1)
             }
             state[index] = 2
+            order.append(index)
         }
-        for index in nodes.indices { try visit(index) }
+        for index in nodes.indices { try visit(index, level: 0) }
+        return order
     }
 }
 

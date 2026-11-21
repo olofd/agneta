@@ -27,7 +27,9 @@ import Testing
         ["tool": .string(tool), "arguments": arguments, "ask": .bool(ask)]
     }
 
-    func prompt(_ app: AppClient, _ session: String, _ text: String, _ result: JSONValue? = nil) async throws -> JSONValue {
+    func prompt(_ app: AppClient, _ session: String, _ text: String, _ result: JSONValue? = nil) async throws
+        -> JSONValue
+    {
         var params: JSONValue = ["sessionId": .string(session), "prompt": [["type": "text", "text": .string(text)]]]
         if let result { params = params.setting("_meta", to: ["agneta/result": result]) }
         return try await app.request("session/prompt", params)
@@ -55,7 +57,8 @@ import Testing
                 ]
             ])
         let session = try #require(opened["sessionId"]?.stringValue)
-        #expect(opened["_meta"]?["agneta"]?["results"] == ["declared": ["result"], "every": "result", "mechanism": "tool"])
+        #expect(
+            opened["_meta"]?["agneta"]?["results"] == ["declared": ["result"], "every": "result", "mechanism": "tool"])
         // The engine got Agneta's result server beside the app's (none here), on loopback with its own bearer.
         let servers = try #require(await stack.engines.opening.last?.params["mcpServers"]?.arrayValue)
         #expect(servers.count == 1 && servers[0]["name"] == "agneta-result" && servers[0]["type"] == "http")
@@ -71,7 +74,8 @@ import Testing
         #expect(!answer.isError && answer.text.hasPrefix("Result received"))
         // The engine read the note naming the tool, after the app's own words; Agneta's field didn't reach it.
         let blocks = try #require(await stack.engines.prompts.last)
-        #expect(blocks.count == 2 && blocks[1]["text"]?.stringValue?.contains("call the tool submit_result once") == true)
+        #expect(
+            blocks.count == 2 && blocks[1]["text"]?.stringValue?.contains("call the tool submit_result once") == true)
         // The trace has the turn's result from asked to final.
         let events = try results(stack, session).map { $0["event"]?.stringValue }
         #expect(events == ["asked", "submitted", "final"])
@@ -83,7 +87,8 @@ import Testing
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Results")
-        let session = try await stack.session(app, account: "brokered", meta: ["agneta/result": ["schema": Self.invoice]])
+        let session = try await stack.session(
+            app, account: "brokered", meta: ["agneta/result": ["schema": Self.invoice]])
         let reply = try await prompt(
             app, session,
             Self.script([Self.call("submit_result", Self.bad), Self.call("submit_result", Self.good)]))
@@ -102,7 +107,8 @@ import Testing
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Results")
-        let session = try await stack.session(app, account: "brokered", meta: ["agneta/result": ["schema": Self.invoice]])
+        let session = try await stack.session(
+            app, account: "brokered", meta: ["agneta/result": ["schema": Self.invoice]])
 
         let silent = try await prompt(app, session, "hello")
         #expect(silent["_meta"]?["agneta/result"]?["status"] == "missing")
@@ -115,7 +121,9 @@ import Testing
             app, session, Self.script([Self.call("submit_result", Self.bad)]), ["attempts": 1])
         let report = try #require(exhausted["_meta"]?["agneta/result"])
         #expect(report["status"] == "invalid" && report["value"] == Self.bad)
-        #expect(report["issues"]?.arrayValue?.first?["path"] == "/total" && report["issues"]?.arrayValue?.first?["keyword"] == "type")
+        #expect(
+            report["issues"]?.arrayValue?.first?["path"] == "/total"
+                && report["issues"]?.arrayValue?.first?["keyword"] == "type")
         #expect(await stack.engines.resultAnswers.last??.text.contains("that was the last attempt") == true)
 
         // Each turn starts fresh: the next one accepts.
@@ -185,7 +193,9 @@ import Testing
                 "session/new",
                 [
                     "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)),
-                    "mcpServers": [["type": "http", "name": "agneta-result", "url": "http://127.0.0.1:1/mcp", "headers": []]],
+                    "mcpServers": [
+                        ["type": "http", "name": "agneta-result", "url": "http://127.0.0.1:1/mcp", "headers": []]
+                    ],
                     "_meta": ["agneta/policy": ["tools": "app-only"], "agneta": ["account": "brokered"]]
                 ])
             Issue.record("accepted a server named agneta-result")
@@ -194,7 +204,8 @@ import Testing
         }
 
         // A prompt asking for something the session didn't declare is refused, and the engine never sees it.
-        let session = try await stack.session(app, account: "brokered", meta: ["agneta/result": ["schema": Self.invoice]])
+        let session = try await stack.session(
+            app, account: "brokered", meta: ["agneta/result": ["schema": Self.invoice]])
         let prompts = await stack.engines.prompts.count
         do {
             _ = try await prompt(app, session, "hello", ["name": "contact"])
@@ -252,7 +263,8 @@ import Testing
         _ = try await app.request(
             "session/load",
             [
-                "sessionId": .string(session), "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)),
+                "sessionId": .string(session),
+                "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)),
                 "mcpServers": []
             ])
         let loaded = try #require(await stack.engines.opening.last)
@@ -269,7 +281,8 @@ import Testing
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Results")
-        let session = try await stack.session(app, account: "brokered", meta: ["agneta/result": ["schema": Self.invoice]])
+        let session = try await stack.session(
+            app, account: "brokered", meta: ["agneta/result": ["schema": Self.invoice]])
         async let reply = prompt(app, session, "deaf")
         try await Task.sleep(for: .milliseconds(300))
         await stack.router.stop(session)

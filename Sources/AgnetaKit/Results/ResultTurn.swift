@@ -12,6 +12,8 @@
 import Foundation
 
 public struct ResultTurn: Sendable {
+    /// This turn's own identity: work that waited (a value being checked) finds out whether its turn is still open.
+    public let id = UUID()
     public let request: ResultRequest
     public let schema: ResultSchema
     /// The tool this turn's result comes through.
@@ -49,24 +51,56 @@ public struct ResultTurn: Sendable {
         case notAsked
     }
 
-    /// A call of one of the session's result tools during this turn, with its arguments (the value itself). Runs on
-    /// the router's actor, validation included: checking and recording in one step is what keeps "the first valid value
-    /// wins" true when calls arrive together.
-    public mutating func submit(tool called: String, arguments: JSONValue) -> Answer {
+    /// A call reserved for checking: it counted as an attempt, and its value is being validated.
+    public struct Ticket: Sendable, Equatable {
+        public let attempt: Int
+    }
+
+    /// What a call does before its value is checked: counts as an attempt and gets a ticket, or is answered at once
+    /// (the turn ended, a value was accepted, no attempts are left, the wrong tool). On the router's actor, with
+    /// `complete`, so the bookkeeping is one step each side of the validation, which runs off the actor.
+    public mutating func reserve(tool called: String) -> Reservation {
+        if ended != nil { return .answered(.notAsked) }
+        if accepted != nil { return .answered(.alreadyReceived) }
+        guard submissions < request.attempts else { return .answered(.noAttemptsLeft) }
+        submissions += 1
+        guard called == tool else { return .answered(.wrongTool(expected: tool, left: request.attempts - submissions)) }
+        return .check(Ticket(attempt: submissions))
+    }
+
+    /// What `reserve` gives: a value to check, or an answer already.
+    public enum Reservation: Sendable, Equatable {
+        case check(Ticket)
+        case answered(Answer)
+    }
+
+    /// A reserved call's value, checked: the first valid value wins, even when two calls were checked at once.
+    public mutating func complete(_ ticket: Ticket, value: JSONValue, issues: [ResultIssue]) -> Answer {
         if ended != nil { return .notAsked }
         if accepted != nil { return .alreadyReceived }
-        guard submissions < request.attempts else { return .noAttemptsLeft }
-        submissions += 1
-        let left = request.attempts - submissions
-        guard called == tool else { return .wrongTool(expected: tool, left: left) }
-        let issues = schema.validate(arguments)
         if issues.isEmpty {
-            accepted = arguments
+            accepted = value
             lastRefused = nil
             return .accepted
         }
-        lastRefused = .init(value: arguments, issues: issues)
+        // A later attempt's refusal is the one reported, whichever finished checking first.
+        if ticket.attempt >= (lastRefusedAttempt ?? 0) {
+            lastRefused = .init(value: value, issues: issues)
+            lastRefusedAttempt = ticket.attempt
+        }
+        let left = request.attempts - submissions
         return left > 0 ? .refused(issues: issues, left: left) : .exhausted(issues: issues)
+    }
+
+    private var lastRefusedAttempt: Int?
+
+    /// `reserve`, validation on the caller's thread and `complete` in one step: for tests and values known to be
+    /// shallow. The router validates off its stack (`ResultSchema.checked`).
+    public mutating func submit(tool called: String, arguments: JSONValue) -> Answer {
+        switch reserve(tool: called) {
+        case .answered(let answer): return answer
+        case .check(let ticket): return complete(ticket, value: arguments, issues: schema.validate(arguments))
+        }
     }
 
     /// Ends the turn with `stopReason` (ACP's), `stopped` when a cancel, the user's Stop or a limit ended it, and gives
@@ -175,7 +209,10 @@ public enum ResultWording {
                         + "accepted. Don't call result tools again in this turn.", true
                 )
             }
-            return ("This request asks for its result through \(expected); call that tool instead (\(attempts(left)) left).", true)
+            return (
+                "This request asks for its result through \(expected); call that tool instead (\(attempts(left)) left).",
+                true
+            )
         case .noAttemptsLeft:
             return ("No attempts are left in this turn; no result was accepted. Don't call \(tool) again.", true)
         case .notAsked:

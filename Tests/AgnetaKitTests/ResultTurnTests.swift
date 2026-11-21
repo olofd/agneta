@@ -204,9 +204,11 @@ import Testing
     @Test func aWrongToolCountsAsAnAttempt() throws {
         var t = try turn(attempts: 2)
         #expect(
-            t.submit(tool: "submit_contact", arguments: ["name": "x"]) == .wrongTool(expected: "submit_invoice", left: 1))
+            t.submit(tool: "submit_contact", arguments: ["name": "x"])
+                == .wrongTool(expected: "submit_invoice", left: 1))
         #expect(
-            t.submit(tool: "submit_contact", arguments: ["name": "x"]) == .wrongTool(expected: "submit_invoice", left: 0))
+            t.submit(tool: "submit_contact", arguments: ["name": "x"])
+                == .wrongTool(expected: "submit_invoice", left: 0))
         #expect(t.submit(tool: "submit_invoice", arguments: good) == .noAttemptsLeft)
         #expect(t.outcome(stopReason: "end_turn", stopped: false) == .missing(.notSubmitted, last: nil))
     }
@@ -303,8 +305,10 @@ import Testing
         #expect(someWrong.text.hasSuffix("call that tool instead (2 attempts left)."))
         #expect(ResultWording.answer(.notAsked, tool: "x", schema: t.schema) == (ResultWording.notAsked, true))
         let accepted = ResultWording.answer(.accepted, tool: "submit_invoice", schema: t.schema)
-        #expect(!accepted.isError && accepted.text.contains("Don't call submit_invoice again"))
-        for other: ResultTurn.Answer in [.alreadyReceived, .wrongTool(expected: "submit_invoice", left: 1), .noAttemptsLeft] {
+        #expect(!accepted.isError && accepted.text.contains("don't call submit_invoice again"))
+        for other: ResultTurn.Answer in [
+            .alreadyReceived, .wrongTool(expected: "submit_invoice", left: 1), .noAttemptsLeft
+        ] {
             #expect(ResultWording.answer(other, tool: "submit_invoice", schema: t.schema).isError)
         }
         #expect(
@@ -345,15 +349,17 @@ extension ResultTurnTests {
 
     @Test func theTotalBoundIsExact() throws {
         // Two schemas whose JSON together is exactly the bound, then one byte over.
+        // Each schema stays under its own 16 KB; together they're exactly the bound, then one byte over.
         let small: JSONValue = ["type": "object", "description": ""]
-        func padded(_ bytes: Int) throws -> JSONValue {
-            let size = try JSONCoding.encode(JSONValue.object(["a": small, "b": small])).count
-            return ["type": "object", "description": .string(String(repeating: "x", count: bytes - size))]
+        func pair(_ total: Int) throws -> JSONValue {
+            let extra = total - (try JSONCoding.encode(JSONValue.object(["a": small, "b": small])).count)
+            func padded(_ n: Int) -> JSONValue {
+                ["type": "object", "description": .string(String(repeating: "x", count: n))]
+            }
+            return ["a": padded(extra / 2), "b": padded(extra - extra / 2)]
         }
-        #expect(refusal(["schemas": ["a": try padded(ResultDeclaration.maxTotalBytes), "b": small]]) == nil)
-        #expect(
-            refusal(["schemas": ["a": try padded(ResultDeclaration.maxTotalBytes + 1), "b": small]])?.contains(
-                "bytes together") == true)
+        #expect(refusal(["schemas": try pair(ResultDeclaration.maxTotalBytes)]) == nil)
+        #expect(refusal(["schemas": try pair(ResultDeclaration.maxTotalBytes + 1)])?.contains("bytes together") == true)
     }
 
     @Test func answersAreBoundedAndCantForgeLines() throws {
@@ -377,5 +383,51 @@ extension ResultTurnTests {
             #expect((shown["path"]?.stringValue?.count ?? 0) <= 1_000)
             #expect((shown["message"]?.stringValue?.count ?? 0) <= 1_000)
         }
+    }
+}
+
+extension ResultTurnTests {
+    /// Calls checked at the same time (models send parallel tool calls): the first valid value to be recorded wins, and
+    /// every call counted when it arrived.
+    @Test func callsCheckedTogetherKeepTheFirstValidValue() throws {
+        var t = try turn()
+        guard case .check(let first) = t.reserve(tool: "submit_invoice"),
+            case .check(let second) = t.reserve(tool: "submit_invoice")
+        else {
+            Issue.record("not reserved")
+            return
+        }
+        #expect(t.submissions == 2)
+        #expect(t.complete(second, value: other, issues: []) == .accepted)
+        #expect(t.complete(first, value: good, issues: []) == .alreadyReceived)
+        #expect(t.accepted == other)
+    }
+
+    @Test func aCheckThatFinishesAfterTheTurnEndedChangesNothing() throws {
+        var t = try turn()
+        guard case .check(let ticket) = t.reserve(tool: "submit_invoice") else {
+            Issue.record("not reserved")
+            return
+        }
+        _ = t.end(stopReason: "cancelled", stopped: true)
+        #expect(t.complete(ticket, value: good, issues: []) == .notAsked)
+        #expect(t.accepted == nil)
+    }
+
+    @Test func theLaterAttemptsRefusalIsReported() throws {
+        var t = try turn()
+        guard case .check(let first) = t.reserve(tool: "submit_invoice"),
+            case .check(let second) = t.reserve(tool: "submit_invoice")
+        else { return }
+        let issue = ResultIssue(path: "/total", keyword: "type", message: "x", schemaPath: "")
+        _ = t.complete(second, value: ["second": 1], issues: [issue])
+        _ = t.complete(first, value: ["first": 1], issues: [issue])
+        #expect(t.lastRefused?.value == ["second": 1])
+    }
+
+    @Test func reservingAnswersAtOnceWhenNothingNeedsChecking() throws {
+        var t = try turn(attempts: 1)
+        #expect(t.reserve(tool: "submit_contact") == .answered(.wrongTool(expected: "submit_invoice", left: 0)))
+        #expect(t.reserve(tool: "submit_invoice") == .answered(.noAttemptsLeft))
     }
 }
