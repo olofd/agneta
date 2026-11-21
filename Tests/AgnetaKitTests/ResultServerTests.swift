@@ -236,7 +236,12 @@ import Testing
             Issue.record("a start the stop overtook still gave a port")
             return
         }
-        // A later session starts it again.
+        // A stop is final (Agneta is resetting or quitting): nothing starts it again.
+        await #expect(throws: (any Error).self) { _ = try await server.register(session: "s1") }
+    }
+
+    @Test func aStoppedServerClosesItsPort() async throws {
+        let server = ResultServer(sessions: Sessions())
         let route = try await server.register(session: "s1")
         #expect(try await Self.rpc(route, "ping").status == 200)
         await server.stop()

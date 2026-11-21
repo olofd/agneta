@@ -144,7 +144,24 @@ public actor RPCPeer {
         tap?(.received, line)
         let message: RPCMessage
         do { message = try RPCMessage.parse(line) } catch {
-            return // Not ours to answer: a malformed line has no usable id. Logged by whoever owns the connection.
+            // Nested too deep to decode: still answered, so nothing waits for ever (a request gets an error; a reply to
+            // one of ours fails that request). Anything else malformed has no usable id: not ours to answer, logged by
+            // whoever owns the connection.
+            if JSONCoding.nesting(of: line) > JSONCoding.maxDepth, let top = JSONCoding.topLevel(of: line),
+                let raw = top.id, let id = RPCID(raw)
+            {
+                let error = RPCError(
+                    code: RPCError.invalidRequest,
+                    message: "The message is nested more than \(JSONCoding.maxDepth) levels deep")
+                if top.method != nil {
+                    if let data = try? RPCMessage.response(id: id, result: .failure(error)).encoded() {
+                        Task { try? await self.transmit(data) }
+                    }
+                } else if case .int(let number) = id, let continuation = pending.removeValue(forKey: number) {
+                    inbox.yield { continuation.resume(throwing: error) }
+                }
+            }
+            return
         }
         switch message {
         case .response(.int(let id), let result):

@@ -125,7 +125,7 @@ extension Router {
         case .failure(let refusal): return .failure(refusal)
         }
         if let taken = servers.compactMap({ $0["name"]?.stringValue }).first(where: {
-            engine.reservedToolServers.contains($0) || $0 == ResultServer.name
+            engine.reservedToolServers.contains($0) || ResultServer.isReserved($0)
         }) {
             return .failure(
                 RPCError(

@@ -355,10 +355,12 @@ extension Router {
             // Over its cost limit already (a resumed task, or one the last turn took past it): nothing more is spent.
             if let max = session.policy.limits.maxCostUSD, let cost = traces?.session(id)?.progress.taskCost, cost > max
             {
-                return .success([
-                    "sessionId": .string(id), "stopReason": "cancelled",
-                    "_meta": ["agneta/limit": LimitHit(limit: "maxCostUSD", value: .double(max)).report]
-                ])
+                return .success(
+                    Self.withResult(
+                        [
+                            "sessionId": .string(id), "stopReason": "cancelled",
+                            "_meta": ["agneta/limit": LimitHit(limit: "maxCostUSD", value: .double(max)).report]
+                        ], resultTurn.map { Self.report(.missing(.stopped, last: nil), turn: $0) }))
             }
             // Over a limit the user set for the app: refused, as the user's choice (-32016). And on an engine a spending
             // limit set since the session opened can't count (Codex on an API key; `apply` stops those sessions too).
@@ -369,7 +371,10 @@ extension Router {
             }
             do {
                 guard try await admit(id, account: session.account, meter: session.meter) else {
-                    return .success(["stopReason": "cancelled"])
+                    return .success(
+                        Self.withResult(
+                            ["sessionId": .string(id), "stopReason": "cancelled"],
+                            resultTurn.map { Self.report(.missing(.stopped, last: nil), turn: $0) }))
                 }
             } catch let error as RPCError {
                 return .failure(error)
@@ -390,7 +395,7 @@ extension Router {
             sessions[id]?.limitHit = nil // a turn begins with no limit reached
             onEvent(.turnStarted(id))
             trace?.turnStarted(prompt: params?["prompt"])
-            if let resultTurn { openResult(id, resultTurn, generation: generation) }
+            if let resultTurn, current(id, generation) { openResult(id, resultTurn, generation: generation) }
         }
         // A session that ended meanwhile already let its turn go; one reopened under this id has a turn of its own.
         defer { if method == "session/prompt", current(id, generation) { finishTurn(id) } }
@@ -399,7 +404,8 @@ extension Router {
         // Agneta's own methods, so apps never need an engine's names.
         var engineMethod = method
         var engineParams = params?.setting("sessionId", to: .string(session.engineSession))
-        if method == "session/prompt", let resultTurn { engineParams = Self.asking(engineParams, for: resultTurn) }
+        // Agneta's own field never reaches the engine, a turn that asks nothing (`false`) included.
+        if method == "session/prompt" { engineParams = Self.asking(engineParams, for: resultTurn) }
         let engine = session.lease.engine
         // A mode the engine's adapter doesn't allow would leave the session outside what Agneta set up: on engines
         // that run their own tools, one that stops asking skips Agneta's permission checks; on OpenCode, another agent
@@ -530,6 +536,14 @@ extension Router {
                     noteTokens(id, summary)
                 }
                 if current(id, generation) { onEvent(.turnEnded(id, stopReason: "error")) }
+            }
+            // A value accepted before the engine failed was checked: it goes back with the error, in its data.
+            if method == "session/prompt",
+                let report = closeResult(id, generation: generation, stopReason: "error", stopped: true)
+            {
+                let data = (error.data?.objectValue != nil ? error.data! : [:]).setting(
+                    ResultDeclaration.key, to: report)
+                error = RPCError(code: error.code, message: error.message, data: data)
             }
             record(method, params: params, result: .failure(error), in: trace)
             return .failure(error)

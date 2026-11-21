@@ -17,6 +17,8 @@ extension Router: ResultSessions {
     /// engines take their MCP servers at launch or with `session/new`.
     func routeResults(_ plan: inout Plan, session id: String) async -> RPCError? {
         guard let declaration = plan.results else { return nil }
+        // After a reset nothing new starts, the result server included.
+        guard !shutDown else { return RPCError(code: RPCError.internalError, message: "Agneta is stopping") }
         do {
             let route = try await results().register(session: id)
             plan.resultRoute = route
@@ -33,11 +35,11 @@ extension Router: ResultSessions {
         }
     }
 
-    /// Ends a session's route (it closed, or never opened).
+    /// Ends a session's route (it closed, or never opened): that route only, so a late removal can't take the route of
+    /// a session opened again under the same id.
     func dropResults(_ id: String) {
-        resultRoutes[id] = nil
-        guard let resultServer else { return }
-        Task { await resultServer.unregister(session: id) }
+        guard let route = resultRoutes.removeValue(forKey: id)?.route, let resultServer else { return }
+        Task { await resultServer.unregister(route: route) }
     }
 
     // MARK: A turn
@@ -66,12 +68,15 @@ extension Router: ResultSessions {
             ])
     }
 
-    /// The prompt as the engine gets it: the note saying which tool to call added, and Agneta's own field taken out.
-    static func asking(_ params: JSONValue?, for turn: ResultTurn) -> JSONValue? {
+    /// The prompt as the engine gets it: Agneta's own field taken out, and when it asks for a result, the note saying
+    /// which tool to call added.
+    static func asking(_ params: JSONValue?, for turn: ResultTurn?) -> JSONValue? {
         guard var fields = params?.objectValue else { return params }
-        var prompt = fields["prompt"]?.arrayValue ?? []
-        prompt.append(["type": "text", "text": .string(ResultWording.note(tool: turn.tool))])
-        fields["prompt"] = .array(prompt)
+        if let turn {
+            var prompt = fields["prompt"]?.arrayValue ?? []
+            prompt.append(["type": "text", "text": .string(ResultWording.note(tool: turn.tool))])
+            fields["prompt"] = .array(prompt)
+        }
         if var meta = fields["_meta"]?.objectValue {
             meta[ResultDeclaration.key] = nil
             fields["_meta"] = meta.isEmpty ? nil : .object(meta)
@@ -111,17 +116,27 @@ extension Router: ResultSessions {
         switch outcome {
         case .valid(let value): fields["value"] = value
         case .invalid(let value, let issues):
-            fields["value"] = value
+            Self.report(value, into: &fields)
             fields["issues"] = .array(issues.map(Self.issue))
         case .missing(let reason, let last):
             fields["reason"] = .string(reason.rawValue)
             // The last value refused before the turn ended, as detail: what the model got wrong before it was cut off.
             if let last {
-                fields["value"] = last.value
+                Self.report(last.value, into: &fields)
                 fields["issues"] = .array(last.issues.map(Self.issue))
             }
         }
         return .object(fields)
+    }
+
+    /// A refused value in the reply: in full when it nests within the validator's bound (a valid value always does),
+    /// else left out and said so (`valueOmitted`), so the reply stays within the nesting Agneta's JSON readers accept.
+    static func report(_ value: JSONValue, into fields: inout [String: JSONValue]) {
+        if value.nestingDepth <= ResultSchema.ValidationLimits.standard.depth {
+            fields["value"] = value
+        } else {
+            fields["valueOmitted"] = "nested too deeply to report"
+        }
     }
 
     /// An issue for the app, its texts cut to a bound (a value's own keys are in its path).
@@ -180,9 +195,13 @@ extension Router: ResultSessions {
             open = now
         }
         var fields: [String: JSONValue] = [
-            "event": "submitted", "tool": .string(tool), "attempt": .int(Int64(open.turn.submissions)),
-            "value": Self.traced(arguments)
+            "event": "submitted", "tool": .string(tool), "attempt": .int(Int64(open.turn.submissions))
         ]
+        switch answer {
+        // The value is traced only when it was checked: a call answered at once costs the router no encoding.
+        case .accepted, .refused, .exhausted: fields["value"] = Self.traced(arguments)
+        default: break
+        }
         switch answer {
         case .accepted: fields["answer"] = "accepted"
         case .refused(let issues, _), .exhausted(let issues):

@@ -68,6 +68,16 @@ extension ResultSchema {
     /// The ways `value` doesn't match: empty when it does. On the caller's thread: fine for shallow values and tests;
     /// anything that came from outside goes through `checked`.
     public func validate(_ value: JSONValue, limits: ValidationLimits = .standard) -> [ResultIssue] {
+        // Whatever the schema looks into: a value deeper than the bound is refused, measured without recursing, so a
+        // schema that never descends ({"type": "object"}) can't let one through (and into Agneta's reply to the app).
+        guard value.nestingDepth <= limits.depth else {
+            return [
+                ResultIssue(
+                    path: "", keyword: "limit",
+                    message: "the value nests more than \(limits.depth) levels deep, more than Agneta accepts",
+                    schemaPath: "")
+            ]
+        }
         let cap = max(1, limits.issues)
         var evaluator = Evaluator(nodes: nodes, limits: limits)
         var issues: [ResultIssue] = []

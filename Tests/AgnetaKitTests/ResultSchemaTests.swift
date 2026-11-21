@@ -460,7 +460,9 @@ import Testing
         var list: JSONValue = []
         for _ in 0..<100 { list = [list] }
         let arrays = try compile(["type": "object", "properties": ["xs": true]]).validate(["xs": list])
-        #expect(arrays.isEmpty) // `true` checks nothing inside, so nothing is walked
+        // Refused even where the schema looks at nothing inside (`true`): the depth is measured whatever the schema,
+        // without recursing, so no value deeper than the bound reaches the app's reply.
+        #expect(arrays.map(\.keyword) == ["limit"])
         let walked = try await compile([
             "type": "object", "properties": ["xs": ["$ref": "#/$defs/l"]],
             "$defs": ["l": ["type": "array", "items": ["$ref": "#/$defs/l"]]]

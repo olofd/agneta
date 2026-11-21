@@ -24,6 +24,13 @@ public actor ResultServer {
     /// The MCP server name engines know it by. Reserved: an app's server can't take it.
     public static let name = "agneta-result"
 
+    /// Whether an app's server name would pass for this server's on some engine: engines split tool names at `__`
+    /// (Claude Code, Goose) or the first `_` (OpenCode), and may fold case or `-` and `_` (Codex). Such a name could
+    /// have its tools allowed without asking and tagged as a result's, so it's refused.
+    public static func isReserved(_ server: String) -> Bool {
+        server.lowercased().replacingOccurrences(of: "_", with: "-").hasPrefix(name)
+    }
+
     /// A session's way in. Its description leaves the bearer out, so printing one never leaks it.
     public struct Route: Sendable, Equatable, CustomStringConvertible {
         /// The route's id: the last part of its path.
@@ -50,6 +57,9 @@ public actor ResultServer {
     private var starting: Task<UInt16, Error>?
     /// Counts stops: a start that finishes after a stop finds it changed and stops what it started.
     private var stops = 0
+    /// The port it last listened on: a listener that died is replaced on the same port when it can be, since running
+    /// sessions' engines were given it (and their sandboxes allow only it).
+    private var lastPort: UInt16 = 0
     /// Route id → whose it is.
     private var routes: [String: Registration] = [:]
 
@@ -68,17 +78,25 @@ public actor ResultServer {
 
     /// The listener's port, starting it on first use.
     public func port() async throws -> UInt16 {
-        // A listener that failed since is replaced: its routes still hold, on the new port.
+        // Stopped is final: Agneta is resetting or quitting, and nothing may start it again.
+        guard stops == 0 else { throw CancellationError() }
+        // A listener that failed since is replaced: its routes still hold, on the same port when it's free.
         if let http, http.isListening { return http.port }
         http = nil
         if let starting { return try await starting.value }
         let generation = stops
-        let afterStart = self.afterStart
+        let afterStart = self.afterStart, previous = lastPort
         let task = Task<UInt16, Error> { [weak self] in
-            let server = try LocalHTTPServer(port: 0) { [weak self] request in
+            let handler: LocalHTTPServer.Handler = { [weak self] request in
                 await self?.handle(request) ?? .init(status: 404)
             }
-            try await server.start()
+            var server = try LocalHTTPServer(port: previous, handler: handler)
+            do {
+                try await server.start()
+            } catch  where previous != 0 {
+                server = try LocalHTTPServer(port: 0, handler: handler)
+                try await server.start()
+            }
             await afterStart?()
             guard let self, await self.started(server, generation: generation) else {
                 server.stop()
@@ -99,6 +117,7 @@ public actor ResultServer {
     private func started(_ server: LocalHTTPServer, generation: Int) -> Bool {
         guard stops == generation else { return false }
         http = server
+        lastPort = server.port
         starting = nil
         return true
     }
@@ -113,12 +132,17 @@ public actor ResultServer {
         return Route(id: route, url: "http://127.0.0.1:\(port)/result/\(route)", bearer: bearer)
     }
 
-    /// Ends a session's route: its engine can reach nothing here any more.
+    /// Ends a session's routes: its engine can reach nothing here any more.
     public func unregister(session: String) {
         routes = routes.filter { $0.value.session != session }
     }
 
-    /// Stops listening (Agneta quitting); routes end with it.
+    /// Ends one route.
+    public func unregister(route: String) {
+        routes[route] = nil
+    }
+
+    /// Stops listening for good (Agneta resetting or quitting); routes end with it.
     public func stop() {
         stops += 1
         starting?.cancel()

@@ -163,6 +163,8 @@ actor FakeEngines: EngineSource {
     private(set) var servers: [String: [JSONValue]] = [:]
     /// Every prompt's content blocks as the engine got them, in order.
     private(set) var prompts: [[JSONValue]] = []
+    /// The last `session/prompt`'s params as the engine got them.
+    private(set) var lastPromptParams: JSONValue?
     /// What the result tool answered each `result` script's calls, in order: (text, isError), or nil when unreachable.
     private(set) var resultAnswers: [(text: String, isError: Bool)?] = []
     /// What the engine was asked to set (`session/set_config_option`): config id = value, in order.
@@ -259,6 +261,7 @@ actor FakeEngines: EngineSource {
         case "session/prompt":
             let text = params?["prompt"]?.arrayValue?.first?["text"]?.stringValue ?? ""
             prompts.append(params?["prompt"]?.arrayValue ?? [])
+            lastPromptParams = params
             cancelled.remove(session.stringValue ?? "") // a cancel belongs to the turn it arrived in
             if text.hasPrefix("result ") {
                 // "result <json>": {"calls": [{"tool": "submit_x", "arguments": {…}, "ask": true}], "stopReason": "…"}.
@@ -292,6 +295,13 @@ actor FakeEngines: EngineSource {
                     resultAnswers.append(
                         await Self.callResultTool(server, tool: tool, arguments: call["arguments"] ?? [:]))
                     await update(["sessionUpdate": "tool_call_update", "toolCallId": callID, "status": "completed"])
+                }
+                // What the engine does after the calls: never finish ("deaf"), take a while ("wait"), or fail ("error").
+                switch script["then"]?.stringValue {
+                case "deaf"?: try? await Task.sleep(for: .seconds(60))
+                case "wait"?: try? await Task.sleep(for: .milliseconds(1500))
+                case "error"?: return .failure(RPCError(code: RPCError.internalError, message: "boom"))
+                default: break
                 }
                 let stop = script["stopReason"]?.stringValue ?? "end_turn"
                 return .success([

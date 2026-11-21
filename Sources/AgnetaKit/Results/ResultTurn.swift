@@ -74,7 +74,9 @@ public struct ResultTurn: Sendable {
         case answered(Answer)
     }
 
-    /// A reserved call's value, checked: the first valid value wins, even when two calls were checked at once.
+    /// A reserved call's value, checked: the first valid value to finish checking wins, so two calls checked at once
+    /// never both count (with calls in parallel, that may not be the one sent first; values are usually checked in
+    /// well under a millisecond, so the order they were sent in almost always holds).
     public mutating func complete(_ ticket: Ticket, value: JSONValue, issues: [ResultIssue]) -> Answer {
         if ended != nil { return .notAsked }
         if accepted != nil { return .alreadyReceived }

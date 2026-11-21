@@ -46,6 +46,24 @@ public enum JSONValue: Sendable, Hashable {
     }
 
     /// Returns a copy with `key` set; non-objects become an object holding only `key`.
+    /// How deeply its arrays and objects nest (a scalar is 0), found without recursing.
+    public var nestingDepth: Int {
+        var deepest = 0
+        var stack: [(JSONValue, Int)] = [(self, 0)]
+        while let (value, level) = stack.popLast() {
+            switch value {
+            case .array(let items):
+                deepest = max(deepest, level + 1)
+                for item in items { stack.append((item, level + 1)) }
+            case .object(let fields):
+                deepest = max(deepest, level + 1)
+                for item in fields.values { stack.append((item, level + 1)) }
+            default: break
+            }
+        }
+        return deepest
+    }
+
     public func setting(_ key: String, to value: JSONValue?) -> JSONValue {
         var fields = objectValue ?? [:]
         fields[key] = value
@@ -122,6 +140,75 @@ public enum JSONCoding {
                 .init(codingPath: [], debugDescription: "JSON nested more than \(maxDepth) levels deep"))
         }
         return try JSONDecoder().decode(JSONValue.self, from: data)
+    }
+
+    /// A message's top-level `id` and `method` (scalars only), read without decoding the rest: for a message nested
+    /// too deep to decode, so it can still be answered instead of left waiting. Nil when it isn't a JSON object.
+    static func topLevel(of data: Data) -> (id: JSONValue?, method: String?)? {
+        let bytes = [UInt8](data)
+        var i = 0
+        func skipSpace() { while i < bytes.count, [0x20, 0x09, 0x0A, 0x0D].contains(bytes[i]) { i += 1 } }
+        /// The end (exclusive) of the string starting at `start` (its opening quote).
+        func stringEnd(_ start: Int) -> Int? {
+            var j = start + 1, escaped = false
+            while j < bytes.count {
+                if escaped {
+                    escaped = false
+                } else if bytes[j] == UInt8(ascii: "\\") {
+                    escaped = true
+                } else if bytes[j] == UInt8(ascii: "\"") {
+                    return j + 1
+                }
+                j += 1
+            }
+            return nil
+        }
+        /// The end (exclusive) of any value starting at `start`, nested or not, without recursing.
+        func valueEnd(_ start: Int) -> Int? {
+            var j = start, depth = 0
+            while j < bytes.count {
+                switch bytes[j] {
+                case UInt8(ascii: "\""):
+                    guard let end = stringEnd(j) else { return nil }
+                    j = end
+                    if depth == 0 { return j }
+                    continue
+                case UInt8(ascii: "["), UInt8(ascii: "{"): depth += 1
+                case UInt8(ascii: "]"), UInt8(ascii: "}"):
+                    depth -= 1
+                    if depth == 0 { return j + 1 }
+                    if depth < 0 { return j }
+                case UInt8(ascii: ","): if depth == 0 { return j }
+                default: break
+                }
+                j += 1
+            }
+            return depth == 0 ? j : nil
+        }
+        skipSpace()
+        guard i < bytes.count, bytes[i] == UInt8(ascii: "{") else { return nil }
+        i += 1
+        var id: JSONValue?, method: String?
+        while i < bytes.count {
+            skipSpace()
+            if i < bytes.count, bytes[i] == UInt8(ascii: "}") { break }
+            guard i < bytes.count, bytes[i] == UInt8(ascii: "\""), let keyEnd = stringEnd(i),
+                let key = try? JSONDecoder().decode(String.self, from: Data(bytes[i..<keyEnd]))
+            else { return nil }
+            i = keyEnd
+            skipSpace()
+            guard i < bytes.count, bytes[i] == UInt8(ascii: ":") else { return nil }
+            i += 1
+            skipSpace()
+            guard let end = valueEnd(i) else { return nil }
+            if key == "id" || key == "method", let scalar = try? decode(Data(bytes[i..<end])) {
+                if key == "id" { id = scalar } else { method = scalar.stringValue }
+            }
+            i = end
+            skipSpace()
+            if i < bytes.count, bytes[i] == UInt8(ascii: ",") { i += 1 }
+        }
+        return (id, method)
     }
 
     /// The deepest nesting of arrays and objects in `data`, read byte by byte (brackets inside strings don't count),
