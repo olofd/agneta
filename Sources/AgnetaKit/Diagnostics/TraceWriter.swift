@@ -62,7 +62,11 @@ public final class TraceWriter: @unchecked Sendable {
 
     /// Hears once when the trace can't be written any more (the disk is full, the file went away).
     public func onProblem(_ handler: @escaping @Sendable (String) -> Void) {
-        lock.withLock { problemHandler = handler }
+        let existing = lock.withLock {
+            problemHandler = handler
+            return failure
+        }
+        if let existing { handler(existing) }
     }
 
     /// Why this trace stopped being written, or nil while it's whole.

@@ -41,6 +41,24 @@ import Testing
         }
     }
 
+    @Test func reportsAnUnopenableTraceOnce() async throws {
+        let folder = try folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let blocked = folder.appending(path: "file")
+        try Data().write(to: blocked)
+        let traces = Traces(folder: blocked)
+        await confirmation("the task owner hears why the trace is unavailable") { reported in
+            traces.onProblem { task, reason in
+                #expect(task == "t1")
+                #expect(reason == "the trace file couldn't be opened")
+                reported()
+            }
+            let trace = traces.open(task: "t1", lease: "account/lease", engineSession: "session")
+            trace.writer.record("event", ["kind": "prompt"])
+            traces.close(task: "t1")
+        }
+    }
+
     @Test func masksSecretsButNotUsage() {
         let mask = SecretMask()
         mask.register("app-token-1234567890")
