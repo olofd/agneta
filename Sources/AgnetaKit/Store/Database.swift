@@ -93,6 +93,20 @@ public final class AgnetaDatabase: Sendable {
         try migrator.migrate(queue)
     }
 
+    /// Opens an existing store for inspection. Only the host creates or migrates it.
+    public init(reading file: URL) throws {
+        self.file = file
+        var configuration = Configuration()
+        configuration.readonly = true
+        queue = try DatabaseQueue(path: file.path(percentEncoded: false), configuration: configuration)
+        let migrator = Self.migrator
+        try queue.read { db in
+            guard try migrator.hasCompletedMigrations(db), try !migrator.hasBeenSuperseded(db) else {
+                throw StoreError.otherSchema(file: file.lastPathComponent)
+            }
+        }
+    }
+
     // MARK: Schema
 
     /// The schema's id: a new one whenever the schema changes, until 1.0.

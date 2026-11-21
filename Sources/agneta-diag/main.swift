@@ -185,13 +185,16 @@ arguments.removeFirst()
 switch command {
 case "tasks":
     let limit = Int(option("--limit") ?? "30") ?? 30
-    guard let database = try? AgnetaDatabase(file: store.databaseFile) else {
-        fail("can't open \(store.databaseFile.path(percentEncoded: false))")
+    let history: [TaskRecord], ended: Set<String>
+    do {
+        let database = try AgnetaDatabase(reading: store.databaseFile)
+        history = try database.history(limit: limit)
+        ended = try database.endedTaskIDs()
+    } catch {
+        fail("can't read \(store.databaseFile.path(percentEncoded: false)): \(error)")
     }
-    let history = (try? database.history(limit: limit)) ?? []
     let names =
         (try? FileManager.default.contentsOfDirectory(atPath: store.tracesFolder.path(percentEncoded: false))) ?? []
-    let ended = (try? database.endedTaskIDs()) ?? Set(history.map(\.id))
     let running = names.filter { $0.hasSuffix(".jsonl") }.map { String($0.dropLast(6)) }.filter { !ended.contains($0) }
     for id in running { print("\(id)  running or unfinished") }
     for task in history {
