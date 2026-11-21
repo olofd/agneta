@@ -7,7 +7,7 @@ import type {
 import { configSetting, findConfigOption, type ConfigSetting } from './config.js';
 import type { Connection, RequestOptions } from './connection.js';
 import { Emitter } from './emitter.js';
-import { TimeoutError, TurnBusyError, type ConnectionClosedError, type DownloadProgress } from './errors.js';
+import { InvalidParamsError, TimeoutError, TurnBusyError, type ConnectionClosedError, type DownloadProgress } from './errors.js';
 import type {
   AgnetaRequests, AgnetaUsage, AppToolsLoad, EngineId, LimitHit, Policy, PromptResult, QueuedParams, RateLimitDetails, SandboxLevel,
   SessionCapabilities, SessionRequestMeta, SessionResult, SessionResultAgneta, SteerResult, StoppedBy, TaskInfo, TraceDelivery,
@@ -438,9 +438,11 @@ export class Session extends Emitter<SessionEvents> {
     if (this.#ended) return;
     try {
       await this.#request('session/close', { sessionId: this.id }, options);
-    } finally {
-      this.end({ reason: 'closed' });
+    } catch (error) {
+      // A retry can reach Agneta after it closed the session but the first acknowledgement was lost.
+      if (!(error instanceof InvalidParamsError && error.message === 'Unknown session')) throw error;
     }
+    this.end({ reason: 'closed' });
   }
 
   /** Sets one of the engine's settings, between turns. Resolves with the settings as they are now. */

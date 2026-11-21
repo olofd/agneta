@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   connect, httpMcpServer, chooseProvider, configSetting, findConfigOption, permissionResponse, providerEngines,
-  EngineDownloadingError, NoTurnRunningError, RateLimitedError, TurnBusyError, UnenforceableError, PausedError
+  AbortedError, TimeoutError, EngineDownloadingError, NoTurnRunningError, RateLimitedError, TurnBusyError, UnenforceableError, PausedError
 } from '../dist/index.js';
 import { agnetaLike, accessReport, standIn, workspace } from './stand-in.mjs';
 
@@ -349,6 +349,36 @@ test('policy.builtins narrows the engine\'s own tools, and session.builtins read
     }
   });
   await assert.rejects(refusing.client.newSession({ policy: { builtins: ['read'] } }), (error) => error instanceof UnenforceableError && error.fields[0] === 'builtins');
+});
+
+test('an aborted close keeps the handle registered for a retry', async (t) => {
+  const { agneta, client } = await setUp(t);
+  const session = await client.newSession();
+  await assert.rejects(session.close({ signal: AbortSignal.abort() }), AbortedError);
+  assert.equal(agneta.calls('session/close').length, 0);
+  assert.equal(session.ended, null);
+  assert.equal(client.session(session.id), session);
+  await session.close();
+  assert.equal(agneta.calls('session/close').length, 1);
+  assert.deepEqual(session.ended, { reason: 'closed' });
+});
+
+test('a close with a lost reply can reconcile an already closed session', async (t) => {
+  let closed = false;
+  const { client } = await setUp(t, { handlers: {
+    'session/close': () => {
+      if (closed) return { error: { code: -32602, message: 'Unknown session' } };
+      closed = true;
+      return null; // Agneta closed it, but the acknowledgement never arrived.
+    }
+  } });
+  const session = await client.newSession();
+  await assert.rejects(session.close({ timeout: 50 }), TimeoutError);
+  assert.equal(session.ended, null);
+  await session.close();
+  assert.equal(closed, true);
+  assert.deepEqual(session.ended, { reason: 'closed' });
+  assert.equal(client.session(session.id), undefined);
 });
 
 test('fork, close, mode and instructions', async (t) => {
