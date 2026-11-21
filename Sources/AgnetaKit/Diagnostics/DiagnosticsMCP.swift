@@ -75,7 +75,7 @@ public final class DiagnosticsMCP: @unchecked Sendable {
         ]
     }
 
-    /// The longest a `tail` waits: under LocalHTTPServer's 10 s per connection.
+    /// The longest a `tail` waits: well within LocalHTTPServer's time for an answer.
     static let maxTailWait = 8_000
     static let task: JSONValue = ["type": "string", "description": "A task id, or any unique prefix of one"]
     static let json: JSONValue = ["type": "boolean", "description": "Return JSON instead of compact text"]

@@ -4,26 +4,33 @@
 // never use them has nothing new listening. Each session gets its own route and bearer token: knowing the port gives
 // nothing, and a session can only reach its own route. The server keeps only that table; what a call means (which turn
 // is open, whether the value is accepted) is the router's to decide, so the two can never disagree. It runs no command
-// and touches no file. docs/ARCHITECTURE.md, The result server.
+// and touches no file. docs/ARCHITECTURE.md, Structured results.
 import CryptoKit
 import Foundation
 
-/// What decides a result server's answers: the router.
+/// What decides a result server's answers: the router. Each call names the route it came through, so a call that
+/// passed the route check just before the session was reloaded (and given a new route) is told it's too late, never
+/// fed to the reloaded session's turn.
 public protocol ResultSessions: AnyObject, Sendable {
-    /// The session's result tools, or nil when it has none (it ended).
-    func resultTools(session: String) async -> [JSONValue]?
+    /// The session's result tools, or nil when the route is no longer the session's.
+    func resultTools(session: String, route: String) async -> [JSONValue]?
     /// A call of one of the session's result tools: the text the model reads, and whether it's an error.
-    func submitResult(session: String, tool: String, arguments: JSONValue) async -> (text: String, isError: Bool)
+    func submitResult(session: String, route: String, tool: String, arguments: JSONValue) async -> (
+        text: String, isError: Bool
+    )
 }
 
 public actor ResultServer {
     /// The MCP server name engines know it by. Reserved: an app's server can't take it.
     public static let name = "agneta-result"
 
-    /// A session's way in.
-    public struct Route: Sendable, Equatable {
+    /// A session's way in. Its description leaves the bearer out, so printing one never leaks it.
+    public struct Route: Sendable, Equatable, CustomStringConvertible {
+        /// The route's id: the last part of its path.
+        public var id: String
         public var url: String
         public var bearer: String
+        public var description: String { "Route(\(url))" }
         /// As ACP's `mcpServers` entry: the server the engine is given for the session.
         public var server: JSONValue {
             [
@@ -41,6 +48,8 @@ public actor ResultServer {
     private weak var sessions: (any ResultSessions)?
     private var http: LocalHTTPServer?
     private var starting: Task<UInt16, Error>?
+    /// Counts stops: a start that finishes after a stop finds it changed and stops what it started.
+    private var stops = 0
     /// Route id → whose it is.
     private var routes: [String: Registration] = [:]
 
@@ -50,28 +59,37 @@ public actor ResultServer {
 
     /// The listener's port, starting it on first use.
     public func port() async throws -> UInt16 {
-        if let http { return http.port }
+        // A listener that failed since is replaced: its routes still hold, on the new port.
+        if let http, http.isListening { return http.port }
+        http = nil
         if let starting { return try await starting.value }
+        let generation = stops
         let task = Task<UInt16, Error> { [weak self] in
             let server = try LocalHTTPServer(port: 0) { [weak self] request in
                 await self?.handle(request) ?? .init(status: 404)
             }
             try await server.start()
-            await self?.started(server)
+            guard let self, await self.started(server, generation: generation) else {
+                server.stop()
+                throw CancellationError()
+            }
             return server.port
         }
         starting = task
         do {
             return try await task.value
         } catch {
-            starting = nil // a later session may try again
+            if stops == generation { starting = nil } // a later session may try again
             throw error
         }
     }
 
-    private func started(_ server: LocalHTTPServer) {
+    /// Keeps a listener that started, unless the server was stopped meanwhile.
+    private func started(_ server: LocalHTTPServer, generation: Int) -> Bool {
+        guard stops == generation else { return false }
         http = server
         starting = nil
+        return true
     }
 
     /// A route for `session`: a fresh path and bearer, replacing any it had (a session reloaded gets new ones, as the
@@ -81,7 +99,7 @@ public actor ResultServer {
         unregister(session: session)
         let route = Self.hex(16), bearer = Self.hex(32)
         routes[route] = Registration(session: session, tokenHash: Data(SHA256.hash(data: Data(bearer.utf8))))
-        return Route(url: "http://127.0.0.1:\(port)/result/\(route)", bearer: bearer)
+        return Route(id: route, url: "http://127.0.0.1:\(port)/result/\(route)", bearer: bearer)
     }
 
     /// Ends a session's route: its engine can reach nothing here any more.
@@ -91,6 +109,9 @@ public actor ResultServer {
 
     /// Stops listening (Agneta quitting); routes end with it.
     public func stop() {
+        stops += 1
+        starting?.cancel()
+        starting = nil
         http?.stop()
         http = nil
         routes = [:]
@@ -116,10 +137,10 @@ public actor ResultServer {
             server: MCPHTTP.Server(
                 name: Self.name,
                 instructions: "Submit the result a request asks for, once your work for it is done.",
-                tools: { await sessions?.resultTools(session: session) },
+                tools: { await sessions?.resultTools(session: session, route: route) },
                 call: { name, arguments in
                     guard let sessions else { return ("Agneta is stopping", true) }
-                    return await sessions.submitResult(session: session, tool: name, arguments: arguments)
+                    return await sessions.submitResult(session: session, route: route, tool: name, arguments: arguments)
                 }))
     }
 

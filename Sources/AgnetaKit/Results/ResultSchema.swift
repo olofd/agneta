@@ -44,10 +44,13 @@ public struct ResultSchema: Sendable {
         case null, boolean, object, array, number, string, integer
     }
 
-    /// One compiled schema. Children are indices into `nodes`.
-    struct Node: Sendable {
+    /// One compiled schema. Children are indices into `nodes`. A class, so checking passes a reference down the stack
+    /// rather than copying every field into each frame (checking recurses once per level of the value). Filled in
+    /// while compiling, never changed after.
+    final class Node: @unchecked Sendable {
         /// Where it is in the app's schema (a JSON Pointer), for messages.
         var pointer: String
+        init(pointer: String) { self.pointer = pointer }
         /// A boolean schema: `true` accepts anything, `false` nothing.
         var always: Bool?
         var types: Set<Kind>?
@@ -198,7 +201,7 @@ private struct Compiler {
             nodes[index].always = value
             return index
         case .object(let fields):
-            var node = ResultSchema.Node(pointer: pointer)
+            let node = ResultSchema.Node(pointer: pointer)
             if fields["$ref"] != nil {
                 if let other = fields.keys.sorted().first(where: { Self.applicators.contains($0) }) {
                     throw ResultSchemaRejection(
@@ -210,7 +213,7 @@ private struct Compiler {
             for key in fields.keys.sorted() {
                 let value = fields[key]!
                 let at = pointer + "/" + escape(key)
-                try keyword(key, value, at: at, node: &node, index: index, depth: depth, isRoot: isRoot)
+                try keyword(key, value, at: at, node: node, index: index, depth: depth, isRoot: isRoot)
             }
             nodes[index] = node
             return index
@@ -220,7 +223,7 @@ private struct Compiler {
     }
 
     private mutating func keyword(
-        _ key: String, _ value: JSONValue, at: String, node: inout ResultSchema.Node, index: Int, depth: Int,
+        _ key: String, _ value: JSONValue, at: String, node: ResultSchema.Node, index: Int, depth: Int,
         isRoot: Bool
     ) throws(ResultSchemaRejection) {
         if Self.annotations.contains(key) { return }

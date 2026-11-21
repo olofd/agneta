@@ -308,7 +308,7 @@ import Testing
         #expect(try !valid(["type": "string", "pattern": "^b"], "abc"))
         #expect(
             try issues(["type": "string", "pattern": "^\\d{4}$"], "12a4").first?.message
-                == "must match the pattern ^\\d{4}$")
+                == #"must match the pattern "^\d{4}$""#)
     }
 
     @Test func aPatternThatRunsAwayIsStoppedAndTheValueIsNotValid() throws {
@@ -316,7 +316,7 @@ import Testing
         let evil = JSONValue.string(String(repeating: "a", count: 40) + "!")
         let started = ContinuousClock.now
         let found = schema.validate(
-            ["v": evil], limits: .init(checks: 1_000, patternTime: .milliseconds(50), issues: 20))
+            ["v": evil], limits: .init(checks: 1_000, patternTime: .milliseconds(50), issues: 20, depth: 32))
         #expect(ContinuousClock.now - started < .seconds(2))
         #expect(found.last?.keyword == "limit")
         #expect(found.last?.message.contains("took longer") == true)
@@ -399,7 +399,7 @@ import Testing
         ])
         let big: JSONValue = ["xs": .array((0..<10_000).map { .int(Int64($0)) })]
         #expect(schema.validate(big).isEmpty)
-        let found = schema.validate(big, limits: .init(checks: 100, patternTime: .milliseconds(250), issues: 20))
+        let found = schema.validate(big, limits: .init(checks: 100, patternTime: .milliseconds(250), issues: 20, depth: 32))
         #expect(found.last?.keyword == "limit")
         #expect(found.last?.message == "the value is too large or complex to check within Agneta's limits")
     }
@@ -433,5 +433,68 @@ import Testing
         let first = schema.validate(value)
         for _ in 0..<20 { #expect(schema.validate(value) == first) }
         #expect(first.map(\.path) == ["/a", "/b", "/c"])
+    }
+
+    // MARK: Depth
+
+    /// A recursive schema and a value nested deeper than Agneta checks: reported as a limit, never walked into (on the
+    /// router's small stack a deep walk would crash Agneta).
+    @Test func aValueNestedTooDeepIsReportedNotWalked() throws {
+        let schema = try compile([
+            "type": "object", "properties": ["n": ["$ref": "#/$defs/node"]],
+            "$defs": ["node": ["type": "object", "properties": ["n": ["$ref": "#/$defs/node"]]]]
+        ])
+        func nested(_ levels: Int) -> JSONValue {
+            var value: JSONValue = [:]
+            for _ in 0..<levels { value = ["n": value] }
+            return value
+        }
+        #expect(schema.validate(nested(30)).isEmpty)
+        let deep = schema.validate(nested(200))
+        #expect(deep.last?.keyword == "limit")
+        #expect(deep.last?.message.contains("more than 32 levels") == true)
+        // Arrays count as levels too.
+        var list: JSONValue = []
+        for _ in 0..<100 { list = [list] }
+        let arrays = try compile(["type": "object", "properties": ["xs": true]]).validate(["xs": list])
+        #expect(arrays.isEmpty) // `true` checks nothing inside, so nothing is walked
+        let walked = try compile([
+            "type": "object", "properties": ["xs": ["$ref": "#/$defs/l"]],
+            "$defs": ["l": ["type": "array", "items": ["$ref": "#/$defs/l"]]]
+        ]).validate(["xs": list])
+        #expect(walked.last?.keyword == "limit")
+    }
+
+    @Test func namesInMessagesAreQuotedAndEscaped() throws {
+        let found = try issues(["type": "object", "additionalProperties": false], ["a\nb\"c": 1])
+        #expect(found.first?.message == #""a\nb\"c" isn't one of the allowed properties"#)
+        let long = try issues(["type": "object", "required": [.string(String(repeating: "r", count: 100))]], [:])
+        #expect(long.first?.message.count ?? 0 < 100)
+    }
+}
+
+/// JSON nested deeper than Agneta reads is refused before decoding, which would otherwise recurse once per level and
+/// overflow the stack: from an app, an engine, or a model's tool call.
+@Suite struct JSONDepthTests {
+    @Test func refusesJSONNestedTooDeep() throws {
+        let ok = String(repeating: "[", count: JSONCoding.maxDepth) + String(repeating: "]", count: JSONCoding.maxDepth)
+        #expect(throws: Never.self) { _ = try JSONCoding.decode(Data(ok.utf8)) }
+        let deep = String(repeating: "[", count: 10_000) + String(repeating: "]", count: 10_000)
+        #expect(throws: (any Error).self) { _ = try JSONCoding.decode(Data(deep.utf8)) }
+        let objects = String(repeating: #"{"a":"#, count: 500) + "1" + String(repeating: "}", count: 500)
+        #expect(throws: (any Error).self) { _ = try JSONCoding.decode(Data(objects.utf8)) }
+    }
+
+    @Test func bracketsInStringsDontCount() throws {
+        let text = String(repeating: "[", count: 1_000)
+        let json = try JSONCoding.encode(JSONValue.array([.string(text), .string(#"\"[[["#)]))
+        #expect(JSONCoding.nesting(of: json) == 1)
+        #expect(try JSONCoding.decode(json) == .array([.string(text), .string(#"\"[[["#)]))
+    }
+
+    @Test func aDeepRPCMessageIsNotJSONToAgneta() {
+        let deep = #"{"jsonrpc":"2.0","method":"x","params":"# + String(repeating: "[", count: 5_000)
+            + String(repeating: "]", count: 5_000) + "}"
+        #expect(throws: (any Error).self) { _ = try RPCMessage.parse(Data(deep.utf8)) }
     }
 }

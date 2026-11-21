@@ -88,7 +88,8 @@ extension Router {
                 }
             }
         }
-        try? await app.peer.notify(method, params?.setting("sessionId", to: .string(id)))
+        let tagged = method == "session/update" ? Self.taggingResult(params, in: sessions[id] ?? session) : params
+        try? await app.peer.notify(method, tagged?.setting("sessionId", to: .string(id)))
     }
 
     func engineRequest(lease: String, method: String, params: JSONValue?) async -> Result<JSONValue, RPCError> {
@@ -121,6 +122,18 @@ extension Router {
             let session = sessions[id], let app = apps[session.app]
         else {
             return (.failure(RPCError(code: RPCError.invalidParams, message: "Unknown session")), "unknown-session")
+        }
+        if method == "session/request_permission", Self.isResultTool(params, in: session) {
+            // Agneta's own result tool runs nothing (it hands the value to Agneta), so Agneta allows it itself,
+            // whatever the policy's approval: asking the app or refusing it would only lose the result.
+            let options = params?["options"]?.arrayValue ?? []
+            guard let allow = options.first(where: { $0["kind"]?.stringValue == "allow_once" }) else {
+                return (.success(["outcome": ["outcome": "cancelled"]]), "cancelled")
+            }
+            return (
+                .success(["outcome": ["outcome": "selected", "optionId": allow["optionId"] ?? .null]]),
+                "allowed-by-agneta"
+            )
         }
         if method == "session/request_permission",
             runner(account: session.account, engine: session.lease.engine) == .native,

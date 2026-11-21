@@ -159,6 +159,12 @@ actor FakeEngines: EngineSource {
     private(set) var askedPolicies: [SessionPolicy] = []
     /// The params of every `session/new` and `session/load` the engines got, in order.
     private(set) var opening: [(method: String, params: JSONValue)] = []
+    /// Each engine session's MCP servers, from its latest `session/new` or `session/load`.
+    private(set) var servers: [String: [JSONValue]] = [:]
+    /// Every prompt's content blocks as the engine got them, in order.
+    private(set) var prompts: [[JSONValue]] = []
+    /// What the result tool answered each `result` script's calls, in order: (text, isError), or nil when unreachable.
+    private(set) var resultAnswers: [(text: String, isError: Bool)?] = []
     /// What the engine was asked to set (`session/set_config_option`): config id = value, in order.
     private(set) var configSets: [String] = []
     /// The model and effort it offers, and what's current, as a real engine lists them (Router+Settings).
@@ -225,6 +231,10 @@ actor FakeEngines: EngineSource {
             opening.append((method, params ?? .null))
             await onOpen?()
         }
+        if method == "session/new" { servers["e\(n)"] = params?["mcpServers"]?.arrayValue ?? [] }
+        if method == "session/load", let id = params?["sessionId"]?.stringValue {
+            servers[id] = params?["mcpServers"]?.arrayValue ?? []
+        }
         switch method {
         case "session/new":
             // As real engines may: an update for the new session before the answer that names it.
@@ -248,7 +258,47 @@ actor FakeEngines: EngineSource {
             return .success(["runId": params?["expectedRunId"] ?? .null])
         case "session/prompt":
             let text = params?["prompt"]?.arrayValue?.first?["text"]?.stringValue ?? ""
+            prompts.append(params?["prompt"]?.arrayValue ?? [])
             cancelled.remove(session.stringValue ?? "") // a cancel belongs to the turn it arrived in
+            if text.hasPrefix("result ") {
+                // "result <json>": {"calls": [{"tool": "submit_x", "arguments": {…}, "ask": true}], "stopReason": "…"}.
+                // Each call is announced as Goose does, its permission asked when "ask", then made over real HTTP to
+                // the agneta-result server this session was given, as an engine's MCP client would.
+                let script = (try? JSONCoding.decode(Data(text.dropFirst("result ".count).utf8))) ?? [:]
+                for (i, call) in (script["calls"]?.arrayValue ?? []).enumerated() {
+                    let tool = call["tool"]?.stringValue ?? ""
+                    let callID = JSONValue.string("result-\(prompts.count)-\(i)")
+                    let goose: JSONValue = [
+                        "toolCall": ["extensionName": "agneta-result", "toolName": .string("agneta-result__" + tool)]
+                    ]
+                    await update([
+                        "sessionUpdate": "tool_call", "toolCallId": callID, "title": .string(tool), "kind": "other",
+                        "status": "pending", "_meta": ["goose": goose]
+                    ])
+                    if call["ask"] == true {
+                        permissionAnswers[tool] =
+                            (try? await engine.request(
+                                "session/request_permission",
+                                [
+                                    "sessionId": session,
+                                    "toolCall": ["toolCallId": callID, "kind": "other", "title": .string(tool)],
+                                    "options": [
+                                        ["kind": "allow_once", "optionId": "allow", "name": "Allow"],
+                                        ["kind": "reject_once", "optionId": "reject", "name": "Reject"]
+                                    ]
+                                ])) ?? .null
+                    }
+                    let server = servers[session.stringValue ?? ""]?.first { $0["name"] == "agneta-result" }
+                    resultAnswers.append(
+                        await Self.callResultTool(server, tool: tool, arguments: call["arguments"] ?? [:]))
+                    await update(["sessionUpdate": "tool_call_update", "toolCallId": callID, "status": "completed"])
+                }
+                let stop = script["stopReason"]?.stringValue ?? "end_turn"
+                return .success([
+                    "stopReason": .string(cancelled.contains(session.stringValue ?? "") ? "cancelled" : stop),
+                    "usage": ["inputTokens": 5, "outputTokens": 1]
+                ])
+            }
             if text.hasPrefix("permission ") {
                 let kind = String(text.dropFirst("permission ".count))
                 await update([
@@ -340,6 +390,30 @@ actor FakeEngines: EngineSource {
     }
 
     private func noted(_ method: String) { notifications.append(method) }
+
+    /// A `tools/call` to a result server entry (ACP's HTTP form), as an engine's MCP client sends it.
+    static func callResultTool(_ server: JSONValue?, tool: String, arguments: JSONValue) async -> (
+        text: String, isError: Bool
+    )? {
+        guard let server, let url = server["url"]?.stringValue.flatMap(URL.init(string:)) else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        for header in server["headers"]?.arrayValue ?? [] {
+            if let name = header["name"]?.stringValue, let value = header["value"]?.stringValue {
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+        }
+        let message: JSONValue = [
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": ["name": .string(tool), "arguments": arguments]
+        ]
+        request.httpBody = try? JSONCoding.encode(message)
+        guard let (data, _) = try? await URLSession(configuration: .ephemeral).data(for: request),
+            let reply = try? JSONCoding.decode(data), let result = reply["result"]
+        else { return nil }
+        return (result["content"]?.arrayValue?.first?["text"]?.stringValue ?? "", result["isError"] == true)
+    }
 
     private func cancel(_ session: String) {
         cancelled.insert(session)

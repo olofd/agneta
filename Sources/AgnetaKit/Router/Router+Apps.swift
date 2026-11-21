@@ -111,6 +111,7 @@ extension Router {
     /// arriving meanwhile can't have its routing removed by this one.
     func end(_ id: String, _ ending: Ending) async {
         guard let session = sessions.removeValue(forKey: id) else { return }
+        if session.results != nil { dropResults(id) }
         // Only a session whose start was announced has an end to announce (a load or fork cut short has none).
         let announced = infos.removeValue(forKey: id) != nil
         _ = cancelWaiting(id)
@@ -341,6 +342,14 @@ extension Router {
             return .failure(
                 RPCError(code: Self.turnBusy, message: "A turn is already running in this session; steer it or wait"))
         }
+        // The result the prompt asks for (agneta/result), checked before it waits for room.
+        var resultTurn: ResultTurn?
+        if method == "session/prompt" {
+            switch self.resultTurn(for: params, in: session) {
+            case .success(let turn): resultTurn = turn
+            case .failure(let refusal): return .failure(refusal)
+            }
+        }
         if method == "session/prompt" {
             if let refusal = pausedRefusal(session.account) { return .failure(refusal) }
             // Over its cost limit already (a resumed task, or one the last turn took past it): nothing more is spent.
@@ -381,12 +390,16 @@ extension Router {
             sessions[id]?.limitHit = nil // a turn begins with no limit reached
             onEvent(.turnStarted(id))
             trace?.turnStarted(prompt: params?["prompt"])
+            if let resultTurn { openResult(id, resultTurn, generation: generation) }
         }
         // A session that ended meanwhile already let its turn go; one reopened under this id has a turn of its own.
         defer { if method == "session/prompt", current(id, generation) { finishTurn(id) } }
+        // A result the turn didn't report (it failed) is forgotten with it.
+        defer { if method == "session/prompt" { discardResult(id, generation: generation) } }
         // Agneta's own methods, so apps never need an engine's names.
         var engineMethod = method
         var engineParams = params?.setting("sessionId", to: .string(session.engineSession))
+        if method == "session/prompt", let resultTurn { engineParams = Self.asking(engineParams, for: resultTurn) }
         let engine = session.lease.engine
         // A mode the engine's adapter doesn't allow would leave the session outside what Agneta set up: on engines
         // that run their own tools, one that stops asking skips Agneta's permission checks; on OpenCode, another agent
@@ -444,11 +457,22 @@ extension Router {
             if method == "session/prompt" {
                 watchdog?.cancel()
                 let wasCutOff = cutOff.remove(id) != nil
-                if let hit = enforcedLimits.removeValue(forKey: id) { return .success(Self.enforced(hit, session: id)) }
-                if wasCutOff { return .success(["sessionId": .string(id), "stopReason": "cancelled"]) }
+                if let hit = enforcedLimits.removeValue(forKey: id) {
+                    let report = closeResult(id, generation: generation, stopReason: "cancelled", stopped: true)
+                    return .success(Self.withResult(Self.enforced(hit, session: id), report))
+                }
+                if wasCutOff {
+                    let report = closeResult(id, generation: generation, stopReason: "cancelled", stopped: true)
+                    return .success(Self.withResult(["sessionId": .string(id), "stopReason": "cancelled"], report))
+                }
                 // The session may have ended (or been reopened) while the engine worked: the result goes back, but
                 // the router's state and the record of turns belong to the session as it is now.
-                guard current(id, generation) else { return .success(result.setting("sessionId", to: .string(id))) }
+                guard current(id, generation) else {
+                    let report = closeResult(
+                        id, generation: generation, stopReason: result["stopReason"]?.stringValue ?? "end_turn",
+                        stopped: true)
+                    return .success(Self.withResult(result.setting("sessionId", to: .string(id)), report))
+                }
                 let limited = sessions[id]?.limitHit != nil
                 if let hit = sessions[id]?.limitHit {
                     // ACP has a stop reason for too many model turns; time and cost stop as cancelled, with the reason beside it.
@@ -458,6 +482,7 @@ extension Router {
                     sessions[id]?.limitHit = nil
                 }
                 let reason = result["stopReason"]?.stringValue ?? "end_turn"
+                result = Self.withResult(result, closeResult(id, generation: generation, stopReason: reason, stopped: limited))
                 sessions[id]?.activeRun = nil
                 if let summary = await trace?.turnEnded(stopReason: reason, usage: result["usage"], cutOff: limited) {
                     noteTokens(id, summary)
@@ -485,9 +510,13 @@ extension Router {
             var error = error
             let wasCutOff = method == "session/prompt" && cutOff.remove(id) != nil
             if method == "session/prompt", let hit = enforcedLimits.removeValue(forKey: id) {
-                return .success(Self.enforced(hit, session: id))
+                let report = closeResult(id, generation: generation, stopReason: "cancelled", stopped: true)
+                return .success(Self.withResult(Self.enforced(hit, session: id), report))
             }
-            if wasCutOff { return .success(["sessionId": .string(id), "stopReason": "cancelled"]) }
+            if wasCutOff {
+                let report = closeResult(id, generation: generation, stopReason: "cancelled", stopped: true)
+                return .success(Self.withResult(["sessionId": .string(id), "stopReason": "cancelled"], report))
+            }
             if method == "session/prompt", current(id, generation) {
                 sessions[id]?.activeRun = nil
                 sessions[id]?.limitHit = nil // a stale flag would mislabel the next turn
@@ -506,10 +535,14 @@ extension Router {
         } catch {
             let wasCutOff = method == "session/prompt" && cutOff.remove(id) != nil
             if method == "session/prompt", let hit = enforcedLimits.removeValue(forKey: id) {
-                return .success(Self.enforced(hit, session: id))
+                let report = closeResult(id, generation: generation, stopReason: "cancelled", stopped: true)
+                return .success(Self.withResult(Self.enforced(hit, session: id), report))
             }
             // Stopped by the user (or its account removed, or access narrowed): cancelled, as the protocol says.
-            if wasCutOff { return .success(["sessionId": .string(id), "stopReason": "cancelled"]) }
+            if wasCutOff {
+                let report = closeResult(id, generation: generation, stopReason: "cancelled", stopped: true)
+                return .success(Self.withResult(["sessionId": .string(id), "stopReason": "cancelled"], report))
+            }
             if method == "session/prompt", current(id, generation) {
                 sessions[id]?.activeRun = nil
                 sessions[id]?.limitHit = nil

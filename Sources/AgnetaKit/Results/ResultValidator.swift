@@ -33,14 +33,27 @@ extension ResultSchema {
         public var patternTime: Duration
         /// Issues reported at most; the model fixes them in one attempt, so more than a screenful only adds noise.
         public var issues: Int
+        /// How deeply a value's arrays and objects may nest. Checking recurses a few calls per level, on whatever
+        /// thread the caller runs (the router's, with a small stack), so a value nested deeper is reported, never
+        /// walked into. Real results nest a handful of levels.
+        public var depth: Int
 
-        public static let standard = ValidationLimits(checks: 2_000_000, patternTime: .milliseconds(250), issues: 20)
+        public init(checks: Int, patternTime: Duration, issues: Int, depth: Int = 32) {
+            self.checks = checks
+            self.patternTime = patternTime
+            self.issues = issues
+            self.depth = depth
+        }
+
+        public static let standard = ValidationLimits(
+            checks: 2_000_000, patternTime: .milliseconds(250), issues: 20, depth: 32)
     }
 
     /// The ways `value` doesn't match: empty when it does.
     public func validate(_ value: JSONValue, limits: ValidationLimits = .standard) -> [ResultIssue] {
         var evaluator = Evaluator(
-            nodes: nodes, checksLeft: limits.checks, deadline: ContinuousClock.now + limits.patternTime)
+            nodes: nodes, checksLeft: limits.checks, deadline: ContinuousClock.now + limits.patternTime,
+            maxDepth: limits.depth)
         var issues: [ResultIssue] = []
         evaluator.check(0, value, path: "", into: &issues, cap: limits.issues)
         if let stopped = evaluator.stopped {
@@ -55,8 +68,11 @@ private struct Evaluator {
     let nodes: [ResultSchema.Node]
     var checksLeft: Int
     let deadline: ContinuousClock.Instant
+    let maxDepth: Int
     /// Set when checking stopped at a bound: the issue that says so.
     var stopped: ResultIssue?
+    /// How deep in the value the check now is.
+    var depth = 0
 
     /// Adds the ways `value` doesn't match node `index` to `issues`, up to `cap` of them.
     mutating func check(_ index: Int, _ value: JSONValue, path: String, into issues: inout [ResultIssue], cap: Int) {
@@ -147,7 +163,7 @@ private struct Evaluator {
             Self.push(&issues, cap: cap, path: at, node: node, keyword: keyword, message: message)
         }
         for name in node.required where fields[name] == nil {
-            add("required", "is missing the required property \"\(name)\"", path)
+            add("required", "is missing the required property \(Self.quoted(name))", path)
         }
         if let least = node.minProperties, fields.count < least {
             add("minProperties", "must have at least \(least) properties, has \(fields.count)", path)
@@ -157,6 +173,8 @@ private struct Evaluator {
         }
         for name in fields.keys.sorted() {
             let value = fields[name]!, at = path + "/" + escape(name)
+            guard descend(at: at, node: node) else { return }
+            defer { depth -= 1 }
             if let names = node.propertyNames {
                 check(names, .string(name), path: at, into: &issues, cap: cap)
             }
@@ -177,7 +195,7 @@ private struct Evaluator {
             }
             if !matched, let extra = node.additionalProperties {
                 if nodes[extra].always == false {
-                    add("additionalProperties", "\"\(name)\" isn't one of the allowed properties", at)
+                    add("additionalProperties", "\(Self.quoted(name)) isn't one of the allowed properties", at)
                 } else {
                     check(extra, value, path: at, into: &issues, cap: cap)
                 }
@@ -199,6 +217,8 @@ private struct Evaluator {
             add("maxItems", "must have at most \(most) items, has \(items.count)", path)
         }
         for (i, item) in items.enumerated() {
+            guard descend(at: path + "/\(i)", node: node) else { return }
+            defer { depth -= 1 }
             let child = i < node.prefixItems.count ? node.prefixItems[i] : node.items
             if let child { check(child, item, path: path + "/\(i)", into: &issues, cap: cap) }
             if stopped != nil || issues.count >= cap { return }
@@ -267,16 +287,30 @@ private struct Evaluator {
         if let pattern = node.pattern {
             switch pattern.matches(string, deadline: deadline) {
             case true?: break
-            case false?: add("pattern", "must match the pattern \(pattern.source)", "")
+            case false?: add("pattern", "must match the pattern \(Self.quoted(pattern.source, limit: 200))", "")
             case nil: timedOut(at: path, pattern: pattern, node: node)
             }
         }
     }
 
+    /// One level deeper into the value, or false (and checking stopped) past the bound.
+    mutating func descend(at: String, node: ResultSchema.Node) -> Bool {
+        depth += 1
+        guard depth <= maxDepth else {
+            depth -= 1
+            stopped = ResultIssue(
+                path: at, keyword: "limit",
+                message: "the value nests more than \(maxDepth) levels deep, more than Agneta checks",
+                schemaPath: node.pointer)
+            return false
+        }
+        return true
+    }
+
     mutating func timedOut(at: String?, pattern: Pattern, node: ResultSchema.Node) {
         stopped = ResultIssue(
             path: at ?? "", keyword: "limit",
-            message: "checking the pattern \(pattern.source) took longer than Agneta allows",
+            message: "checking the pattern \(Self.quoted(pattern.source, limit: 200)) took longer than Agneta allows",
             schemaPath: node.pointer)
     }
 
@@ -329,6 +363,25 @@ private struct Evaluator {
         case .string: "a string"
         case .int, .double: "the number \(preview(value))"
         }
+    }
+
+    /// A name or pattern in a message: in quotes, control characters escaped and long ones cut, so text from the value
+    /// can't pass for a line of Agneta's own or fill the model's context.
+    static func quoted(_ text: String, limit: Int = 60) -> String {
+        var out = ""
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            case "\"": out += "\\\""
+            case _ where scalar.value < 0x20 || scalar.value == 0x7f || scalar.value == 0x2028 || scalar.value == 0x2029:
+                out += String(format: "\\u%04x", scalar.value)
+            default: out.unicodeScalars.append(scalar)
+            }
+        }
+        if out.count > limit { out = String(out.prefix(limit - 1)) + "…" }
+        return "\"" + out + "\""
     }
 
     /// A short JSON rendering of a value for a message.

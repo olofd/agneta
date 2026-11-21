@@ -49,9 +49,24 @@ public final class LocalHTTPServer: @unchecked Sendable {
             listener.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready:
-                    if let self, let given = self.listener.port?.rawValue { self.lock.withLock { self.bound = given } }
+                    if let self {
+                        self.lock.withLock {
+                            if let given = self.listener.port?.rawValue { self.bound = given }
+                            self.listening = true
+                        }
+                    }
                     if started.take() { continuation.resume() }
-                case .failed(let error): if started.take() { continuation.resume(throwing: error) }
+                case .failed(let error):
+                    self?.lock.withLock { self?.listening = false }
+                    self?.listener.cancel()
+                    if started.take() { continuation.resume(throwing: error) }
+                case .waiting(let error):
+                    // Can't listen now (the port is taken, say): a failure, not a wait that never ends.
+                    self?.listener.cancel()
+                    if started.take() { continuation.resume(throwing: error) }
+                case .cancelled:
+                    self?.lock.withLock { self?.listening = false }
+                    if started.take() { continuation.resume(throwing: CancellationError()) }
                 default: break
                 }
             }
@@ -60,20 +75,46 @@ public final class LocalHTTPServer: @unchecked Sendable {
         }
     }
 
-    public func stop() { listener.cancel() }
+    /// Stops listening and closes every connection, requests being answered included.
+    public func stop() {
+        listener.cancel()
+        for connection in lock.withLock({ () -> [NWConnection] in
+            defer { connections = [:] }
+            return Array(connections.values)
+        }) {
+            connection.cancel()
+        }
+    }
 
-    static let maxConnections = 16
+    /// Whether it's listening: false before it starts, and after it stops or its listener fails.
+    public var isListening: Bool { lock.withLock { listening } }
+
+    /// Connections at most: reading a request, or being answered.
+    static let maxConnections = 64
+    /// How long a connection may take to send its whole request. Idle or trickling connections are closed then, so
+    /// they can't hold the slots that real requests need.
+    static let readDeadline: DispatchTimeInterval = .seconds(2)
+    /// How long answering may take, from the request's arrival, before the connection is closed anyway (the handler's
+    /// own work is bounded by its caller; this is the backstop).
+    static let answerDeadline: DispatchTimeInterval = .seconds(60)
     private let lock = NSLock()
     private var open = 0
+    private var listening = false
+    private var connections: [ObjectIdentifier: NWConnection] = [:]
     /// Connections being served now.
     var openConnections: Int { lock.withLock { open } }
 
-    /// At most 16 connections, each closed after 10 s whatever it's doing (no slow-request pile-up). Each is
-    /// counted out once: a connection that fails is cancelled, and then reports `.cancelled` as well.
+    /// At most `maxConnections`, each given `readDeadline` to send its request and then held until its answer is sent,
+    /// so a slot is free only when its work is done. Each is counted out once: a connection that fails is cancelled,
+    /// and then reports `.cancelled` as well.
     private func serve(_ connection: NWConnection) {
+        let id = ObjectIdentifier(connection)
         guard
             lock.withLock({ () -> Bool in
-                guard open < Self.maxConnections else { return false }; open += 1; return true
+                guard open < Self.maxConnections, listening else { return false }
+                open += 1
+                connections[id] = connection
+                return true
             })
         else {
             connection.cancel()
@@ -84,17 +125,25 @@ public final class LocalHTTPServer: @unchecked Sendable {
             switch state {
             case .failed, .cancelled:
                 connection?.cancel() // a failed connection keeps its resources until it's cancelled
-                if ended.take() { self?.lock.withLock { self?.open -= 1 } }
+                if ended.take() {
+                    self?.lock.withLock {
+                        self?.open -= 1
+                        self?.connections[id] = nil
+                    }
+                }
             default: break
             }
         }
         let queue = DispatchQueue(label: "agneta.http.connection")
         connection.start(queue: queue)
-        queue.asyncAfter(deadline: .now() + 10) { connection.cancel() }
-        read(connection, buffer: Data())
+        let arrived = OnceFlag()
+        queue.asyncAfter(deadline: .now() + Self.readDeadline) {
+            if arrived.take() { connection.cancel() } // the request didn't arrive in time
+        }
+        read(connection, buffer: Data(), arrived: arrived, queue: queue)
     }
 
-    private func read(_ connection: NWConnection, buffer: Data) {
+    private func read(_ connection: NWConnection, buffer: Data, arrived: OnceFlag, queue: DispatchQueue) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 << 10) {
             [weak self] data, _, complete, error in
             guard let self else { return }
@@ -102,6 +151,9 @@ public final class LocalHTTPServer: @unchecked Sendable {
             if let data { buffer.append(data) }
             if error != nil || buffer.count > Self.maxBody + (16 << 10) { connection.cancel(); return }
             if let request = Self.parse(buffer) {
+                // In time: the read deadline no longer applies; the answer's does.
+                guard arrived.take() else { return }
+                queue.asyncAfter(deadline: .now() + Self.answerDeadline) { connection.cancel() }
                 let handler = self.handler
                 Task {
                     let response: Response
@@ -119,7 +171,7 @@ public final class LocalHTTPServer: @unchecked Sendable {
             } else if complete {
                 connection.cancel()
             } else {
-                self.read(connection, buffer: buffer)
+                self.read(connection, buffer: buffer, arrived: arrived, queue: queue)
             }
         }
     }
@@ -133,8 +185,12 @@ public final class LocalHTTPServer: @unchecked Sendable {
         var headers: [String: String] = [:]
         for line in head.dropFirst() {
             guard let colon = line.firstIndex(of: ":") else { continue }
-            headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(
-                in: .whitespaces)
+            let name = line[..<colon]
+            // Whitespace in a header name is malformed (RFC 9112): refused, so `Origin :` can't pass for no Origin.
+            guard !name.isEmpty, !name.contains(where: \.isWhitespace) else {
+                return Request(method: "INVALID", path: "", headers: [:], body: Data())
+            }
+            headers[name.lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
         // A missing length is 0; anything else must be a whole number within the cap (-1 trapped).
         guard let length = Int(headers["content-length"] ?? "0"), (0...maxBody).contains(length) else {

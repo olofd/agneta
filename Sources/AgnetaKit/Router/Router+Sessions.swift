@@ -67,6 +67,11 @@ extension Router {
         var instructions: String?
         /// What the task can really do (SandboxResolution.Outcome.effective), reported to the app.
         var sandbox: Sandbox = .contained
+        /// The results it declared (agneta/result), and its route on Agneta's result server once given one.
+        var results: ResultDeclaration?
+        var resultRoute: ResultServer.Route?
+        /// The MCP servers the engine gets: the app's, and Agneta's result server for a session that declared results.
+        var engineServers: [JSONValue] { servers + (resultRoute.map { [$0.server] } ?? []) }
     }
 
     /// Every check a session passes before an engine starts: an account the app was granted, not paused; an engine
@@ -78,7 +83,7 @@ extension Router {
     func authorize(
         app appID: UUID, grant: Grant, account: String?, engine requested: String? = nil, resuming: Bool = false,
         cwd: String?,
-        policy value: JSONValue?, sent: Bool, appTools: JSONValue? = nil,
+        policy value: JSONValue?, sent: Bool, appTools: JSONValue? = nil, results resultsValue: JSONValue? = nil,
         servers: [JSONValue], instructions: String?
     ) async -> Result<Plan, RPCError> {
         guard let account, grant.accounts.contains(account), accounts[account] != nil else {
@@ -108,6 +113,8 @@ extension Router {
         } catch {
             return .failure(RPCError(code: RPCError.invalidParams, message: "Invalid \(AppToolsLoad.key)"))
         }
+        let results: ResultDeclaration?
+        do { results = try ResultDeclaration.parse(resultsValue) } catch { return .failure(error.rpcError) }
         if let refusal = Self.refuseServers(servers) { return .failure(refusal) }
         let engine: any EngineAdapter
         let wanted =
@@ -117,8 +124,9 @@ extension Router {
         case .success(let adapter): engine = adapter
         case .failure(let refusal): return .failure(refusal)
         }
-        if let taken = servers.compactMap({ $0["name"]?.stringValue }).first(where: engine.reservedToolServers.contains)
-        {
+        if let taken = servers.compactMap({ $0["name"]?.stringValue }).first(where: {
+            engine.reservedToolServers.contains($0) || $0 == ResultServer.name
+        }) {
             return .failure(
                 RPCError(
                     code: RPCError.invalidParams,
@@ -187,7 +195,7 @@ extension Router {
         return .success(
             Plan(
                 account: account, engine: engine, policy: policy, servers: servers, instructions: instructions,
-                sandbox: effective))
+                sandbox: effective, results: results))
     }
 
     /// Waits until no other reach check of this grant's is running, then holds the turn.
@@ -250,8 +258,9 @@ extension Router {
         do {
             let lease = try await engines.open(
                 account: plan.account, engine: plan.engine, policy: plan.policy,
-                mcpPorts: Self.loopbackPorts(plan.servers), key: key,
-                session: EngineSessionSpec(policy: plan.policy, servers: plan.servers, instructions: plan.instructions))
+                mcpPorts: Self.loopbackPorts(plan.engineServers), key: key,
+                session: EngineSessionSpec(
+                    policy: plan.policy, servers: plan.engineServers, instructions: plan.instructions))
             await wire(lease)
             return .success(lease)
         } catch let error as RPCError {
@@ -269,6 +278,7 @@ extension Router {
             appServers: Set(plan.servers.compactMap { $0["name"]?.stringValue }))
         session.sandbox = plan.sandbox
         session.meter = meter
+        session.results = plan.results
         sessions[id] = session
         byEngine[key(lease.key, engineSession)] = id
         return session.generation
@@ -322,6 +332,13 @@ extension Router {
             "builtins": Self.builtins(
                 plan.policy, engine: lease.engine, kind: accounts[plan.account]?.kind, dedicated: lease.dedicated)
         ]
+        if let results = plan.results {
+            // What the session can ask for, and how its results come back (docs/APP_PROTOCOL.md, Structured results).
+            agneta["results"] = [
+                "declared": .array(results.names.map(JSONValue.string)),
+                "every": results.every.map(JSONValue.string) ?? .null, "mechanism": "tool"
+            ]
+        }
         agneta.merge(extra) { _, new in new }
         return (id.map { result.setting("sessionId", to: .string($0)) } ?? result).setting(
             "_meta", to: ["agneta": .object(agneta)])
@@ -344,12 +361,13 @@ extension Router {
             meta?["agneta/instructions"]?["text"]?.stringValue
             ?? params?["systemPrompt"]?["content"]?.arrayValue?.compactMap { $0["text"]?.stringValue }.joined(
                 separator: "\n")
-        let plan: Plan, lease: EngineLease
+        var plan: Plan, lease: EngineLease
         // Without an account named: the first one the app may use that's here.
         switch await authorize(
             app: appID, grant: grant, account: requested ?? grant.accounts.first { accounts[$0] != nil },
             engine: params?["_meta"]?["agneta"]?["engine"]?.stringValue, cwd: params?["cwd"]?.stringValue,
             policy: meta?[SessionPolicy.key], sent: meta?[SessionPolicy.key] != nil, appTools: meta?[AppToolsLoad.key],
+            results: meta?[ResultDeclaration.key],
             servers: params?["mcpServers"]?.arrayValue ?? [], instructions: instructions)
         {
         case .success(let authorized): plan = authorized
@@ -362,13 +380,17 @@ extension Router {
         }
         let counted = reserveTask(meter: grant.meter)
         var opened = false
+        // Its id now: a session that declares results needs its route before the engine starts.
+        let id = "s_" + UUID().uuidString.lowercased()
         defer {
             if opened {
                 taskCommitted(meter: grant.meter, at: counted)
             } else {
                 refundTask(meter: grant.meter, at: counted)
+                if plan.resultRoute != nil { dropResults(id) }
             }
         }
+        if let failure = await routeResults(&plan, session: id) { return .failure(failure) }
         switch await launch(plan, key: nil) {
         case .success(let started): lease = started
         case .failure(let error): return .failure(error)
@@ -383,7 +405,7 @@ extension Router {
         var result: JSONValue
         do {
             let engineParams = lease.engine.newSession(
-                cwd: plan.policy.workspace, servers: plan.servers, policy: plan.policy,
+                cwd: plan.policy.workspace, servers: plan.engineServers, policy: plan.policy,
                 title: meta?["agneta/task"]?["title"], instructions: plan.instructions)
             (engineSession, result) = try await freshSession(lease, EngineRequest("session/new", engineParams)) {
                 $0["sessionId"]?.stringValue
@@ -404,7 +426,6 @@ extension Router {
             await engines.release(lease)
             return .failure(refusal)
         }
-        let id = "s_" + UUID().uuidString.lowercased()
         let generation = register(
             id, app: appID, meter: grant.meter, plan: plan, lease: lease, engineSession: engineSession)
         await deliverEarly(lease, engineSession)
@@ -457,13 +478,14 @@ extension Router {
         let original = meta["request"]
         let policyValue = params?["_meta"]?[SessionPolicy.key] ?? original?["_meta"]?[SessionPolicy.key]
         let appTools = params?["_meta"]?[AppToolsLoad.key] ?? original?["_meta"]?[AppToolsLoad.key]
-        let plan: Plan, lease: EngineLease
+        let declared = params?["_meta"]?[ResultDeclaration.key] ?? original?["_meta"]?[ResultDeclaration.key]
+        var plan: Plan, lease: EngineLease
         switch await authorize(
             app: appID, grant: grant, account: meta["account"]?["id"]?.stringValue,
             engine: meta["engine"]?["id"]?.stringValue,
             resuming: true,
             cwd: params?["cwd"]?.stringValue ?? original?["cwd"]?.stringValue,
-            policy: policyValue, sent: policyValue != nil, appTools: appTools,
+            policy: policyValue, sent: policyValue != nil, appTools: appTools, results: declared,
             servers: params?["mcpServers"]?.arrayValue ?? [],
             instructions: params?["_meta"]?["agneta/instructions"]?["text"]?.stringValue
                 ?? meta["instructions"]?.stringValue)
@@ -481,6 +503,9 @@ extension Router {
                     .rpcError)
         }
         if let refusal = savedStateRefusal(meta, engine: plan.engine) { return .failure(refusal) }
+        var loaded = false
+        defer { if !loaded, plan.resultRoute != nil { dropResults(id) } }
+        if let failure = await routeResults(&plan, session: id) { return .failure(failure) }
         switch await launch(plan, key: engineKey) {
         case .success(let started): lease = started
         case .failure(let error): return .failure(error)
@@ -502,7 +527,7 @@ extension Router {
                 "session/load",
                 lease.engine.loadSession(
                     engineSession, cwd: plan.policy.workspace,
-                    servers: plan.servers, policy: plan.policy,
+                    servers: plan.engineServers, policy: plan.policy,
                     instructions: plan.instructions))
             try await prepare(lease, engineSession, instructions: plan.instructions)
             // Ended while the engine replayed it (the app went or lost access, or the user stopped it): end() has
@@ -516,6 +541,7 @@ extension Router {
                 id, grant: grant, account: plan.account, sandbox: plan.sandbox,
                 title: original?["_meta"]?["agneta/task"]?["title"]?.stringValue ?? "AI task",
                 stopWarning: original?["_meta"]?["agneta/task"]?["stopWarning"]?.stringValue, resumed: true)
+            loaded = true
             return .success(reply(result, id: nil, plan: plan, lease: lease, adding: ["resumed": true]))
         } catch {
             if current(id, generation) {
@@ -547,13 +573,14 @@ extension Router {
                 "tools", to: .string((grant.tools.rank < SessionPolicy.Tools.read.rank ? grant.tools : .read).rawValue))
         }
         let appTools = params?["_meta"]?[AppToolsLoad.key] ?? original?["_meta"]?[AppToolsLoad.key]
+        let declared = params?["_meta"]?[ResultDeclaration.key] ?? original?["_meta"]?[ResultDeclaration.key]
         let cwd = params?["cwd"]?.stringValue ?? original?["cwd"]?.stringValue
-        let plan: Plan, lease: EngineLease
+        var plan: Plan, lease: EngineLease
         switch await authorize(
             app: appID, grant: grant, account: meta["account"]?["id"]?.stringValue,
             engine: meta["engine"]?["id"]?.stringValue,
             resuming: true, cwd: cwd,
-            policy: policyValue, sent: true, appTools: appTools,
+            policy: policyValue, sent: true, appTools: appTools, results: declared,
             servers: params?["mcpServers"]?.arrayValue ?? [],
             instructions: params?["_meta"]?["agneta/instructions"]?["text"]?.stringValue
                 ?? meta["instructions"]?.stringValue)
@@ -569,13 +596,17 @@ extension Router {
         }
         let counted = reserveTask(meter: grant.meter)
         var opened = false
+        // Its id now: a fork that declares results needs its route before its engine starts.
+        let id = "s_" + UUID().uuidString.lowercased()
         defer {
             if opened {
                 taskCommitted(meter: grant.meter, at: counted)
             } else {
                 refundTask(meter: grant.meter, at: counted)
+                if plan.resultRoute != nil { dropResults(id) }
             }
         }
+        if let failure = await routeResults(&plan, session: id) { return .failure(failure) }
 
         // 1. The conversation, from the engine that holds it.
         let exported: JSONValue
@@ -628,7 +659,6 @@ extension Router {
             await engines.release(lease)
             return .failure(refusal)
         }
-        let id = "s_" + UUID().uuidString.lowercased()
         let generation = register(
             id, app: appID, meter: grant.meter, plan: plan, lease: lease, engineSession: engineSession)
         await deliverEarly(lease, engineSession)
@@ -637,7 +667,7 @@ extension Router {
                 "session/load",
                 lease.engine.loadSession(
                     engineSession, cwd: plan.policy.workspace,
-                    servers: plan.servers, policy: plan.policy,
+                    servers: plan.engineServers, policy: plan.policy,
                     instructions: plan.instructions))
             try await prepare(lease, engineSession, instructions: plan.instructions)
             // Ended while the engine loaded it: end() has let it go, and it gets no trace or announcement.
@@ -650,6 +680,7 @@ extension Router {
             // The trace keeps what the fork runs with, so loading it later gets the same.
             var recorded = (request["_meta"] ?? [:]).setting(SessionPolicy.key, to: policyValue)
             if let appTools { recorded = recorded.setting(AppToolsLoad.key, to: appTools) }
+            if let declared { recorded = recorded.setting(ResultDeclaration.key, to: declared) }
             request = request.setting("_meta", to: recorded)
             openTrace(
                 traces, task: id, grant: grant, accountID: plan.account, lease: lease, engineSession: engineSession,

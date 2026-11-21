@@ -19,7 +19,8 @@ public struct ResultDeclaration: Sendable {
     /// The schema every prompt asks for unless it opts out, or nil.
     public let every: String?
 
-    /// The declaration as the app sent it, kept with the task so a resume or fork declares the same.
+    /// The declaration in its long form (the shorthand becomes `schemas` and `every`): declaring it again gives the
+    /// same.
     public var recorded: JSONValue {
         var fields: [String: JSONValue] = [
             "schemas": .object(schemas.mapValues(\.source))
@@ -30,6 +31,11 @@ public struct ResultDeclaration: Sendable {
 
     /// The names in a stable order (the tool list's).
     public var names: [String] { schemas.keys.sorted() }
+
+    /// A turn asking for one of this declaration's results.
+    public func turn(for request: ResultRequest) -> ResultTurn? {
+        schemas[request.name].map { ResultTurn(request: request, schema: $0) }
+    }
 
     /// The tool that submits the named result.
     public static func tool(for name: String) -> String { "submit_" + name }
@@ -80,8 +86,8 @@ public struct ResultDeclaration: Sendable {
         for name in raw.keys.sorted() {
             guard validName(name) else {
                 throw refused(
-                    "\"\(name)\" isn't a usable name: lowercase letters, digits and _, starting with a letter, "
-                        + "at most 32 characters")
+                    "\"\(name)\" isn't a usable name: lowercase letters, digits and single underscores, starting with "
+                        + "a letter, at most 32 characters (\"any\" is reserved)")
             }
             do {
                 compiled[name] = try ResultSchema.compile(raw[name]!)
@@ -93,8 +99,14 @@ public struct ResultDeclaration: Sendable {
         return ResultDeclaration(schemas: compiled, every: every)
     }
 
+    /// Names kept for what's to come: `any` for a generic tool taking a schema per prompt.
+    static let reserved: Set<String> = ["any"]
+
+    /// Lowercase letters, digits and single underscores, starting with a letter, at most 32 characters (the engine's
+    /// tool name, `mcp__agneta-result__submit_<name>`, stays under 64; Claude Code splits names at `__`).
     static func validName(_ name: String) -> Bool {
-        guard let first = name.unicodeScalars.first, ("a"..."z").contains(first), name.unicodeScalars.count <= 32
+        guard let first = name.unicodeScalars.first, ("a"..."z").contains(first), name.unicodeScalars.count <= 32,
+            !name.contains("__"), !reserved.contains(name)
         else { return false }
         return name.unicodeScalars.allSatisfy { ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "_" }
     }
@@ -143,7 +155,7 @@ public struct ResultRequest: Sendable, Equatable {
             }
             var attempts = defaultAttempts
             if let given = object["attempts"] {
-                guard let n = given.intValue, (1...Int64(maxAttempts)).contains(n), given.boolValue == nil else {
+                guard let n = given.intValue, (1...Int64(maxAttempts)).contains(n) else {
                     throw ResultDeclaration.refused("attempts must be a whole number from 1 to \(maxAttempts)")
                 }
                 attempts = Int(n)

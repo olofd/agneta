@@ -222,6 +222,8 @@ public actor Router {
         var limitHit: LimitHit?
         /// Whose usage its turns count toward (Grant.meter).
         var meter = ""
+        /// The results it declared when it opened (agneta/result), if any.
+        var results: ResultDeclaration?
         /// New every time a session is registered. Work that waited (a load, a fork, a prompt) checks it before
         /// touching the session again: meanwhile the session may have ended, or been reopened under the same id.
         let generation = UUID()
@@ -302,6 +304,13 @@ public actor Router {
     let calendar: Calendar
     /// Each running prompt's request to its engine, so a limit the engine ignores can abandon it.
     var inFlight: [String: Task<JSONValue, Error>] = [:]
+    /// Each running turn's structured result, by session, with the session's generation it belongs to: kept apart from
+    /// the session so a turn whose session a limit ended still reports what it accepted (Router+Results).
+    var resultTurns: [String: (generation: UUID, turn: ResultTurn)] = [:]
+    /// Agneta's result server, once a session declared results.
+    var resultServer: ResultServer?
+    /// Each session's route on it and what it declared, from before its engine starts until it ends.
+    var resultRoutes: [String: (route: String, declaration: ResultDeclaration)] = [:]
     /// Sessions whose running prompt was cut off by their end (Stop, a removed account, narrowed access): the prompt
     /// is answered as cancelled, not left waiting on an engine that may never answer.
     var cutOff: Set<String> = []
@@ -676,6 +685,7 @@ public actor Router {
         for appID in apps.keys { apps[appID]?.grant = nil }
         for id in Array(sessions.keys) { await stop(id) }
         for app in apps.values { await hangUp(app, reason: "Agneta was reset") }
+        await resultServer?.stop()
     }
 
     /// Quitting: every app's connection closes before the engines stop, so an app hears that Agneta went away (its
@@ -693,6 +703,7 @@ public actor Router {
         for app in apps.values { await hangUp(app, reason: reason) }
         let deadline = ContinuousClock.now + .seconds(2)
         while !sessions.isEmpty, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+        await resultServer?.stop()
     }
 
     /// Closes an app's peer and its connection; the connection's `serve` then cleans up.

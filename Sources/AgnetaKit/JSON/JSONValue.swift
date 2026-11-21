@@ -111,7 +111,46 @@ public enum JSONCoding {
         return try encoder.encode(value)
     }
 
+    /// How deeply arrays and objects may nest in JSON Agneta reads. Decoding recurses once per level, so a small
+    /// message nested thousands deep (from an app, an engine, or a model's tool call) would overflow the stack and stop
+    /// Agneta: it's refused before decoding. Real messages nest a few dozen levels at most.
+    public static let maxDepth = 128
+
     public static func decode(_ data: Data) throws -> JSONValue {
-        try JSONDecoder().decode(JSONValue.self, from: data)
+        guard nesting(of: data) <= maxDepth else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: [], debugDescription: "JSON nested more than \(maxDepth) levels deep"))
+        }
+        return try JSONDecoder().decode(JSONValue.self, from: data)
+    }
+
+    /// The deepest nesting of arrays and objects in `data`, read byte by byte (brackets inside strings don't count),
+    /// stopping as soon as it's past `maxDepth`.
+    static func nesting(of data: Data) -> Int {
+        var depth = 0, deepest = 0, inString = false, escaped = false
+        for byte in data {
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if byte == UInt8(ascii: "\\") {
+                    escaped = true
+                } else if byte == UInt8(ascii: "\"") {
+                    inString = false
+                }
+                continue
+            }
+            switch byte {
+            case UInt8(ascii: "\""): inString = true
+            case UInt8(ascii: "["), UInt8(ascii: "{"):
+                depth += 1
+                if depth > deepest {
+                    deepest = depth
+                    if deepest > maxDepth { return deepest }
+                }
+            case UInt8(ascii: "]"), UInt8(ascii: "}"): depth -= 1
+            default: break
+            }
+        }
+        return deepest
     }
 }

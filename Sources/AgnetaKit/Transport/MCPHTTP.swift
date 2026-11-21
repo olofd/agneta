@@ -5,6 +5,9 @@ import CryptoKit
 import Foundation
 
 enum MCPHTTP {
+    /// MCP versions these servers speak, oldest first: what they answer needs nothing a later one added.
+    static let versions = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]
+
     /// What one server answers.
     struct Server: Sendable {
         var name: String
@@ -18,17 +21,30 @@ enum MCPHTTP {
     /// Answers one HTTP request that already passed the server's own checks (path, credentials).
     static func respond(_ request: LocalHTTPServer.Request, server: Server) async -> LocalHTTPServer.Response {
         guard request.method == "POST" else { return .init(status: 405, headers: ["Allow": "POST"]) }
-        guard let message = try? JSONCoding.decode(request.body), let method = message["method"]?.stringValue else {
+        guard let message = try? JSONCoding.decode(request.body) else {
             return .init(
                 status: 400,
                 body: Data(#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}"#.utf8))
         }
+        // JSON, but not one request: a batch (an array), or an object without a method.
+        guard let method = message["method"]?.stringValue else {
+            return .init(
+                status: 400,
+                body: Data(#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}"#.utf8))
+        }
         guard let id = message["id"] else { return .init(status: 202) } // a notification, e.g. notifications/initialized
+        guard let rpcID = RPCID(id) else {
+            return .init(
+                status: 400,
+                body: Data(#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}"#.utf8))
+        }
         let result: Result<JSONValue, RPCError>
         switch method {
         case "initialize":
+            // The client's version when it's one this server speaks, else the latest it does (MCP's negotiation).
+            let asked = message["params"]?["protocolVersion"]?.stringValue ?? ""
             var answer: JSONValue = [
-                "protocolVersion": message["params"]?["protocolVersion"] ?? "2025-06-18",
+                "protocolVersion": .string(versions.contains(asked) ? asked : versions.last!),
                 "capabilities": ["tools": [:]], "serverInfo": ["name": .string(server.name), "version": "1"]
             ]
             if let instructions = server.instructions {
@@ -51,7 +67,7 @@ enum MCPHTTP {
             result = .success(content)
         default: result = .failure(RPCError(code: RPCError.methodNotFound, message: "Method not found: \(method)"))
         }
-        let body = (try? RPCMessage.response(id: RPCID(id) ?? .int(0), result: result).encoded()) ?? Data()
+        let body = (try? RPCMessage.response(id: rpcID, result: result).encoded()) ?? Data()
         return .init(status: 200, body: body)
     }
 
