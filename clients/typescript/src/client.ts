@@ -722,6 +722,11 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     this.#requireAccess();
     const wait = options.waitForDownload === false ? 0 : typeof options.waitForDownload === 'number' ? options.waitForDownload : 600_000;
     const started = Date.now();
+    // A load of a session whose earlier handle is still registered (its close reply was lost) unregisters that handle
+    // first, so the load's replay and anything else sent for the id meanwhile reach the new handle, not the old one.
+    // A load that fails gives the id back to the earlier handle.
+    const stale = method === 'session/load' ? this.#sessions.get(params.sessionId) : undefined;
+    if (stale) this.#sessions.delete(params.sessionId);
     let result: SessionResult;
     try {
       for (;;) {
@@ -737,6 +742,12 @@ export class AgnetaClient extends Emitter<ClientEvents> {
           await delay(2000, options.signal);
         }
       }
+    } catch (error) {
+      if (stale && !this.#sessions.has(params.sessionId)) {
+        this.#early.delete(params.sessionId);
+        this.#sessions.set(params.sessionId, stale);
+      }
+      throw error;
     } finally {
       if (method === 'session/load') queueMicrotask(() => { if (!this.#sessions.has(params.sessionId)) this.#early.delete(params.sessionId); });
     }
@@ -750,7 +761,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
       session.end({ reason: 'disconnected', error: new ConnectionClosedError(undefined, 'closed while the session opened') });
       throw new ConnectionClosedError(undefined, 'closed while the session opened');
     }
-    const previous = this.#sessions.get(id);
+    const previous = this.#sessions.get(id) ?? (stale && id === params.sessionId ? stale : undefined);
     this.#sessions.set(id, session);
     previous?.end({ reason: 'closed' });
     // The rest of what came early (live trace records, a queue place, a stop), to the listeners given in `on`.

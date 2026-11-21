@@ -408,10 +408,30 @@ test('an ended handle cannot submit work to a resumed session', async (t) => {
 });
 
 test('loading after a lost close reply retires the earlier handle', async (t) => {
-  const { agneta, client } = await setUp(t, { handlers: { 'session/close': () => null } });
+  let fail = false;
+  const { agneta, client } = await setUp(t, {
+    handlers: {
+      'session/close': () => null,
+      'session/load': (message, peer) => {
+        peer.notify('session/update', update(message.params.sessionId, text('Replayed')));
+        return fail ? { error: { code: -32603, message: 'Internal error' } } : undefined;
+      }
+    }
+  });
   const old = await client.newSession();
+  const oldUpdates = [];
+  old.on('update', (u) => oldUpdates.push(u));
   await assert.rejects(old.close({ timeout: 50 }), TimeoutError);
+  // A load that fails gives the id back to the earlier handle, and its replay goes nowhere.
+  fail = true;
+  await assert.rejects(client.loadSession(old.id));
+  assert.equal(client.session(old.id), old);
+  assert.equal(old.ended, null);
+  fail = false;
   const current = await client.loadSession(old.id);
+  // The replay reaches the new handle, never the earlier one.
+  assert.deepEqual(current.history.map(({ sessionUpdate }) => sessionUpdate), ['agent_message_chunk']);
+  assert.deepEqual(oldUpdates, []);
   assert.deepEqual(old.ended, { reason: 'closed' });
   await old.close();
   assert.equal(agneta.calls('session/close').length, 1);
