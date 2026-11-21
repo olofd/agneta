@@ -285,12 +285,14 @@ export class BenchRun extends EventEmitter {
       clearTimeout(timer);
     }
     turn.ended = Date.now();
-    this.phase = this.session ? 'ready' : 'ended';
-    this.status = turn.error ? turn.error
-      : turn.deadline ? 'Stopped at the scenario\'s time limit.'
-      : turn.limit ? `Stopped at Agneta's ${turn.limit.limit} limit.`
-      : turn.stopReason === 'cancelled' ? 'Turn stopped.'
-      : 'Ready';
+    if (this.session) {
+      this.phase = 'ready';
+      this.status = turn.error ? turn.error
+        : turn.deadline ? 'Stopped at the scenario\'s time limit.'
+        : turn.limit ? `Stopped at Agneta's ${turn.limit.limit} limit.`
+        : turn.stopReason === 'cancelled' ? 'Turn stopped.'
+        : 'Ready';
+    }
     const calls = turn.usage?.modelCalls;
     this.#log(`turn ended: ${turn.error ?? turn.stopReason ?? 'no stop reason'} after ${((turn.ended - turn.started) / 1000).toFixed(0)} s${Number.isInteger(calls) ? `, ${calls} model calls` : ''}`);
     this.#change();
@@ -356,7 +358,7 @@ export class BenchRun extends EventEmitter {
     return this.verdict;
   }
 
-  /** The session ended in Agneta: the user's Stop, the engine exiting, or a limit Agneta enforced. */
+  /** Keeps Agneta's explanation visible after the outstanding prompt settles. */
   #ended(end) {
     if (end.reason !== 'stopped') return;
     this.#log(`session stopped by ${end.stoppedBy}`);
@@ -364,7 +366,11 @@ export class BenchRun extends EventEmitter {
     this.session = null;
     this.#session = null;
     this.phase = 'ended';
-    this.status = end.stoppedBy === 'user' ? 'Stopped in Agneta.' : end.stoppedBy === 'limit' ? 'Stopped at its limit.' : 'The engine stopped.';
+    const reason = {
+      user: 'Stopped in Agneta.', limit: 'Stopped at its limit.', engine: 'The engine stopped.',
+      reach: 'A tool socket or port is no longer reachable.'
+    }[end.stoppedBy] ?? 'The session stopped.';
+    this.status = end.detail ? `${reason} ${end.detail}` : reason;
     this.#change();
   }
 
