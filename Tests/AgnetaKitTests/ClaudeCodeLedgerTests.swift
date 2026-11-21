@@ -102,11 +102,12 @@ import Testing
         let ledger = try account.ledger()
         #expect(ledger.read().usage.map { $0["id"]?.stringValue } == ["msg_a", "msg_sub"])
 
-        // A session folder that's a link to another task's: not followed.
+        // A session folder that's a link to another task's: not followed. The other task's folder holds a final call
+        // of its own, so following the link would show it.
         try FileManager.default.removeItem(at: account.project.appending(path: Self.session))
-        try FileManager.default.createSymbolicLink(
-            at: account.project.appending(path: Self.session),
-            withDestinationURL: account.config.appending(path: "projects/-other", directoryHint: .isDirectory))
+        let otherTask = account.config.appending(path: "projects/-other", directoryHint: .isDirectory)
+        try account.append(Self.line("msg_other", output: 6, stop: "end_turn"), to: otherTask.appending(path: "subagents/agent-x.jsonl"))
+        try FileManager.default.createSymbolicLink(at: account.project.appending(path: Self.session), withDestinationURL: otherTask)
         try account.append(Self.line("msg_b", output: 5, stop: "end_turn"), to: account.transcript)
         #expect(ledger.read().usage.map { $0["id"]?.stringValue } == ["msg_b"])
 

@@ -426,7 +426,7 @@ The result:
 
 | Method | Effect |
 | --- | --- |
-| `agneta/steer {"sessionId", "prompt": [blocks]}` | Adds input to the running turn. Returns `{"delivery": "accepted", "runId"}`. Error `-32010` when no turn is running, or it ended before the input arrived |
+| `agneta/steer {"sessionId", "prompt": [blocks]}` | Adds input to the running turn. Returns `{"delivery": "accepted", "runId"}`. Error `-32010` when no turn is running, or it ended before the input arrived. On Claude Code a turn's end can take up to a second after its last answer, while Agneta reads that call's final usage from the session transcript: a steer then gets `-32010`, and the input goes in as the next prompt |
 | `agneta/instructions/set {"sessionId", "text", "mode": "replace" \| "append", "key"?}` | `replace` (the default) sets the instructions; `append` adds a named part (`key`, default `app`) that a later append with the same key replaces |
 | `session/cancel` (notification) | Ends the running turn with `cancelled` |
 | `session/close` | Ends the session and, if it has one of its own, its engine |
