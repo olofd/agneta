@@ -193,6 +193,13 @@ import Testing
         }
         let lines = text.split(separator: "\n").compactMap { try? JSONCoding.decode(Data($0.utf8)) }
         #expect(lines.count == Self.records.count)
+        #expect(TraceSummary(records: lines).input == 150)
+        #expect(lines[9]["ledger"]?["input"] == 150)
+        let redactor = TraceRedactor()
+        let turn = redactor.redact(["type": "event", "kind": "turn", "callLedger": ["input": 123]])
+        #expect(turn["callLedger"]?["input"] == 123)
+        let tool = redactor.redact(["type": "event", "kind": "tool-input", "input": 123])
+        #expect(tool["input"]?.stringValue?.hasPrefix("‹content removed") == true)
         // Structure, timing and what's structural stay; one tool keeps one token within the export.
         #expect(
             lines[2]["tool"]?.stringValue?.hasPrefix("‹name ") == true && lines[2]["tool"] == lines[4]["tool"]

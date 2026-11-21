@@ -239,22 +239,29 @@ public struct TraceRedactor: Sendable {
         salt = SecureRandom.bytes(16)
     }
 
-    public func redact(_ value: JSONValue) -> JSONValue { redact(value, path: []) }
+    public func redact(_ value: JSONValue) -> JSONValue {
+        let kind = value["type"] == "event" ? value["kind"]?.stringValue : nil
+        return redact(value, path: [], eventKind: kind)
+    }
 
-    private func redact(_ value: JSONValue, path: [String]) -> JSONValue {
+    private func redact(_ value: JSONValue, path: [String], eventKind: String?) -> JSONValue {
         switch value {
         case .array(let items):
-            return .array(items.map { redact($0, path: path) })
+            return .array(items.map { redact($0, path: path, eventKind: nil) })
         case .object(let fields):
             let toolEvent = ["tool-call", "tool-input"].contains(fields["kind"]?.stringValue ?? "")
             var out: [String: JSONValue] = [:]
+            let usage = (eventKind == "model-call" && path.isEmpty)
+                || (eventKind == "turn" && (path == ["ledger"] || path == ["callLedger"]))
             for (key, field) in fields {
-                if TraceExport.contentKeys.contains(key) || (toolEvent && key == "name"), field != .null {
+                if usage && key == "input" && field.intValue != nil {
+                    out[key] = field
+                } else if TraceExport.contentKeys.contains(key) || (toolEvent && key == "name"), field != .null {
                     var text = ""
                     TraceJSON.encode(field, into: &text)
                     out[key] = .string("‹content removed, \(text.utf8.count) bytes›")
                 } else {
-                    out[key] = redact(field, path: path + [key])
+                    out[key] = redact(field, path: path + [key], eventKind: eventKind)
                 }
             }
             return .object(out)
