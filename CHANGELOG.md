@@ -2,7 +2,7 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
-## Unreleased
+## 0.7.0 (2026-11-21)
 
 **For you**
 
