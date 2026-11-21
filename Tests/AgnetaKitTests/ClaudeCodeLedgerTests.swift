@@ -351,7 +351,8 @@ import Testing
         Self.feed(trace, ClaudeCodeUsageTests.assistant("msg_a", output: 2))
         let started = ContinuousClock.now
         let turn = await trace.turnEnded(stopReason: "max_turn_requests", usage: nil, cutOff: true)
-        #expect(ContinuousClock.now - started < .seconds(5))
+        // Not the 30 s grace: judged at 15 s, since a starved CI runner took 5.9 s for what takes 0.01 s here (2026-11-21).
+        #expect(ContinuousClock.now - started < .seconds(15))
         #expect(turn["modelCalls"]?.intValue == 2)
 
         trace.turnStarted(prompt: nil)

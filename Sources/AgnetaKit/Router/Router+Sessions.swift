@@ -682,7 +682,13 @@ extension Router {
         }
         let trace = traces.open(task: task, lease: lease.key, engineSession: engineSession) { trace in
             if let forwarder { trace.writer.observe { forwarder.accept($0) } } // the live app gets `meta` too
-            if let meta { trace.writer.record("meta", meta) }
+            if let meta {
+                trace.writer.record("meta", meta)
+                // On disk before the reply: a load or fork right after it finds the task by this record
+                // (Traces.meta reads the file), and a slow machine answered "Unknown session" to a fork sent at
+                // once (CI, 2026-11-21). One write per opened task.
+                trace.writer.flush()
+            }
         }
         trace.set(billing: accounts[accountID]?.billing ?? "unknown")
         trace.identify(with: lease.engine)

@@ -1577,6 +1577,20 @@ actor FakeEngines: EngineSource {
         }
     }
 
+    /// A task's `meta` record is on disk when `session/new` replies, so a fork or load sent at once finds the task
+    /// (it was written on the trace's queue, and a slow CI runner answered "Unknown session", 2026-11-21).
+    @Test func aNewTasksRecordIsThereWhenItsReplyIs() async throws {
+        let stack = try await Stack.start(port: 47731)
+        defer { stack.stop() }
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("At once")
+        for _ in 0..<5 {
+            let session = try await stack.session(app, account: "brokered")
+            #expect(stack.traces.meta(task: session) != nil, "no meta record for \(session) when its reply came")
+        }
+    }
+
     /// `builtins` in the policy narrow the engine's own tools: Claude Code gets exactly the kept groups' tools, the reply
     /// and the trace say what the session has, and a load or fork keeps the narrowing with the policy. An engine that
     /// can't honour it (Goose without skills, Codex without edit under workspace tools) and an unknown group are refused,
