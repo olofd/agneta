@@ -168,7 +168,8 @@ extension ResultSchema {
         }
         guard var fields = node?.objectValue else { return nil }
         for annotation in ["description", "title", "examples", "$comment", "default"] { fields[annotation] = nil }
-        guard let data = try? JSONCoding.encode(JSONValue.object(fields)), let text = String(data: data, encoding: .utf8),
+        guard let data = try? JSONCoding.encode(JSONValue.object(fields)),
+            let text = String(data: data, encoding: .utf8),
             text.count <= maxLength
         else { return nil }
         return text

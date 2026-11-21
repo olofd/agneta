@@ -79,9 +79,14 @@ import Testing
     }
 
     @Test func explainsCommonMistakes() {
-        #expect(refusal(object(["a": ["type": "string", "nullable": true]]))?.reason.contains(#"["string", "null"]"#) == true)
-        #expect(refusal(object(["a": ["type": "array", "items": [["type": "string"]]]]))?.reason.contains("prefixItems") == true)
-        #expect(refusal(object(["a": ["type": "number", "exclusiveMinimum": true]]))?.reason.contains("draft-04") == true)
+        #expect(
+            refusal(object(["a": ["type": "string", "nullable": true]]))?.reason.contains(#"["string", "null"]"#)
+                == true)
+        #expect(
+            refusal(object(["a": ["type": "array", "items": [["type": "string"]]]]))?.reason.contains("prefixItems")
+                == true)
+        #expect(
+            refusal(object(["a": ["type": "number", "exclusiveMinimum": true]]))?.reason.contains("draft-04") == true)
         #expect(refusal(object(["a": ["$anchor": "x"]]))?.reason.contains("#/$defs/") == true)
         #expect(refusal(object(["a": ["if": ["type": "string"]]]))?.reason.contains("anyOf") == true)
     }
@@ -98,7 +103,9 @@ import Testing
         #expect(refusal(object([:], ["$schema": "https://json-schema.org/draft/2020-12/schema"])) == nil)
         #expect(refusal(object([:], ["$schema": "http://json-schema.org/draft-07/schema#"])) == nil)
         #expect(refusal(object([:], ["$schema": "http://json-schema.org/draft-04/schema#"]))?.path == "/$schema")
-        #expect(refusal(object(["a": ["$schema": "https://json-schema.org/draft/2020-12/schema"]]))?.path == "/properties/a/$schema")
+        #expect(
+            refusal(object(["a": ["$schema": "https://json-schema.org/draft/2020-12/schema"]]))?.path
+                == "/properties/a/$schema")
         #expect(refusal(object([:], ["$id": "https://example.com/s"])) == nil)
         #expect(refusal(object(["a": ["$id": "x"]]))?.path == "/properties/a/$id")
         #expect(refusal(object(["a": ["$defs": ["b": true]]]))?.path == "/properties/a/$defs")
@@ -141,22 +148,29 @@ import Testing
         #expect(refusal(object(["a": ["$ref": "#/$defs/missing"]]))?.path == "/properties/a/$ref")
         #expect(refusal(object(["a": ["$ref": "#/properties/b"]]))?.reason.contains("$defs") == true)
         // definitions (draft-07's name) and escaped names work.
-        let defs = try compile(object(["a": ["$ref": "#/definitions/a~1b"]], ["definitions": ["a/b": ["type": "integer"]]]))
+        let defs = try compile(
+            object(["a": ["$ref": "#/definitions/a~1b"]], ["definitions": ["a/b": ["type": "integer"]]]))
         #expect(defs.validate(["a": 3]).isEmpty && !defs.validate(["a": "x"]).isEmpty)
         let encoded = try compile(object(["a": ["$ref": "#/$defs/x%20y"]], ["$defs": ["x y": ["const": 1]]]))
         #expect(encoded.validate(["a": 1]).isEmpty)
     }
 
     @Test func keywordsBesideARefAreRefusedButAnnotationsAreFine() {
-        #expect(refusal(object(["a": ["$ref": "#/$defs/n", "minimum": 3]], ["$defs": ["n": ["type": "number"]]]))?
-            .path == "/properties/a/minimum")
-        #expect(refusal(object(["a": ["$ref": "#/$defs/n", "description": "d"]], ["$defs": ["n": ["type": "number"]]])) == nil)
+        #expect(
+            refusal(object(["a": ["$ref": "#/$defs/n", "minimum": 3]], ["$defs": ["n": ["type": "number"]]]))?
+                .path == "/properties/a/minimum")
+        #expect(
+            refusal(object(["a": ["$ref": "#/$defs/n", "description": "d"]], ["$defs": ["n": ["type": "number"]]]))
+                == nil)
     }
 
     @Test func refusesASchemaThatReachesItselfWithoutDescending() {
         #expect(refusal(object([:], ["allOf": [["$ref": "#"]]]))?.reason.contains("refers back to itself") == true)
         #expect(
-            refusal(object(["a": ["$ref": "#/$defs/x"]], ["$defs": ["x": ["anyOf": [["$ref": "#/$defs/y"]]], "y": ["not": ["$ref": "#/$defs/x"]]]]))
+            refusal(
+                object(
+                    ["a": ["$ref": "#/$defs/x"]],
+                    ["$defs": ["x": ["anyOf": [["$ref": "#/$defs/y"]]], "y": ["not": ["$ref": "#/$defs/x"]]]]))
                 != nil)
         // A cycle through a property descends, so it's fine.
         #expect(refusal(object(["next": ["$ref": "#"]])) == nil)
@@ -164,10 +178,16 @@ import Testing
 
     @Test func enforcesTheLimits() {
         let tight = ResultSchema.Limits(bytes: 200, depth: 3, nodes: 5, enumValues: 3, patternLength: 5)
-        #expect(refusal(object(["a": ["description": .string(String(repeating: "x", count: 300))]]), limits: tight)?.reason.contains("bytes") == true)
+        #expect(
+            refusal(object(["a": ["description": .string(String(repeating: "x", count: 300))]]), limits: tight)?.reason
+                .contains("bytes") == true)
         #expect(refusal(object(["a": ["not": ["not": ["not": true]]]]), limits: tight)?.reason.contains("nest") == true)
-        #expect(refusal(object(["a": true, "b": true, "c": true, "d": true, "e": true]), limits: tight)?.reason.contains("schemas") == true)
-        #expect(refusal(object(["a": ["enum": [1, 2]], "b": ["enum": [3, 4]]]), limits: tight)?.reason.contains("enum") == true)
+        #expect(
+            refusal(object(["a": true, "b": true, "c": true, "d": true, "e": true]), limits: tight)?.reason.contains(
+                "schemas") == true)
+        #expect(
+            refusal(object(["a": ["enum": [1, 2]], "b": ["enum": [3, 4]]]), limits: tight)?.reason.contains("enum")
+                == true)
         #expect(refusal(object(["a": ["pattern": "abcdef"]]), limits: tight)?.reason.contains("longer than 5") == true)
         // The standard limits fit a realistic schema with room.
         #expect(ResultSchema.Limits.standard.bytes == 16_384 && ResultSchema.Limits.standard.depth == 32)
@@ -185,8 +205,15 @@ import Testing
         #expect(try !valid(["type": "boolean"], 0))
         #expect(try !valid(["type": "object"], []))
         let wrong = try issues(["type": "number"], "12")
-        #expect(wrong == [ResultIssue(path: "/v", keyword: "type", message: "expected a number, got a string", schemaPath: "/properties/v/type")])
-        #expect(try issues(["type": ["integer", "null"]], true).first?.message == "expected a whole number or null, got true")
+        #expect(
+            wrong == [
+                ResultIssue(
+                    path: "/v", keyword: "type", message: "expected a number, got a string",
+                    schemaPath: "/properties/v/type")
+            ])
+        #expect(
+            try issues(["type": ["integer", "null"]], true).first?.message
+                == "expected a whole number or null, got true")
     }
 
     @Test func objectKeywords() throws {
@@ -204,9 +231,15 @@ import Testing
         #expect(pairs.contains("/v/x-1 type"))
         #expect(pairs.contains("/v/other additionalProperties"))
         #expect(pairs.contains("/v/longername maxLength"))
-        #expect(found.contains { $0.path == "/v/other" && $0.message == #""other" isn't one of the allowed properties"# })
-        #expect(try issues(["type": "object", "additionalProperties": ["type": "number"]], ["k": "s"]).map(\.path) == ["/v/k"])
-        #expect(try issues(["type": "object", "minProperties": 2], [:]).first?.message == "must have at least 2 properties, has 0")
+        #expect(
+            found.contains { $0.path == "/v/other" && $0.message == #""other" isn't one of the allowed properties"# })
+        #expect(
+            try issues(["type": "object", "additionalProperties": ["type": "number"]], ["k": "s"]).map(\.path) == [
+                "/v/k"
+            ])
+        #expect(
+            try issues(["type": "object", "minProperties": 2], [:]).first?.message
+                == "must have at least 2 properties, has 0")
     }
 
     @Test func pointersEscapeSlashesAndTildes() throws {
@@ -230,7 +263,8 @@ import Testing
     @Test func uniqueItemsUsesJSONEquality() throws {
         let unique: JSONValue = ["type": "array", "uniqueItems": true]
         #expect(try valid(unique, [1, "1", [1], ["a": 1]]))
-        #expect(try issues(unique, [1, 1.0]).first?.message == "items 0 and 1 are the same; every item must be different")
+        #expect(
+            try issues(unique, [1, 1.0]).first?.message == "items 0 and 1 are the same; every item must be different")
         #expect(try !valid(unique, [["a": 1, "b": 2], ["b": 2, "a": 1]]))
         #expect(try valid(unique, [false, 0]))
         #expect(try valid(["type": "array", "uniqueItems": false], [1, 1]))
@@ -264,13 +298,17 @@ import Testing
     @Test func stringLengthsCountCodePoints() throws {
         #expect(try valid(["type": "string", "maxLength": 1], "💩"))
         #expect(try valid(["type": "string", "minLength": 2, "maxLength": 2], "é😀"))
-        #expect(try issues(["type": "string", "minLength": 3], "ab").first?.message == "must be at least 3 characters long, is 2")
+        #expect(
+            try issues(["type": "string", "minLength": 3], "ab").first?.message
+                == "must be at least 3 characters long, is 2")
     }
 
     @Test func patternsSearchAnywhereUnlessAnchored() throws {
         #expect(try valid(["type": "string", "pattern": "b"], "abc"))
         #expect(try !valid(["type": "string", "pattern": "^b"], "abc"))
-        #expect(try issues(["type": "string", "pattern": "^\\d{4}$"], "12a4").first?.message == "must match the pattern ^\\d{4}$")
+        #expect(
+            try issues(["type": "string", "pattern": "^\\d{4}$"], "12a4").first?.message
+                == "must match the pattern ^\\d{4}$")
     }
 
     @Test func aPatternThatRunsAwayIsStoppedAndTheValueIsNotValid() throws {
@@ -299,7 +337,10 @@ import Testing
     @Test func anyOfReportsTheClosestForm() throws {
         let schema: JSONValue = [
             "anyOf": [
-                ["type": "object", "properties": ["kind": ["const": "a"], "x": ["type": "number"]], "required": ["kind", "x"]],
+                [
+                    "type": "object", "properties": ["kind": ["const": "a"], "x": ["type": "number"]],
+                    "required": ["kind", "x"]
+                ],
                 ["type": "string"]
             ]
         ]
@@ -307,7 +348,8 @@ import Testing
         #expect(try valid(schema, ["kind": "a", "x": 1]))
         let found = try issues(schema, ["kind": "a", "x": "1"])
         #expect(found.first?.keyword == "anyOf")
-        #expect(found.first?.message == "doesn't match any of the 2 allowed forms; the closest, form #1, fails as follows")
+        #expect(
+            found.first?.message == "doesn't match any of the 2 allowed forms; the closest, form #1, fails as follows")
         #expect(found.dropFirst().map(\.path) == ["/v/x"])
     }
 
@@ -315,7 +357,9 @@ import Testing
         let schema: JSONValue = ["oneOf": [["type": "integer"], ["type": "number", "minimum": 2]]]
         #expect(try valid(schema, 1))
         #expect(try valid(schema, 2.5))
-        #expect(try issues(schema, 3).first?.message == "matches 2 of the allowed forms (#1, #2) but must match exactly one")
+        #expect(
+            try issues(schema, 3).first?.message == "matches 2 of the allowed forms (#1, #2) but must match exactly one"
+        )
         #expect(try issues(schema, "x").first?.keyword == "oneOf")
     }
 
@@ -328,7 +372,11 @@ import Testing
 
     @Test func booleanSchemas() throws {
         #expect(try valid(true, ["anything": [1]]))
-        #expect(try issues(false, 1) == [ResultIssue(path: "/v", keyword: "false", message: "no value is allowed here", schemaPath: "/properties/v")])
+        #expect(
+            try issues(false, 1) == [
+                ResultIssue(
+                    path: "/v", keyword: "false", message: "no value is allowed here", schemaPath: "/properties/v")
+            ])
     }
 
     @Test func issuesAreCappedAndInKeyOrder() throws {
@@ -346,7 +394,9 @@ import Testing
     }
 
     @Test func checkingStopsAtItsBoundAndSaysSo() throws {
-        let schema = try compile(["type": "object", "properties": ["xs": ["type": "array", "items": ["type": "integer"]]]])
+        let schema = try compile([
+            "type": "object", "properties": ["xs": ["type": "array", "items": ["type": "integer"]]]
+        ])
         let big: JSONValue = ["xs": .array((0..<10_000).map { .int(Int64($0)) })]
         #expect(schema.validate(big).isEmpty)
         let found = schema.validate(big, limits: .init(checks: 100, patternTime: .milliseconds(250), issues: 20))
@@ -360,7 +410,9 @@ import Testing
         let started = ContinuousClock.now
         #expect(schema.validate(["xs": .array(items)]).isEmpty)
         items.append(.double(5.0))
-        #expect(schema.validate(["xs": .array(items)]).first?.message == "items 5 and 100000 are the same; every item must be different")
+        #expect(
+            schema.validate(["xs": .array(items)]).first?.message
+                == "items 5 and 100000 are the same; every item must be different")
         #expect(ContinuousClock.now - started < .seconds(5))
     }
 

@@ -64,7 +64,8 @@ private struct Evaluator {
         checksLeft -= 1
         guard checksLeft >= 0 else {
             stopped = ResultIssue(
-                path: path, keyword: "limit", message: "the value is too large or complex to check within Agneta's limits",
+                path: path, keyword: "limit",
+                message: "the value is too large or complex to check within Agneta's limits",
                 schemaPath: nodes[index].pointer)
             return
         }
@@ -86,8 +87,10 @@ private struct Evaluator {
             return // the other keywords would only repeat that it's the wrong kind of value
         }
         if let values = node.enumValues, !values.contains(where: { JSONEquality.equal($0, value) }) {
-            add("enum", "must be one of \(values.prefix(10).map(Self.preview).joined(separator: ", "))"
-                + (values.count > 10 ? ", … (\(values.count) in all)" : ""))
+            add(
+                "enum",
+                "must be one of \(values.prefix(10).map(Self.preview).joined(separator: ", "))"
+                    + (values.count > 10 ? ", … (\(values.count) in all)" : ""))
         }
         if let constant = node.constant, !JSONEquality.equal(constant, value) {
             add("const", "must be \(Self.preview(constant))")
@@ -104,7 +107,8 @@ private struct Evaluator {
             let branches = node.anyOf.map { attempt($0, value, path: path) }
             if !branches.contains(where: \.isEmpty), stopped == nil {
                 add("anyOf", "doesn't match any of the \(node.anyOf.count) allowed forms" + Self.closest(branches))
-                issues.append(contentsOf: (branches.min { $0.count < $1.count } ?? []).prefix(max(0, cap - issues.count)))
+                issues.append(
+                    contentsOf: (branches.min { $0.count < $1.count } ?? []).prefix(max(0, cap - issues.count)))
             }
         }
         if !node.oneOf.isEmpty {
@@ -432,10 +436,12 @@ enum JSONEquality {
         case .double(let d):
             if d.rounded() == d, abs(d) < 9_223_372_036_854_775_808.0 { return "\(Int64(d))" }
             return "\(d)"
-        case .string(let s): return (try? JSONCoding.encode(JSONValue.string(s))).flatMap { String(data: $0, encoding: .utf8) } ?? s
+        case .string(let s):
+            return (try? JSONCoding.encode(JSONValue.string(s))).flatMap { String(data: $0, encoding: .utf8) } ?? s
         case .array(let items): return "[" + items.map(canonical).joined(separator: ",") + "]"
         case .object(let fields):
-            return "{" + fields.keys.sorted().map { canonical(.string($0)) + ":" + canonical(fields[$0]!) }
+            return "{"
+                + fields.keys.sorted().map { canonical(.string($0)) + ":" + canonical(fields[$0]!) }
                 .joined(separator: ",") + "}"
         }
     }

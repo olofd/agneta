@@ -23,7 +23,9 @@ import Testing
         }
     }
 
-    func declaration(_ value: JSONValue) throws -> ResultDeclaration { try #require(try ResultDeclaration.parse(value)) }
+    func declaration(_ value: JSONValue) throws -> ResultDeclaration {
+        try #require(try ResultDeclaration.parse(value))
+    }
 
     // MARK: Declarations
 
@@ -66,7 +68,10 @@ import Testing
             (["schemas": [.init(stringLiteral: String(repeating: "a", count: 33)): invoice]], "isn't a usable name"),
             (["schemas": ["invoice": invoice], "any": true], "unknown field any"),
             (["schemas": ["invoice": ["type": "string"]]], #"schema "invoice" the schema's root must have"#),
-            (["schemas": ["invoice": ["type": "object", "properties": ["a": ["nullable": true]]]]], "at /properties/a/nullable")
+            (
+                ["schemas": ["invoice": ["type": "object", "properties": ["a": ["nullable": true]]]]],
+                "at /properties/a/nullable"
+            )
         ]
         for (value, expected) in cases {
             let reason = refusal(value)
@@ -96,8 +101,12 @@ import Testing
     @Test func aPromptAsksByNameOrTakesEvery() throws {
         let session = try declaration(["schemas": ["invoice": invoice, "contact": contact], "every": "invoice"])
         #expect(try ResultRequest.parse(nil, declaration: session) == ResultRequest(name: "invoice", attempts: 3))
-        #expect(try ResultRequest.parse(["name": "contact"], declaration: session) == ResultRequest(name: "contact", attempts: 3))
-        #expect(try ResultRequest.parse(["attempts": 5], declaration: session) == ResultRequest(name: "invoice", attempts: 5))
+        #expect(
+            try ResultRequest.parse(["name": "contact"], declaration: session)
+                == ResultRequest(name: "contact", attempts: 3))
+        #expect(
+            try ResultRequest.parse(["attempts": 5], declaration: session)
+                == ResultRequest(name: "invoice", attempts: 5))
         #expect(try ResultRequest.parse(false, declaration: session) == nil)
         let plain = try declaration(["schemas": ["contact": contact]])
         #expect(try ResultRequest.parse(nil, declaration: plain) == nil)
@@ -134,7 +143,8 @@ import Testing
     // MARK: The turn
 
     func turn(attempts: Int = 3) throws -> ResultTurn {
-        try ResultTurn(request: ResultRequest(name: "invoice", attempts: attempts), schema: ResultSchema.compile(invoice))
+        try ResultTurn(
+            request: ResultRequest(name: "invoice", attempts: attempts), schema: ResultSchema.compile(invoice))
     }
 
     let good: JSONValue = ["number": "A-1", "total": 12.5]
@@ -173,7 +183,9 @@ import Testing
 
     @Test func attemptsRunOut() throws {
         var t = try turn(attempts: 2)
-        guard case .refused = t.submit(tool: "submit_invoice", arguments: bad) else { Issue.record("not refused"); return }
+        guard case .refused = t.submit(tool: "submit_invoice", arguments: bad) else {
+            Issue.record("not refused"); return
+        }
         guard case .exhausted = t.submit(tool: "submit_invoice", arguments: ["number": 1]) else {
             Issue.record("not exhausted")
             return
@@ -236,13 +248,16 @@ import Testing
         #expect(
             told.text
                 == "The result doesn't match its schema, so it wasn't accepted. Fix these and call submit_invoice again "
-                + "(2 attempts left):\n- /total: must be at least 0, is -3 (schema: {\"minimum\":0,\"type\":\"number\"})")
+                + "(2 attempts left):\n- /total: must be at least 0, is -3 (schema: {\"minimum\":0,\"type\":\"number\"})"
+        )
         let accepted = ResultWording.answer(.accepted, tool: "submit_invoice", schema: t.schema)
         #expect(!accepted.isError && accepted.text.contains("Don't call submit_invoice again"))
         for other: ResultTurn.Answer in [.alreadyReceived, .wrongTool(expected: "submit_invoice"), .noAttemptsLeft] {
             #expect(ResultWording.answer(other, tool: "submit_invoice", schema: t.schema).isError)
         }
-        #expect(ResultWording.answer(.refused(issues: [], left: 1), tool: "x", schema: t.schema).text.contains("(1 attempt left)"))
+        #expect(
+            ResultWording.answer(.refused(issues: [], left: 1), tool: "x", schema: t.schema).text.contains(
+                "(1 attempt left)"))
         #expect(ResultWording.note(tool: "submit_invoice").contains("call the tool submit_invoice once"))
     }
 

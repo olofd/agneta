@@ -35,7 +35,8 @@ public struct ResultSchema: Sendable {
         /// The longest `pattern` (or `patternProperties` key), in characters.
         public var patternLength: Int
 
-        public static let standard = Limits(bytes: 16_384, depth: 32, nodes: 1_000, enumValues: 1_000, patternLength: 1_000)
+        public static let standard = Limits(
+            bytes: 16_384, depth: 32, nodes: 1_000, enumValues: 1_000, patternLength: 1_000)
     }
 
     /// The JSON types a value can have, as `type` names them.
