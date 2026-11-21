@@ -175,6 +175,7 @@ public final class Traces: @unchecked Sendable {
 
     /// One line of a dedicated engine's stderr. A shared engine's lines stay in its engine.log only.
     public func stderr(lease: String, line: String) {
+        guard !EngineKeys.isShared(lease) else { return }
         let sessions = tasks(onLease: lease)
         guard sessions.count == 1 else { return }
         sessions[0].writer.record("stderr", ["text": .string(line)], droppable: true)

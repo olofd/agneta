@@ -19,6 +19,28 @@ import Testing
         }
     }
 
+    @Test func sharedEngineStderrStaysOutOfTaskTraces() throws {
+        let folder = try folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let traces = Traces(folder: folder)
+        let shared = EngineKeys.shared(account: "account", engine: "goose")
+        _ = traces.open(task: "first", lease: shared, engineSession: "one")
+        traces.stderr(lease: shared, line: "before second task")
+        _ = traces.open(task: "second", lease: shared, engineSession: "two")
+        traces.stderr(lease: shared, line: "during both tasks")
+        traces.close(task: "first")
+        traces.stderr(lease: shared, line: "after first task")
+        traces.close(task: "second")
+        _ = traces.open(task: "dedicated", lease: "account/dedicated", engineSession: "three")
+        traces.stderr(lease: "account/dedicated", line: "dedicated output")
+        traces.close(task: "dedicated")
+
+        for task in ["first", "second", "dedicated"] {
+            let lines = try records(traces.file(for: task)).filter { $0["type"] == "stderr" }
+            #expect(lines.compactMap { $0["text"]?.stringValue } == (task == "dedicated" ? ["dedicated output"] : []))
+        }
+    }
+
     @Test func masksSecretsButNotUsage() {
         let mask = SecretMask()
         mask.register("app-token-1234567890")
