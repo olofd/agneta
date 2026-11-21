@@ -318,7 +318,7 @@ extension Router {
         guard let grant = app.grant else { return .failure(Self.notPaired) }
         if method == "agneta/access" { return .success(access(grant)) }
         if method == "session/new" { return await newSession(appID, grant: grant, params: params) }
-        if method == "agneta/trace/read" { return await readTrace(grant: grant, params: params) }
+        if method == "agneta/trace/read" { return await readTrace(appID, grant: grant, params: params) }
         if method == "session/load" { return await loadSession(appID, grant: grant, params: params) }
         if method == "agneta/fork" { return await forkSession(appID, grant: grant, params: params) }
         guard Self.sessionMethods.contains(method) else {
@@ -625,10 +625,9 @@ extension Router {
     }
 
     /// `agneta/trace/read`: a page of one of this app's own tasks, running or finished.
-    func readTrace(grant: Grant, params: JSONValue?) async -> Result<JSONValue, RPCError> {
+    func readTrace(_ appID: UUID, grant: Grant, params: JSONValue?) async -> Result<JSONValue, RPCError> {
         guard let traces else { return .failure(RPCError(code: RPCError.methodNotFound, message: "Traces are off")) }
-        guard let task = params?["sessionId"]?.stringValue, !task.contains("/"), !task.contains(".."),
-            traces.meta(task: task)?["app"]?["grant"]?.stringValue == grant.id
+        guard let task = params?["sessionId"]?.stringValue, !task.contains("/"), !task.contains("..")
         else {
             return .failure(RPCError(code: RPCError.invalidParams, message: "Unknown session"))
         }
@@ -638,8 +637,12 @@ extension Router {
         let after = params?["after"]?.intValue ?? 0
         guard
             let page = await Task.detached(
-                priority: .utility, operation: { traces.read(task: task, after: after, types: types, limit: limit) }
-            ).value
+                priority: .utility,
+                operation: { () -> (records: [JSONValue], next: Int64?, complete: Bool)? in
+                    guard traces.meta(task: task)?["app"]?["grant"]?.stringValue == grant.id else { return nil }
+                    return traces.read(task: task, after: after, types: types, limit: limit)
+                }
+            ).value, apps[appID]?.grant?.id == grant.id
         else {
             return .failure(RPCError(code: RPCError.invalidParams, message: "Unknown session"))
         }

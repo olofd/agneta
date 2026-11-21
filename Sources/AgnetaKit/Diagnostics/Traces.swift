@@ -143,13 +143,13 @@ public final class Traces: @unchecked Sendable {
         guard let handle = try? FileHandle(forReadingFrom: file(for: task)) else { return nil }
         defer { try? handle.close() }
         var splitter = LineSplitter(limit: 64 << 20)
-        while true {
-            let data = handle.availableData
-            if data.isEmpty { return nil }
-            for line in (try? splitter.push(data)) ?? [] {
+        while let chunk = try? handle.read(upToCount: 16 << 10), !chunk.isEmpty {
+            guard let lines = try? splitter.push(chunk) else { return nil }
+            for line in lines {
                 if let record = try? JSONCoding.decode(line), record["type"]?.stringValue == "meta" { return record }
             }
         }
+        return nil
     }
 
     /// Record types an app receives unless it asks otherwise: everything except the raw frames.

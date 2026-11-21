@@ -59,6 +59,21 @@ import Testing
         }
     }
 
+    @Test func metadataCanBeReadIndependentlyOfAnOversizedTail() throws {
+        let folder = try folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let traces = Traces(folder: folder)
+        let file = traces.file(for: "task")
+        try Data(#"{"type":"meta","app":{"grant":"owner"}}"#.utf8).write(to: file)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data([0x0A]))
+        // A sparse tail larger than the reader's single-line limit.
+        try handle.truncate(atOffset: 65 << 20)
+        try handle.close()
+        #expect(traces.meta(task: "task")?["app"]?["grant"] == "owner")
+    }
+
     @Test func masksSecretsButNotUsage() {
         let mask = SecretMask()
         mask.register("app-token-1234567890")
