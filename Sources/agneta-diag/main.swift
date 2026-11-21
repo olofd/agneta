@@ -224,16 +224,23 @@ case "tail":
     }
     var splitter = LineSplitter(limit: 64 << 20)
     var ended = false
-    while true {
-        let data = handle.availableData
-        for line in (try? splitter.push(data)) ?? [] {
-            guard let record = try? JSONCoding.decode(line) else { continue }
-            print(asJSON ? String(decoding: line, as: UTF8.self) : describe(record))
-            if record["type"]?.stringValue == "end" { ended = true }
+    do {
+        while true {
+            guard let data = try handle.read(upToCount: 64 << 10), !data.isEmpty else {
+                if !follow || ended { break }
+                usleep(200_000)
+                continue
+            }
+            for line in try splitter.push(data) {
+                guard let record = try? JSONCoding.decode(line) else { continue }
+                print(asJSON ? String(decoding: line, as: UTF8.self) : describe(record))
+                ended = record["type"]?.stringValue == "end"
+            }
+            if data.last != 0x0A { ended = false } // another record is still being written
+            fflush(stdout)
         }
-        fflush(stdout)
-        if !follow || ended { break }
-        if data.isEmpty { usleep(200_000) }
+    } catch {
+        fail("can't read \(file.path(percentEncoded: false)): \(error)")
     }
 case "log":
     let lines = Int(option("--lines") ?? "50") ?? 50
