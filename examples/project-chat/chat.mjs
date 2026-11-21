@@ -350,7 +350,11 @@ export class ProjectChat extends EventEmitter {
     });
     session.on('ended', (end) => {
       if (this.#session !== session || end.reason !== 'stopped') return;
-      const status = end.stoppedBy === 'user' ? `Stopped in ${this.name}.` : 'The engine stopped.';
+      const reason = {
+        user: `Stopped in ${this.name}.`, engine: 'The engine stopped.', limit: 'The session reached its limit.',
+        reach: 'A project tool is no longer reachable.'
+      }[end.stoppedBy] ?? 'The session stopped.';
+      const status = end.detail ? `${reason} ${end.detail}` : reason;
       this.#dropSession();
       // A close in progress still owns the reset.
       if (this.view.phase === 'resetting') return;
