@@ -289,13 +289,13 @@ extension Router {
     }
 
     /// Takes back a session whose opening failed, unless it ended meanwhile: then `end()` already let it go.
-    func abandon(_ id: String, generation: UUID, lease: EngineLease) async {
-        guard current(id, generation) else { return }
-        if let session = sessions.removeValue(forKey: id) {
-            byEngine.removeValue(forKey: key(session.lease.key, session.engineSession))
-        }
+    func abandon(_ id: String, generation: UUID) async {
+        guard current(id, generation), let session = sessions.removeValue(forKey: id) else { return }
+        byEngine.removeValue(forKey: key(session.lease.key, session.engineSession))
+        traces?.session(id)?.writer.record("end", [:])
         traces?.close(task: id)
-        await engines.release(lease)
+        await Self.closeOnEngine(session)
+        await engines.release(session.lease)
     }
 
     /// Shows an opened session in Agneta's UI. Only announced sessions are announced as ended.
@@ -373,6 +373,10 @@ extension Router {
         case .success(let started): lease = started
         case .failure(let error): return .failure(error)
         }
+        if let refusal = refusal(appID, grant, plan, counted: true) {
+            await engines.release(lease)
+            return .failure(refusal)
+        }
         beginOpening(lease.key)
         defer { endOpening(lease.key) }
         let engineSession: String
@@ -396,6 +400,7 @@ extension Router {
         result = await withDefaults(result, account: plan.account, lease: lease, engineSession: engineSession)
         // The app may have gone or lost access while the engine started: nothing to hand the session to.
         if let refusal = refusal(appID, grant, plan, counted: true) {
+            await Self.closeOnEngine(lease, session: engineSession)
             await engines.release(lease)
             return .failure(refusal)
         }
@@ -406,10 +411,14 @@ extension Router {
         do {
             try await prepare(lease, engineSession, instructions: plan.instructions)
         } catch {
-            await abandon(id, generation: generation, lease: lease)
+            await abandon(id, generation: generation)
             return .failure(engineFailure(error, account: plan.account, otherwise: "The engine stopped"))
         }
         guard current(id, generation) else { return .failure(Self.endedWhileOpening) }
+        if let refusal = refusal(appID, grant, plan, counted: true) {
+            await abandon(id, generation: generation)
+            return .failure(refusal)
+        }
         if let traces {
             openTrace(
                 traces, task: id, grant: grant, accountID: plan.account, lease: lease, engineSession: engineSession,
@@ -499,6 +508,10 @@ extension Router {
             // Ended while the engine replayed it (the app went or lost access, or the user stopped it): end() has
             // already let it go, and nothing may announce it now.
             guard current(id, generation) else { return .failure(Self.endedWhileOpening) }
+            if let refusal = refusal(appID, grant, plan) {
+                await abandon(id, generation: generation)
+                return .failure(refusal)
+            }
             announce(
                 id, grant: grant, account: plan.account, sandbox: plan.sandbox,
                 title: original?["_meta"]?["agneta/task"]?["title"]?.stringValue ?? "AI task",
@@ -508,7 +521,7 @@ extension Router {
             if current(id, generation) {
                 trace.writer.record("lifecycle", ["event": "resume-failed", "reason": .string("\(error)")])
             }
-            await abandon(id, generation: generation, lease: lease)
+            await abandon(id, generation: generation)
             return .failure(
                 engineFailure(error, account: plan.account, otherwise: "The engine couldn't resume the session"))
         }
@@ -592,6 +605,10 @@ extension Router {
         case .success(let started): lease = started
         case .failure(let error): return .failure(error)
         }
+        if let refusal = refusal(appID, grant, plan, counted: true) {
+            await engines.release(lease)
+            return .failure(refusal)
+        }
         beginOpening(lease.key)
         defer { endOpening(lease.key) }
         let engineSession: String, imported: JSONValue
@@ -607,6 +624,7 @@ extension Router {
                 engineFailure(error, account: plan.account, otherwise: "The engine couldn't fork the session"))
         }
         if let refusal = refusal(appID, grant, plan, counted: true) {
+            await Self.closeOnEngine(lease, session: engineSession)
             await engines.release(lease)
             return .failure(refusal)
         }
@@ -624,6 +642,10 @@ extension Router {
             try await prepare(lease, engineSession, instructions: plan.instructions)
             // Ended while the engine loaded it: end() has let it go, and it gets no trace or announcement.
             guard current(id, generation) else { return .failure(Self.endedWhileOpening) }
+            if let refusal = refusal(appID, grant, plan, counted: true) {
+                await abandon(id, generation: generation)
+                return .failure(refusal)
+            }
             var request = (params ?? [:]).setting("cwd", to: cwd.map(JSONValue.string) ?? .null)
             // The trace keeps what the fork runs with, so loading it later gets the same.
             var recorded = (request["_meta"] ?? [:]).setting(SessionPolicy.key, to: policyValue)
@@ -644,7 +666,7 @@ extension Router {
             opened = true
             return .success(reply(result, id: id, plan: plan, lease: lease, adding: ["forkOf": .string(source)]))
         } catch {
-            await abandon(id, generation: generation, lease: lease)
+            await abandon(id, generation: generation)
             return .failure(
                 engineFailure(error, account: plan.account, otherwise: "The engine couldn't fork the session"))
         }

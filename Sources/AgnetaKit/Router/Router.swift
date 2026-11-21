@@ -710,7 +710,8 @@ public actor Router {
     /// `counted`: a new task the app's meter already counts (`reserveTask`).
     func refusal(_ appID: UUID, _ grant: Grant, _ plan: Plan, counted: Bool = false) -> RPCError? {
         guard !shutDown, let current = apps[appID]?.grant, current.id == grant.id else { return Self.appGone }
-        guard
+        if let refusal = pausedRefusal(plan.account) { return refusal }
+        guard accounts[plan.account] != nil,
             Self.fits(
                 account: plan.account, engine: plan.engine.id, policy: plan.policy, sandbox: plan.sandbox,
                 grant: current)
@@ -762,7 +763,11 @@ public actor Router {
     /// (one that stopped reading, so even a notification can't be written) can't hold up Stop, a disconnect,
     /// Remove Access or close; ending the session afterwards stops a dedicated engine regardless.
     static func closeOnEngine(_ session: Session) async {
-        let peer = session.lease.peer, engineSession = JSONValue.string(session.engineSession)
+        await closeOnEngine(session.lease, session: session.engineSession)
+    }
+
+    static func closeOnEngine(_ lease: EngineLease, session id: String) async {
+        let peer = lease.peer, engineSession = JSONValue.string(id)
         await bounded {
             try? await peer.notify("session/cancel", ["sessionId": engineSession])
             _ = try? await peer.request("session/close", ["sessionId": engineSession])

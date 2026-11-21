@@ -123,6 +123,7 @@ actor FakeEngines: EngineSource {
     private(set) var notifications: [String] = []
     /// How engines answer `session/close`: normally, with an error, or never.
     enum Close { case answer, fail, hang }
+    private(set) var closeRequests = 0
     var close = Close.answer
     func closing(_ mode: Close) { close = mode }
     private var gates: [Gate] = []
@@ -138,6 +139,8 @@ actor FakeEngines: EngineSource {
     private(set) var opened = 0
     private(set) var released = 0
     func loading(takes delay: Duration) { loadDelay = delay }
+    private var onOpen: (@Sendable () async -> Void)?
+    func beforeOpeningReply(_ action: @escaping @Sendable () async -> Void) { onOpen = action }
     /// Whether engines export and import conversations (Goose's fork). Off by default: tests that need a fork to fail
     /// (one that isn't counted, AppLimitsContractTests) rely on an engine that can't export.
     private var exports = false
@@ -218,7 +221,10 @@ actor FakeEngines: EngineSource {
         func update(_ update: JSONValue) async {
             try? await engine.notify("session/update", ["sessionId": session, "update": update])
         }
-        if method == "session/new" || method == "session/load" { opening.append((method, params ?? .null)) }
+        if method == "session/new" || method == "session/load" {
+            opening.append((method, params ?? .null))
+            await onOpen?()
+        }
         switch method {
         case "session/new":
             // As real engines may: an update for the new session before the answer that names it.
@@ -320,6 +326,7 @@ actor FakeEngines: EngineSource {
         case "_goose/unstable/session/import" where exports:
             return .success(["sessionId": .string("e\(n)-imported"), "messageCount": 2])
         case "session/close":
+            closeRequests += 1
             switch close {
             case .answer: return .success([:])
             case .fail: return .failure(RPCError(code: RPCError.internalError, message: "close failed"))
@@ -1034,6 +1041,40 @@ actor FakeEngines: EngineSource {
         #expect(
             try stack.records(session).contains { $0["kind"]?.stringValue == "rate-limited" && $0["resetsAt"] != .null }
         )
+    }
+
+    @Test func pausingDuringAnOpeningReplyPreventsPublication() async throws {
+        let stack = try await Stack.start(port: 47685)
+        defer { stack.stop() }
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Pause during open")
+        let source = try await stack.session(app, account: "brokered", tools: "workspace")
+        _ = try await app.request("session/close", ["sessionId": .string(source)])
+        let params: JSONValue = ["sessionId": .string(source), "mcpServers": []]
+        await stack.engines.exporting(true)
+        await stack.engines.beforeOpeningReply { [weak router = stack.router] in
+            await router?.setPaused("brokered", true)
+        }
+        for method in ["session/new", "session/load", "agneta/fork"] {
+            await stack.router.setPaused("brokered", false)
+            do {
+                if method == "session/new" {
+                    _ = try await stack.session(app, account: "brokered")
+                } else {
+                    _ = try await app.request(method, params)
+                }
+                Issue.record("\(method) finished opening after Pause")
+            } catch let error as RPCError {
+                #expect(error.code == -32013)
+                #expect(error.data?["agneta"]?["paused"] == "brokered")
+            }
+            #expect(await stack.router.infos.isEmpty)
+            #expect(await stack.router.sessions.isEmpty)
+        }
+        let opened = await stack.engines.opened
+        #expect(await stack.engines.released == opened)
+        #expect(await stack.engines.closeRequests == 4) // the original and all three refused sessions
     }
 
     /// Pausing starts nothing new on the account: no session opens by any path, no turn begins, and a turn waiting
