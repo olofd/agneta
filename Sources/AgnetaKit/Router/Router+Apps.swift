@@ -567,7 +567,14 @@ extension Router {
                 }
                 if current(id, generation) { onEvent(.turnEnded(id, stopReason: "error")) }
             }
-            return .failure(RPCError(code: RPCError.internalError, message: "The engine stopped"))
+            // As for an engine's error: the turn's result goes back with it (a value accepted before the engine stopped).
+            var data: JSONValue?
+            if method == "session/prompt",
+                let report = closeResult(id, generation: generation, stopReason: "error", stopped: true)
+            {
+                data = ["agneta": ["result": report]]
+            }
+            return .failure(RPCError(code: RPCError.internalError, message: "The engine stopped", data: data))
         }
     }
 

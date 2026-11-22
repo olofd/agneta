@@ -366,7 +366,7 @@ How the engine offers your MCP tools to the model. `{"load": "always"}` puts eve
 | `instructionsBetweenTurns` | `agneta/instructions/set` works |
 | `reportsCost` | Per-call cost is known while the turn runs, so `maxCostUSD` can be enforced |
 
-- `_meta.agneta.results`, for a session that declared [structured results](#structured-results): `{"declared": [names], "every": name or null, "mechanism": "tool"}`.
+- `_meta.agneta.results`, for a session that declared [structured results](#structured-results): `{"declared": [names], "every": name or null, "mechanism": "tool", "schemas": {name: schema}}`.
 - `configOptions` and `modes`: the engine's own, passed through (model, thinking effort, mode, …).
 
 **Only Agneta's methods.** An app calls only the methods on this page. Anything else, including an engine's own methods, is refused with `-32601`, and notifications other than `session/cancel` are dropped: an engine's methods would bypass the checks made when the session started. Engine extras are reached through Agneta's methods (`agneta/steer`, `agneta/instructions/set`), which each engine's adapter maps.
@@ -487,9 +487,9 @@ Schemas are declared when a session opens (`session/new`, `session/load`, `agnet
 - **`schemas`**: each named schema becomes a tool the model calls with the value as its arguments. Names are lowercase letters, digits and single underscores, starting with a letter, at most 32 characters; `any` is reserved.
 - **`every`** (optional): the schema every prompt asks for unless it opts out.
 - **The shorthand** `{"schema": {…}}` declares one schema named `result`, asked for on every prompt: a one-shot extraction.
+- **The reply** of `session/new`, `session/load` and `agneta/fork` says what the session declared, schemas included, in `_meta.agneta.results`: `{"declared", "every", "mechanism", "schemas"}`, so a client resuming a task in a new process can rebuild them.
 - **Limits:** at most 8 schemas, 32 KB together; each at most 16 KB. They're in the model's tool list on every call.
 - `session/load` and `agneta/fork` keep the original's declaration unless their `_meta` sets one.
-- The reply says what the session can ask for, in `_meta.agneta.results` ([The result](#the-result)).
 - Anything that doesn't fit (a bad name, an unknown field, a schema outside the subset below) is refused before an engine starts, with `-32602` and `data.agneta.unenforceable: ["agneta/result"]`, `data.agneta.reason` naming what and where.
 
 ### Asking for a result
@@ -523,7 +523,7 @@ The prompt's reply gains `_meta["agneta/result"]`:
 - **`issues`**: each `{"path", "keyword", "message", "schemaPath"}`, `path` a JSON Pointer into the value. At most 20.
 - **`valueOmitted`**: a refused value nested too deeply to carry back is left out and said so.
 - **`attempts`**: the calls of the session's result tools in the turn.
-- A missing or invalid result is still a successful reply: the turn ran and has usage. Errors keep their meaning; when a prompt that asked for a result fails, the error's `data.agneta.result` carries the turn's result: `valid` with the value when one was accepted before the failure, else `missing` with `stopped`.
+- A missing or invalid result is still a successful reply: the turn ran and has usage. Errors keep their meaning; when the turn of a prompt that asked for a result fails once it has started (the engine's error, or the engine stopping), the error's `data.agneta.result` carries the turn's result, by the same rules as a reply: `valid` with the value when one was accepted before the failure, `invalid` when the attempts had run out, else `missing` with `stopped`. A prompt refused before its turn starts (a paused account, a limit the user set, a full queue) has none.
 - While the turn runs, the result tool's calls arrive as ordinary `tool_call` updates, tagged `update._meta.agneta.result: {"name"}`, so an app can show or hide them.
 - Agneta answers the result tool's permission requests itself (it runs nothing), whatever `approval` says.
 
@@ -533,11 +533,12 @@ JSON Schema 2020-12, in a subset every engine can honour. Anything outside it is
 
 - **Supported:** `type` (a name or a list, `null` included), `properties`, `required`, `additionalProperties`, `patternProperties`, `propertyNames`, `minProperties`, `maxProperties`, `items`, `prefixItems`, `minItems`, `maxItems`, `uniqueItems`, `enum`, `const`, `allOf`, `anyOf`, `oneOf`, `not`, `$ref` to a schema within this one (`#`, `#/$defs/…`, any JSON Pointer), `$defs`, `definitions`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minLength`, `maxLength`, `pattern`.
 - **Accepted, not enforced:** `title`, `description`, `default`, `examples`, `format`, `$comment`, `deprecated`, `readOnly`, `writeOnly`, `$schema` (2020-12 or draft-07, read with 2020-12's meaning), `$id` at the root.
-- **Refused:** references to other documents, `$dynamicRef`, `$anchor`, `if`/`then`/`else`, `dependentSchemas`, `dependentRequired`, `contains`, `unevaluated*`, content keywords, keywords beside `$ref` (put them in `allOf`), and any keyword Agneta doesn't know.
+- **Refused:** references to other documents, `$dynamicRef`, `$anchor`, `if`/`then`/`else`, `dependentSchemas`, `dependentRequired`, `contains`, `unevaluated*`, content keywords, constraining keywords beside `$ref` (put them in `allOf` with it; annotations and `$defs` beside it are fine), and any keyword Agneta doesn't know.
 - **The root** must be `"type": "object"`.
 - **Patterns** are ECMA-262: `$` is the end of the value (never before a final newline), and `\d`, `\w` and `\b` are ASCII. Syntax other engines have but ECMA-262 doesn't (inline flags, possessive quantifiers, `\A`, `\z`) is refused.
 - **Equality** is JSON's: `1` and `1.0` are equal, strings compare by code point, and `multipleOf` is exact.
-- **Bounds:** a value nested more than 64 levels, or one that would take too long to check (a pattern that backtracks without end, a huge value against a schema of many choices), is refused as `limit`. A schema whose `anyOf`, `oneOf`, `allOf`, `not` and `$ref` choices add up to more than 1,000 checks for one value is refused when declared.
+- **Bounds:** a value nested more than 64 levels, or one that would take too long to check (a pattern that backtracks without end, a huge value against a schema of many choices), is refused as `limit`. A schema is refused when it's declared if its `anyOf`, `oneOf`, `allOf`, `not` and `$ref` choices add up to more than 1,000 checks for one value, its references and applicators chain more than 64 deep, its schemas nest more than 32 deep, it holds more than 1,000 schemas or more than 1,000 `enum` and `const` values, or a pattern is longer than 1,000 characters.
+- **Issues** are worded for the model, each `path` and `message` cut to 1,000 characters in the reply.
 
 ### Engines
 

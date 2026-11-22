@@ -58,7 +58,10 @@ import Testing
             ])
         let session = try #require(opened["sessionId"]?.stringValue)
         #expect(
-            opened["_meta"]?["agneta"]?["results"] == ["declared": ["result"], "every": "result", "mechanism": "tool"])
+            opened["_meta"]?["agneta"]?["results"]
+                == [
+                    "declared": ["result"], "every": "result", "mechanism": "tool", "schemas": ["result": Self.invoice]
+                ])
         // The engine got Agneta's result server beside the app's (none here), on loopback with its own bearer.
         let servers = try #require(await stack.engines.opening.last?.params["mcpServers"]?.arrayValue)
         #expect(servers.count == 1 && servers[0]["name"] == "agneta-result" && servers[0]["type"] == "http")
@@ -263,13 +266,16 @@ import Testing
         #expect(await server.routeCount == 0)
 
         // Resumed, it declares the same results (kept with the task) through a new route.
-        _ = try await app.request(
+        let resumed = try await app.request(
             "session/load",
             [
                 "sessionId": .string(session),
                 "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)),
                 "mcpServers": []
             ])
+        // The reply carries the schemas, so a client resuming in a new process can rebuild them.
+        #expect(resumed["_meta"]?["agneta"]?["results"]?["schemas"] == ["result": Self.invoice])
+        #expect(resumed["_meta"]?["agneta"]?["results"]?["every"] == "result")
         let loaded = try #require(await stack.engines.opening.last)
         #expect(loaded.method == "session/load")
         let second = try #require(loaded.params["mcpServers"]?.arrayValue?.first { $0["name"] == "agneta-result" })

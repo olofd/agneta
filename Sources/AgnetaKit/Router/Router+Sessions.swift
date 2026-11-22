@@ -334,9 +334,11 @@ extension Router {
         ]
         if let results = plan.results {
             // What the session can ask for, and how its results come back (docs/APP_PROTOCOL.md, Structured results).
+            // The schemas too: a client that resumes or forks a task in a new process can rebuild what it declared.
             agneta["results"] = [
                 "declared": .array(results.names.map(JSONValue.string)),
-                "every": results.every.map(JSONValue.string) ?? .null, "mechanism": "tool"
+                "every": results.every.map(JSONValue.string) ?? .null, "mechanism": "tool",
+                "schemas": results.recorded["schemas"] ?? [:]
             ]
         }
         agneta.merge(extra) { _, new in new }
