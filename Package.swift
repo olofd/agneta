@@ -41,7 +41,7 @@ let package = Package(
         // Swift. Development only, never in the app.
         .target(name: "AgnetaFakes"),
         .executableTarget(name: "agneta-fakes", dependencies: ["AgnetaFakes"]),
-        .testTarget(name: "AgnetaKitTests", dependencies: ["AgnetaKit", "AgnetaFakes"]),
+        .testTarget(name: "AgnetaKitTests", dependencies: ["AgnetaKit", "AgnetaFakes"], exclude: ["Fixtures"]),
         // The app's own logic (approvals, sign-in, the engine library), without its windows.
         .testTarget(name: "AgnetaTests", dependencies: ["Agneta"])
     ]

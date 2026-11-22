@@ -99,7 +99,7 @@ Tools return compact text by default, and JSON with `json: true`. A task can be 
 | Tool | Returns |
 | --- | --- |
 | `list_tasks(app?, limit?, json?)` | Tasks with traces, newest first: id, app, title, account, start, turns, whether it ended |
-| `task_summary(task, json?)` | Turns with time, model calls and tokens; tools by total time, with failures and p95; model usage; shell commands; permission decisions; lifecycle |
+| `task_summary(task, json?)` | Turns with time, model calls and tokens; tools by total time, with failures and p95; model usage; shell commands; permission decisions; each turn's structured result (status, reason, attempts, refused calls); lifecycle |
 | `tool_calls(task, name?, errors_only?, turn?, full?, json?)` | Each call's input, result, status and exact timing; input and result cut to 2,000 characters unless `full` |
 | `model_calls(task, turn?, json?)` | Model calls from the engine's records: model, tokens, cost, compaction |
 | `read_trace(task, after?, types?, limit?)` | Trace records after a sequence number, filtered by type; raw ACP frames only when `types` includes `acp` |

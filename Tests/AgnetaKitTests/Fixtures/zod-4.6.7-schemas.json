@@ -1,0 +1,354 @@
+{
+ "object": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "name": {
+    "type": "string"
+   },
+   "age": {
+    "type": "integer",
+    "minimum": 0,
+    "maximum": 9007199254740991
+   }
+  },
+  "required": [
+   "name",
+   "age"
+  ]
+ },
+ "optional": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "a": {
+    "type": "string"
+   },
+   "b": {
+    "type": [
+     "number",
+     "null"
+    ]
+   }
+  },
+  "required": [
+   "b"
+  ]
+ },
+ "enumLiteral": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "s": {
+    "type": "string",
+    "enum": [
+     "draft",
+     "sent"
+    ]
+   },
+   "k": {
+    "type": "string",
+    "const": "x"
+   }
+  },
+  "required": [
+   "s",
+   "k"
+  ]
+ },
+ "array": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "xs": {
+    "minItems": 1,
+    "maxItems": 5,
+    "type": "array",
+    "items": {
+     "type": "object",
+     "properties": {
+      "t": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "t"
+     ]
+    }
+   }
+  },
+  "required": [
+   "xs"
+  ]
+ },
+ "strings": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "e": {
+    "type": "string",
+    "format": "email",
+    "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+   },
+   "u": {
+    "type": "string",
+    "format": "uri"
+   },
+   "id": {
+    "type": "string",
+    "format": "uuid",
+    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+   },
+   "d": {
+    "type": "string",
+    "format": "date",
+    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+   },
+   "r": {
+    "type": "string",
+    "pattern": "^[A-Z]{3}$"
+   },
+   "l": {
+    "type": "string",
+    "minLength": 2,
+    "maxLength": 9
+   }
+  },
+  "required": [
+   "e",
+   "u",
+   "id",
+   "d",
+   "r",
+   "l"
+  ]
+ },
+ "union": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "v": {
+    "type": [
+     "string",
+     "number"
+    ]
+   }
+  },
+  "required": [
+   "v"
+  ]
+ },
+ "discriminated": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "ev": {
+    "oneOf": [
+     {
+      "type": "object",
+      "properties": {
+       "type": {
+        "type": "string",
+        "const": "a"
+       },
+       "x": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "type",
+       "x"
+      ]
+     },
+     {
+      "type": "object",
+      "properties": {
+       "type": {
+        "type": "string",
+        "const": "b"
+       },
+       "y": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "type",
+       "y"
+      ]
+     }
+    ]
+   }
+  },
+  "required": [
+   "ev"
+  ]
+ },
+ "record": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "m": {
+    "type": "object",
+    "propertyNames": {
+     "type": "string"
+    },
+    "additionalProperties": {
+     "type": "number"
+    }
+   }
+  },
+  "required": [
+   "m"
+  ]
+ },
+ "defaults": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "n": {
+    "default": 3,
+    "type": "number"
+   },
+   "b": {
+    "default": false,
+    "type": "boolean"
+   }
+  }
+ },
+ "nested": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "a": {
+    "type": "object",
+    "properties": {
+     "b": {
+      "type": "object",
+      "properties": {
+       "c": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       }
+      },
+      "required": [
+       "c"
+      ]
+     }
+    },
+    "required": [
+     "b"
+    ]
+   }
+  },
+  "required": [
+   "a"
+  ]
+ },
+ "tuple": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "t": {
+    "type": "array",
+    "prefixItems": [
+     {
+      "type": "string"
+     },
+     {
+      "type": "number"
+     }
+    ],
+    "items": false,
+    "minItems": 2,
+    "maxItems": 2
+   }
+  },
+  "required": [
+   "t"
+  ]
+ },
+ "recursive": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "root": {
+    "$ref": "#/$defs/__schema0"
+   }
+  },
+  "required": [
+   "root"
+  ],
+  "$defs": {
+   "__schema0": {
+    "type": "object",
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "children": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/__schema0"
+      }
+     }
+    },
+    "required": [
+     "name",
+     "children"
+    ]
+   }
+  }
+ },
+ "numbers": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "p": {
+    "type": "number",
+    "exclusiveMinimum": 0
+   },
+   "m": {
+    "type": "number",
+    "multipleOf": 0.01
+   },
+   "i": {
+    "type": "integer",
+    "minimum": -2147483648,
+    "maximum": 2147483647
+   }
+  },
+  "required": [
+   "p",
+   "m",
+   "i"
+  ]
+ },
+ "strict": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "a": {
+    "type": "string"
+   }
+  },
+  "required": [
+   "a"
+  ],
+  "additionalProperties": false
+ },
+ "loose": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+   "a": {
+    "type": "string"
+   }
+  },
+  "required": [
+   "a"
+  ],
+  "additionalProperties": {}
+ }
+}

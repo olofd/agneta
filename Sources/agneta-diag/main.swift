@@ -118,6 +118,9 @@ let traces = Traces(folder: store.tracesFolder)
             "shell exit \(short(record["exit"] ?? record["signal"])) \(Int(number(record["ms"]) ?? 0)) ms \(short(record["command"]))"
     case "permission":
         detail = "permission \(short(record["decision"])) \(short(record["toolKind"])) \(short(record["title"], 60))"
+    case "result":
+        detail =
+            "result \(short(record["event"])) \(short(record["name"] ?? record["tool"])) \(short(record["answer"] ?? record["report"]?["status"] ?? .null))"
     case "lifecycle":
         detail =
             "lifecycle \(short(record["event"])) \(short(.object((record.objectValue ?? [:]).filter { !TraceRecordKeys.header.contains($0.key) && $0.key != "event" })))"
@@ -167,6 +170,14 @@ enum TraceRecordKeys { static let header: Set<String> = ["v", "seq", "t", "mono"
     print("Shell commands: \(s.shellCommands)  non-zero exits \(s.shellFailures)  refused \(s.shellRefused)")
     let decisions = s.permissions.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", ")
     print("Permissions: \(s.permissions.values.reduce(0, +)) \(decisions.isEmpty ? "" : "(\(decisions))")")
+    if !s.results.isEmpty {
+        print("\nStructured results")
+        for result in s.results {
+            print(
+                "  turn \(result.turn)  \(result.name)  \(result.status)\(result.reason.map { " (\($0))" } ?? "")  \(result.attempts) attempts, \(result.refused) refused"
+            )
+        }
+    }
     if !s.lifecycle.isEmpty {
         print("\nLifecycle")
         for record in s.lifecycle { print("  " + describe(record)) }

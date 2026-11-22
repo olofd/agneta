@@ -86,7 +86,7 @@ public final class DiagnosticsMCP: @unchecked Sendable {
             ["app": ["type": "string"], "limit": ["type": "integer"], "json": json]),
         tool(
             "task_summary",
-            "One task: turns with time, model calls and tokens; tools by total time with failures and p95; model usage; shell commands; permission decisions; lifecycle (stops, limits, queueing).",
+            "One task: turns with time, model calls and tokens; tools by total time with failures and p95; model usage; shell commands; permission decisions; structured results; lifecycle (stops, limits, queueing).",
             ["task": task, "json": json], required: ["task"]),
         tool(
             "tool_calls",
@@ -284,7 +284,15 @@ public final class DiagnosticsMCP: @unchecked Sendable {
                 "modelCalls": .int(Int64(s.modelCalls)), "input": .int(Int64(s.input)), "output": .int(Int64(s.output)),
                 "cacheRead": .int(Int64(s.cacheRead)), "shellCommands": .int(Int64(s.shellCommands)),
                 "shellFailures": .int(Int64(s.shellFailures)),
-                "permissions": .object(s.permissions.mapValues { .int(Int64($0)) }), "lifecycle": .array(s.lifecycle)
+                "permissions": .object(s.permissions.mapValues { .int(Int64($0)) }), "lifecycle": .array(s.lifecycle),
+                "results": .array(
+                    s.results.map {
+                        [
+                            "turn": .int(Int64($0.turn)), "name": .string($0.name), "status": .string($0.status),
+                            "reason": $0.reason.map(JSONValue.string) ?? .null, "attempts": .int(Int64($0.attempts)),
+                            "refused": .int(Int64($0.refused))
+                        ]
+                    })
             ])
         }
         var lines = [
@@ -308,6 +316,11 @@ public final class DiagnosticsMCP: @unchecked Sendable {
         lines.append(
             "shell: \(s.shellCommands) commands, \(s.shellFailures) failed, \(s.shellRefused) refused; permissions: \(s.permissions.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", "))"
         )
+        for result in s.results {
+            lines.append(
+                "result in turn \(result.turn): \(result.name) \(result.status)\(result.reason.map { " (\($0))" } ?? ""), "
+                    + "\(result.attempts) attempts, \(result.refused) refused")
+        }
         for record in s.lifecycle {
             let fields = (record.objectValue ?? [:]).filter {
                 !["v", "seq", "t", "mono", "task", "type", "request"].contains($0.key)

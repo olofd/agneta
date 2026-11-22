@@ -319,3 +319,23 @@ extension ResultRouterEdgeTests {
         await #expect(throws: RPCError.self) { _ = try await a.request("x/y", [:]) }
     }
 }
+
+extension ResultRouterEdgeTests {
+    /// The trace's `result` records reach the summary agneta-diag and the diagnostics server show.
+    @Test func theSummaryShowsEachTurnsResult() async throws {
+        let stack = try await Stack.start(port: 47809)
+        defer { stack.stop() }
+        let app = AppClient(port: stack.port)
+        defer { app.close() }
+        try await app.pairAndInitialize("Review")
+        let session = try await stack.session(app, account: "brokered", meta: ["agneta/result": ["schema": C.invoice]])
+        _ = try await prompt(
+            app, session, Self.script([C.call("submit_result", C.bad), C.call("submit_result", C.good)]))
+        _ = try await prompt(app, session, Self.script([C.call("submit_result", C.bad)]), ["attempts": 1])
+        let summary = TraceSummary(records: try stack.records(session))
+        #expect(summary.results.map(\.status) == ["valid", "invalid"])
+        #expect(summary.results.map(\.attempts) == [2, 1])
+        #expect(summary.results.map(\.refused) == [1, 1])
+        #expect(summary.results.map(\.turn) == [1, 2])
+    }
+}

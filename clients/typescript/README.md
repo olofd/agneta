@@ -316,7 +316,7 @@ const contact = await client.ask(`Find the sender in this email:\n${email}`, { s
 contact.name;    // string (typed from the schema)
 ```
 
-It takes the session's options too (`engine`, `account`, `policy`, `instructions`, `task`, …; without a `policy`: app-only tools and `never-ask`), `attempts`, `timeout` (the prompt's), `signal`, and `onTurn(turn)` to stream or cancel the turn. `await answer.details` gives `{ value, name, mechanism, attempts, turnResult }`, `turnResult` with the usage and text.
+It takes the session's options too (`engine`, `account`, `policy`, `instructions`, `task`, …; without a `policy`: app-only tools and `never-ask`), `attempts`, `timeout` (the prompt's), `signal`, and `onTurn(turn)` to stream or cancel the turn. `await answer.details` gives `{ value, name, mechanism, attempts, turnResult }`, `turnResult` with the usage and text. [`examples/extract.mjs`](examples/extract.mjs) is a complete one: a contact and action items from a text file.
 
 **In a session.** Agneta takes schemas when a session opens (engines take their tools only then), so declare the ones its prompts may ask for, then ask for one per turn:
 

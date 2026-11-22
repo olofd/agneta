@@ -53,6 +53,17 @@ public struct TraceSummary: Sendable {
     public var shellFailures = 0
     public var shellRefused = 0
     public var permissions: [String: Int] = [:]
+    /// Each turn's structured result (docs/APP_PROTOCOL.md, Structured results), from its `final` record: the turn, the
+    /// result's name, and its status with the reason, attempts and how many calls were refused.
+    public struct Result: Sendable {
+        public var turn: Int
+        public var name: String
+        public var status: String
+        public var reason: String?
+        public var attempts: Int
+        public var refused: Int
+    }
+    public var results: [Result] = []
     public var lifecycle: [JSONValue] = []
     public var records = 0
     public var ended = false
@@ -131,6 +142,18 @@ public struct TraceSummary: Sendable {
         shellRefused = shells.filter { $0["refused"] != nil }.count
         for record in all where record["type"]?.stringValue == "permission" {
             permissions[record["decision"]?.stringValue ?? "?", default: 0] += 1
+        }
+        let resultRecords = all.filter { $0["type"]?.stringValue == "result" }
+        results = resultRecords.filter { $0["event"]?.stringValue == "final" }.map { final in
+            let turn = Int(final["turn"]?.intValue ?? 0)
+            let report = final["report"]
+            return Result(
+                turn: turn, name: final["name"]?.stringValue ?? "?", status: report?["status"]?.stringValue ?? "?",
+                reason: report?["reason"]?.stringValue, attempts: Int(report?["attempts"]?.intValue ?? 0),
+                refused: resultRecords.filter {
+                    $0["event"]?.stringValue == "submitted" && $0["answer"]?.stringValue == "refused"
+                        && $0["turn"]?.intValue == Int64(turn)
+                }.count)
         }
         lifecycle = all.filter { $0["type"]?.stringValue == "lifecycle" }
         records = all.count
