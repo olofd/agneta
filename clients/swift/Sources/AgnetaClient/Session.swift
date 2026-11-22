@@ -35,7 +35,6 @@ public struct TurnResult: Sendable, Equatable {
     public var structured: StructuredResult? {
         raw["_meta"]?[resultExtension].flatMap { try? StructuredResult(raw: $0) }
     }
-    public var resultCalls: [ToolCallState] { toolCalls.filter { $0.raw["_meta"]?["agneta"]?["result"] != nil } }
     public var cancelled: Bool { stopReason == "cancelled" }
 }
 

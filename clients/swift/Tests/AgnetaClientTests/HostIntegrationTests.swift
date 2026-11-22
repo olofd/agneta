@@ -111,6 +111,8 @@ import Testing
             let card = try await connected.ask(
                 #"CALL agneta-result__submit_result {"name":"Ada"}"#, schema: schema, as: Card.self)
             #expect(card.value == Card(name: "Ada"))
+            #expect(card.turnResult.toolCalls.isEmpty)
+            #expect(!card.turnResult.resultCalls.isEmpty)
             let list = try await connected.ask(
                 #"CALL agneta-result__submit_result {"value":["a","b"]}"#,
                 schema: ["type": "array", "items": ["type": "string"]], as: [String].self)

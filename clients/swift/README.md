@@ -85,12 +85,16 @@ For Agneta Dev use `build: .dev` (47331); releases use 47321. `ClientOptions.url
 ## Sessions, policy and tools
 
 ```swift
+var consent = ConnectOptions(pair: .always)
+consent.scope = PairingScope(tools: .workspace, sandbox: "contained")
+try await client.connect(consent)   // ask for the access this feature needs
+
 var options = SessionOptions()
 options.account = chooseProvider(client.access, sandbox: .contained)?.account
 options.engine = "goose"
 options.policy = Policy(
     tools: .workspace, sandbox: .contained, network: "none", approval: .neverAsk,
-    limits: PolicyLimits(maxTurns: 50, maxSeconds: 600), builtins: [.read, .edit]
+    limits: PolicyLimits(maxTurns: 50, maxSeconds: 600)
 )
 options.title = "Reviewing the project"
 options.instructions = "Be concise."
