@@ -163,7 +163,7 @@ Your app is an ACP **client** and Agneta is the ACP **agent**. If your app alrea
 | Typed results | Nothing standard | A value checked against your JSON Schema, on every engine ([Typed results](#typed-results)) |
 | Afterwards | Nothing standard | Usage in every prompt result, and the task's full trace, live or later |
 
-**In TypeScript or JavaScript (Node 22+ or Electron's main process), use [`@agneta-ai/client`](clients/typescript/README.md),** the official client. It does everything below for you, typed, and keeps a raw layer for anything else:
+**In TypeScript or JavaScript (Node 22+ or Electron's main process), use [`@agneta-ai/client`](clients/typescript/README.md)** (`npm install @agneta-ai/client`), the official client. It does everything below for you, typed, and keeps a raw layer for anything else:
 
 ```js
 import { AgnetaClient } from '@agneta-ai/client';

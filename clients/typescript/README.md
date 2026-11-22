@@ -8,13 +8,11 @@ It speaks [Agneta's app protocol](https://github.com/olofd/agneta/blob/main/docs
 - **Node 22 or later, and Electron's main process.** Agneta refuses connections from web pages and Electron renderers (anything that sends an `Origin` header), so the client says so rather than failing as "not running".
 - **Before 1.0**, like Agneta's protocol: minor versions may change the API, and the [changelog](CHANGELOG.md) says how.
 
-The package isn't on npm yet. Until its first release, build it from this repository:
-
 ```sh
-cd clients/typescript && npm install && npm run build
+npm install @agneta-ai/client
 ```
 
-and depend on it by path (`"@agneta-ai/client": "file:../agneta/clients/typescript"`).
+Releases are published from GitHub Actions with [provenance](https://docs.npmjs.com/generating-provenance-statements): `npm audit signatures` checks that a download was built from this repository. To try unreleased changes, build it from here (`cd clients/typescript && npm ci && npm run build`) and depend on it by path (`"@agneta-ai/client": "file:../agneta/clients/typescript"`).
 
 ## Quick start
 
