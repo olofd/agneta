@@ -440,10 +440,11 @@ export type ResultDeclaration =
   | { schema: JsonSchema };
 
 /**
- * `_meta["agneta/result"]` on `session/prompt`: a declared schema by name, with the calls of the result tools the model
- * gets this turn (1 to 10, default 3); or `false`, no result this turn in a session with `every`.
+ * `_meta["agneta/result"]` on `session/prompt`: a declared schema by name (without one, the session's `every`), with the
+ * calls of the result tools the model gets this turn (1 to 10, default 3); or `false`, no result this turn in a session
+ * with `every`.
  */
-export type ResultAsk = { name: string; attempts?: number } | false;
+export type ResultAsk = { name?: string; attempts?: number } | false;
 
 /** How the model returned the result: through the result tool Agneta serves (version 1's only mechanism). */
 export type ResultMechanism = 'tool' | (string & {});
@@ -455,6 +456,8 @@ export interface SessionResults {
   /** The one every prompt asks for, or null. */
   every: string | null;
   mechanism: ResultMechanism;
+  /** The declared schemas by name, as Agneta recorded them (as sent); absent from Agnetas before it was added. */
+  schemas?: { [name: string]: JsonSchema };
 }
 
 /** One way a value failed its schema. */

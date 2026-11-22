@@ -148,6 +148,7 @@ expect<Equal<FromSchema<{ readonly [key: string]: unknown }>, unknown>>();
 /** A minimal hand-written Standard Schema with Standard JSON Schema, as Zod 4.2+ gives one. */
 type Invoice = { number: string; total: number };
 declare const invoiceSchema: StandardSchemaV1<{ number: string; total: string }, Invoice> & StandardJSONSchemaV1<{ number: string; total: string }, Invoice>;
+declare const jsonOnly: StandardJSONSchemaV1<{ when: string }, { when: Date }>;
 const handWritten = {
   '~standard': {
     version: 1, vendor: 'mini',
@@ -184,6 +185,16 @@ async function structured(client: AgnetaClient, session: Session) {
   expect<Equal<typeof fromStandard, Invoice>>();
   const fromHandWritten = await session.ask('Id?', { schema: handWritten });
   expect<Equal<typeof fromHandWritten, { id: number }>>();
+  // A Standard Schema with parse: parse gets its output, and the value is parse's.
+  const totals = await session.ask('Invoice?', { schema: invoiceSchema, parse: (invoice) => invoice.total * 100 });
+  expect<Equal<typeof totals, number>>();
+  const numbered = await client.ask('Invoice?', { schema: invoiceSchema, parse: (invoice) => invoice.number });
+  expect<Equal<typeof numbered, string>>();
+  // A Standard JSON Schema that can't validate: the value comes back as the model gave it, its input type.
+  const unchecked = await session.ask('When?', { schema: jsonOnly });
+  expect<Equal<typeof unchecked, { when: string }>>();
+  // Ask without a name: the session's every.
+  await session.prompt('Again', { result: { attempts: 2 } });
 
   // A plain schema with the app's own type, by parse or given.
   const parsed = await session.ask('Date?', { schema: { type: 'string' }, parse: (raw) => new Date(String(raw)) });
@@ -221,9 +232,13 @@ async function structured(client: AgnetaClient, session: Session) {
     if (isAgnetaError(error)) {
       switch (error.kind) {
         case 'resultMissing': { const reason: string = error.reason; const usage = error.turnResult.usage; void reason; void usage; break; }
-        case 'resultInvalid': { const source: 'agneta' | 'client' = error.source; const path: string | undefined = error.issues[0]?.path; void source; void path; break; }
+        case 'resultInvalid': { const submitted: unknown = error.submitted; void submitted; const source: 'agneta' | 'client' = error.source; const path: string | undefined = error.issues[0]?.path; void source; void path; break; }
         case 'unsupportedByAgneta': { const extension: string = error.extension; void extension; break; }
-        case 'internal': { const accepted: StructuredResult | null = error.structured; void accepted; break; }
+        case 'internal': {
+          const report: StructuredResult | null = error.structured;
+          const accepted: { value: unknown; issues: { path: string }[] | null } | null = error.accepted;
+          void report; void accepted; break;
+        }
       }
     }
   }

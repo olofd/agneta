@@ -497,11 +497,12 @@ export class Session extends Emitter<SessionEvents> {
    * A Standard Schema checks Agneta's value again and gives its output; `parse` may reject further. Fails with
    * `ResultMissingError`, `ResultInvalidError` (`source: 'agneta'` or `'client'`), or the turn's own error.
    */
+  ask<const S extends StandardJSONSchemaV1, T>(input: PromptInput, options: AskOptions & { schema: S; parse: (value: FromStandardSchema<S>) => T }): Ask<T>;
   ask<const S extends StandardJSONSchemaV1>(input: PromptInput, options: AskOptions & { schema: S }): Ask<FromStandardSchema<S>>;
   ask<T>(input: PromptInput, options: AskOptions & { schema?: SchemaInput; parse: (value: unknown) => T }): Ask<T>;
   ask<const S extends JsonSchema>(input: PromptInput, options: AskOptions & { schema: S }): Ask<FromSchema<S>>;
   ask<T = unknown>(input: PromptInput, options?: AskOptions & { schema?: SchemaInput }): Ask<T>;
-  ask(input: PromptInput, options: AskOptions & { schema?: SchemaInput; parse?: (value: unknown) => unknown } = {}): Ask<unknown> {
+  ask(input: PromptInput, options: AskOptions & { schema?: SchemaInput; parse?: (value: any) => unknown } = {}): Ask<unknown> {
     return askIn(this, input, options);
   }
 

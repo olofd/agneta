@@ -220,6 +220,13 @@ export abstract class AgnetaRpcError extends AgnetaError {
     return structuredResult({ 'agneta/result': agnetaData(this.data).result });
   }
 
+  /**
+   * Set by `ask` when this error failed a turn after Agneta had accepted a value (`structured.status === "valid"`): the
+   * value as `ask` would have given it (`structured.value` is the wire's, still `{ value: … }` for a wrapped root, and not
+   * checked by the app's schema). Null otherwise, and for `prompt`.
+   */
+  accepted: AcceptedResult | null = null;
+
   /** The error as it came over the wire. */
   toJSON(): RpcErrorObject {
     return { code: this.code, message: this.message, ...(this.data === undefined ? {} : { data: this.data }) };
@@ -463,7 +470,18 @@ export class UnsupportedByAgnetaError extends AgnetaError {
 /** A refused value and its issues, as an error carries them (unwrapped like the value, for a schema that isn't an object). */
 export interface RefusedResult {
   value: unknown;
+  /** As the model submitted it: `{ value: … }` for a wrapped root. Default: `value`. */
+  submitted?: unknown;
   issues: ResultIssue[];
+}
+
+/**
+ * A value Agneta accepted in a turn that then failed, as `ask` reads it: unwrapped, then through the app's own schema
+ * and `parse` (`value` is their output). `issues` is what they said against it, or null when they accepted it.
+ */
+export interface AcceptedResult {
+  value: unknown;
+  issues: ResultIssue[] | null;
 }
 
 const missingWords: Record<string, string> = {
@@ -486,6 +504,8 @@ export class ResultMissingError extends AgnetaError {
   readonly resultName: string;
   /** The last value Agneta refused before the turn ended, if one was (else undefined). */
   readonly value: unknown;
+  /** That value as the model submitted it (for a root that isn't an object, `{ value: … }`, or whatever came instead). */
+  readonly submitted: unknown;
   /** What was wrong with it; empty when none was refused. */
   readonly issues: ResultIssue[];
   /** Why the refused value is left out (it nested too deeply to carry back), or null. */
@@ -501,6 +521,7 @@ export class ResultMissingError extends AgnetaError {
     this.reason = structured.reason;
     this.resultName = structured.name;
     this.value = refused.value;
+    this.submitted = 'submitted' in refused ? refused.submitted : refused.value;
     this.issues = refused.issues;
     this.valueOmitted = structured.valueOmitted ?? null;
     this.structured = structured;
@@ -518,8 +539,13 @@ export class ResultInvalidError extends AgnetaError {
   readonly source: 'agneta' | 'client';
   /** The schema asked for. */
   readonly resultName: string;
-  /** The last value refused: Agneta's last refused value, or the value Agneta accepted that the app's schema rejected. */
+  /**
+   * The last value refused: Agneta's last refused value, or the value Agneta accepted that the app's schema rejected.
+   * Undefined for a root that isn't an object when the model didn't submit `{ value: … }` (see `submitted`).
+   */
   readonly value: unknown;
+  /** That value as the model submitted it (for a root that isn't an object, `{ value: … }`, or whatever came instead). */
+  readonly submitted: unknown;
   /**
    * What was wrong. From the app's own schema, `keyword` is the schema library's vendor (`zod`, …) or `parse`, and
    * `schemaPath` is empty.
@@ -545,6 +571,7 @@ export class ResultInvalidError extends AgnetaError {
     this.source = source;
     this.resultName = structured.name;
     this.value = refused.value;
+    this.submitted = 'submitted' in refused ? refused.submitted : refused.value;
     this.issues = refused.issues;
     this.valueOmitted = structured.status === 'valid' ? null : structured.valueOmitted ?? null;
     this.structured = structured;

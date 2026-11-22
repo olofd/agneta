@@ -324,7 +324,7 @@ It takes the session's options too (`engine`, `account`, `policy`, `instructions
 const session = await client.newSession({
   results: { schemas: { invoice: invoiceSchema, contact: contactSchema }, every: 'invoice' }   // every: asked on each prompt
 });
-session.results;   // { declared: ['contact', 'invoice'], every: 'invoice', mechanism: 'tool' }
+session.results;   // { declared: ['contact', 'invoice'], every: 'invoice', mechanism: 'tool', schemas: { … } }
 
 const ask = session.ask('Now fill in the contact from what we discussed.', { schema: contactSchema });
 for await (const text of ask.turn.textStream()) render(text);   // the turn, to stream or cancel
@@ -332,11 +332,11 @@ const filled = await ask;                                         // the value, 
 const { attempts, turnResult } = await ask.details;
 ```
 
-- **Which schema:** the one passed is matched to a declared one (the same object, or an equal JSON Schema); or pass `name`, or nothing for the session's `every`. One the session didn't declare is a `TypeError` before anything is sent: declare it in `newSession`, `loadSession` or `fork` (`results`), or use `client.ask`.
+- **Which schema:** the one passed is matched to a declared one (the same object, or an equal JSON Schema); or pass `name`, or nothing for the session's `every`. One the session didn't declare is a `TypeError` before anything is sent: declare it in `newSession`, `loadSession` or `fork` (`results`), or use `client.ask`. So is one the session declared under two names: say which with `name`.
 - **`{ schema }`** is the shorthand for one schema named `result`, asked for on every prompt.
 - **`attempts`** (1 to 10, Agneta's default 3): the calls of the result tools the model gets this turn. Every call counts.
-- **`loadSession` and `fork`** keep the original's declaration unless given `results`. A fork of a session handle knows its schemas; a load without `results` knows only their names (`session.results.declared`), so ask it by `name` (with the schema too, to type and read the value).
-- **A root that isn't an object** (`{ type: 'array', … }`, a string, a union) is sent as `{ value: … }`, as Agneta needs an object, and unwrapped when read: values and issues read as if it hadn't been.
+- **`loadSession` and `fork`** keep the original's declaration unless given `results`. A handle opened without `results` (a task resumed in another process, say) gets the schemas from Agneta's reply (`session.results.schemas`, as they were sent), so asking by `name` or by schema works as in the session that declared them. An Agneta older than that says only the names: then pass `name` and `schema` (a `TypeError` says so).
+- **A root that isn't an object** (`{ type: 'array', … }`, a string, a union; `"type": "object"` and `["object"]` are objects) is sent as `{ value: … }`, as Agneta needs an object, and unwrapped when read: values and issues read as if it hadn't been. The wrapper is marked `"$comment": "@agneta/client: wraps a non-object root as { value }"` (`wrapperComment`), which is how a reply's recorded schema is recognized; it moves `$defs`, `definitions`, `$schema` and `$id` to its own root and points the schema's other local references (`#`, `#/items`, …) into `value`. It costs one level of nesting (a value may nest 63 levels, of Agneta's 64) and about 160 bytes of the schema's 16 KB. An issue with the wrapper itself (the model submitted something other than `{ "value": … }`) has an empty `path` and says so; the error's `submitted` is what the model sent, and `value` is undefined when there was no `value` in it.
 
 **Three ways to give a schema**, with no dependency:
 
@@ -346,9 +346,11 @@ const { attempts, turnResult } = await ask.details;
 const invoice = await session.ask(text, { schema: { type: 'object', properties: { total: { type: 'number' } }, required: ['total'] } });
 
 // 2. A Standard Schema that can say its JSON Schema (Zod 4.2+, ArkType 2.1.28+, Valibot with toStandardJsonSchema):
-//    converted for Agneta (draft 2020-12), Agneta's value checked again with it, and typed as its output.
+//    converted for Agneta (draft 2020-12), Agneta's value checked again with it, and typed as its output (one that
+//    can't validate, only say its JSON Schema, is typed as its input: the value comes back as the model gave it).
 const Invoice = z.object({ number: z.string(), total: z.number() });
 const typed = await session.ask(text, { schema: Invoice });
+const cents = await session.ask(text, { schema: Invoice, parse: (invoice) => Math.round(invoice.total * 100) });
 
 // 3. Plain JSON Schema with your own type, and optionally parse.
 const due = await session.ask<Date>(text, { schema: { type: 'string' }, parse: (value) => new Date(String(value)) });
@@ -360,14 +362,18 @@ Agneta's verdict stands: your schema (or `parse`) may only reject further, never
 
 | `kind` | When | Data |
 | --- | --- | --- |
-| `resultMissing` | No value: `stopped` (cancelled, Stop, a limit, cancelled while queued), `refused`, `truncated` (out of output tokens), `not-submitted` | `reason`, `resultName`, the last refused `value` and `issues` if any, `valueOmitted`, `structured`, `turnResult` |
-| `resultInvalid` | Only values that didn't match (`source: 'agneta'`), or Agneta accepted one and your schema or `parse` rejected it (`source: 'client'`) | `source`, `issues` (`{ path, keyword, message, schemaPath }`), `value`, `valueOmitted`, `resultName`, `structured`, `turnResult` |
+| `resultMissing` | No value: `stopped` (cancelled, Stop, a limit, cancelled while queued), `refused`, `truncated` (out of output tokens), `not-submitted` | `reason`, `resultName`, the last refused `value`, `submitted` and `issues` if any, `valueOmitted`, `structured`, `turnResult` |
+| `resultInvalid` | Only values that didn't match (`source: 'agneta'`), or Agneta accepted one and your schema or `parse` rejected it (`source: 'client'`) | `source`, `issues` (`{ path, keyword, message, schemaPath }`), `value`, `submitted`, `valueOmitted`, `resultName`, `structured`, `turnResult` |
 | `unsupportedByAgneta` | This Agneta doesn't offer structured results (not in `initialize`'s extensions): nothing was sent, never a silent fallback | `extension` |
 | `unenforceable` | A declaration or ask Agneta refuses | `fields: ['agneta/result']`, `reason` |
 
-A missing or invalid result is a successful turn: it ran and has usage (`error.turnResult.usage`). An engine that fails after a value was accepted fails the turn with its own error, whose `structured` holds the report and the value.
+A missing or invalid result is a successful turn: it ran and has usage (`error.turnResult.usage`).
 
-**The low level.** `newSession({ results })` sends `_meta["agneta/result"]`; `session.prompt(text, { result: { name, attempts } })` asks (`result: false` opts out of `every`); the turn's result has `structured`, the report as Agneta sent it, discriminated by `status` (`valid` with `value`; `invalid` with `issues`; `missing` with `reason`). While the turn runs, the result tool's calls arrive as ordinary `tool_call` updates tagged `_meta.agneta.result`: `resultCallOf(update)` says which (`{ name }`, or null for the model's own calls), and `turn.toolCalls` leaves them out, `turn.resultCalls` has them.
+**A turn that fails** once it has started (the engine's own error, or `InternalError` "The engine stopped") fails `ask` with that error, not a result error. Agneta puts the turn's result in the error's `data.agneta.result`, by the reply's rules: `valid` with the value when one was accepted before the failure, `invalid` when the attempts had run out, else `missing` with `stopped`; a prompt refused before its turn starts (a paused account, a limit the user set, a full queue) has none. `error.structured` is that report as Agneta sent it: its `value` is the wire's (still `{ value: … }` for a wrapped root) and your schema never saw it. When it's `valid`, `ask` also sets `error.accepted`: `{ value, issues }`, the value as `ask` would have resolved with it (unwrapped, then through your Standard Schema and `parse`), with `issues: null`, or with what your schema or `parse` said against it (`value` then as Agneta accepted it, unwrapped). It's null otherwise, and `prompt` never sets it.
+
+**Opening and giving up.** A `newSession`, `loadSession` or `fork` (and so `client.ask`) whose signal aborts or that times out while Agneta is still opening the session closes it when the reply comes: nothing is left running in Agneta.
+
+**The low level.** `newSession({ results })` sends `_meta["agneta/result"]`; `session.prompt(text, { result: { name, attempts } })` asks (without `name`, the session's `every`; `result: false` opts out of it); the turn's result has `structured`, the report as Agneta sent it, discriminated by `status` (`valid` with `value`; `invalid` with `issues`; `missing` with `reason`). While the turn runs, the result tool's calls arrive as ordinary `tool_call` updates tagged `_meta.agneta.result`: `resultCallOf(update)` says which (`{ name }`, or null for the model's own calls), and `turn.toolCalls` leaves them out, `turn.resultCalls` has them.
 
 **Engines differ.** OpenCode checks a tool's arguments against its schema itself, so a value that doesn't match may never reach Agneta: the model reads OpenCode's message, and the turn ends `missing` with `not-submitted` where Goose's would be `invalid`.
 

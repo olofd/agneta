@@ -161,7 +161,9 @@ export function parseDeclaration(value) {
   if (Object.keys(schemas).length > 8) return { refusal: refuse('a session may declare at most 8 schemas') };
   for (const [name, schema] of Object.entries(schemas)) {
     if (!usableName(name)) return { refusal: refuse(`"${name}" isn't a usable name`) };
-    if (schema?.type !== 'object') return { refusal: refuse(`schema "${name}" at /type: the root must be "type": "object"`) };
+    if (!(schema?.type === 'object' || (Array.isArray(schema?.type) && schema.type.length === 1 && schema.type[0] === 'object'))) {
+      return { refusal: refuse(`schema "${name}" at /type: the root must be "type": "object"`) };
+    }
     if ('if' in schema) return { refusal: refuse(`schema "${name}" at /if: if isn't supported`) };
   }
   if (every !== undefined && !(every in schemas)) return { refusal: refuse(`"every" names "${every}", which isn't declared`) };
@@ -177,7 +179,8 @@ function parseAsk(value, declaration) {
   if (value.schema !== undefined) return { refusal: refuse('a schema is declared when the session opens and asked for by name here') };
   const unknown = Object.keys(value).sort().find((key) => !['name', 'attempts'].includes(key));
   if (unknown) return { refusal: refuse(`unknown field ${unknown}`) };
-  const name = value.name ?? declaration.every;
+  // A name given as null is refused, as Agneta does; only a missing one takes every.
+  const name = 'name' in value ? value.name : declaration.every;
   if (typeof name !== 'string' || !(name in declaration.schemas)) return { refusal: refuse(`"${name}" wasn't declared when the session opened`) };
   const attempts = value.attempts ?? 3;
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 10) return { refusal: refuse('attempts must be a whole number from 1 to 10') };
@@ -220,6 +223,8 @@ function resultTurn(ask, declaration) {
   let submissions = 0, accepted, lastRefused;
   return {
     submit(tool, value) {
+      // A tool the session doesn't have is answered "There's no tool …" and isn't counted.
+      if (!(tool.slice('submit_'.length) in declaration.schemas)) return;
       if (accepted !== undefined || submissions >= ask.attempts) return;
       submissions++;
       if (tool !== `submit_${ask.name}`) return;
@@ -244,7 +249,9 @@ function resultTurn(ask, declaration) {
 /**
  * A prompt that may ask for a result, scripted by its text, a line each: `CALL <tool> <json>` calls a tool (`submit_<name>`
  * is the result tool, its updates tagged as Agneta tags them), `STOP <stopReason>` ends the turn so, `FAIL` makes the
- * engine fail after the calls (the report then in the error's data); anything else is a reply.
+ * engine stop after the calls (-32603 "The engine stopped") and `FAIL <code>` answer with an error of its own; either way
+ * the turn's result is in the error's `data.agneta.result`, as Agneta puts it once a turn has started. Anything else is a
+ * reply.
  */
 function scriptedPrompt(params, peer, state) {
   const id = params.sessionId;
@@ -253,7 +260,7 @@ function scriptedPrompt(params, peer, state) {
   if (parsed.refusal) return parsed.refusal;
   const turn = parsed.ask ? resultTurn(parsed.ask, declaration) : null;
   const text = params.prompt.map((block) => block.text ?? '').join('\n');
-  let stopReason = 'end_turn', fail = false, calls = 0;
+  let stopReason = 'end_turn', fail = null, calls = 0;
   const notify = (update) => peer.notify('session/update', { sessionId: id, update });
   for (const line of text.split('\n')) {
     const call = /^CALL (\S+) (.*)$/.exec(line);
@@ -267,11 +274,12 @@ function scriptedPrompt(params, peer, state) {
       if (tag._meta) turn?.submit(tool, value);
       notify({ sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', ...tag });
     } else if (line.startsWith('STOP ')) stopReason = line.slice(5);
-    else if (line === 'FAIL') fail = true;
+    else if (line === 'FAIL' || line.startsWith('FAIL ')) fail = line === 'FAIL' ? -32603 : Number(line.slice(5));
     else if (line) notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: line } });
   }
-  const report = turn?.report(fail ? 'error' : stopReason, fail);
-  if (fail) return { error: { code: -32603, message: 'The engine stopped', data: report ? { agneta: { result: report } } : {} } };
+  const report = turn?.report(fail !== null ? 'error' : stopReason, fail !== null);
+  if (fail === -32603) return { error: { code: fail, message: 'The engine stopped', ...(report ? { data: { agneta: { result: report } } } : {}) } };
+  if (fail !== null) return { error: { code: fail, message: 'The engine failed', data: { engine: 'own', ...(report ? { agneta: { result: report } } : {}) } } };
   return { result: { stopReason, _meta: report ? { [resultKey]: report } : {} } };
 }
 
@@ -279,11 +287,13 @@ function scriptedPrompt(params, peer, state) {
  * Agneta's behaviour, enough for the client: pairs (Always Allow unless `remembered: false`, with a pairing code),
  * initializes known tokens, opens sessions, and answers prompts with `prompt(message, peer)` (default: a short reply).
  * Structured results as Agneta answers them: declarations, asks, their refusals, and a prompt that asks for a result
- * scripted by its text (`scriptedPrompt`). `extensions`: what `initialize` lists. Every handler can be replaced through
+ * scripted by its text (`scriptedPrompt`). `extensions`: what `initialize` lists; `recordSchemas: false`, an Agneta whose
+ * session replies don't carry the declared schemas yet. Every handler can be replaced through
  * `handlers[method]`.
  */
 export function agnetaLike({
-  remembered = true, code = '123456', access = accessReport(), handlers = {}, extensions = ['agneta/policy', 'agneta/access', resultKey]
+  remembered = true, code = '123456', access = accessReport(), handlers = {}, extensions = ['agneta/policy', 'agneta/access', resultKey],
+  recordSchemas = true
 } = {}) {
   const state = { tokens: new Set(['kept-token']), sessions: 0, access, config: new Map(), declarations: new Map() };
   /** A session's declaration, as Agneta keeps it: given, the original's (load, fork), or refused. */
@@ -295,7 +305,7 @@ export function agnetaLike({
   const opened = (id, declaration, extra = {}) => {
     if (declaration) state.declarations.set(id, declaration);
     else state.declarations.delete(id);
-    return { result: sessionResult(id, { ...extra, ...(declaration ? { results: { declared: Object.keys(declaration.schemas).sort(), every: declaration.every, mechanism: 'tool' } } : {}) }) };
+    return { result: sessionResult(id, { ...extra, ...(declaration ? { results: { declared: Object.keys(declaration.schemas).sort(), every: declaration.every, mechanism: 'tool', ...(recordSchemas ? { schemas: declaration.schemas } : {}) } } : {}) }) };
   };
   const sessionResult = (id, extra = {}) => ({
     sessionId: id,

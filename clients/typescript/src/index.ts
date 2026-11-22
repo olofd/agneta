@@ -24,7 +24,7 @@ export {
   type TurnEvent, type TurnResult
 } from './session.js';
 export {
-  Answer, Ask, resultExtension, type AskDetails, type AskOptions, type FromSchema, type FromStandardSchema,
+  Answer, Ask, resultExtension, wrapperComment, type AskDetails, type AskOptions, type FromSchema, type FromStandardSchema,
   type ResultSchemas, type SchemaInput
 } from './results.js';
 export type { StandardJSONSchemaV1, StandardSchemaV1, StandardTypedV1 } from './standard-schema.js';

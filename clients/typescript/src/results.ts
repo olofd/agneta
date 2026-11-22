@@ -4,7 +4,9 @@
 // or a typed error. Agneta validates every value and its verdict stands: the client never decides validity itself,
 // and the app's own schema may only reject further (`source: 'client'`).
 import type { Meta } from './acp.js';
-import { ProtocolError, ResultInvalidError, ResultMissingError, UnsupportedByAgnetaError, type RefusedResult } from './errors.js';
+import {
+  AgnetaRpcError, ProtocolError, ResultInvalidError, ResultMissingError, UnsupportedByAgnetaError, type RefusedResult
+} from './errors.js';
 import type { JsonSchema, ResultDeclaration, ResultIssue, ResultMechanism, StructuredResult } from './protocol.js';
 import type { PromptInput, Session, Turn, TurnResult } from './session.js';
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from './standard-schema.js';
@@ -56,8 +58,12 @@ type FromObject<S> =
 
 type Flatten<T> = { [K in keyof T]: T[K] } & {};
 
-/** The value a Standard Schema gives: its output type. */
-export type FromStandardSchema<S extends StandardJSONSchemaV1> = NonNullable<S['~standard']['types']>['output'];
+/**
+ * The value a Standard Schema gives: its output type when it can validate (Agneta's value goes through it), else its
+ * input type (the value comes back as the model gave it).
+ */
+export type FromStandardSchema<S extends StandardJSONSchemaV1> =
+  NonNullable<S['~standard']['types']>[S extends StandardSchemaV1 ? 'output' : 'input'];
 
 // MARK: Schemas made ready
 
@@ -65,9 +71,7 @@ export type FromStandardSchema<S extends StandardJSONSchemaV1> = NonNullable<S['
 export interface PreparedSchema {
   /** As the app gave it. */
   source: SchemaInput;
-  /** Its JSON Schema: a Standard Schema's, converted. */
-  json: JsonSchema;
-  /** What Agneta gets: `json`, or `{ value: json }` for a root that isn't an object. */
+  /** What Agneta gets: its JSON Schema (a Standard Schema's, converted), or `{ value: … }` for a root that isn't an object. */
   wire: JsonSchema;
   wrapped: boolean;
   /** A Standard Schema's properties, when it can validate: Agneta's value is checked again with them. */
@@ -103,8 +107,25 @@ export function prepareSchema(schema: SchemaInput): PreparedSchema {
     json = schema;
   }
   if (!isPlainObject(json)) throw new TypeError('A result schema is a JSON Schema object or a Standard Schema.');
-  const wrapped = json.type !== 'object';
-  return { source: schema, json, wire: wrapped ? wrap(json) : json, wrapped, standard };
+  const wrapped = !isObjectRoot(json);
+  return { source: schema, wire: wrapped ? wrap(json) : json, wrapped, standard };
+}
+
+/** Agneta's own rule for a root: `"type": "object"` (or `["object"]`). */
+function isObjectRoot(json: JsonSchema): boolean {
+  return json.type === 'object' || (Array.isArray(json.type) && json.type.length === 1 && json.type[0] === 'object');
+}
+
+/**
+ * A declared schema as Agneta's reply recorded it (`_meta.agneta.results.schemas`): what a handle that was loaded or
+ * forked without `results` knows. The client's own wrapper is told by its `$comment`, never guessed from its shape.
+ * @internal
+ */
+export function recordedSchemas(schemas: unknown): Map<string, PreparedSchema> {
+  if (!isPlainObject(schemas)) return new Map();
+  return new Map(Object.entries(schemas).filter(([, wire]) => isPlainObject(wire)).map(([name, wire]) => [name, {
+    source: wire as JsonSchema, wire: wire as JsonSchema, wrapped: (wire as JsonSchema).$comment === wrapperComment, standard: null
+  }]));
 }
 
 /** `results` made ready for `_meta["agneta/result"]`. @internal */
@@ -126,46 +147,80 @@ export function prepareDeclaration(results: ResultSchemas): PreparedDeclaration 
   };
 }
 
-/** Keywords whose values are data, not schemas: a `$ref` in them isn't one. */
-const dataKeywords = new Set(['const', 'enum', 'default', 'examples']);
+/** Marks the client's wrapper (`$comment`, an annotation Agneta accepts), so a reply's recorded schema is told by it. */
+export const wrapperComment = '@agneta/client: wraps a non-object root as { value }';
 
 /**
- * `{ value: S }`, with S's definitions, `$schema` and `$id` moved to the new root, and its local references (`#`,
- * `#/properties/…`) pointed into `value`: references into `$defs` and `definitions` stay as they are.
+ * `{ value: S }`, marked by `$comment`, with S's definitions, `$schema` and `$id` moved to the new root, and its local
+ * references (`#`, `#/items`, …) pointed into `value`: references into `$defs` and `definitions` stay as they are.
  */
 function wrap(json: JsonSchema): JsonSchema {
   const { $schema, $id, $defs, definitions, ...inner } = json;
-  const hoisted = (name: string, value: unknown) => value === undefined ? {} : { [name]: rewriteRefs(value) };
+  const hoisted = (name: string, value: unknown) => value === undefined ? {} : { [name]: schemaMap(value) };
   return {
-    ...($schema === undefined ? {} : { $schema }), ...($id === undefined ? {} : { $id }),
-    type: 'object', properties: { value: rewriteRefs(inner) }, required: ['value'], additionalProperties: false,
+    ...($schema === undefined ? {} : { $schema }), ...($id === undefined ? {} : { $id }), $comment: wrapperComment,
+    type: 'object', properties: { value: moved(inner) }, required: ['value'], additionalProperties: false,
     ...hoisted('$defs', $defs), ...hoisted('definitions', definitions)
   };
 }
 
-function rewriteRefs(node: unknown): unknown {
-  if (Array.isArray(node)) return node.map(rewriteRefs);
-  if (!isPlainObject(node)) return node;
-  return Object.fromEntries(Object.entries(node).map(([key, value]) => {
+/** Keywords whose value is a schema, a list of schemas, or a map of names to schemas (JSON Schema 2020-12 and draft-07). */
+const schemaKeywords = new Set(['items', 'additionalItems', 'additionalProperties', 'not', 'propertyNames', 'contains', 'if', 'then', 'else', 'unevaluatedItems', 'unevaluatedProperties', 'contentSchema']);
+const schemaListKeywords = new Set(['allOf', 'anyOf', 'oneOf', 'prefixItems']);
+const schemaMapKeywords = new Set(['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas']);
+
+/**
+ * A schema with its local references moved into `value`, walked by where schemas are: under a keyword that holds one,
+ * a list or a map of them. Everything else (`enum`, `const`, `default`, `examples`, and names in a map, whatever they
+ * are) is data and stays as it is.
+ */
+function moved(schema: unknown): unknown {
+  if (!isPlainObject(schema)) return schema;
+  return Object.fromEntries(Object.entries(schema).map(([key, value]) => {
     if (key === '$ref' && typeof value === 'string') return [key, movedRef(value)];
-    return [key, dataKeywords.has(key) ? value : rewriteRefs(value)];
+    if (schemaKeywords.has(key)) return [key, Array.isArray(value) ? value.map(moved) : moved(value)];
+    if (schemaListKeywords.has(key)) return [key, Array.isArray(value) ? value.map(moved) : value];
+    if (schemaMapKeywords.has(key)) return [key, schemaMap(value)];
+    if (key === 'dependencies' && isPlainObject(value)) {
+      return [key, Object.fromEntries(Object.entries(value).map(([name, item]) => [name, Array.isArray(item) ? item : moved(item)]))];
+    }
+    return [key, value];
   }));
 }
 
+function schemaMap(map: unknown): unknown {
+  return isPlainObject(map) ? Object.fromEntries(Object.entries(map).map(([name, schema]) => [name, moved(schema)])) : map;
+}
+
+/**
+ * A reference into the old root, pointed into `value`. The fragment is a URI fragment (`#/%24defs/a` is `#/$defs/a`), so
+ * it's decoded to decide, and kept as it was written after the new prefix. One that doesn't decode, or points elsewhere,
+ * stays for Agneta to refuse.
+ */
 function movedRef(ref: string): string {
-  if (ref === '#' || ref === '#/') return '#/properties/value';
-  if (!ref.startsWith('#/') || ref.startsWith('#/$defs/') || ref.startsWith('#/definitions/')) return ref;
+  if (!ref.startsWith('#')) return ref;
+  let pointer: string;
+  try { pointer = decodeURIComponent(ref.slice(1)); } catch { return ref; }
+  if (pointer.startsWith('/$defs/') || pointer.startsWith('/definitions/')) return ref;
+  if (pointer !== '' && !pointer.startsWith('/')) return ref;
   return '#/properties/value' + ref.slice(1);
 }
 
+/** The app's value in a wrapped submission: its `value`, or undefined when the model didn't submit `{ value: … }`. */
 function unwrap(value: unknown): unknown {
-  return isPlainObject(value) && 'value' in value ? value.value : value;
+  return isPlainObject(value) && 'value' in value ? value.value : undefined;
 }
 
-/** An issue of a wrapped schema, as if it hadn't been: `/value/…` is `/…`. */
+/**
+ * An issue of a wrapped schema, as if it hadn't been: `/value/…` is `/…`. One at the wrapper itself (a submission that
+ * isn't an object, no `value`, another property beside it) is about the whole value: path empty, saying so.
+ */
 function unwrapIssue(issue: ResultIssue): ResultIssue {
-  const strip = (pointer: string, prefix: string) => pointer === prefix ? '' : pointer.startsWith(prefix + '/') ? pointer.slice(prefix.length) : pointer;
-  return { ...issue, path: strip(issue.path, '/value'), schemaPath: strip(issue.schemaPath, '/properties/value') };
+  const strip = (pointer: string, prefix: string) => pointer === prefix ? '' : pointer.startsWith(prefix + '/') ? pointer.slice(prefix.length) : null;
+  const path = strip(issue.path, '/value');
+  const schemaPath = strip(issue.schemaPath, '/properties/value');
+  if (path !== null && schemaPath !== null) return { ...issue, path, schemaPath };
+  return { ...issue, path: '', schemaPath: '', message: `the model didn't submit the value as { "value": … } (${issue.path || 'the submission'}: ${issue.message})` };
 }
 
 /** Whether two JSON values are equal, objects compared by their keys whatever the order. */
@@ -252,14 +307,14 @@ export class Ask<T> extends Answer<T> {
 }
 
 /** `ask`'s options as the implementation takes them. @internal */
-export type AnyAskOptions = AskOptions & { schema?: SchemaInput; parse?: (value: unknown) => unknown };
+export type AnyAskOptions = AskOptions & { schema?: SchemaInput; parse?: (value: any) => unknown };
 
 /** What one ask needs to read its answer. */
 interface Plan {
   name: string;
   wrapped: boolean;
   standard: PreparedSchema['standard'];
-  parse: ((value: unknown) => unknown) | undefined;
+  parse: ((value: any) => unknown) | undefined;
 }
 
 /** `session.ask`: checks what it can before sending (nothing is sent on a mistake), then reads the report. @internal */
@@ -270,7 +325,7 @@ export function askIn(session: Session, input: PromptInput, options: AnyAskOptio
     result: { name: plan.name, ...(attempts !== undefined ? { attempts } : {}) },
     ...(signal ? { signal } : {}), ...(timeout !== undefined ? { timeout } : {}), ...(meta ? { meta } : {})
   });
-  return new Ask(turn, turn.result.then((turnResult) => read(turnResult, plan)));
+  return new Ask(turn, turn.result.then((turnResult) => read(turnResult, plan), (error) => failed(error, plan)));
 }
 
 function planAsk(session: Session, options: AnyAskOptions): Plan {
@@ -288,16 +343,19 @@ function planAsk(session: Session, options: AnyAskOptions): Plan {
       throw new TypeError(`"${name}" wasn't declared when this session opened (declared: ${results.declared.join(', ') || 'none'}).`);
     }
     const known = declared.get(name);
-    if (given && known && known.source !== given.source && !sameJson(known.json, given.json)) {
+    if (given && known && known.source !== given.source && !sameJson(known.wire, given.wire)) {
       throw new TypeError(`The schema given isn't the one this session declared as "${name}".`);
     }
   } else if (given) {
-    name = [...declared].find(([, known]) => known.source === given.source)?.[0]
-      ?? [...declared].find(([, known]) => sameJson(known.json, given.json))?.[0];
+    const matches = [...declared].filter(([, known]) => known.source === given.source || sameJson(known.wire, given.wire)).map(([match]) => match);
+    if (matches.length > 1) {
+      throw new TypeError(`This session declared that schema as ${matches.map((match) => `"${match}"`).join(' and ')}: say which with name.`);
+    }
+    name = matches[0];
     if (name === undefined) {
       throw new TypeError(declared.size === 0
-        ? 'This session handle doesn\'t know the schemas it declared (it was loaded or forked without results): ask by name '
-          + `(${results.declared.join(', ')}), or pass results again when loading it.`
+        ? 'This session handle doesn\'t know the schemas it declared (it was loaded or forked without results, from an Agneta '
+          + `that doesn't say them): ask with name (${results.declared.join(', ')}) and schema, or pass results again when loading it.`
         : 'This session didn\'t declare that schema, and Agneta takes schemas only when a session opens: declare it there '
           + '(newSession, loadSession or fork with results: { schemas: { name: schema } }), then ask for it; or use client.ask for a one-shot.');
     }
@@ -306,6 +364,11 @@ function planAsk(session: Session, options: AnyAskOptions): Plan {
     if (name === undefined) throw new TypeError('Say which result to ask for (schema or name): this session has no every.');
   }
   const known = declared.get(name);
+  if (!known && !given) {
+    // Without either, a wrapped root's value would come back as { value: … }, silently.
+    throw new TypeError(`This session handle doesn't know the schema "${name}" (an Agneta that doesn't say a loaded or `
+      + 'forked task\'s schemas): pass schema too, to read the value.');
+  }
   return {
     name,
     wrapped: known?.wrapped ?? given?.wrapped ?? false,
@@ -322,12 +385,22 @@ async function read(turnResult: TurnResult, plan: Plan): Promise<AskDetails<unkn
   if (report.status !== 'valid') {
     throw new ProtocolError(`Agneta reported a result status this client doesn't know: ${String((report as { status: unknown }).status)}.`, report);
   }
-  let value = plan.wrapped ? unwrap(report.value) : report.value;
+  const checked = await appCheck(report.value, plan);
+  if ('issues' in checked) {
+    throw new ResultInvalidError('client', report, turnResult, { value: checked.value, submitted: report.value, issues: checked.issues }, { cause: checked.cause });
+  }
+  return { value: checked.value, name: report.name, mechanism: report.mechanism, attempts: report.attempts, turnResult };
+}
+
+/**
+ * A value Agneta accepted, as `ask` gives it: unwrapped, then through the app's own schema and `parse`, which may only
+ * reject it.
+ */
+async function appCheck(submitted: unknown, plan: Plan): Promise<{ value: unknown } | { value: unknown; issues: ResultIssue[]; cause?: unknown }> {
+  let value = plan.wrapped ? unwrap(submitted) : submitted;
   if (plan.standard) {
     const outcome = await plan.standard.validate(value);
-    if (outcome.issues) {
-      throw new ResultInvalidError('client', report, turnResult, { value, issues: outcome.issues.map((issue) => clientIssue(issue, plan.standard!.vendor)) });
-    }
+    if (outcome.issues) return { value, issues: outcome.issues.map((issue) => clientIssue(issue, plan.standard!.vendor)) };
     value = outcome.value;
   }
   if (plan.parse) {
@@ -335,16 +408,29 @@ async function read(turnResult: TurnResult, plan: Plan): Promise<AskDetails<unkn
       value = plan.parse(value);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new ResultInvalidError('client', report, turnResult, { value, issues: [{ path: '', keyword: 'parse', message, schemaPath: '' }] }, { cause: error });
+      return { value, issues: [{ path: '', keyword: 'parse', message, schemaPath: '' }], cause: error };
     }
   }
-  return { value, name: report.name, mechanism: report.mechanism, attempts: report.attempts, turnResult };
+  return { value };
+}
+
+/**
+ * The turn failed. When Agneta had accepted a value first (the error's `structured`), the error gets it as `ask` would
+ * have given it (`accepted`): read and checked like a reply's.
+ */
+async function failed(error: unknown, plan: Plan): Promise<never> {
+  if (error instanceof AgnetaRpcError && error.structured?.status === 'valid') {
+    const checked = await appCheck(error.structured.value, plan);
+    error.accepted = 'issues' in checked ? { value: checked.value, issues: checked.issues } : { value: checked.value, issues: null };
+  }
+  throw error;
 }
 
 function refused(report: StructuredResult & { status: 'invalid' | 'missing' }, plan: Plan): RefusedResult {
   const issues = report.issues ?? [];
   return {
     value: plan.wrapped ? unwrap(report.value) : report.value,
+    submitted: report.value,
     issues: plan.wrapped ? issues.map(unwrapIssue) : issues
   };
 }

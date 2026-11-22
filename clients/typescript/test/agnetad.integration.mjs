@@ -19,7 +19,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import {
   AgnetaClient, DeclinedError, httpMcpServer, memoryTokenStore, NeedsPairingError, NotRunningError, ResultInvalidError,
-  ResultMissingError, UnenforceableError, chooseProvider
+  ResultMissingError, UnenforceableError, chooseProvider, wrapperComment
 } from '../dist/index.js';
 import { fileTokenStore } from '../dist/node.js';
 
@@ -274,11 +274,35 @@ test('the client against agnetad: open, catalog, pair, sessions, streaming, tool
   assert.equal(client.sessions.length, before, 'the one-shot closed its session');
   const list = { type: 'array', items: { type: 'string' } };
   assert.deepEqual(await client.ask('CALL agneta-result__submit_result {"value": ["a", "b"]}', { ...onGoose, schema: list }), ['a', 'b']);
+  // References in a wrapped schema still point where they did, checked by Agneta's own validator: under a definition
+  // or property named like a data keyword, and percent-encoded.
+  const submit = (value) => `CALL agneta-result__submit_result ${JSON.stringify({ value })}`;
+  const nested = { $defs: { enum: { anyOf: [{ type: 'string' }, { $ref: '#' }] } }, type: 'array', items: { $ref: '#/$defs/enum' } };
+  assert.deepEqual(await client.ask(submit(['a', ['b']]), { ...onGoose, schema: nested }), ['a', ['b']]);
+  const underDefault = { type: 'array', items: { type: 'object', properties: { default: { type: 'array', items: { $ref: '#' } } } } };
+  assert.deepEqual(await client.ask(submit([{ default: [[]] }]), { ...onGoose, schema: underDefault }), [{ default: [[]] }]);
+  const underExamples = { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, examples: { $ref: '#/items/properties/name' } } } };
+  assert.deepEqual(await client.ask(submit([{ examples: 'x' }]), { ...onGoose, schema: underExamples }), [{ examples: 'x' }]);
+  await assert.rejects(client.ask(submit([{ examples: 1 }]), { ...onGoose, schema: underExamples, attempts: 1 }),
+    (error) => error instanceof ResultInvalidError && error.issues[0]?.path === '/0/examples');
+  const encoded = { $defs: { a: { type: 'string' } }, type: 'array', items: { $ref: '#/%24defs/a' } };
+  assert.deepEqual(await client.ask(submit(['x']), { ...onGoose, schema: encoded }), ['x']);
+  // A submission that isn't { value }: the issue is about the whole value, and the submission is kept.
+  await assert.rejects(client.ask('CALL agneta-result__submit_result {"value": ["a"], "note": 1}', { ...onGoose, schema: list, attempts: 1 }),
+    (error) => error instanceof ResultInvalidError && error.issues[0]?.path === '' && error.submitted?.note === 1 && error.value?.[0] === 'a');
+
+  // A task loaded in a handle that declared nothing reads its schemas from Agneta's reply, the wrapper by its $comment.
+  const tagging = await client.newSession({ ...onGoose, policy: { tools: 'app-only', approval: 'never-ask' }, results: { schemas: { tags: list } } });
+  await tagging.close();
+  const retagging = await client.loadSession(tagging.id);
+  assert.equal(retagging.results.schemas?.tags?.$comment, wrapperComment);
+  assert.deepEqual(await retagging.ask('CALL agneta-result__submit_tags {"value": ["z"]}', { name: 'tags' }), ['z']);
+  await retagging.close();
 
   // A session with every: each prompt asks for it unless it says false; the result tool's calls are tagged and kept
   // apart from the model's own; Agneta's refusal of a value, the app's own parse refusing one, and none submitted.
   const forms = await client.newSession({ ...onGoose, policy: { tools: 'app-only', approval: 'never-ask' }, results: { schemas: { contact }, every: 'contact' } });
-  assert.deepEqual(forms.results, { declared: ['contact'], every: 'contact', mechanism: 'tool' });
+  assert.deepEqual(forms.results, { declared: ['contact'], every: 'contact', mechanism: 'tool', schemas: { contact } });
   const filled = await forms.prompt('CALL agneta-result__submit_contact {"name": "Bo"}');
   assert.equal(filled.structured?.status, 'valid', JSON.stringify(filled.structured));
   assert.deepEqual(filled.structured.value, { name: 'Bo' });

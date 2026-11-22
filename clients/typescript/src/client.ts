@@ -5,7 +5,7 @@ import type { Implementation, SessionUpdate } from './acp.js';
 import { Connection, probeAgneta, type OpenOptions, type PortProbe, type RequestOptions, type WebSocketConstructor } from './connection.js';
 import { Emitter } from './emitter.js';
 import {
-  AbortedError, ConnectionClosedError, DeclinedError, EngineDownloadingError, MethodNotFoundError, NeedsPairingError,
+  AbortedError, ConnectionClosedError, DeclinedError, TimeoutError, EngineDownloadingError, MethodNotFoundError, NeedsPairingError,
   NotInstalledError, NotRunningError, OutdatedError, ProtocolError, UnsupportedByAgnetaError, UnsupportedEnvironmentError,
   type DownloadProgress
 } from './errors.js';
@@ -20,7 +20,7 @@ import {
   type TraceReadResult, type TraceRecord
 } from './protocol.js';
 import {
-  Answer, prepareDeclaration, resultExtension, type AskOptions, type FromSchema, type FromStandardSchema, type PreparedDeclaration,
+  Answer, prepareDeclaration, recordedSchemas, resultExtension, type AskOptions, type FromSchema, type FromStandardSchema, type PreparedDeclaration,
   type PreparedSchema, type SchemaInput
 } from './results.js';
 import {
@@ -675,11 +675,12 @@ export class AgnetaClient extends Emitter<ClientEvents> {
    * The schema forms, checks and errors are `session.ask`'s, and opening's errors are `newSession`'s
    * (`UnenforceableError` with `fields: ['agneta/result']` for a schema Agneta refuses).
    */
+  ask<const S extends StandardJSONSchemaV1, T>(input: PromptInput, options: OneShotOptions & { schema: S; parse: (value: FromStandardSchema<S>) => T }): Answer<T>;
   ask<const S extends StandardJSONSchemaV1>(input: PromptInput, options: OneShotOptions & { schema: S }): Answer<FromStandardSchema<S>>;
   ask<T>(input: PromptInput, options: OneShotOptions & { schema: SchemaInput; parse: (value: unknown) => T }): Answer<T>;
   ask<const S extends JsonSchema>(input: PromptInput, options: OneShotOptions & { schema: S }): Answer<FromSchema<S>>;
   ask<T = unknown>(input: PromptInput, options: OneShotOptions & { schema: SchemaInput }): Answer<T>;
-  ask(input: PromptInput, options: OneShotOptions & { schema: SchemaInput; parse?: (value: unknown) => unknown }): Answer<unknown> {
+  ask(input: PromptInput, options: OneShotOptions & { schema: SchemaInput; parse?: (value: any) => unknown }): Answer<unknown> {
     const { schema, parse, attempts, timeout, policy, onTurn, ...rest } = options;
     return new Answer((async () => {
       let session: Session | undefined;
@@ -791,7 +792,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     try {
       for (;;) {
         try {
-          result = await connection.request(method, params, { timeout: options.timeout ?? this.timeouts.session, ...(options.signal ? { signal: options.signal } : {}) });
+          result = await this.#openRequest(connection, method, params, options.timeout ?? this.timeouts.session, options.signal);
           break;
         } catch (error) {
           if (!(error instanceof EngineDownloadingError) || Date.now() - started >= wait) throw error;
@@ -816,7 +817,10 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     const early = this.#early.get(id) ?? [];
     this.#early.delete(id);
     const history = early.filter(({ method }) => method === 'session/update').map(({ params }) => params.update as SessionUpdate);
-    const session = new Session(this.#host, id, { ...result, sessionId: id }, history, options.permissions, options.on, declared);
+    // What it declared: as given, as a handle known here had it, else as Agneta's reply recorded it (a task resumed in
+    // another process).
+    const schemas = declared?.size ? declared : recordedSchemas(result._meta?.agneta?.results?.schemas);
+    const session = new Session(this.#host, id, { ...result, sessionId: id }, history, options.permissions, options.on, schemas);
     if (this.#connection !== connection || !connection.isOpen) {
       session.end({ reason: 'disconnected', error: new ConnectionClosedError(undefined, 'closed while the session opened') });
       throw new ConnectionClosedError(undefined, 'closed while the session opened');
@@ -827,6 +831,46 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     // The rest of what came early (live trace records, a queue place, a stop), to the listeners given in `on`.
     for (const { method, params } of early) if (method !== 'session/update') session.receive(method, params);
     return session;
+  }
+
+  /**
+   * One attempt at opening, with its own timeout and the caller's signal, so a reply that arrives after the caller gave
+   * up is still seen: that session is open in Agneta, and nothing will ever use it, so it's closed.
+   */
+  #openRequest(connection: Connection, method: 'session/new' | 'session/load' | 'agneta/fork', params: any, timeout: number,
+    signal: AbortSignal | undefined): Promise<SessionResult> {
+    if (signal?.aborted) return Promise.reject(new AbortedError(method, { cause: signal.reason }));
+    const sent = connection.request(method, params, { timeout: 0 });
+    return new Promise((resolve, reject) => {
+      let gaveUp = false;
+      const timer = timeout > 0 && Number.isFinite(timeout) ? setTimeout(() => giveUp(new TimeoutError(method, timeout)), timeout) : undefined;
+      const abort = () => giveUp(new AbortedError(method, { cause: signal?.reason }));
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+      };
+      const giveUp = (error: Error) => {
+        gaveUp = true;
+        cleanup();
+        reject(error);
+      };
+      signal?.addEventListener('abort', abort, { once: true });
+      sent.then((result) => {
+        if (!gaveUp) {
+          cleanup();
+          resolve(result);
+          return;
+        }
+        const id = result?.sessionId ?? params.sessionId;
+        if (method === 'session/load' && this.#sessions.has(id)) return;
+        if (typeof id === 'string' && connection.isOpen) connection.request('session/close', { sessionId: id }).catch(() => {});
+        this.#early.delete(id);
+      }, (error) => {
+        if (gaveUp) return;
+        cleanup();
+        reject(error);
+      });
+    });
   }
 
   /** What sessions use of the client: the connection they were opened on. */
