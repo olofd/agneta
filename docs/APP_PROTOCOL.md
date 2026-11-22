@@ -548,7 +548,7 @@ JSON Schema 2020-12, in a subset every engine can honour. Anything outside it is
 The value reaches Agneta through an MCP tool on every engine, and Agneta checks it the same way. How an engine handles a call before it reaches Agneta differs, measured on the pinned versions ([ENGINES.md](ENGINES.md)):
 
 - **Goose** passes every call on: the model reads Agneta's issues.
-- **Claude Code** and **Codex** get the result tool up front like the other engines; how they pass calls on is not yet measured with real models.
+- **Claude Code** and **Codex** pass every call on: the model reads Agneta's issues (measured with Sonnet, Luna and Terra on plans).
 - **OpenCode** checks the arguments against the tool's schema itself and refuses a call that doesn't fit before it reaches Agneta; the model reads OpenCode's message, and if it never sends a valid value the reply is `missing` with `not-submitted`.
 - Engines may show the model less of a schema than they're given; Agneta's issues quote the part a value broke.
 

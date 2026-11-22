@@ -4,8 +4,9 @@
 // pattern and bounds a model has to work to meet) through Agneta's whole stack on each account and model, a few times
 // each, and prints per run: the outcome, attempts, model calls, time and tokens; then a summary per configuration.
 // The sign-ins are the real probe's (RealProbeTests). AGNETA_REAL_PROBE_RUNS=<n> runs each case n times (default 3);
-// AGNETA_REAL_PROBE_ACCOUNTS=codex,claude-direct,claude picks accounts; AGNETA_REAL_PROBE_KEEP=<folder> writes every
-// run as JSON lines there. It uses your plans' limits.
+// AGNETA_REAL_PROBE_ACCOUNTS=codex,claude-direct,claude picks accounts, AGNETA_REAL_PROBE_CASES=invoice,… cases;
+// AGNETA_REAL_PROBE_KEEP=<folder> writes every run as JSON lines there, and the tasks' traces (each attempt's issues
+// are in their result records) in its Traces folder. It uses your plans' limits.
 import AgnetaFakes
 import Foundation
 import Testing
@@ -112,13 +113,14 @@ func realResultProbe() async throws {
     try await app.pairAndInitialize("Results probe")
     let keep = env["AGNETA_REAL_PROBE_KEEP"].map { URL(filePath: $0) }
     let only = env["AGNETA_REAL_PROBE_ACCOUNTS"].map { Set($0.split(separator: ",").map(String.init)) }
+    let cases = env["AGNETA_REAL_PROBE_CASES"].map { Set($0.split(separator: ",").map(String.init)) }
     // Only Luna, Terra and Sonnet (the maintainer's choice for real-model tests).
     let configurations: [(account: String, model: String)] = [
         ("codex", "luna"), ("codex", "terra"), ("claude-direct", "sonnet"), ("claude", "sonnet")
     ]
     var summary: [String: [String]] = [:]
     for (account, wanted) in configurations where only?.contains(account) ?? true {
-        for corpus in ResultCorpus.cases {
+        for corpus in ResultCorpus.cases where cases?.contains(corpus.name) ?? true {
             for run in 1...runs {
                 let label = "\(account)/\(wanted)/\(corpus.name)#\(run)"
                 do {
@@ -164,7 +166,8 @@ func realResultProbe() async throws {
                         "\(status)\(status == "missing" ? "(\(result["reason"]?.stringValue ?? "?"))" : "")"
                         + " attempts=\(result["attempts"]?.intValue ?? 0) correct=\(correct)"
                         + " calls=\(usage["modelCalls"]?.intValue ?? 0) in=\(usage["inputTokens"]?.intValue ?? 0)"
-                        + " out=\(usage["outputTokens"]?.intValue ?? 0) ms=\(Int(Double(elapsed.components.seconds) * 1000))"
+                        + " cached=\(usage["cacheReadTokens"]?.intValue ?? 0)+\(usage["cacheWriteTokens"]?.intValue ?? 0)"
+                        + " out=\(usage["outputTokens"]?.intValue ?? 0) ms=\(Int(elapsed / .milliseconds(1)))"
                     print("RESULTS \(label) [\(pick)]", line)
                     summary["\(account)/\(wanted)/\(corpus.name)", default: []].append(line)
                     if let keep {
@@ -198,4 +201,9 @@ func realResultProbe() async throws {
         print("RESULTS SUMMARY \(key): valid \(valid)/\(lines.count), first attempt \(first), correct \(correct)")
     }
     await supervisor.stopAll()
+    if let keep {
+        try? FileManager.default.copyItem(
+            at: root.appending(path: "agneta/Traces"), to: keep.appending(path: "Traces-\(UUID().uuidString.prefix(6))")
+        )
+    }
 }

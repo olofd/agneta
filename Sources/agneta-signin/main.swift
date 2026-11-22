@@ -37,7 +37,7 @@ let progress: SignInProgress = { step in
         if openBrowser {
             _ = try? ChildProcess(executable: "/usr/bin/open", arguments: [page.absoluteString], environment: [:])
         }
-    case .browserOpened(let url): say("→ opened by Claude: \(url.absoluteString)")
+    case .browserOpened(let url): say("→ opened by the provider's sign-in: \(url.absoluteString)")
     case .pasteCode(let text): say("→ \(text) Type it here and press Return.")
     case .waiting(let text): say("… \(text)")
     case .signedIn(let who): say("✓ signed in: \(who)")
