@@ -191,6 +191,7 @@ public actor ResultServer {
                 "Submit the \(name) result once your work for the request is done: call it once, with the result "
                 + "itself as the arguments."
             if let about = schema.source["description"]?.stringValue { description += " The result: " + about }
+            if let rules = schema.rules { description += " " + rules }
             return [
                 "name": .string(ResultDeclaration.tool(for: name)), "description": .string(description),
                 "inputSchema": schema.source,

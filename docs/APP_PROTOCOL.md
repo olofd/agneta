@@ -470,6 +470,8 @@ The result:
 
 A turn can return a value that matches a JSON Schema the app gives, checked by Agneta, the same on every engine: an invoice from a PDF, a form filled in from a conversation, a typed answer. The model returns it by calling a tool Agneta serves; Agneta validates every call and answers the model with what's wrong, so it can correct the value within the turn; the prompt's reply carries the result, or why there is none.
 
+The tool's input schema is the app's schema, and its description also lists the schema's limits in words: counts, lengths, numeric bounds, multiples, uniqueness and patterns, each at its path (`/tags/*` for any item), said only for the kinds of value they apply to ("if a number: at least 0"). They're read from the compiled schema, so they say what Agneta checks; choices (`anyOf`, `oneOf`, `not`) are left to the schema, and the list is at most 1,200 characters. Smaller models meet the limits on the first call more often that way ([ENGINES.md](ENGINES.md)). The schema stays what Agneta checks.
+
 ### Declaring results
 
 Schemas are declared when a session opens (`session/new`, `session/load`, `agneta/fork`), because engines take their tools only then:

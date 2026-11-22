@@ -106,6 +106,8 @@ public struct ResultSchema: Sendable {
     /// The schema as the app sent it.
     public let source: JSONValue
     let nodes: [Node]
+    /// Its limits in words, for the result tool's description (ResultRules), worked out once here.
+    let rules: String?
 
     /// Compiles `schema`, or refuses it with the first thing outside the subset or over a limit.
     public static func compile(_ schema: JSONValue, limits: Limits = .standard) throws(ResultSchemaRejection)
@@ -129,7 +131,7 @@ public struct ResultSchema: Sendable {
         let order = try compiler.refuseCyclesThatDontDescend()
         try compiler.boundWork(order)
         precondition(root == 0)
-        return ResultSchema(source: schema, nodes: compiler.nodes)
+        return ResultSchema(source: schema, nodes: compiler.nodes, rules: ResultRules.text(compiler.nodes))
     }
 }
 
