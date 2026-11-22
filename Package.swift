@@ -8,6 +8,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "AgnetaKit", targets: ["AgnetaKit"]),
+        .library(name: "AgnetaClient", targets: ["AgnetaClient"]),
         .executable(name: "agneta-probe", targets: ["agneta-probe"]),
         .executable(name: "agneta-shell", targets: ["agneta-shell"]),
         .executable(name: "agnetad", targets: ["agnetad"]),
@@ -24,6 +25,10 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1")
     ],
     targets: [
+        // The app-facing SDK is independent of the runtime. Its nested package also builds without host dependencies.
+        .target(name: "AgnetaClient", path: "clients/swift/Sources/AgnetaClient"),
+        .testTarget(
+            name: "AgnetaClientTests", dependencies: ["AgnetaClient"], path: "clients/swift/Tests/AgnetaClientTests"),
         .target(name: "AgnetaKit", dependencies: [.product(name: "GRDB", package: "GRDB.swift")]),
         .executableTarget(name: "agneta-probe", dependencies: ["AgnetaKit"]),
         // GOOSE_SHELL inside engines: forwards commands to Agneta's tool broker. No dependencies.

@@ -41,6 +41,7 @@ App (sandboxed or not) ──ACP over a local WebSocket, paired──▶ Agneta 
 | `Sources/agneta-testclient/` | A stand-in client app, built as a sandboxed app with Mac App Store entitlements; the panel's Run a Test Task uses it |
 | `Sources/agnetad`, `agneta-probe`, `agneta-signin` | Development tools: a headless runtime (it approves every pairing, contained unless started with `--sandbox developer`), a direct engine probe, a sign-in driver. Not shipped |
 | `Sources/AgnetaFakes`, `agneta-fakes` | Fake model and tool servers for tests: a library the test process serves, and a program for the example apps' and the TypeScript client's integration tests. Not shipped |
+| `clients/swift/` | `AgnetaClient`, the official Swift app client: a standalone dependency-free package, also exported by the root package; native WebSockets, MainActor state, Keychain tokens and async turns ([README](../clients/swift/README.md)) |
 | `clients/typescript/` | `@agneta/client`, the official TypeScript client of the app protocol, published to npm on its own ([its design](../clients/typescript/DESIGN.md)). `clients/` holds every official client, one folder per language |
 | `examples/` | Project Chat and Replica Bench: Electron apps on the TypeScript client, and the reference for how an app uses Agneta |
 | `Engines/*.lock` | Pinned engine and runtime versions with SHA-256 hashes; `scripts/fetch-engines` and `scripts/fetch-codex` fetch them |

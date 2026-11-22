@@ -49,7 +49,7 @@
       <h2>For app developers</h2>
       <p>Ship agent features without building an agent: Agneta runs a proven one with your app’s own tools and handles sign-in, consent and sandboxing. Your users’ own AI accounts pay for it, so there’s no backend and no AI bill.</p>
       <ul class="points">
-        <li>Use the official <a href="/docs/typescript-client/">TypeScript client</a>, or speak the <a href="https://agentclientprotocol.com" rel="noopener">Agent Client Protocol</a> over a local WebSocket from any language. A sandboxed Mac App Store app can do it too.</li>
+        <li>Use the official <a href="/docs/typescript-client/">TypeScript</a> or <a href="/docs/swift-client/">Swift client</a>, or speak the <a href="https://agentclientprotocol.com" rel="noopener">Agent Client Protocol</a> over a local WebSocket from any language. A sandboxed Mac App Store app can do it too.</li>
         <li>Keep your tools and data in your app, served as an MCP server on loopback. The agent uses them on the user’s account.</li>
         <li>Ask for exactly what you need: the providers, engines and mode. Find out first what Agneta offers, and ask it to help the user connect a provider.</li>
         <li>Send a policy with each session: tools, folders, network, approval and limits. Agneta enforces it with sandboxes, or refuses it.</li>
@@ -110,7 +110,7 @@
 
   <section class="dev wrap" aria-labelledby="dev">
     <h2 id="dev">Add it to your app</h2>
-    <p class="section-lede">Your app is an ACP client and Agneta is the ACP agent. In TypeScript or JavaScript, <a href="/docs/typescript-client/"><code>@agneta/client</code></a> connects, pairs once, keeps the token, and starts sessions with your own tools and a policy, typed. In any other language, connect to <code>ws://127.0.0.1:47321/acp</code>: any WebSocket and JSON-RPC 2.0 code will do.</p>
+    <p class="section-lede">Your app is an ACP client and Agneta is the ACP agent. In TypeScript or JavaScript, <a href="/docs/typescript-client/"><code>@agneta/client</code></a> connects, pairs once, keeps the token, and starts sessions with your own tools and a policy, typed. For native Mac apps, <a href="/docs/swift-client/"><code>AgnetaClient</code> for Swift</a> provides async turns, Keychain pairing and typed results. In any other language, connect to <code>ws://127.0.0.1:47321/acp</code>: any WebSocket and JSON-RPC 2.0 code will do.</p>
     <div class="dev-code">
       <p class="code-title">Pair, then stream a reply</p>
 {{dev_snippet}}
@@ -118,6 +118,7 @@
     <div class="dev-grid">
       <ul class="link-list">
         <li><a href="/docs/apps/">Developer guide</a>: the conversation, step by step</li>
+        <li><a href="/docs/swift-client/">Swift client</a>: the <code>AgnetaClient</code> Swift package, with native WebSockets, streaming and Keychain tokens</li>
         <li><a href="/docs/typescript-client/">TypeScript client</a>: build it from <code>clients/typescript</code> until its first npm release, and every class, event and error</li>
         <li><a href="/docs/app-protocol/">App protocol</a>: every field, limit and error</li>
         <li><a href="/docs/app-protocol/#structured-results">Structured results</a>: typed values checked against your JSON Schema</li>

@@ -73,6 +73,6 @@ Every app that talks to Agneta used to write the same hundred careful lines: ope
 
 - **No tool-server helper.** An app's MCP tools still need a Streamable HTTP server of their own (Project Chat's `project-tools.mjs` is about 120 lines). `httpMcpServer()` builds the registration, bearer and all; serving is the app's.
 - **Browsers can't be supported** while Agneta refuses any `Origin`, which is deliberate.
-- **No Swift client yet.** A Mac App Store app writes its own, following the protocol's Getting Agneta (every call it names works sandboxed); `clients/swift/` is planned separately.
+- **Swift:** [AgnetaClient](../swift/README.md) provides the native client in `clients/swift/`, with the same client/session/turn structure and Swift concurrency.
 - **No ad hoc schemas.** Agneta version 1 takes schemas only when a session opens; a schema per prompt needs Agneta's planned generic tool (the reserved name `any`), and `ask` would then send an undeclared schema instead of refusing it.
 - **Sessions don't survive a reconnect.** That's Agneta's rule (a session belongs to its connection); the library makes the reload one call but doesn't do it unasked.

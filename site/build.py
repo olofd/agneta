@@ -33,6 +33,7 @@ GROUPS = [
     ("For app developers", [
         ("README.md", "For app developers", "docs/apps", "Developer guide"),
         ("clients/typescript/README.md", None, "docs/typescript-client", "TypeScript client"),
+        ("clients/swift/README.md", None, "docs/swift-client", "Swift client"),
         ("docs/APP_PROTOCOL.md", None, "docs/app-protocol", "App protocol"),
         ("docs/DIAGNOSTICS.md", None, "docs/diagnostics", "Diagnostics"),
     ]),

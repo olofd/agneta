@@ -23,7 +23,7 @@
 
 Agneta is a free, open-source menu bar app that runs AI agents for your other Mac apps, with you in control. An app asks before it can use one, and you decide what it may reach. Every task runs in a sandbox on your Mac, shows in the menu bar, and stops with one click. The agents run on the AI account you connect once (a ChatGPT or Claude plan, or an API key), and no app ever sees your password or key.
 
-**Building a Mac app?** Add agent features without building an agent. Agneta runs a proven one (Claude Code, Codex, Goose or OpenCode) with your app's own tools, handles sign-in, consent and sandboxing, and streams the work back over one local connection in the open [Agent Client Protocol](https://agentclientprotocol.com) (ACP). Your users' own AI accounts pay for it, so there's no backend to run and no AI bill. The [TypeScript client](clients/typescript/README.md) does the talking for you; any language with a WebSocket works.
+**Building a Mac app?** Add agent features without building an agent. Agneta runs a proven one (Claude Code, Codex, Goose or OpenCode) with your app's own tools, handles sign-in, consent and sandboxing, and streams the work back over one local connection in the open [Agent Client Protocol](https://agentclientprotocol.com) (ACP). Your users' own AI accounts pay for it, so there's no backend to run and no AI bill. The [TypeScript](clients/typescript/README.md) and [Swift](clients/swift/README.md) clients do the talking for you; any language with a WebSocket works.
 
 <!-- The demo video goes here, above the screenshots: 20 seconds of an app pairing, a task running in the panel, and
      Stop. Drag the .mp4 into this file in GitHub's web editor, which uploads it and puts its URL on a line of its own;
@@ -147,6 +147,8 @@ python3 site/build.py && python3 -m http.server 8642 --bind 127.0.0.1 --director
 ```
 
 ## For app developers
+
+**Building a native Mac app?** Use the [Swift client](clients/swift/README.md), available as the `AgnetaClient` Swift package product: async turns and streaming, Keychain pairing tokens, policies, tools and typed structured results.
 
 **Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app, built on [`@agneta/client`](clients/typescript/README.md) like Replica Bench, pairs with Agneta, keeps its access and reconnects by itself, helps the user get Agneta when it isn't installed and open it when it isn't running, lets you choose Agneta or Agneta Dev, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review. **[Replica Bench](examples/replica-bench/README.md)** shows the sandbox modes: it runs a demanding workload on every engine in both modes, and shows what each task got and how a refusal looks.
 
@@ -371,6 +373,7 @@ The documents below are also on [agneta.dahlbom.io/docs](https://agneta.dahlbom.
 | Document | For |
 | --- | --- |
 | [docs/APP_PROTOCOL.md](docs/APP_PROTOCOL.md) | The protocol in full, for integrating an app: connecting and pairing, sessions and their policy, the sandbox modes, model choice, turns, permissions, the trace, and every error |
+| [clients/swift/README.md](clients/swift/README.md) | `AgnetaClient`, the official Swift client: async turns, Keychain pairing, policies, tools, traces and typed results |
 | [clients/typescript/README.md](clients/typescript/README.md) | `@agneta/client`, the official TypeScript client: a quick start, and every class, option, event and error |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How Agneta is built, and its security model |
 | [docs/ENGINES.md](docs/ENGINES.md) | Goose, OpenCode, Claude Code and Codex behind the engine boundary |

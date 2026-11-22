@@ -8,6 +8,9 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 **For apps**
 
+- **Swift client:** the `AgnetaClient` Swift package provides native WebSockets, Keychain pairing, async sessions and streaming turns, policies, MCP registrations, permissions, traces and typed structured results. It is also a standalone package in `clients/swift` ([README](https://github.com/olofd/agneta/tree/main/clients/swift)).
+- **TypeScript client hardening:** closing cancels an in-flight connection or guided flow, and closing from a pairing callback cannot reopen it. Token files are replaced atomically through unique owner-only temporary files. Malformed replies fail explicitly, and message observers cannot mutate delivered replies.
+
 - **Structured results** (`agneta/result`, in `initialize`'s extensions). A session declares JSON Schemas when it opens; a prompt asks for one by name, or every prompt does; the model submits the value through a tool Agneta serves, Agneta checks it against the schema the same way on every engine and answers the model with what's wrong, and the prompt's reply carries `_meta["agneta/result"]`: `valid` with the value, or `invalid` or `missing` with why ([APP_PROTOCOL.md](https://github.com/olofd/agneta/blob/v0.8.0/docs/APP_PROTOCOL.md#structured-results)). Schemas are a documented subset of JSON Schema 2020-12; anything outside it is refused, never ignored. Additive: an app that doesn't use it sees nothing new, and Agneta listens on nothing new until a session declares results.
 - **App server names starting like Agneta's result server's** (`agneta-result`, `agneta_result`, `agneta.result`, `agneta-result__…`, any case) are refused with `-32602`, as engines' own server names already are.
 - Sessions that declare results load the app's tools up front (`agneta/appTools` `always`) on every engine. `initialize` says what structured results can do in `_meta.agneta.results`. A request over the result server's 1 MB cap is answered `413`.
@@ -16,6 +19,7 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 
 **Fixes**
 
+- **Result validation edge cases:** regex grammar is checked as JavaScript Unicode syntax before bounded ICU matching, and combining marks cannot hide regex delimiters. Duplicate and canonically equivalent JSON object keys are refused before decoding, preserving every schema constraint; malformed RPC frames with a usable id are answered rather than left waiting.
 - **A message nested more than 128 levels deep no longer stops Agneta.** Decoding it recursed past the stack: an app, an engine or a model's tool call could crash Agneta with under 1 KB. It's refused before decoding; a request that deep is answered with `-32600`, and a reply that deep fails the request it answers instead of leaving it waiting.
 - **Agneta's local HTTP servers** give a request 2 s to arrive and then hold its connection until it's answered, so idle connections can't block real requests, and refuse malformed header names. The diagnostics server answers MCP's version negotiation and malformed requests as the spec says.
 

@@ -93,6 +93,12 @@ jobs:
           npm test
           npm run test:integration
 
+      - name: Test the Swift client library
+        env:
+          AGNETA_CLIENT_NATIVE_TESTS: "1"
+          AGNETA_CLIENT_INTEGRATION: "1"
+        run: swift test --package-path clients/swift -Xswiftc -warnings-as-errors
+
       # Project Chat runs on the client library. --ignore-scripts: its tests need no Electron binary.
       - name: Test Project Chat
         working-directory: examples/project-chat
