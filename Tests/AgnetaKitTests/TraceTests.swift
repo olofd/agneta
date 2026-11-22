@@ -19,6 +19,12 @@ import Testing
         }
     }
 
+    /// An app reading a trace without naming types gets every record but the raw frames, structured results included.
+    @Test func defaultTypesAreEverythingButTheRawFrames() {
+        #expect(Traces.defaultTypes.contains("result") && Traces.defaultTypes.contains("permission"))
+        #expect(!Traces.defaultTypes.contains("acp"))
+    }
+
     @Test func sharedEngineStderrStaysOutOfTaskTraces() throws {
         let folder = try folder()
         defer { try? FileManager.default.removeItem(at: folder) }

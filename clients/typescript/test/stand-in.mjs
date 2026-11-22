@@ -333,7 +333,7 @@ export function agnetaLike({
       }
       case 'initialize':
         if (!state.tokens.has(params._meta?.agneta?.token)) return { error: { code: -32001, message: 'Pair with Agneta first', data: { agneta: { needsPairing: true } } } };
-        return { result: { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [], _meta: { agneta: { extensions, access: state.access } } } };
+        return { result: { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [], _meta: { agneta: { extensions, access: state.access, results: { mechanisms: ['tool'], followUps: false, adHoc: false } } } } };
       case 'agneta/access': return { result: state.access };
       case 'session/new': {
         const { declaration, refusal } = declare(params);

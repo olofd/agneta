@@ -154,7 +154,9 @@ public final class Traces: @unchecked Sendable {
 
     /// Record types an app receives unless it asks otherwise: everything except the raw frames.
     public static let defaultTypes: Set<String> = [
-        "meta", "config", "event", "engine.message", "engine.usage", "permission", "shell", "stderr", "lifecycle", "end"
+        "meta", "config", "event", "engine.message", "engine.usage", "permission", "shell", "stderr", "lifecycle",
+        "result",
+        "end"
     ]
 
     /// Deletes the traces of tasks no longer kept (retention, Clear History).

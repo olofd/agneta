@@ -115,6 +115,11 @@ extension Router {
         }
         let results: ResultDeclaration?
         do { results = try ResultDeclaration.parse(resultsValue) } catch { return .failure(error.rpcError) }
+        // A session that declares results has its MCP tools up front on every engine: Claude Code and Codex defer them
+        // behind their tool search otherwise, and neither lets one server's tools be loaded while another's are
+        // deferred (Claude Code doesn't pass a tool's `anthropic/alwaysLoad` on, measured on claude-agent-acp 0.107.2),
+        // so a result tool the model must search for first might never be called. The reply's `appTools` says so.
+        if results != nil { policy.appTools = .always }
         if let refusal = Self.refuseServers(servers) { return .failure(refusal) }
         let engine: any EngineAdapter
         let wanted =

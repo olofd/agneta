@@ -230,7 +230,15 @@ export interface InitializeResult {
   };
   authMethods?: unknown[];
   agentInfo?: Implementation;
-  _meta: { agneta: { extensions: AgnetaExtension[]; access: Access }; [key: string]: unknown };
+  _meta: {
+    agneta: {
+      extensions: AgnetaExtension[];
+      access: Access;
+      /** What structured results can do in this Agneta; absent from Agnetas before it was added. */
+      results?: ResultCapabilities;
+    };
+    [key: string]: unknown;
+  };
 }
 
 // MARK: Sessions
@@ -449,6 +457,16 @@ export type ResultAsk = { name?: string; attempts?: number } | false;
 /** How the model returned the result: through the result tool Agneta serves (version 1's only mechanism). */
 export type ResultMechanism = 'tool' | (string & {});
 
+/**
+ * `_meta.agneta.results` in `initialize`: the mechanisms Agneta can return a value through (version 1: the result tool),
+ * and whether it can ask the model again for a missing value (`followUps`) or take a schema in a prompt (`adHoc`).
+ */
+export interface ResultCapabilities {
+  mechanisms: ResultMechanism[];
+  followUps: boolean;
+  adHoc: boolean;
+}
+
 /** What a session that declared results can ask for: `_meta.agneta.results` in the reply that opened it. */
 export interface SessionResults {
   /** The declared schemas' names. */
@@ -474,7 +492,7 @@ export interface ResultIssue {
 /**
  * Why a turn has no value: `stopped` (cancelled, the user's Stop, a limit, or cancelled while it waited in the queue),
  * `refused` (the model refused), `truncated` (it ran out of output tokens), `not-submitted` (it ended without calling the
- * result tool).
+ * result tool the turn asks for).
  */
 export type ResultMissingReason = 'stopped' | 'refused' | 'truncated' | 'not-submitted' | (string & {});
 
@@ -482,7 +500,10 @@ interface StructuredResultBase {
   /** The schema asked for. */
   name: string;
   mechanism: ResultMechanism;
-  /** The calls of the session's result tools in the turn, valid or not. */
+  /**
+   * The calls of the session's result tools that reached Agneta in the turn, valid or not, another result's tool
+   * included (a call the engine refused itself never reaches Agneta).
+   */
   attempts: number;
 }
 
@@ -608,7 +629,8 @@ export interface TraceParams {
 // MARK: Traces (docs/DIAGNOSTICS.md)
 
 export type TraceRecordType =
-  | 'meta' | 'config' | 'acp' | 'event' | 'engine.message' | 'engine.usage' | 'permission' | 'shell' | 'stderr' | 'lifecycle' | 'end'
+  | 'meta' | 'config' | 'acp' | 'event' | 'engine.message' | 'engine.usage' | 'permission' | 'shell' | 'stderr' | 'lifecycle'
+  | 'result' | 'end'
   | (string & {});
 
 interface TraceRecordBase {
@@ -631,7 +653,11 @@ export type TraceEventKind =
   | 'init' | 'prompt' | 'text-delta' | 'thinking-delta' | 'tool-call' | 'tool-input' | 'tool-result' | 'model-call'
   | 'usage' | 'plan' | 'turn' | 'rate-limited' | (string & {});
 
-export type PermissionDecision = 'asked-app' | 'allowed-by-policy' | 'refused-by-policy' | 'cancelled' | (string & {});
+export type PermissionDecision =
+  | 'asked-app' | 'allowed-by-policy' | 'refused-by-policy' | 'allowed-by-agneta' | 'cancelled' | (string & {});
+
+/** What a `result` record says happened to a turn's structured result (docs/DIAGNOSTICS.md). */
+export type ResultTraceEvent = 'asked' | 'submitted' | 'not-asked' | 'too-late' | 'final' | (string & {});
 
 /** One trace record, discriminated by `type`. Secrets are masked. */
 export type TraceRecord =
@@ -645,6 +671,7 @@ export type TraceRecord =
   | (TraceRecordBase & { type: 'shell'; command?: string; cwd?: string; ms?: number })
   | (TraceRecordBase & { type: 'stderr' })
   | (TraceRecordBase & { type: 'lifecycle'; event: string })
+  | (TraceRecordBase & { type: 'result'; event: ResultTraceEvent })
   | (TraceRecordBase & { type: 'end' });
 
 export interface TraceReadParams {

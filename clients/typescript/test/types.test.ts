@@ -2,7 +2,7 @@
 import {
   AgnetaClient, Connection, isAgnetaError, resultCallOf, type Access, type AccessEngine, type AgnetaPresence, type Answer,
   type Ask, type AskDetails, type ConnectProgress, type FromSchema, type GuideQuestion, type Session, type SessionUpdate,
-  type StandardJSONSchemaV1, type StandardSchemaV1, type StructuredResult, type TraceRecord, type TurnEvent
+  type InitializeResult, type StandardJSONSchemaV1, type StandardSchemaV1, type StructuredResult, type TraceRecord, type TurnEvent
 } from '../src/index.js';
 import { electronEnvironment, fileTokenStore, nodeEnvironment, safeStorageTokenStore } from '../src/node.js';
 
@@ -61,6 +61,10 @@ async function narrowing(client: AgnetaClient, connection: Connection) {
   const page = await connection.request('agneta/trace/read', { sessionId: 's', after: 0, types: ['event', 'acp'] });
   const record: TraceRecord | undefined = page.records[0];
   if (record?.type === 'acp') { const leg: string = record.leg; void leg; }
+  if (record?.type === 'result') { const event: string = record.event; void event; }
+  if (record?.type === 'permission' && record.decision === 'allowed-by-agneta') void record;
+  const capabilities: InitializeResult['_meta']['agneta']['results'] = { mechanisms: ['tool'], followUps: false, adHoc: false };
+  void capabilities;
   const anything = await connection.request<{ x: number }>('engine/own', { a: 1 });
   const x: number = anything.x;
   void access; void x;

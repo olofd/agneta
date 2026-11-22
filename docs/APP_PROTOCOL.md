@@ -4,7 +4,7 @@ How a Mac app runs AI work through Agneta. Agneta speaks the [Agent Client Proto
 
 **In TypeScript or JavaScript, use [`@agneta/client`](../clients/typescript/README.md),** the official client: it implements everything on this page (connecting, and getting and opening Agneta, pairing and the token, access, sessions, streaming, permissions, traces and every error, typed) and keeps a raw layer for anything else. Two runnable Electron examples are built on it: [Project Chat](../examples/project-chat/README.md), with pairing, streamed replies, and app-owned MCP tools, and [Replica Bench](../examples/replica-bench/README.md), which runs demanding work on every engine in both sandbox modes.
 
-Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/AppScenarioTests.swift` runs it against a real engine, and `RouterContractTests.swift` pins each decision. How Agneta works inside is in [ARCHITECTURE.md](ARCHITECTURE.md); what each engine can do is in [ENGINES.md](ENGINES.md).
+Every step on this page is exercised by the test suite: `Tests/AgnetaKitTests/AppScenarioTests.swift` and, for structured results, `ResultScenarioTests.swift` run it against real engines, and `RouterContractTests.swift` and `ResultContractTests.swift` pin each decision. How Agneta works inside is in [ARCHITECTURE.md](ARCHITECTURE.md); what each engine can do is in [ENGINES.md](ENGINES.md).
 
 ## Connecting
 
@@ -88,7 +88,8 @@ Two calls work on a connection that hasn't paired, so an app can find out whethe
 
 - **Result:** standard `agentCapabilities` (`loadSession: true`, images in prompts, HTTP MCP servers, `session/close`), plus:
   - `_meta.agneta.extensions`: the extensions below;
-  - `_meta.agneta.access`: what the app may use ([Access](#access)).
+  - `_meta.agneta.access`: what the app may use ([Access](#access));
+  - `_meta.agneta.results`: what [structured results](#structured-results) can do in this Agneta, `{"mechanisms": ["tool"], "followUps": false, "adHoc": false}`: the result tool only, no follow-up prompt for a missing value, no schema given ad hoc in a prompt.
 - **Error `-32001`** with `data.agneta.needsPairing: true` means the token is unknown, access was removed, an Allow Once grant has ended, or (for a verified app) the connecting program isn't the one that paired. Pair again.
 
 ### Access
@@ -489,6 +490,8 @@ Schemas are declared when a session opens (`session/new`, `session/load`, `agnet
 - **The shorthand** `{"schema": {…}}` declares one schema named `result`, asked for on every prompt: a one-shot extraction.
 - **The reply** of `session/new`, `session/load` and `agneta/fork` says what the session declared, schemas included, in `_meta.agneta.results`: `{"declared", "every", "mechanism", "schemas"}`, so a client resuming a task in a new process can rebuild them.
 - **Limits:** at most 8 schemas, 32 KB together; each at most 16 KB. They're in the model's tool list on every call.
+- **App tools load up front:** a session that declares results gets `agneta/appTools` `always` on every engine, whatever it sent, so the model never has to search for the result tool before it can call it (Claude Code would otherwise defer it). The reply's `_meta.agneta.appTools` says so.
+- **Server names** of the app's that start like the result server's, `agneta-result`, case, `-`, `_` and `.` aside (`agneta_result`, `Agneta.Result`, `agneta-results`), are refused in every session, as engines' own server names are: some engine would take their tools for Agneta's.
 - `session/load` and `agneta/fork` keep the original's declaration unless their `_meta` sets one.
 - Anything that doesn't fit (a bad name, an unknown field, a schema outside the subset below) is refused before an engine starts, with `-32602` and `data.agneta.unenforceable: ["agneta/result"]`, `data.agneta.reason` naming what and where.
 
@@ -500,7 +503,7 @@ Schemas are declared when a session opens (`session/new`, `session/load`, `agnet
 - `false`: no result this turn, in a session with `every`.
 - Nothing: the session's `every`, if it has one; otherwise an ordinary turn.
 
-Agneta adds a short note to the prompt saying which tool to call. A schema a session didn't declare can't be asked for in a prompt (`-32602`); declare it when the session opens.
+Agneta adds a short note to the prompt saying which tool to call, in its own paragraph after the app's text. Engines record it as part of the user's message, so a resumed task's replay (`session/load`) shows the note at the end of that message. A schema a session didn't declare can't be asked for in a prompt (`-32602`); declare it when the session opens.
 
 ### The reply
 
@@ -519,10 +522,10 @@ The prompt's reply gains `_meta["agneta/result"]`:
 | `invalid` | The model's values didn't match, and the turn ended or its attempts ran out: `value` and `issues` are the last refused value's |
 | `missing` | No value: `reason` says why, and when a value was refused before, `value` and `issues` are the last one's |
 
-- **`reason`** (with `missing`): `stopped` (cancelled, Stop, a limit, or the turn was cancelled while queued), `refused` (the model refused), `truncated` (it ran out of output tokens), `not-submitted` (it ended without calling the tool).
+- **`reason`** (with `missing`): `stopped` (cancelled, Stop, a limit, or the turn was cancelled while queued), `refused` (the model refused), `truncated` (it ran out of output tokens), `not-submitted` (it ended without calling the tool the turn asks for: calls of another result's tool only count as attempts).
 - **`issues`**: each `{"path", "keyword", "message", "schemaPath"}`, `path` a JSON Pointer into the value. At most 20.
 - **`valueOmitted`**: a refused value nested too deeply to carry back is left out and said so.
-- **`attempts`**: the calls of the session's result tools in the turn.
+- **`attempts`**: the calls of the session's result tools that reached Agneta in the turn, valid or not, another result's tool included. A call an engine refuses itself (OpenCode, below) never reaches Agneta and isn't counted.
 - A missing or invalid result is still a successful reply: the turn ran and has usage. Errors keep their meaning; when the turn of a prompt that asked for a result fails once it has started (the engine's error, or the engine stopping), the error's `data.agneta.result` carries the turn's result, by the same rules as a reply: `valid` with the value when one was accepted before the failure, `invalid` when the attempts had run out, else `missing` with `stopped`. A prompt refused before its turn starts (a paused account, a limit the user set, a full queue) has none.
 - While the turn runs, the result tool's calls arrive as ordinary `tool_call` updates, tagged `update._meta.agneta.result: {"name"}`, so an app can show or hide them.
 - Agneta answers the result tool's permission requests itself (it runs nothing), whatever `approval` says.
@@ -535,9 +538,9 @@ JSON Schema 2020-12, in a subset every engine can honour. Anything outside it is
 - **Accepted, not enforced:** `title`, `description`, `default`, `examples`, `format`, `$comment`, `deprecated`, `readOnly`, `writeOnly`, `$schema` (2020-12 or draft-07, read with 2020-12's meaning), `$id` at the root.
 - **Refused:** references to other documents, `$dynamicRef`, `$anchor`, `if`/`then`/`else`, `dependentSchemas`, `dependentRequired`, `contains`, `unevaluated*`, content keywords, constraining keywords beside `$ref` (put them in `allOf` with it; annotations and `$defs` beside it are fine), and any keyword Agneta doesn't know.
 - **The root** must be `"type": "object"`.
-- **Patterns** are ECMA-262: `$` is the end of the value (never before a final newline), and `\d`, `\w` and `\b` are ASCII. Syntax other engines have but ECMA-262 doesn't (inline flags, possessive quantifiers, `\A`, `\z`) is refused.
+- **Patterns** are ECMA-262, read as JavaScript reads them with the `u` flag: `$` is the end of the value (never before a final newline), `\d`, `\w` and `\b` are ASCII, `\s` is ECMA's white space (U+FEFF and U+000B included, U+0085 not), and `\p{…}` names a Unicode property. `\D`, `\W` and `\S` inside a character class are refused (write the class out). Syntax other engines have but ECMA-262 doesn't (inline flags, possessive quantifiers, `\A`, `\z`) is refused.
 - **Equality** is JSON's: `1` and `1.0` are equal, strings compare by code point, and `multipleOf` is exact.
-- **Bounds:** a value nested more than 64 levels, or one that would take too long to check (a pattern that backtracks without end, a huge value against a schema of many choices), is refused as `limit`. A schema is refused when it's declared if its `anyOf`, `oneOf`, `allOf`, `not` and `$ref` choices add up to more than 1,000 checks for one value, its references and applicators chain more than 64 deep, its schemas nest more than 32 deep, it holds more than 1,000 schemas or more than 1,000 `enum` and `const` values, or a pattern is longer than 1,000 characters.
+- **Bounds:** a request to the result tool larger than 1 MB is answered `413` (the engine shows the model a JSON-RPC error); a value nested more than 64 levels, or one that would take too long to check (a pattern that backtracks without end, a huge value against a schema of many choices), is refused as `limit`. A schema is refused when it's declared if its `anyOf`, `oneOf`, `allOf`, `not` and `$ref` choices add up to more than 1,000 checks for one value, its references and applicators chain more than 64 deep, its schemas nest more than 32 deep, it holds more than 1,000 schemas or more than 1,000 `enum` and `const` values, or a pattern is longer than 1,000 characters; an `enum` or `const` value nested more than 64 levels is refused too, since nothing could match it.
 - **Issues** are worded for the model, each `path` and `message` cut to 1,000 characters in the reply.
 
 ### Engines
@@ -545,6 +548,7 @@ JSON Schema 2020-12, in a subset every engine can honour. Anything outside it is
 The value reaches Agneta through an MCP tool on every engine, and Agneta checks it the same way. How an engine handles a call before it reaches Agneta differs, measured on the pinned versions ([ENGINES.md](ENGINES.md)):
 
 - **Goose** passes every call on: the model reads Agneta's issues.
+- **Claude Code** and **Codex** get the result tool up front like the other engines; how they pass calls on is not yet measured with real models.
 - **OpenCode** checks the arguments against the tool's schema itself and refuses a call that doesn't fit before it reaches Agneta; the model reads OpenCode's message, and if it never sends a valid value the reply is `missing` with `not-submitted`.
 - Engines may show the model less of a schema than they're given; Agneta's issues quote the part a value broke.
 

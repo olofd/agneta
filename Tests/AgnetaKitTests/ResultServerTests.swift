@@ -154,7 +154,11 @@ import Testing
         let path = String(route.url.dropFirst("http://127.0.0.1:\(port)".count))
         let over = try RawHTTP.send(
             port, "POST \(path) HTTP/1.1\r\nAuthorization: Bearer \(route.bearer)\r\nContent-Length: 1048577\r\n\r\n")
-        #expect(over.hasPrefix("HTTP/1.1 400"))
+        #expect(over.hasPrefix("HTTP/1.1 413") && over.contains("-32600") && over.contains("larger than 1 MB"))
+        // A request whose head never ends is answered the same once it passes the cap, not dropped without a word.
+        let endless = try RawHTTP.send(
+            port, "POST \(path) HTTP/1.1\r\nX-Filler: " + String(repeating: "a", count: (1 << 20) + (32 << 10)))
+        #expect(endless.hasPrefix("HTTP/1.1 413"))
         // Exactly 1 MB is read in full (and isn't JSON: a 400 parse error, not a closed connection).
         let body = String(repeating: " ", count: 1 << 20)
         let at = try RawHTTP.send(
@@ -309,6 +313,9 @@ enum RawHTTP {
             close(socket)
             throw POSIXError(.ECONNREFUSED)
         }
+        // A server that answers and closes before the request is all sent is an error to send, not a SIGPIPE.
+        var on: Int32 = 1
+        setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         return socket
     }
 

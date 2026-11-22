@@ -24,11 +24,13 @@ public actor ResultServer {
     /// The MCP server name engines know it by. Reserved: an app's server can't take it.
     public static let name = "agneta-result"
 
-    /// Whether an app's server name would pass for this server's on some engine: engines split tool names at `__`
-    /// (Claude Code, Goose) or the first `_` (OpenCode), and may fold case or `-` and `_` (Codex). Such a name could
-    /// have its tools allowed without asking and tagged as a result's, so it's refused.
+    /// Whether an app's server name starts like this server's, case, `-`, `_` and `.` aside: engines split tool names at
+    /// `__` (Claude Code, Goose) or the first `_` (OpenCode), and Codex folds `-`, `_` and `.`, so such a name could pass
+    /// for this server's, have its tools allowed without asking and tagged as a result's. It's refused, a little more
+    /// broadly than strictly needed (`agneta-results` too).
     public static func isReserved(_ server: String) -> Bool {
-        server.lowercased().replacingOccurrences(of: "_", with: "-").hasPrefix(name)
+        server.lowercased().replacingOccurrences(of: "_", with: "-").replacingOccurrences(of: ".", with: "-")
+            .hasPrefix(name)
     }
 
     /// A session's way in. Its description leaves the bearer out, so printing one never leaks it.

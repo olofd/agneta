@@ -421,7 +421,7 @@ for await (const record of session.traceRecords({ after: 0, types: ['event', 'pe
 const page = await client.readTrace(id, { after: 120, limit: 500 });   // { records, next, complete }, any of your tasks
 ```
 
-Records are typed by `type` (`meta`, `config`, `acp`, `event` with its `kind`, `engine.message`, `engine.usage`, `permission`, `shell`, `stderr`, `lifecycle`, `end`); every one has `v`, `seq`, `t`, `mono`, `task` and `turn`. See [DIAGNOSTICS.md](https://github.com/olofd/agneta/blob/main/docs/DIAGNOSTICS.md#record-types).
+Records are typed by `type` (`meta`, `config`, `acp`, `event` with its `kind`, `engine.message`, `engine.usage`, `permission`, `shell`, `stderr`, `lifecycle`, `result`, `end`); every one has `v`, `seq`, `t`, `mono`, `task` and `turn`. See [DIAGNOSTICS.md](https://github.com/olofd/agneta/blob/main/docs/DIAGNOSTICS.md#record-types).
 
 ## Errors
 

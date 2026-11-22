@@ -317,6 +317,8 @@ import Testing
         #expect(
             ResultWording.note(tool: "submit_invoice").contains(
                 "call the tool submit_invoice (from the agneta-result tools) once"))
+        // Its own paragraph, never run on into the user's last line.
+        #expect(ResultWording.note(tool: "x").hasPrefix("\n\nWhen your work"))
     }
 
     @Test func quotesOnlyShortSchemaPartsWithoutAnnotations() throws {

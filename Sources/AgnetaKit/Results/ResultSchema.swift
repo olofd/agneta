@@ -253,9 +253,11 @@ private struct Compiler {
         case "enum":
             guard let values = value.arrayValue, !values.isEmpty else { throw notA("a non-empty array", at) }
             try tally(values.count, at: at)
+            try matchable(values, at: at)
             node.enumValues = values
         case "const":
             try tally(1, at: at)
+            try matchable([value], at: at)
             node.constant = value
         case "allOf", "anyOf", "oneOf":
             guard let list = value.arrayValue, !list.isEmpty else { throw notA("a non-empty array of schemas", at) }
@@ -328,6 +330,17 @@ private struct Compiler {
                 path: at,
                 reason: Self.hints[key].map { "\"\(key)\": \($0)" }
                     ?? "\"\(key)\" isn't in the subset of JSON Schema Agneta enforces")
+        }
+    }
+
+    /// Refuses `enum` and `const` values that no value could ever equal: one nested deeper than a submitted value may
+    /// be at all (a value that deep is turned away before it's checked).
+    private func matchable(_ values: [JSONValue], at: String) throws(ResultSchemaRejection) {
+        let deepest = ResultSchema.ValidationLimits.standard.depth
+        guard values.allSatisfy({ $0.nestingDepth <= deepest }) else {
+            throw ResultSchemaRejection(
+                path: at,
+                reason: "a value here nests more than \(deepest) levels deep, so no result could ever match it")
         }
     }
 

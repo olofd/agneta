@@ -4,7 +4,7 @@ import Testing
 @testable import AgnetaKit
 
 /// The schema subset Agneta enforces for structured results: what it compiles, what it refuses and why, and what the
-/// validator says about values. The official JSON-Schema-Test-Suite runs in ResultSchemaSuiteTests.
+/// validator says about values.
 @Suite struct ResultSchemaTests {
     func compile(_ schema: JSONValue) throws -> ResultSchema { try ResultSchema.compile(schema) }
 
@@ -540,10 +540,35 @@ import Testing
         #expect(try valid(["type": "string", "pattern": "^[^]$"], "\n"))
         #expect(try valid(["type": "string", "pattern": "^(?<year>\\d{4})-(?:0[1-9]|1[0-2])$"], "2026-11"))
         #expect(try valid(["type": "string", "pattern": "^\\u{1F600}$"], "😀"))
-        for icuOnly in ["(?i)a", "\\Aa", "a\\z", "a*+", "a++", "\\Qa\\E", "[\\D]", "\\h"] {
+        // \p{…} is read whole: its braces aren't a quantifier's, and what follows it is.
+        #expect(try valid(["type": "string", "pattern": "^\\p{L}+$"], "Åsa"))
+        #expect(try !valid(["type": "string", "pattern": "^\\p{L}+$"], "Åsa1"))
+        #expect(try valid(["type": "string", "pattern": "^\\P{L}{2}$"], "12"))
+        // \s is ECMA's: U+FEFF and U+000B are white space; U+0085 isn't. Inside a class too.
+        for space in ["\u{FEFF}", "\u{0B}", "\u{A0}", "\u{3000}"] {
+            let code = space.unicodeScalars.first!.value
+            #expect(try valid(["type": "string", "pattern": "^\\s$"], .string(space)), "\(code)")
+            #expect(try valid(["type": "string", "pattern": "^[\\sx]$"], .string(space)))
+            #expect(try !valid(["type": "string", "pattern": "^\\S$"], .string(space)))
+        }
+        #expect(try !valid(["type": "string", "pattern": "^\\s$"], "\u{85}"))
+        #expect(try valid(["type": "string", "pattern": "^\\S$"], "\u{85}"))
+        for icuOnly in ["(?i)a", "\\Aa", "a\\z", "a*+", "a++", "\\Qa\\E", "[\\D]", "[\\S]", "\\h", "\\p", "\\p{L"] {
             #expect(
                 refusal(object(["type": "string", "pattern": .string(icuOnly)]))?.reason.contains("pattern") == true,
                 "\(icuOnly)")
+        }
+    }
+
+    /// An `enum` or `const` value nested deeper than a submitted value may be could never match: refused at compile.
+    @Test func unmatchableDeepValuesAreRefused() throws {
+        func nested(_ levels: Int) -> JSONValue { (0..<levels).reduce(JSONValue.null) { inner, _ in .array([inner]) } }
+        #expect(throws: Never.self) { _ = try compile(["type": "object", "const": .object(["a": nested(63)])]) }
+        for schema: JSONValue in [
+            ["type": "object", "const": .object(["a": nested(64)])],
+            object(["enum": .array([1, nested(65)])])
+        ] {
+            #expect(refusal(schema)?.reason.contains("could ever match") == true)
         }
     }
 

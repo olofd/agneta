@@ -7,7 +7,8 @@ Notable changes to Agneta, newest first. Versions follow [semantic versioning](h
 **For apps**
 
 - **Structured results** (`agneta/result`, in `initialize`'s extensions). A session declares JSON Schemas when it opens; a prompt asks for one by name, or every prompt does; the model submits the value through a tool Agneta serves, Agneta checks it against the schema the same way on every engine and answers the model with what's wrong, and the prompt's reply carries `_meta["agneta/result"]`: `valid` with the value, or `invalid` or `missing` with why ([APP_PROTOCOL.md](docs/APP_PROTOCOL.md#structured-results)). Schemas are a documented subset of JSON Schema 2020-12; anything outside it is refused, never ignored. Additive: an app that doesn't use it sees nothing new, and Agneta listens on nothing new until a session declares results.
-- **App server names that would pass for Agneta's result server** (`agneta-result`, `agneta_result`, `agneta-result__…`, any case) are refused with `-32602`, as engines' own server names already are.
+- **App server names starting like Agneta's result server's** (`agneta-result`, `agneta_result`, `agneta.result`, `agneta-result__…`, any case) are refused with `-32602`, as engines' own server names already are.
+- Sessions that declare results load the app's tools up front (`agneta/appTools` `always`) on every engine. `initialize` says what structured results can do in `_meta.agneta.results`. A request over the result server's 1 MB cap is answered `413`.
 
 **Fixes**
 

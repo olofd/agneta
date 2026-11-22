@@ -902,6 +902,9 @@ actor FakeEngines: EngineSource {
             extensions.isSuperset(of: [
                 "agneta/usage", "agneta/trace", "agneta/steer", "agneta/instructions", "agneta/result"
             ]))
+        // What structured results can do here, before a client sends what would be refused.
+        #expect(
+            initialize["_meta"]?["agneta"]?["results"] == ["mechanisms": ["tool"], "followUps": false, "adHoc": false])
 
         let session = try await stack.session(app, account: "native")
         let result = try await app.prompt(session, "hello")

@@ -62,6 +62,8 @@ import Testing
                 == [
                     "declared": ["result"], "every": "result", "mechanism": "tool", "schemas": ["result": Self.invoice]
                 ])
+        // Declaring results loads the app's tools up front, so the model never has to search for the result tool.
+        #expect(opened["_meta"]?["agneta"]?["appTools"]?["load"] == "always")
         // The engine got Agneta's result server beside the app's (none here), on loopback with its own bearer.
         let servers = try #require(await stack.engines.opening.last?.params["mcpServers"]?.arrayValue)
         #expect(servers.count == 1 && servers[0]["name"] == "agneta-result" && servers[0]["type"] == "http")
@@ -307,7 +309,17 @@ import Testing
         let app = AppClient(port: stack.port)
         defer { app.close() }
         try await app.pairAndInitialize("Results")
-        let session = try await stack.session(app, account: "brokered")
+        let opened = try await app.request(
+            "session/new",
+            [
+                "cwd": .string(stack.root.appending(path: "work").path(percentEncoded: false)), "mcpServers": [],
+                "_meta": [
+                    "agneta/policy": ["tools": "app-only", "approval": "never-ask"], "agneta": ["account": "brokered"]
+                ]
+            ])
+        let session = try #require(opened["sessionId"]?.stringValue)
+        #expect(opened["_meta"]?["agneta"]?["appTools"]?["load"] == "engine")
+        #expect(opened["_meta"]?["agneta"]?["results"] == nil)
         #expect(await stack.engines.opening.last?.params["mcpServers"] == [])
         let reply = try await prompt(app, session, "hello")
         #expect(reply["_meta"]?["agneta/result"] == nil)

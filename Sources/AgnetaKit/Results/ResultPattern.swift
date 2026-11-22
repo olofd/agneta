@@ -54,8 +54,12 @@ struct PatternRefusal: Error, Equatable {
     var reason: String
 }
 
-/// ECMA-262 patterns (without flags) in ICU's syntax.
+/// ECMA-262 patterns in ICU's syntax, read as JavaScript reads them with the `u` flag (as JSON Schema's validators
+/// commonly do): code points, `\u{…}` and `\p{…}`, and no other flags.
 enum ECMAPattern {
+    /// ECMA's `\s`: its white space and line terminators. ICU's leaves out U+000B and U+FEFF.
+    static let space =
+        #"\t\n\x{0B}\f\r \x{A0}\x{1680}\x{2000}-\x{200A}"# + #"\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}"#
     /// ECMA's `\w`, `\d` and line terminators, as ICU classes.
     static let word = "A-Za-z0-9_"
     static let digit = "0-9"
@@ -93,6 +97,11 @@ enum ECMAPattern {
                     case ("B", false): out += notBoundary
                     case ("d", true): out += digit
                     case ("w", true): out += word
+                    case ("s", false): out += "[\(space)]"
+                    case ("S", false): out += "[^\(space)]"
+                    case ("s", true): out += space
+                    case ("S", true):
+                        return refuse("\\S inside a character class can't be matched exactly; write the class out")
                     case ("D", true), ("W", true):
                         return refuse("\\\(e) inside a character class can't be matched exactly; write the class out")
                     case ("b", true): out += #"\x{08}"# // backspace, in a class
@@ -109,7 +118,14 @@ enum ECMAPattern {
                         } else {
                             out += "\\u"
                         }
-                    default: out += "\\" + String(e) // s S t n f r c x k p P: the same in both
+                    case ("p", _), ("P", _):
+                        // A Unicode property, read whole: its braces aren't a quantifier's.
+                        guard i < chars.count, chars[i] == "{", let close = chars[i...].firstIndex(of: "}") else {
+                            return refuse("\\\(e) must name a property in braces, such as \\\(e){L}")
+                        }
+                        out += "\\" + String(e) + String(chars[i...close])
+                        i = close + 1
+                    default: out += "\\" + String(e) // t n f r c x k: the same in both
                     }
                 } else {
                     out += "\\" + String(e) // digits (back references) and escaped punctuation

@@ -171,7 +171,8 @@ public enum ResultWording {
     public static func note(tool: String) -> String {
         // Engines show the tool under their own prefixes (mcp__agneta-result__…, agneta-result__…): named by its own
         // name and its server, which every engine keeps.
-        "When your work for this request is done, call the tool \(tool) (from the \(ResultServer.name) tools) once, "
+        // Its own paragraph: engines join a prompt's text blocks, and a resumed task's replay shows them as one message.
+        "\n\nWhen your work for this request is done, call the tool \(tool) (from the \(ResultServer.name) tools) once, "
             + "with the result as its arguments. Don't call it before then."
     }
 

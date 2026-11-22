@@ -45,7 +45,6 @@ public enum JSONValue: Sendable, Hashable {
         return nil
     }
 
-    /// Returns a copy with `key` set; non-objects become an object holding only `key`.
     /// How deeply its arrays and objects nest (a scalar is 0), found without recursing.
     public var nestingDepth: Int {
         var deepest = 0
@@ -64,6 +63,7 @@ public enum JSONValue: Sendable, Hashable {
         return deepest
     }
 
+    /// Returns a copy with `key` set; non-objects become an object holding only `key`.
     public func setting(_ key: String, to value: JSONValue?) -> JSONValue {
         var fields = objectValue ?? [:]
         fields[key] = value

@@ -149,7 +149,16 @@ public final class LocalHTTPServer: @unchecked Sendable {
             guard let self else { return }
             var buffer = buffer
             if let data { buffer.append(data) }
-            if error != nil || buffer.count > Self.maxBody + (16 << 10) { connection.cancel(); return }
+            if error != nil { connection.cancel(); return }
+            if buffer.count > Self.maxBody + (16 << 10) {
+                // Too large to read: said so (413), not dropped without a word, so the caller (an engine's MCP client)
+                // has an answer to give its model.
+                guard arrived.take() else { return }
+                connection.send(
+                    content: Self.encode(Self.tooLarge),
+                    completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
             if let request = Self.parse(buffer) {
                 // In time: the read deadline no longer applies; the answer's does.
                 guard arrived.take() else { return }
@@ -159,6 +168,8 @@ public final class LocalHTTPServer: @unchecked Sendable {
                     let response: Response
                     if request.method == "INVALID" {
                         response = Response(status: 400, body: Data(#"{"error":"bad request"}"#.utf8))
+                    } else if request.method == "TOO_LARGE" {
+                        response = Self.tooLarge
                     } else if request.headers["origin"] != nil {
                         response = Response(
                             status: 403, body: Data(#"{"error":"browsers can't use Agneta's local servers"}"#.utf8))
@@ -192,21 +203,29 @@ public final class LocalHTTPServer: @unchecked Sendable {
             }
             headers[name.lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
-        // A missing length is 0; anything else must be a whole number within the cap (-1 trapped).
-        guard let length = Int(headers["content-length"] ?? "0"), (0...maxBody).contains(length) else {
+        // A missing length is 0; anything else must be a whole number (-1 trapped), and within the cap.
+        guard let length = Int(headers["content-length"] ?? "0"), length >= 0 else {
             return Request(method: "INVALID", path: "", headers: [:], body: Data())
         }
+        guard length <= maxBody else { return Request(method: "TOO_LARGE", path: "", headers: [:], body: Data()) }
         let body = data[end.upperBound...]
         guard body.count >= length else { return nil }
         return Request(
             method: String(start[0]), path: String(start[1]), headers: headers, body: Data(body.prefix(length)))
     }
 
+    /// The answer to a request over the 1 MB cap, declared or sent: a JSON-RPC error an MCP client can show its model.
+    static let tooLarge = Response(
+        status: 413,
+        body: Data(
+            (#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"# + #""message":"The request is larger than 1 MB"}}"#)
+                .utf8))
+
     static func encode(_ response: Response) -> Data {
         let reason =
             [
                 200: "OK", 202: "Accepted", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
-                405: "Method Not Allowed"
+                405: "Method Not Allowed", 413: "Content Too Large"
             ][response.status] ?? "Status"
         var head =
             "HTTP/1.1 \(response.status) \(reason)\r\nContent-Length: \(response.body.count)\r\nConnection: close\r\n"

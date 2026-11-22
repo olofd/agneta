@@ -29,10 +29,14 @@ import Testing
 
     /// A negative or absurd Content-Length is a bad request, not a crash.
     @Test func badContentLengthsAreRefused() {
-        for length in ["-1", "abc", "99999999999"] {
+        for length in ["-1", "abc", "99999999999999999999"] {
             let request = LocalHTTPServer.parse(Data("POST /mcp HTTP/1.1\r\nContent-Length: \(length)\r\n\r\n{}".utf8))
             #expect(request?.method == "INVALID", "\(length)")
         }
+        // A whole number over the cap is too large (413), not malformed.
+        #expect(
+            LocalHTTPServer.parse(Data("POST /mcp HTTP/1.1\r\nContent-Length: 99999999999\r\n\r\n".utf8))?.method
+                == "TOO_LARGE")
         #expect(
             LocalHTTPServer.parse(Data("POST /mcp HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}".utf8))?.body
                 == Data("{}".utf8))

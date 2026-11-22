@@ -731,7 +731,11 @@ extension Router {
             "_meta": [
                 "agneta": [
                     "extensions": .array(Self.extensions.map(JSONValue.string)),
-                    "access": access(grant)
+                    "access": access(grant),
+                    // What structured results can do here, so a client can tell before it sends what this Agneta
+                    // would refuse: the result tool only (no engine-native mechanism), no follow-up prompts, no schemas
+                    // asked for ad hoc in a prompt.
+                    "results": ["mechanisms": ["tool"], "followUps": false, "adHoc": false]
                 ]
             ]
         ]

@@ -145,7 +145,15 @@ What keeps it safe and bounded:
 - **Checking runs off the router**, on a thread of its own with a large stack, since it recurses once per level of a value. A call counts as an attempt on the router's actor, is checked off it, and is recorded on it again against the same turn, so the first valid value still wins when calls arrive together, and a check that ends after its turn changes nothing.
 - **Every bound is checked:** a value nested more than 64 levels is refused before anything walks it, checking is charged for its work (a check, a key, an item, a stretch of string, a pattern match) and stops at a budget, patterns have their own time and a runaway match is stopped, and a schema whose choices would multiply the work is refused when it's declared. Past a bound a value is reported invalid, never passed unchecked.
 - **JSON is read at most 128 levels deep** anywhere in Agneta: decoding recurses per level, so a small message nested thousands deep would overflow a stack. A request that deep is answered with an error, and a reply that deep fails the request it answers, read from its top-level id without decoding the rest.
-- **App server names that would pass for the result server's** on some engine (`agneta_result`, `agneta-result__x`) are refused, so no app tool is allowed without asking or tagged as a result.
+- **App server names that start like the result server's**, case, `-`, `_` and `.` aside (`agneta_result`, `agneta-result__x`, `Agneta.Result`), are refused, since some engine would take their tools for Agneta's: no app tool is allowed without asking or tagged as a result.
+- **Sessions that declare results load the app's tools up front** (`appTools` `always`): Claude Code doesn't pass a tool's `anthropic/alwaysLoad` on from an HTTP server (measured on claude-agent-acp 0.107.2), so a deferred result tool would have to be searched for first.
+
+Known limits, each bounded:
+
+- **OpenCode's bearer is in its environment.** OpenCode takes MCP servers only from its configuration, so the route's bearer is in `OPENCODE_CONFIG_CONTENT` of that session's engine process. macOS shows a process's environment only to the same user, who can reach the engine's sign-ins anyway; the route ends with its session.
+- **The result server has 64 connection slots for all sessions.** A local process of the same user could hold them, delaying results (not forging them): an idle connection is dropped after 2 s, an answer after 60 s.
+- **A request is at most 1 MB** (`413` beyond), so a larger value can't be submitted.
+- **An engine notification nested more than 128 levels is dropped** (no request to answer). The raw frame is still in the trace's `acp` records.
 - **What the model reads** from the result tool is short, bounded and escaped: a value's own keys can't forge a line of Agneta's.
 
 ### Credentials

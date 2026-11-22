@@ -244,7 +244,10 @@ import Testing
 
 extension ResultRouterEdgeTests {
     @Test func namesThatWouldPassForTheResultServerAreRefused() {
-        for name in ["agneta-result", "agneta_result", "Agneta-Result", "agneta-result__x", "agneta-result_x"] {
+        let reserved = [
+            "agneta-result", "agneta_result", "Agneta-Result", "agneta-result__x", "agneta-result_x", "agneta.result"
+        ]
+        for name in reserved {
             #expect(ResultServer.isReserved(name), "\(name)")
         }
         for name in ["agneta", "results", "app", "my-agneta-result"] {
