@@ -257,7 +257,9 @@ public enum ResultWording {
     static func escapeControls(_ text: String) -> String {
         var out = ""
         for scalar in text.unicodeScalars {
-            if scalar.value < 0x20 || scalar.value == 0x7f || scalar.value == 0x2028 || scalar.value == 0x2029 {
+            if scalar.value < 0x20 || scalar.value == 0x7f || scalar.value == 0x85 || scalar.value == 0x2028
+                || scalar.value == 0x2029
+            {
                 out += String(format: "\\u%04x", scalar.value)
             } else {
                 out.unicodeScalars.append(scalar)

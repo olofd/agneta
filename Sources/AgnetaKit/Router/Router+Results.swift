@@ -25,9 +25,9 @@ extension Router: ResultSessions {
             // Engines list a server's tools while the session is still opening, before it's registered: its tools are
             // answerable from now on.
             resultRoutes[id] = (route.id, declaration)
-            // The bearer reaches the engine in the session's ACP frames: never in a trace.
+            // The bearer reaches the engine in the session's ACP frames: never in a trace (masked wherever it appears,
+            // its "Bearer …" header included).
             traces?.mask.register(route.bearer)
-            traces?.mask.register("Bearer " + route.bearer)
             return nil
         } catch {
             return RPCError(
@@ -170,7 +170,8 @@ extension Router: ResultSessions {
         }
         let trace = traces?.session(id)
         guard declaration.name(forTool: tool) != nil else {
-            return ("There's no tool \(tool) here.", true)
+            // The name is the model's: cut and escaped like any text Agneta hands back.
+            return ("There's no tool \(ResultWording.cut(ResultWording.escapeControls(tool), to: 100)) here.", true)
         }
         guard var open = resultTurns[id], open.generation == session.generation else {
             trace?.writer.record("result", ["event": "not-asked", "tool": .string(tool)])

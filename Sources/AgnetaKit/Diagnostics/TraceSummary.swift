@@ -175,6 +175,9 @@ public enum TraceExport {
         "engineResult", "text", "stderrTail", "command", "title", "message", "entries", "configOptions", "error",
         "reason"
     ]
+    /// A result record's value and what was wrong with it are the model's content, whatever their keys say (a value's
+    /// `status` or `total` would otherwise pass as structure). Only there: a limit's `value` is a number to keep.
+    static let resultContentKeys: Set<String> = ["value", "report", "issues"]
 
     /// Writes the records as JSON lines, owner-only.
     public static func write(_ records: [JSONValue], to file: URL, redactContent: Bool) throws {
@@ -249,7 +252,8 @@ public struct TraceRedactor: Sendable {
         "t", "task", "type", "kind", "event", "leg", "status", "stopReason", "decision", "by", "costKind", "costSource",
         "basis",
         "billing", "runner", "toolKind", "limit", "format", "role", "outcome", "optionId", "sessionUpdate", "delivery",
-        "call", "engineCall", "model", "models", "stateFormat", "version", "tools", "network", "approval", "ending"
+        "call", "engineCall", "model", "models", "stateFormat", "version", "tools", "network", "approval", "ending",
+        "answer" // a result call's: accepted, refused, … (Agneta's words)
     ]
     /// Places whose strings are structural: the engine's own name in `meta`.
     static let structuralPaths: Set<String> = ["engine.id", "engine.info.name"]
@@ -273,6 +277,7 @@ public struct TraceRedactor: Sendable {
             return .array(items.map { redact($0, path: path, eventKind: nil) })
         case .object(let fields):
             let toolEvent = ["tool-call", "tool-input"].contains(fields["kind"]?.stringValue ?? "")
+            let resultRecord = path.isEmpty && fields["type"]?.stringValue == "result"
             var out: [String: JSONValue] = [:]
             let usage =
                 (eventKind == "model-call" && path.isEmpty)
@@ -280,7 +285,9 @@ public struct TraceRedactor: Sendable {
             for (key, field) in fields {
                 if usage && key == "input" && field.intValue != nil {
                     out[key] = field
-                } else if TraceExport.contentKeys.contains(key) || (toolEvent && key == "name"), field != .null {
+                } else if TraceExport.contentKeys.contains(key) || (toolEvent && key == "name")
+                    || (resultRecord && TraceExport.resultContentKeys.contains(key)), field != .null
+                {
                     var text = ""
                     TraceJSON.encode(field, into: &text)
                     out[key] = .string("‹content removed, \(text.utf8.count) bytes›")

@@ -302,7 +302,7 @@ One turn at a time: `prompt()` while one runs throws `TurnBusyError`. A prompt h
 
 ## Structured results
 
-A turn can return a value that matches a JSON Schema: an invoice from a PDF, a form filled in from a conversation, a typed answer. The model returns it by calling a tool Agneta serves; **Agneta validates every call**, tells the model what's wrong so it can correct itself within the turn, and the reply says what came of it ([the protocol](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md#structured-results)). The same on every engine.
+A turn can return a value that matches a JSON Schema: an invoice from a PDF, a form filled in from a conversation, a typed answer. The model returns it by calling a tool Agneta serves; **Agneta validates every call**, tells the model what's wrong so it can correct itself within the turn, and the reply says what came of it ([the protocol](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md#structured-results)). Agneta's check is the same on every engine; OpenCode also checks calls itself first (see Engines differ, below).
 
 **One-shot.** `client.ask` opens a session that declares the schema, asks, and closes it (also when it fails):
 

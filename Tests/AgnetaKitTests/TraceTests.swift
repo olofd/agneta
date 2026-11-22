@@ -237,6 +237,21 @@ import Testing
         let redactor = TraceRedactor()
         let turn = redactor.redact(["type": "event", "kind": "turn", "callLedger": ["input": 123]])
         #expect(turn["callLedger"]?["input"] == 123)
+        // A result's value is content, whatever its keys: a value's "status" would pass as structure otherwise.
+        let submitted = redactor.redact([
+            "type": "result", "event": "submitted", "answer": "refused", "attempt": 1,
+            "value": ["status": "diagnosis", "total": 129.5],
+            "issues": [["path": "/total", "keyword": "maximum", "message": "must be at most 100"]]
+        ])
+        #expect(submitted["value"]?.stringValue?.hasPrefix("‹content removed") == true)
+        #expect(submitted["issues"]?.stringValue?.hasPrefix("‹content removed") == true)
+        #expect(submitted["answer"] == "refused" && submitted["attempt"] == 1)
+        let final = redactor.redact([
+            "type": "result", "event": "final", "report": ["status": "valid", "value": ["status": "private"]]
+        ])
+        #expect(final["report"]?.stringValue?.hasPrefix("‹content removed") == true)
+        // A limit's value stays: it's a number Agneta set, not content.
+        #expect(redactor.redact(["type": "lifecycle", "event": "limit", "value": 5])["value"] == 5)
         let tool = redactor.redact(["type": "event", "kind": "tool-input", "input": 123])
         #expect(tool["input"]?.stringValue?.hasPrefix("‹content removed") == true)
         // Structure, timing and what's structural stay; one tool keeps one token within the export.

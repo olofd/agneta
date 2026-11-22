@@ -110,6 +110,29 @@ import Testing
         #expect(try await Self.post(route.url, note, bearer: route.bearer).status == 202)
     }
 
+    @Test func aListenerReplacedOnAnotherPortEndsEveryRoute() async throws {
+        let server = ResultServer(sessions: Sessions())
+        defer { Task { await server.stop() } }
+        let route = try await server.register(session: "s1")
+        let first = try await server.port()
+        let ping = try JSONCoding.encode(["jsonrpc": "2.0", "id": 1, "method": "ping"] as JSONValue)
+
+        // Replaced on the same port: the route holds.
+        await server.failListener()
+        #expect(try await server.port() == first)
+        #expect(try await Self.post(route.url, ping, bearer: route.bearer).status == 200)
+
+        // Replaced on another port, as when someone took the old one: the route and its bearer end there.
+        await server.failListener(elsewhere: true)
+        let second = try await server.port()
+        #expect(second != first)
+        let moved = route.url.replacingOccurrences(of: ":\(first)/", with: ":\(second)/")
+        #expect(try await Self.post(moved, ping, bearer: route.bearer).status == 401)
+        // A new registration works on the new port.
+        let fresh = try await server.register(session: "s1")
+        #expect(try await Self.post(fresh.url, ping, bearer: fresh.bearer).status == 200)
+    }
+
     @Test func aSessionWithoutToolsListsAnError() async throws {
         let server = ResultServer(sessions: Sessions())
         defer { Task { await server.stop() } }

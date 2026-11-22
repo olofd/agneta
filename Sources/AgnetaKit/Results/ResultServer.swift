@@ -87,7 +87,8 @@ public actor ResultServer {
         http = nil
         if let starting { return try await starting.value }
         let generation = stops
-        let afterStart = self.afterStart, previous = lastPort
+        let afterStart = self.afterStart, previous = avoidLastPort ? 0 : lastPort
+        avoidLastPort = false
         let task = Task<UInt16, Error> { [weak self] in
             let handler: LocalHTTPServer.Handler = { [weak self] request in
                 await self?.handle(request) ?? .init(status: 404)
@@ -119,10 +120,23 @@ public actor ResultServer {
     private func started(_ server: LocalHTTPServer, generation: Int) -> Bool {
         guard stops == generation else { return false }
         http = server
+        // On another port, every route ends: running engines still post to the old port, which anyone on this Mac may
+        // have bound in the meantime and so seen routes and bearers; and their sandboxes allow only that port, so
+        // they couldn't reach the new one anyway. Their turns' results come back missing (not submitted).
+        if lastPort != 0, server.port != lastPort { routes.removeAll() }
         lastPort = server.port
         starting = nil
         return true
     }
+
+    /// Stops the listener as a failure would, leaving the routes, and waits until it has (tests: to replace it).
+    /// With `elsewhere`, the replacement doesn't try the old port, as when someone else has taken it.
+    func failListener(elsewhere: Bool = false) async {
+        avoidLastPort = elsewhere
+        http?.stop()
+        while http?.isListening == true { try? await Task.sleep(for: .milliseconds(5)) }
+    }
+    private var avoidLastPort = false
 
     /// A route for `session`: a fresh path and bearer, replacing any it had (a session reloaded gets new ones, as the
     /// app's own servers do).

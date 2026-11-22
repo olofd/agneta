@@ -151,7 +151,7 @@ What keeps it safe and bounded:
 Known limits, each bounded:
 
 - **OpenCode's bearer is in its environment.** OpenCode takes MCP servers only from its configuration, so the route's bearer is in `OPENCODE_CONFIG_CONTENT` of that session's engine process. macOS shows a process's environment only to the same user, who can reach the engine's sign-ins anyway; the route ends with its session.
-- **The result server has 64 connection slots for all sessions.** A local process of the same user could hold them, delaying results (not forging them): an idle connection is dropped after 2 s, an answer after 60 s.
+- **The result server has 64 connection slots for all sessions.** Any local process could hold them (loopback is reachable by every user of the Mac), delaying results, not forging them: each route needs its bearer: an idle connection is dropped after 2 s, an answer after 60 s.
 - **A request is at most 1 MB** (`413` beyond), so a larger value can't be submitted.
 - **An engine notification nested more than 128 levels is dropped** (no request to answer). The raw frame is still in the trace's `acp` records.
 - **What the model reads** from the result tool is short, bounded and escaped: a value's own keys can't forge a line of Agneta's.

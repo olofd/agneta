@@ -137,8 +137,9 @@ public final class LocalHTTPServer: @unchecked Sendable {
         let queue = DispatchQueue(label: "agneta.http.connection")
         connection.start(queue: queue)
         let arrived = OnceFlag()
-        queue.asyncAfter(deadline: .now() + Self.readDeadline) {
-            if arrived.take() { connection.cancel() } // the request didn't arrive in time
+        // Timers hold the connection weakly: once it's answered and gone, they keep nothing alive.
+        queue.asyncAfter(deadline: .now() + Self.readDeadline) { [weak connection] in
+            if arrived.take() { connection?.cancel() } // the request didn't arrive in time
         }
         read(connection, buffer: Data(), arrived: arrived, queue: queue)
     }
@@ -162,7 +163,7 @@ public final class LocalHTTPServer: @unchecked Sendable {
             if let request = Self.parse(buffer) {
                 // In time: the read deadline no longer applies; the answer's does.
                 guard arrived.take() else { return }
-                queue.asyncAfter(deadline: .now() + Self.answerDeadline) { connection.cancel() }
+                queue.asyncAfter(deadline: .now() + Self.answerDeadline) { [weak connection] in connection?.cancel() }
                 let handler = self.handler
                 Task {
                     let response: Response
