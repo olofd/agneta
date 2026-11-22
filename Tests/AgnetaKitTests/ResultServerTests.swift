@@ -147,7 +147,9 @@ import Testing
         let ping = try JSONCoding.encode(["jsonrpc": "2.0", "id": 1, "method": "ping"] as JSONValue)
         let port = try await server.port()
         #expect(try await Self.post(route.url, ping, bearer: nil).status == 401)
-        #expect(try await Self.post(route.url, ping, bearer: "0" + route.bearer.dropFirst()).status == 401)
+        // A bearer one character off (a random one may already start with "0": then the "wrong" one was right).
+        let wrong = (route.bearer.first == "0" ? "1" : "0") + route.bearer.dropFirst()
+        #expect(try await Self.post(route.url, ping, bearer: wrong).status == 401)
         // An unknown route answers like a wrong token, so routes can't be probed.
         #expect(try await Self.post("http://127.0.0.1:\(port)/result/0123", ping, bearer: route.bearer).status == 401)
         #expect(try await Self.post("http://127.0.0.1:\(port)/mcp", ping, bearer: route.bearer).status == 404)
