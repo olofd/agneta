@@ -6,7 +6,7 @@ import { Connection, probeAgneta, type OpenOptions, type PortProbe, type Request
 import { Emitter } from './emitter.js';
 import {
   AbortedError, ConnectionClosedError, DeclinedError, TimeoutError, EngineDownloadingError, MethodNotFoundError, NeedsPairingError,
-  NotInstalledError, NotRunningError, OutdatedError, ProtocolError, UnsupportedByAgnetaError, UnsupportedEnvironmentError,
+  NotInstalledError, NotRunningError, OutdatedError, ProtocolError, TurnBusyError, UnsupportedByAgnetaError, UnsupportedEnvironmentError,
   type DownloadProgress
 } from './errors.js';
 import {
@@ -217,6 +217,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   #remembered = false;
   #pairingCode: string | null = null;
   #sessions = new Map<string, Session>();
+  #loading = new Set<string>();
   /**
    * Notifications for sessions not known yet: ones that arrive before `session/new` answers (updates, the first live
    * trace records), and a load's replay. Given to the session when it opens.
@@ -226,6 +227,8 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   #connecting: Promise<Access> | null = null;
   #opening: Promise<Connection> | null = null;
   #closing = false;
+  #generation = 0;
+  #reconnectGeneration = 0;
   #operations = new Set<AbortController>();
   /** Reconnecting: never guide (Agneta quit; it comes back when the user opens it), and no progress. */
   #quiet = false;
@@ -280,9 +283,17 @@ export class AgnetaClient extends Emitter<ClientEvents> {
    * or `OutdatedError`.
    */
   connect(options: ConnectOptions = {}): Promise<Access> {
-    if (this.#state === 'connected' && this.#connection?.isOpen && this.#access && options.pair !== 'always') return Promise.resolve(this.#access);
+    return this.#startConnect(options, false);
+  }
+
+  #startConnect(options: ConnectOptions, quiet: boolean): Promise<Access> {
+    if (this.#state === 'connected' && this.#connection?.isOpen && this.#access && options.pair !== 'always') {
+      if (!quiet) { this.#reconnectGeneration++; this.#cancelReconnect(); this.#quiet = false; }
+      return Promise.resolve(this.#access);
+    }
     // One connect at a time: a second call while one runs gets the same outcome.
     if (this.#connecting) return this.#connecting;
+    if (!quiet) { this.#reconnectGeneration++; this.#quiet = false; }
     const connecting = this.#cancellable(options.signal, (signal) => this.#connect({ ...options, signal })).finally(() => { if (this.#connecting === connecting) this.#connecting = null; });
     this.#connecting = connecting;
     return connecting;
@@ -296,17 +307,20 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     this.#cancelReconnect();
     // Already connected (pairing again for a wider scope): a failure, the user's Don't Allow included, keeps what works.
     const wasConnected = this.#state === 'connected' && this.#connection?.isOpen === true && this.#access !== null;
-    this.#flow = { options, updateAsked: false };
+    const generation = this.#generation;
+    const flow = { options, updateAsked: false };
+    this.#flow = flow;
     try {
       const connection = await this.#reach(options);
       try {
         if (this.options.minimumVersion) await this.#checkVersion(options);
         const pair = options.pair ?? 'if-needed';
-        const kept = pair === 'always' ? null : await this.tokens.load();
+        const kept = pair === 'always' ? null : await abortable(Promise.resolve(this.tokens.load()), options.signal);
         let initialized = false;
         if (kept) {
           try {
             await this.initialize(kept, { signal: options.signal });
+            stopIfAborted(options.signal);
             this.#remembered = true;
             initialized = true;
           } catch (error) {
@@ -321,20 +335,25 @@ export class AgnetaClient extends Emitter<ClientEvents> {
           if (options.setup) await this.#setUpProvider(options.setup === true ? undefined : options.setup, options);
           await this.pair(options.scope ?? this.options.scope, { signal: options.signal });
         }
+        stopIfAborted(options.signal);
         this.#setState('connected');
+        const connected = this.#require();
+        const access = this.#access!;
         this.#progress({ step: 'connected' });
-        return this.#access!;
+        stopIfAborted(options.signal);
+        if (this.#connection !== connected || !connected.isOpen) throw new ConnectionClosedError(undefined, 'closed while connecting');
+        return access;
       } catch (error) {
         // The connection may have been replaced meanwhile (reopened during setup, or after an update).
         const current = this.#connection;
-        if (current) {
+        if (current && this.#generation === generation) {
           if (wasConnected && current === connection && current.isOpen) this.#setState('connected');
           else this.#drop(current);
         }
         throw error;
       }
     } finally {
-      this.#flow = null;
+      if (this.#flow === flow) this.#flow = null;
     }
   }
 
@@ -380,7 +399,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     } else {
       this.#progress({ step: 'notRunning' });
       // At launch, only someone who has used the app (a token kept) is offered to open Agneta.
-      if (!guide || (atLaunch && !await this.tokens.load())) throw notRunning;
+      if (!guide || (atLaunch && !await abortable(Promise.resolve(this.tokens.load()), signal))) throw notRunning;
       stopIfAborted(signal);
       if (!await this.#ask(guide, this.#question('open'), signal)) throw new DeclinedError('open');
     }
@@ -445,6 +464,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
       for (;;) {
         try {
           const connection = await Connection.open(open);
+          if (options.signal?.aborted) { connection.close(); stopIfAborted(options.signal); }
           // Opened meanwhile by another call (`open`, `catalog`): use that one, never leave a second socket open.
           if (this.#connection?.isOpen) {
             connection.close();
@@ -498,6 +518,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
    */
   open(options: { signal?: AbortSignal } = {}): Promise<Connection> {
     if (options.signal?.aborted) return Promise.reject(new AbortedError('connect', { cause: options.signal.reason }));
+    this.#closing = false;
     if (this.#connection?.isOpen) return Promise.resolve(this.#connection);
     if (this.#opening) return this.#opening;
     const opening = this.#cancellable(options.signal, (signal) => this.#openSocket({ signal })).finally(() => { if (this.#opening === opening) this.#opening = null; });
@@ -506,6 +527,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   }
 
   async #openSocket(options: { signal?: AbortSignal }): Promise<Connection> {
+    const generation = this.#generation;
     if (!this.options.WebSocket && typeof (globalThis as { document?: unknown }).document !== 'undefined') {
       throw new UnsupportedEnvironmentError('Agneta refuses connections from web pages (anything sending an Origin header). Connect from Node or Electron\'s main process.');
     }
@@ -514,7 +536,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     try {
       connection = await Connection.open(this.#openOptions(options.signal));
     } catch (error) {
-      this.#setState('disconnected');
+      if (generation === this.#generation && !this.#connection?.isOpen) this.#setState('disconnected');
       throw error;
     }
     if (options.signal?.aborted) { connection.close(); stopIfAborted(options.signal); }
@@ -588,6 +610,8 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     }
     if (typeof result?.token !== 'string') throw new ProtocolError('Agneta returned an incomplete pairing response.', result);
     if (result.remembered) await this.tokens.save(result.token);
+    else await this.tokens.clear();
+    if (this.#connection !== connection || !connection.isOpen) throw new ConnectionClosedError(undefined, 'closed while pairing');
     this.#remembered = result.remembered === true;
     this.emit('paired', result);
     if (this.#connection !== connection || !connection.isOpen) throw new ConnectionClosedError(undefined, 'closed while pairing');
@@ -611,6 +635,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     this.#initialized = result;
     this.#access = access;
     this.#setState('connected');
+    if (this.#connection !== connection || !connection.isOpen) throw new ConnectionClosedError(undefined, 'closed while initializing');
     return result;
   }
 
@@ -631,7 +656,12 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   /** Disconnects. Open sessions end; no reconnect follows. */
   close(): void {
     this.#closing = true;
-    for (const operation of this.#operations) operation.abort();
+    this.#generation++;
+    this.#reconnectGeneration++;
+    this.#connecting = null;
+    this.#opening = null;
+    this.#quiet = false;
+    for (const operation of [...this.#operations]) operation.abort();
     this.#cancelReconnect();
     const connection = this.#connection;
     if (connection) this.#drop(connection);
@@ -663,7 +693,6 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     const params = { sessionId, cwd, mcpServers: options.mcpServers ?? [], ...(meta ? { _meta: meta } : {}), ...options.params };
     // Agneta keeps the original's declaration: so does a handle still known here.
     const declared = declaration?.schemas ?? this.#sessions.get(sessionId)?.declaredSchemas;
-    this.#early.set(sessionId, []);
     return this.#open('session/load', params, options, () => sessionId, declared);
   }
 
@@ -702,7 +731,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
         onTurn?.(asked.turn);
         return await asked.details;
       } finally {
-        await session?.close().catch(() => {});
+        await session?.close().catch(() => { session?.connection.close(); });
       }
     })());
   }
@@ -800,7 +829,27 @@ export class AgnetaClient extends Emitter<ClientEvents> {
 
   async #open(method: 'session/new' | 'session/load' | 'agneta/fork', params: any, options: SessionOptionsBase,
     idOf: (result: SessionResult) => string | undefined, declared?: ReadonlyMap<string, PreparedSchema>): Promise<Session> {
+    const loading = method === 'session/load' ? params.sessionId as string : undefined;
+    if (loading !== undefined) {
+      if (this.#loading.has(loading)) throw new TurnBusyError({ code: -32011, message: 'This session is already being loaded' }, method);
+      const turn = this.#sessions.get(loading)?.turn;
+      if (turn && !turn.done) throw new TurnBusyError({ code: -32011, message: "Wait for this session's running turn before loading it" }, method);
+      this.#loading.add(loading);
+      this.#early.set(loading, []);
+    }
+    try { return await this.#openSession(method, params, options, idOf, declared); }
+    finally {
+      if (loading !== undefined) {
+        this.#loading.delete(loading);
+        if (!this.#sessions.has(loading)) this.#early.delete(loading);
+      }
+    }
+  }
+
+  async #openSession(method: 'session/new' | 'session/load' | 'agneta/fork', params: any, options: SessionOptionsBase,
+    idOf: (result: SessionResult) => string | undefined, declared?: ReadonlyMap<string, PreparedSchema>): Promise<Session> {
     const connection = this.#require();
+    const host = this.#host;
     this.#requireAccess();
     const wait = options.waitForDownload === false ? 0 : typeof options.waitForDownload === 'number' ? options.waitForDownload : 600_000;
     const started = Date.now();
@@ -825,9 +874,14 @@ export class AgnetaClient extends Emitter<ClientEvents> {
         }
       }
     } catch (error) {
-      if (stale && !this.#sessions.has(params.sessionId)) {
+      if (stale && this.#connection === connection && connection.isOpen && !this.#sessions.has(params.sessionId)) {
+        const early = this.#early.get(params.sessionId) ?? [];
         this.#early.delete(params.sessionId);
         this.#sessions.set(params.sessionId, stale);
+        // Failed-load replay is discarded, but a stop that arrived during it still retires the earlier handle.
+        for (const held of early) if (held.method === 'agneta/sessionStopped') stale.receive(held.method, held.params);
+      } else if (stale && !connection.isOpen) {
+        stale.end({ reason: 'disconnected', error: new ConnectionClosedError(undefined, 'closed while loading') });
       }
       throw error;
     } finally {
@@ -841,7 +895,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     // What it declared: as given, as a handle known here had it, else as Agneta's reply recorded it (a task resumed in
     // another process).
     const schemas = declared?.size ? declared : recordedSchemas(result._meta?.agneta?.results?.schemas);
-    const session = new Session(this.#host, id, { ...result, sessionId: id }, history, options.permissions, options.on, schemas);
+    const session = new Session(host, id, { ...result, sessionId: id }, history, options.permissions, options.on, schemas);
     if (this.#connection !== connection || !connection.isOpen) {
       session.end({ reason: 'disconnected', error: new ConnectionClosedError(undefined, 'closed while the session opened') });
       throw new ConnectionClosedError(undefined, 'closed while the session opened');
@@ -850,7 +904,11 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     this.#sessions.set(id, session);
     previous?.end({ reason: 'closed' });
     // The rest of what came early (live trace records, a queue place, a stop), to the listeners given in `on`.
-    for (const { method, params } of early) if (method !== 'session/update') session.receive(method, params);
+    for (const { method, params } of early) {
+      if (this.#connection !== connection || !connection.isOpen) throw new ConnectionClosedError(undefined, 'closed while replaying the session');
+      if (method !== 'session/update') session.receive(method, params);
+    }
+    if (this.#connection !== connection || !connection.isOpen) throw new ConnectionClosedError(undefined, 'closed while the session opened');
     return session;
   }
 
@@ -983,6 +1041,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
 
   #dropped(error: ConnectionClosedError): void {
     const hadToken = this.#remembered && this.#token !== null;
+    const reconnectGeneration = this.#reconnectGeneration;
     this.#connection = null;
     this.#initialized = null;
     this.#access = null;
@@ -994,21 +1053,28 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     this.#setState('disconnected');
     this.emit('disconnected', error);
     this.#remembered = false;
-    if (hadToken && this.options.reconnect && !this.#closing) this.#scheduleReconnect(1);
+    if (hadToken && this.options.reconnect && !this.#closing && reconnectGeneration === this.#reconnectGeneration) this.#scheduleReconnect(1);
   }
 
   #scheduleReconnect(attempt: number): void {
+    const generation = this.#generation;
+    const reconnectGeneration = this.#reconnectGeneration;
+    const current = () => generation === this.#generation && reconnectGeneration === this.#reconnectGeneration;
     const settings = typeof this.options.reconnect === 'object' ? this.options.reconnect : {};
     const wait = Math.min((settings.delay ?? 1000) * 2 ** (attempt - 1), settings.maxDelay ?? 30_000);
     this.#setState('reconnecting');
+    if (!current() || this.#closing) return;
     this.emit('reconnecting', attempt, wait);
+    if (!current() || this.#closing) return;
     this.#reconnectTimer = setTimeout(async () => {
       this.#reconnectTimer = null;
-      if (this.#closing) return;
+      if (this.#closing || !current()) return;
       try {
         const access = await this.#reconnectOnce();
+        if (!current()) return;
         this.emit('reconnected', access);
       } catch (error) {
+        if (!current()) return;
         if (this.#closing || error instanceof NeedsPairingError) {
           this.#setState('disconnected');
           return;
@@ -1020,11 +1086,13 @@ export class AgnetaClient extends Emitter<ClientEvents> {
 
   /** A quiet connect: never guides nor pairs. */
   async #reconnectOnce(): Promise<Access> {
+    const generation = this.#generation;
+    const reconnectGeneration = this.#reconnectGeneration;
     this.#quiet = true;
     try {
-      return await this.connect({ pair: 'never' });
+      return await this.#startConnect({ pair: 'never' }, true);
     } finally {
-      this.#quiet = false;
+      if (generation === this.#generation && reconnectGeneration === this.#reconnectGeneration) this.#quiet = false;
     }
   }
 

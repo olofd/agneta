@@ -7,6 +7,6 @@ let package = Package(
     products: [.library(name: "AgnetaClient", targets: ["AgnetaClient"])],
     targets: [
         .target(name: "AgnetaClient"),
-        .testTarget(name: "AgnetaClientTests", dependencies: ["AgnetaClient"])
+        .testTarget(name: "AgnetaClientTests", dependencies: ["AgnetaClient"], resources: [.copy("Fixtures")])
     ]
 )

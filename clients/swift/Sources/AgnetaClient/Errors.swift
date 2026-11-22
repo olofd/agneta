@@ -15,6 +15,8 @@ public struct AgnetaError: Error, LocalizedError, Sendable, Equatable {
     public let code: Int?
     public let data: JSONValue?
     public let method: String?
+    /// An accepted value from a failed typed ask, unwrapped and checked against its requested Decodable type.
+    public var accepted: AcceptedResult?
 
     public init(_ kind: Kind, _ message: String, code: Int? = nil, data: JSONValue? = nil, method: String? = nil) {
         self.kind = kind; self.message = message; self.code = code; self.data = data; self.method = method
@@ -71,4 +73,10 @@ public struct AgnetaError: Error, LocalizedError, Sendable, Equatable {
         }
         return Self(kind, message, code: code, data: data, method: method)
     }
+}
+
+public struct AcceptedResult: Sendable, Equatable {
+    public let value: JSONValue
+    /// Nil when decoding accepted the value; otherwise what the app's type rejected.
+    public let issues: [ResultIssue]?
 }

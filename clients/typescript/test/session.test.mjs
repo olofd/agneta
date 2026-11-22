@@ -9,8 +9,9 @@ import { agnetaLike, accessReport, standIn, workspace } from './stand-in.mjs';
 async function setUp(t, options = {}, clientOptions = {}) {
   const behaviour = agnetaLike(options);
   const agneta = await standIn(behaviour.answer);
-  const client = await connect({ name: 'Example', port: agneta.port, ...clientOptions });
-  t.after(async () => { client.close(); await agneta.close(); });
+  let client;
+  t.after(async () => { client?.close(); await agneta.close(); });
+  client = await connect({ name: 'Example', port: agneta.port, ...clientOptions });
   return { agneta, client, state: behaviour.state };
 }
 
@@ -552,4 +553,89 @@ test('live trace records that arrive before session/new answers reach the listen
   assert.deepEqual(traced, [record]);
   assert.deepEqual(session.history.map(({ sessionUpdate }) => sessionUpdate), ['agent_message_chunk']);
   assert.deepEqual(updates, [], 'early updates are the history, not events');
+});
+
+test('disconnect while loading retires the temporarily unregistered old handle', async (t) => {
+  const { agneta, client } = await setUp(t, { handlers: {
+    'session/load': (_message, peer) => { peer.destroy(); return null; }
+  } });
+  const old = await client.newSession();
+  await assert.rejects(client.loadSession(old.id), (error) => error.kind === 'connectionClosed');
+  assert.equal(old.ended?.reason, 'disconnected');
+  assert.equal(client.sessions.length, 0);
+  assert.equal(agneta.calls('session/load').length, 1);
+});
+
+test('overlapping loads are rejected before resetting or stealing the first replay buffer', { timeout: 3000 }, async (t) => {
+  let finish;
+  const { agneta, client } = await setUp(t, { handlers: {
+    'session/load': (message, peer) => new Promise((resolve) => {
+      peer.notify('session/update', update(message.params.sessionId, text('Replay')));
+      finish = () => resolve({ result: {} });
+    })
+  } });
+  const old = await client.newSession();
+  const first = client.loadSession(old.id, { timeout: 1000 });
+  while (!finish) await new Promise((resolve) => setTimeout(resolve, 1));
+  const second = client.loadSession(old.id, { timeout: 1000 });
+  const rejected = assert.rejects(second, TurnBusyError);
+  finish();
+  await rejected;
+  const loaded = await first;
+  assert.equal(agneta.calls('session/load').length, 1);
+  assert.deepEqual(loaded.history.map((u) => u.content.text), ['Replay']);
+});
+
+test('failed-load replay is discarded but a terminal stop is retained', async (t) => {
+  const { client } = await setUp(t, { handlers: {
+    'session/load': (message, peer) => {
+      peer.notify('session/update', update(message.params.sessionId, text('Failed replay')));
+      peer.notify('agneta/sessionStopped', { sessionId: message.params.sessionId, stoppedBy: 'reach', reason: 'server stopped' });
+      return { error: { code: -32603, message: 'load failed' } };
+    }
+  } });
+  const old = await client.newSession();
+  let updates = 0;
+  old.on('update', () => updates++);
+  await assert.rejects(client.loadSession(old.id));
+  assert.deepEqual(old.ended, { reason: 'stopped', stoppedBy: 'reach', detail: 'server stopped' });
+  assert.equal(client.session(old.id), undefined);
+  assert.equal(updates, 0);
+});
+
+test('loading a running turn cannot steal its updates', { timeout: 3000 }, async (t) => {
+  let finish;
+  const { agneta, client } = await setUp(t, { handlers: { 'session/prompt': (message, peer) => new Promise((resolve) => {
+    finish = () => {
+      peer.notify('session/update', update(message.params.sessionId, text('Still here')));
+      resolve({ result: { stopReason: 'end_turn' } });
+    };
+  }) } });
+  const session = await client.newSession();
+  const turn = session.prompt('Running');
+  await assert.rejects(client.loadSession(session.id), TurnBusyError);
+  while (!finish) await new Promise((resolve) => setTimeout(resolve, 1));
+  finish();
+  assert.equal((await turn).text, 'Still here');
+  assert.equal(agneta.calls('session/load').length, 0);
+});
+
+test('observer-triggered prompt abort sends graceful cancel after its prompt', { timeout: 3000 }, async (t) => {
+  let prompt;
+  const { agneta, client } = await setUp(t, { handlers: {
+    'session/prompt': (message) => { prompt = message; return null; },
+    'session/cancel': (_message, peer) => {
+      if (prompt) peer.send({ id: prompt.id, result: { stopReason: 'cancelled' } });
+      return null;
+    }
+  } });
+  const session = await client.newSession();
+  const controller = new AbortController();
+  client.connection.on('message', (message, direction) => {
+    if (direction === 'out' && message.method === 'session/prompt') controller.abort();
+  });
+  const turn = session.prompt('Start and stop', { signal: controller.signal, timeout: 1000 });
+  assert.equal((await turn).cancelled, true);
+  assert.deepEqual(agneta.received.filter((m) => ['session/prompt', 'session/cancel'].includes(m.method)).map((m) => m.method),
+    ['session/prompt', 'session/cancel']);
 });

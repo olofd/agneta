@@ -51,6 +51,8 @@ public struct TurnResult: Sendable, Equatable {
     private var stoppedBy: String?
     private var completion: Result<TurnResult, any Error>?
     private var running: Task<TurnResult, any Error>?
+    private var enqueued = false
+    private var enqueueWaiters: [CheckedContinuation<Void, Never>] = []
     private var subscribers: [UUID: AsyncThrowingStream<TurnEvent, any Error>.Continuation] = [:]
     private let maximumEvents: Int
     private let maximumBytes: Int
@@ -69,7 +71,8 @@ public struct TurnResult: Sendable, Equatable {
                 let raw: JSONValue
                 do {
                     raw = try await session.request(
-                        "session/prompt", params: .object(params), options: .init(timeout: timeout))
+                        "session/prompt", params: .object(params), options: .init(timeout: timeout),
+                        onEnqueued: { [self] in markEnqueued() })
                 } catch {
                     // Ending our wait does not stop the engine; explicitly cancel the running turn too.
                     if error is CancellationError || (error as? AgnetaError)?.kind == .timeout {
@@ -132,9 +135,22 @@ public struct TurnResult: Sendable, Equatable {
         }
         return stream
     }
-    public func cancel() async throws { if !done { try await session.cancel() } }
+    public func cancel() async throws {
+        guard !done, session.turn === self else { return }
+        try await session.cancel()
+    }
+    func waitUntilEnqueued() async {
+        if enqueued || done { return }
+        await withCheckedContinuation { enqueueWaiters.append($0) }
+    }
+    private func markEnqueued() {
+        enqueued = true
+        let waiters = enqueueWaiters; enqueueWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
     public func steer(_ text: String) async throws -> JSONValue { try await steer([.text(text)]) }
     public func steer(_ content: [ContentBlock]) async throws -> JSONValue {
+        await waitUntilEnqueued()
         guard !done, session.turn === self else { throw AgnetaError(.noTurnRunning, "This turn has ended.") }
         return try await session.steer(content)
     }
@@ -178,6 +194,7 @@ public struct TurnResult: Sendable, Equatable {
     private func finish(_ result: Result<TurnResult, any Error>) {
         guard !done else { return }
         completion = result; done = true
+        markEnqueued()
         session.release(self)
         for continuation in subscribers.values {
             switch result {
@@ -262,6 +279,11 @@ public struct TurnResult: Sendable, Equatable {
     }
     public func cancel() async throws {
         try requireActive()
+        if let current = turn {
+            await current.waitUntilEnqueued()
+            guard !current.done, turn === current else { return }
+        }
+        try requireActive()
         try await connection.notify("session/cancel", params: ["sessionId": .string(id)])
     }
     public func steer(_ text: String) async throws -> JSONValue { try await steer([.text(text)]) }
@@ -313,9 +335,19 @@ public struct TurnResult: Sendable, Equatable {
         guard let client else { throw AgnetaError(.connectionClosed, "The owning client has been released.") }
         return try await client.readTrace(id, after: after, types: types, limit: limit)
     }
-    func request(_ method: String, params: JSONValue, options: RequestOptions = .init()) async throws -> JSONValue {
+    func request(
+        _ method: String, params: JSONValue, options: RequestOptions = .init(),
+        onEnqueued: (@MainActor () -> Void)? = nil
+    ) async throws -> JSONValue {
         try requireActive()
-        return try await connection.request(method, params: params, options: options)
+        if method != "session/prompt", let current = turn {
+            await current.waitUntilEnqueued()
+            if method == "agneta/steer", current.done || turn !== current {
+                throw AgnetaError(.noTurnRunning, "This turn has ended.")
+            }
+        }
+        try requireActive()
+        return try await connection.request(method, params: params, options: options, onEnqueued: onEnqueued)
     }
     private func requireActive() throws {
         if case .disconnected(let error) = ended { throw error }

@@ -28,7 +28,8 @@ let package = Package(
         // The app-facing SDK is independent of the runtime. Its nested package also builds without host dependencies.
         .target(name: "AgnetaClient", path: "clients/swift/Sources/AgnetaClient"),
         .testTarget(
-            name: "AgnetaClientTests", dependencies: ["AgnetaClient"], path: "clients/swift/Tests/AgnetaClientTests"),
+            name: "AgnetaClientTests", dependencies: ["AgnetaClient"], path: "clients/swift/Tests/AgnetaClientTests",
+            resources: [.copy("Fixtures")]),
         .target(name: "AgnetaKit", dependencies: [.product(name: "GRDB", package: "GRDB.swift")]),
         .executableTarget(name: "agneta-probe", dependencies: ["AgnetaKit"]),
         // GOOSE_SHELL inside engines: forwards commands to Agneta's tool broker. No dependencies.

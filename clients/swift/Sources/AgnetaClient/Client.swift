@@ -37,10 +37,12 @@ public enum ClientEvent: Sendable, Equatable {
     private var registered: [String: Session] = [:]
     private var early: [String: [(String, JSONValue)]] = [:]
     private var heldBytes = 0
+    private var openingSessions = 0
     private var loading: Set<String> = []
     private var opening: (UUID, Task<Connection, any Error>)?
     private var connecting: (UUID, Task<Access, any Error>)?
     private var reconnecting: Task<Void, Never>?
+    private var flow: (id: UUID, options: ConnectOptions, quiet: Bool, updateAsked: Bool)?
     private var generation = UUID()
     private var intentionalClose = false
 
@@ -61,7 +63,7 @@ public enum ClientEvent: Sendable, Equatable {
         guard
             [
                 timeouts.connect, timeouts.request, timeouts.pair, timeouts.session, timeouts.prompt,
-                timeouts.open, timeouts.download, timeouts.downloadPoll
+                timeouts.open, timeouts.slow, timeouts.keepWaiting, timeouts.download, timeouts.downloadPoll
             ].allSatisfy({ $0.isFinite && $0 >= 0 }),
             timeouts.downloadPoll > 0
         else {
@@ -111,6 +113,8 @@ public enum ClientEvent: Sendable, Equatable {
             // A waitForAgneta call may have opened one meanwhile.
             if let existing = self.connection, existing.isOpen { connection.close(); return existing }
             attach(connection)
+            report(.connecting, "Connecting to \(options.build.name)…")
+            try ensure(epoch)
             return connection
         }
         opening = (id, task)
@@ -138,7 +142,10 @@ public enum ClientEvent: Sendable, Equatable {
         defer { if connecting?.0 == id { connecting = nil } }
         return try await awaitShared(task)
     }
-    private func performConnect(_ connect: ConnectOptions, epoch: UUID) async throws -> Access {
+    private func performConnect(_ connect: ConnectOptions, epoch: UUID, quiet: Bool = false) async throws -> Access {
+        let flowID = UUID()
+        flow = (flowID, connect, quiet, false)
+        defer { if flow?.id == flowID { flow = nil } }
         let previous = connection
         let wasConnected = state == .connected
         do {
@@ -171,6 +178,7 @@ public enum ClientEvent: Sendable, Equatable {
             try ensure(epoch)
             guard let access else { throw AgnetaError(.protocolViolation, "Initialization returned no access report.") }
             report(.connected, "Connected to \(options.build.name)", connect)
+            try ensure(epoch)
             return access
         } catch {
             if wasConnected, let previous, connection === previous, previous.isOpen {
@@ -184,6 +192,7 @@ public enum ClientEvent: Sendable, Equatable {
     public func pair(scope: PairingScope? = nil) async throws -> PairResult {
         let connection = try await open(), epoch = generation
         setState(.pairing)
+        report(.pairing, "Approve \(options.name) in \(options.build.name)")
         defer { pairingCode = nil; if state == .pairing { setState(access == nil ? .connecting : .connected) } }
         var params: [String: JSONValue] = ["name": .string(options.name)]
         if let scope = scope ?? options.scope { params["scope"] = try JSONValue(encoding: scope) }
@@ -218,6 +227,7 @@ public enum ClientEvent: Sendable, Equatable {
         }
         access = try decodeResult(report, method: "initialize")
         initializeResult = result; setState(.connected)
+        try ensure(epoch)
         return result
     }
     public func catalog() async throws -> Catalog {
@@ -264,8 +274,11 @@ public enum ClientEvent: Sendable, Equatable {
             throw AgnetaError(.unsupportedByAgneta, "This Agneta does not offer structured results.")
         }
         let isLoad = method == "session/load"
-        if isLoad, let source, loading.contains(source) {
-            throw AgnetaError(.turnBusy, "This session is already being loaded.")
+        if isLoad, let source {
+            if loading.contains(source) { throw AgnetaError(.turnBusy, "This session is already being loaded.") }
+            if let turn = registered[source]?.turn, !turn.done {
+                throw AgnetaError(.turnBusy, "Wait for this session's running turn before loading it.")
+            }
         }
         var params = options.params
         if let source { params["sessionId"] = .string(source) }
@@ -283,6 +296,11 @@ public enum ClientEvent: Sendable, Equatable {
         defer {
             if isLoad, let source { loading.remove(source); heldBytes -= cost(early.removeValue(forKey: source) ?? []) }
         }
+        openingSessions += 1
+        defer {
+            openingSessions -= 1
+            if openingSessions == 0 { early.removeAll(); heldBytes = 0 }
+        }
         let start = ContinuousClock.now
         do {
             let raw: JSONValue
@@ -295,7 +313,9 @@ public enum ClientEvent: Sendable, Equatable {
                     } catch {
                         // The host may already have created a session whose id we will never receive. Disconnecting
                         // ends its engines and all other sessions, rather than leaving invisible work behind.
-                        if error is CancellationError || (error as? AgnetaError)?.kind == .timeout {
+                        if error is CancellationError || (error as? AgnetaError)?.kind == .timeout
+                            || (error as? AgnetaError)?.kind == .protocolViolation
+                        {
                             connection.close()
                         }
                         throw error
@@ -343,7 +363,9 @@ public enum ClientEvent: Sendable, Equatable {
                     registered[source] = stale
                     let buffered = early.removeValue(forKey: source) ?? []
                     heldBytes -= cost(buffered)
-                    for (method, params) in buffered { stale.receive(method, params: params) }
+                    for (method, params) in buffered where method == "agneta/sessionStopped" {
+                        stale.receive(method, params: params)
+                    }
                 } else if !connection.isOpen {
                     stale.end(
                         .disconnected(
@@ -421,7 +443,12 @@ public enum ClientEvent: Sendable, Equatable {
     private func notification(_ method: String, _ params: JSONValue) {
         switch method {
         case "agneta/pairingCode":
-            if let code = params["code"]?.string { pairingCode = code; events.emit(.pairingCode(code)) }
+            if let code = params["code"]?.string {
+                pairingCode = code; events.emit(.pairingCode(code))
+                if state == .pairing {
+                    report(.pairing, "Approve \(options.name) in \(options.build.name)", code: code)
+                }
+            }
         case "agneta/accessChanged":
             if let value = params["access"], let report = try? value.decode(Access.self) {
                 access = report; events.emit(.accessChanged(report))
@@ -435,8 +462,9 @@ public enum ClientEvent: Sendable, Equatable {
         if let id = params["sessionId"]?.string {
             if let session = registered[id] {
                 session.receive(method, params: params)
-            } else if ["session/update", "agneta/trace", "agneta/sessionStopped", "agneta/queued", "agneta/rateLimited"]
-                .contains(method)
+            } else if openingSessions > 0,
+                ["session/update", "agneta/trace", "agneta/sessionStopped", "agneta/queued", "agneta/rateLimited"]
+                    .contains(method)
             {
                 let bytes = method.utf8.count + params.payloadSize
                 let buffers = options.buffers
@@ -476,7 +504,7 @@ public enum ClientEvent: Sendable, Equatable {
                 do {
                     // Call the underlying connect flow, so it cannot cancel this reconnect task itself.
                     guard let self else { return }
-                    let access = try await performConnect(ConnectOptions(pair: .never), epoch: generation)
+                    let access = try await performConnect(ConnectOptions(pair: .never), epoch: generation, quiet: true)
                     events.emit(.reconnected(access)); return
                 } catch is CancellationError { return } catch let error as AgnetaError where error.kind == .needsPairing
                 { self?.setState(.disconnected); return } catch {
@@ -486,9 +514,14 @@ public enum ClientEvent: Sendable, Equatable {
         }
     }
 
-    private func report(_ step: ConnectProgress.Step, _ title: String, _ connect: ConnectOptions, code: String? = nil) {
-        let progress = ConnectProgress(step: step, title: title, code: code)
-        connect.onProgress?(progress); events.emit(.progress(progress))
+    private func report(
+        _ step: ConnectProgress.Step, _ title: String, _ connect: ConnectOptions? = nil,
+        code: String? = nil, seconds: Int? = nil, keepWaiting: Bool = false
+    ) {
+        guard flow?.quiet != true else { return }
+        let progress = ConnectProgress(step: step, title: title, code: code, seconds: seconds, keepWaiting: keepWaiting)
+        (connect ?? flow?.options)?.onProgress?(progress)
+        events.emit(.progress(progress))
     }
     private func ask(
         _ kind: GuideQuestion.Kind, title: String, detail: String, confirm: String, connect: ConnectOptions
@@ -513,12 +546,25 @@ public enum ClientEvent: Sendable, Equatable {
         await options.environment.openInstallPage(options.build)
     }
     public func waitForAgneta(timeout: TimeInterval? = nil) async throws -> Connection {
+        let limit = timeout ?? options.timeouts.open
+        guard limit.isFinite, limit >= 0 else { throw AgnetaError(.invalidParams, "Invalid wait timeout.") }
         let start = ContinuousClock.now, epoch = generation
+        var slowStage = 0
         while true {
             try ensure(epoch)
             do { return try await open() } catch let error as AgnetaError where error.kind == .notRunning {
-                let limit = timeout ?? options.timeouts.open
-                if limit > 0, start.duration(to: .now) >= .seconds(limit) { throw error }
+                let elapsed = start.duration(to: .now)
+                if limit > 0, elapsed >= .seconds(limit) { throw error }
+                let stage =
+                    options.timeouts.keepWaiting > 0 && elapsed >= .seconds(options.timeouts.keepWaiting)
+                    ? 2
+                    : options.timeouts.slow > 0 && elapsed >= .seconds(options.timeouts.slow) ? 1 : 0
+                if stage > slowStage {
+                    slowStage = stage
+                    report(
+                        .slow, "Still opening \(options.build.name)…",
+                        seconds: Int(clamping: elapsed.components.seconds), keepWaiting: stage == 2)
+                }
             }
             try await Task.sleep(for: .milliseconds(250))
         }
@@ -568,6 +614,7 @@ public enum ClientEvent: Sendable, Equatable {
                         : "This app uses Agneta for its AI tasks. Open it now?",
                     confirm: "Open", connect: connect)
                 try ensure(epoch)
+                if outdated { flow?.updateAsked = true }
                 guard await openAgneta() else { throw error }
             default: throw error
             }
@@ -578,7 +625,7 @@ public enum ClientEvent: Sendable, Equatable {
     }
     private func checkVersion(_ connect: ConnectOptions, epoch: UUID) async throws {
         guard let needed = options.minimumVersion else { return }
-        var asked = false
+        var asked = flow?.updateAsked == true
         while true {
             let version: String?
             do { version = try await catalog().version } catch let error as AgnetaError

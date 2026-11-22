@@ -578,6 +578,11 @@ npm run test:integration   # against the real headless host (below)
 
 The integration test needs, from the repository root, `scripts/fetch-engines` and `swift build --product agnetad` and `swift build --product agneta-fakes`. It runs its own `agnetad` with Goose and a fake model in a temporary folder, on ports 47800–47899, and leaves your Agneta alone. How it's built is in [DESIGN.md](DESIGN.md).
 
+The TypeScript and Swift suites share the structured-result conformance cases in
+[`clients/swift/Tests/AgnetaClientTests/Fixtures/structured-results.json`](../swift/Tests/AgnetaClientTests/Fixtures/structured-results.json).
+They check matching wire schemas, wrapped values and issue paths, malformed reports, and accepted values retained on engine failures.
+A one-shot `client.ask` disconnects if its session's close cannot be acknowledged, ending that connection's sessions while preserving the answer or original error.
+
 ## Releasing
 
 Maintainers publish from GitHub Actions only (`.github/workflows/client-typescript-release.yml`), with npm's trusted publishing and provenance:

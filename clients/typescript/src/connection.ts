@@ -96,6 +96,8 @@ export class Connection extends Emitter<ConnectionEvents> {
   #pending = new Map<JsonRpcId, Pending>();
   #handlers = new Map<string, RequestHandler<any, any>>();
   #nextId = 1;
+  #writing = false;
+  #outgoing: Array<{ message: JsonRpcMessage; text: string; signal: AbortSignal | undefined }> = [];
   #closedError: ConnectionClosedError | null = null;
   #closed: Promise<ConnectionClosedError>;
   #markClosed!: (error: ConnectionClosedError) => void;
@@ -196,7 +198,7 @@ export class Connection extends Emitter<ConnectionEvents> {
       this.#pending.set(id, { method, resolve, reject, cleanup });
       const message: JsonRpcRequest = { jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) };
       try {
-        this.#send(message);
+        this.#send(message, options.signal);
       } catch (error) {
         this.#pending.delete(id);
         cleanup();
@@ -240,11 +242,36 @@ export class Connection extends Emitter<ConnectionEvents> {
     this.#end(new ConnectionClosedError(code, reason ?? 'closed by the app'));
   }
 
-  #send(message: JsonRpcMessage): void {
-    if (this.#socket.readyState !== OPEN) throw this.#closedError ?? new ConnectionClosedError(undefined, 'not open');
-    const text = JSON.stringify(message);
-    this.emit('message', redacted(message), 'out');
-    this.#socket.send(text);
+  #send(message: JsonRpcMessage, signal?: AbortSignal): void {
+    if (this.#closedError || this.#socket.readyState !== OPEN) throw this.#closedError ?? new ConnectionClosedError(undefined, 'not open');
+    const item = { message, text: JSON.stringify(message), signal };
+    this.#outgoing.push(item);
+    // A message observer may synchronously send cancel or another frame. It belongs after this frame.
+    if (this.#writing) return;
+    this.#writing = true;
+    let failed = false, failure: unknown;
+    try {
+      for (let next = this.#outgoing.shift(); next; next = this.#outgoing.shift()) {
+        try {
+          if (this.#closedError || this.#socket.readyState !== OPEN) throw this.#closedError ?? new ConnectionClosedError(undefined, 'not open');
+          this.emit('message', redacted(JSON.parse(next.text) as JsonRpcMessage), 'out');
+          if (this.#closedError || this.#socket.readyState !== OPEN) throw this.#closedError ?? new ConnectionClosedError(undefined, 'not open');
+          if (next.signal?.aborted) throw new AbortedError('method' in next.message ? next.message.method : 'send', { cause: next.signal.reason });
+          this.#socket.send(next.text);
+        } catch (error) {
+          const request = next.message;
+          const id = 'method' in request && 'id' in request ? request.id : undefined;
+          const pending = id !== undefined && id !== null ? this.#pending.get(id) : undefined;
+          if (pending && id !== undefined && id !== null) {
+            this.#pending.delete(id);
+            pending.cleanup(); pending.reject(error);
+          }
+          if (next === item) { failed = true; failure = error; }
+          else if (!pending && !this.#closedError && !next.signal?.aborted) this.close(1011, 'could not send a queued message');
+        }
+      }
+    } finally { this.#writing = false; }
+    if (failed) throw failure;
   }
 
   #receive(data: unknown): void {
@@ -264,9 +291,11 @@ export class Connection extends Emitter<ConnectionEvents> {
   }
 
   #dispatch(message: unknown): void {
+    if (this.#closedError) return;
     if (!message || typeof message !== 'object' || (message as { jsonrpc?: unknown }).jsonrpc !== '2.0') return;
     const value = message as JsonRpcMessage & { id?: JsonRpcId | null; method?: unknown };
     this.emit('message', redacted(value), 'in');
+    if (this.#closedError) return;
     if (typeof value.method === 'string') {
       if (value.id === undefined || value.id === null) {
         this.emit('notification', value.method, (value as JsonRpcNotification).params);
@@ -302,19 +331,25 @@ export class Connection extends Emitter<ConnectionEvents> {
         const result = await handler(request.params, request);
         response = { jsonrpc: '2.0', id: request.id, result: result ?? null };
       } catch (error) {
-        const code = typeof (error as { code?: unknown })?.code === 'number' ? (error as { code: number }).code : -32603;
+        const rawCode = (error as { code?: unknown })?.code;
+        const code = typeof rawCode === 'number' && Number.isSafeInteger(rawCode) ? rawCode : -32603;
         const text = error instanceof Error ? error.message : String(error);
         response = { jsonrpc: '2.0', id: request.id, error: { code, message: text } };
       }
     }
     if (this.isOpen) {
-      try { this.#send(response); } catch {}
+      try { this.#send(response); } catch {
+        if (this.isOpen) {
+          try { this.#send({ jsonrpc: '2.0', id: request.id, error: { code: -32603, message: 'The app handler returned a value that is not JSON.' } }); } catch {}
+        }
+      }
     }
   }
 
   #end(error: ConnectionClosedError): void {
     if (this.#closedError) return;
     this.#closedError = error;
+    this.#outgoing.length = 0;
     for (const pending of this.#pending.values()) {
       pending.cleanup();
       pending.reject(error);

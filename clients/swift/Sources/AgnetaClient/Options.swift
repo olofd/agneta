@@ -18,6 +18,8 @@ public struct Timeouts: Sendable {
     public var session: TimeInterval = 180
     public var prompt: TimeInterval = 0
     public var open: TimeInterval = 300
+    public var slow: TimeInterval = 15
+    public var keepWaiting: TimeInterval = 60
     public var download: TimeInterval = 600
     public var downloadPoll: TimeInterval = 2
     public init() {}

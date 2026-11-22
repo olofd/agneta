@@ -1,7 +1,7 @@
 import Foundation
 
 /// Injectable transport. Calls are serialized on the main actor; network I/O suspends without blocking it.
-/// `start` and `receive` must respond to task cancellation or `close`. Send one text frame per call.
+/// `start`, `send` and `receive` must respond to task cancellation or `close`. Send one text frame per call.
 @MainActor public protocol WebSocketTransport: AnyObject, Sendable {
     func start() async throws
     func send(_ text: String) async throws

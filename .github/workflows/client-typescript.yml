@@ -5,9 +5,9 @@ name: TypeScript client
 on:
   push:
     branches: [main]
-    paths: ['clients/typescript/**', '.github/workflows/client-typescript.yml']
+    paths: ['clients/typescript/**', 'clients/swift/Tests/AgnetaClientTests/Fixtures/**', '.github/workflows/client-typescript.yml']
   pull_request:
-    paths: ['clients/typescript/**', '.github/workflows/client-typescript.yml']
+    paths: ['clients/typescript/**', 'clients/swift/Tests/AgnetaClientTests/Fixtures/**', '.github/workflows/client-typescript.yml']
   workflow_dispatch:
 
 permissions:

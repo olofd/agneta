@@ -1,0 +1,584 @@
+{
+  "description": "Shared wire and result conformance cases for the TypeScript and Swift clients.",
+  "cases": [
+    {
+      "id": "object_value",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "report": {
+        "status": "valid",
+        "name": "result",
+        "mechanism": "tool",
+        "attempts": 1,
+        "value": {
+          "name": "Ada"
+        }
+      },
+      "kind": "valid",
+      "value": {
+        "name": "Ada"
+      },
+      "wireSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "wrapped_array",
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "report": {
+        "status": "valid",
+        "name": "result",
+        "mechanism": "tool",
+        "attempts": 1,
+        "value": {
+          "value": [
+            "a",
+            "b"
+          ]
+        }
+      },
+      "kind": "valid",
+      "value": [
+        "a",
+        "b"
+      ],
+      "wireSchema": {
+        "$comment": "@agneta/client: wraps a non-object root as { value }",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "wrapped_null",
+      "schema": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "report": {
+        "status": "valid",
+        "name": "result",
+        "mechanism": "tool",
+        "attempts": 1,
+        "value": {
+          "value": null
+        }
+      },
+      "kind": "valid",
+      "value": null,
+      "wireSchema": {
+        "$comment": "@agneta/client: wraps a non-object root as { value }",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "invalid_array",
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "report": {
+        "status": "invalid",
+        "name": "result",
+        "mechanism": "tool",
+        "attempts": 1,
+        "value": {
+          "value": [
+            "a",
+            4
+          ]
+        },
+        "issues": [
+          {
+            "path": "/value/1",
+            "keyword": "type",
+            "message": "expected string",
+            "schemaPath": "/properties/value/items/type"
+          }
+        ]
+      },
+      "kind": "invalid",
+      "value": [
+        "a",
+        4
+      ],
+      "issuePaths": [
+        "/1"
+      ],
+      "schemaPaths": [
+        "/items/type"
+      ],
+      "wireSchema": {
+        "$comment": "@agneta/client: wraps a non-object root as { value }",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "invalid_wrapper",
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "report": {
+        "status": "invalid",
+        "name": "result",
+        "mechanism": "tool",
+        "attempts": 1,
+        "value": {
+          "value": [
+            "a"
+          ],
+          "note": 1
+        },
+        "issues": [
+          {
+            "path": "/note",
+            "keyword": "additionalProperties",
+            "message": "note is not allowed",
+            "schemaPath": "/additionalProperties"
+          }
+        ]
+      },
+      "kind": "invalid",
+      "value": [
+        "a"
+      ],
+      "issuePaths": [
+        ""
+      ],
+      "schemaPaths": [
+        ""
+      ],
+      "wireSchema": {
+        "$comment": "@agneta/client: wraps a non-object root as { value }",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "missing",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "report": {
+        "status": "missing",
+        "name": "result",
+        "mechanism": "tool",
+        "attempts": 1,
+        "reason": "not-submitted"
+      },
+      "kind": "missing",
+      "wireSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "stopped_after_refusal",
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "report": {
+        "status": "missing",
+        "name": "result",
+        "mechanism": "tool",
+        "attempts": 1,
+        "reason": "stopped",
+        "issues": [
+          {
+            "path": "/value/0",
+            "keyword": "type",
+            "message": "expected string",
+            "schemaPath": "/properties/value/items/type"
+          }
+        ],
+        "value": {
+          "value": [
+            7
+          ]
+        }
+      },
+      "kind": "missing",
+      "value": [
+        7
+      ],
+      "issuePaths": [
+        "/0"
+      ],
+      "schemaPaths": [
+        "/items/type"
+      ],
+      "wireSchema": {
+        "$comment": "@agneta/client: wraps a non-object root as { value }",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "accepted_before_engine_failure",
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "report": {
+        "status": "valid",
+        "name": "result",
+        "mechanism": "tool",
+        "attempts": 1,
+        "value": {
+          "value": [
+            "kept"
+          ]
+        }
+      },
+      "rpcCode": -32603,
+      "kind": "rpc",
+      "value": [
+        "kept"
+      ],
+      "wireSchema": {
+        "$comment": "@agneta/client: wraps a non-object root as { value }",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "wrong_result_name",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "report": {
+        "status": "valid",
+        "name": "another",
+        "mechanism": "tool",
+        "attempts": 1,
+        "value": {
+          "name": "Ada"
+        }
+      },
+      "kind": "protocol",
+      "wireSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "negative_attempts",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "report": {
+        "status": "valid",
+        "name": "result",
+        "mechanism": "tool",
+        "attempts": -1,
+        "value": {
+          "name": "Ada"
+        }
+      },
+      "kind": "protocol",
+      "wireSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "fractional_attempts",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "report": {
+        "status": "valid",
+        "name": "result",
+        "mechanism": "tool",
+        "attempts": 0.5,
+        "value": {
+          "name": "Ada"
+        }
+      },
+      "kind": "protocol",
+      "wireSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "missing_reason",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "report": {
+        "status": "missing",
+        "name": "result",
+        "mechanism": "tool",
+        "attempts": 1
+      },
+      "kind": "protocol",
+      "wireSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "malformed_issues",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "report": {
+        "status": "invalid",
+        "name": "result",
+        "mechanism": "tool",
+        "attempts": 1,
+        "value": {},
+        "issues": [
+          {
+            "path": 5
+          }
+        ]
+      },
+      "kind": "protocol",
+      "wireSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "absent_valid_value",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "report": {
+        "status": "valid",
+        "name": "result",
+        "mechanism": "tool",
+        "attempts": 1
+      },
+      "kind": "protocol",
+      "wireSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

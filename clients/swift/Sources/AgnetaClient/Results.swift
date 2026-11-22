@@ -44,10 +44,15 @@ public struct StructuredResult: JSONBacked {
     public let raw: JSONValue
     public init(raw: JSONValue) throws {
         guard let status = raw["status"]?.string, Status(rawValue: status) != nil,
-            raw["name"]?.string != nil, raw["mechanism"]?.string != nil, raw["attempts"]?.integer != nil,
-            status != "valid" || raw["value"] != nil
+            raw["name"]?.string != nil, raw["mechanism"]?.string != nil,
+            let attempts = raw["attempts"]?.integer, attempts >= 0,
+            status != "valid" || raw["value"] != nil,
+            status != "missing" || raw["reason"]?.string != nil
         else {
             throw AgnetaError(.protocolViolation, "Malformed structured-result report.")
+        }
+        if let issues = raw["issues"], (try? issues.decode([ResultIssue].self)) == nil {
+            throw AgnetaError(.protocolViolation, "Malformed structured-result issues.")
         }
         self.raw = raw
     }
@@ -83,7 +88,25 @@ public struct ResultFailure: Error, LocalizedError, Sendable {
     public let report: StructuredResult
     public let turnResult: TurnResult
     public let message: String
+    /// The app-facing value and issue paths, unwrapped for a non-object schema root.
+    public let value: JSONValue?
+    public let submitted: JSONValue?
+    public let issues: [ResultIssue]
+    public enum Source: Sendable { case agneta, client }
+    public var source: Source { kind == .decoding ? .client : .agneta }
+    public var valueOmitted: String? { report.raw["valueOmitted"]?.string }
     public var errorDescription: String? { message }
+
+    init(kind: Kind, report: StructuredResult, turnResult: TurnResult, message: String, wrapped: Bool) {
+        self.kind = kind; self.report = report; self.turnResult = turnResult; self.message = message
+        submitted = report.value
+        value = wrapped ? report.value?["value"] : report.value
+        if kind == .decoding {
+            issues = [ResultIssue(path: "", keyword: "decode", message: message, schemaPath: "")]
+        } else {
+            issues = wrapped ? report.issues.map(unwrapResultIssue) : report.issues
+        }
+    }
 }
 public struct AskDetails<Value: Sendable>: Sendable {
     public let value: Value
@@ -98,7 +121,23 @@ public struct AskDetails<Value: Sendable>: Sendable {
     public var value: Value { get async throws { try await details.value } }
     public var details: AskDetails<Value> {
         get async throws {
-            let result = try await turn.result
+            let result: TurnResult
+            do { result = try await turn.result } catch var error as AgnetaError {
+                if let report = error.structured, report.status == .valid, report.name == name,
+                    let value = wrapped ? report.value?["value"] : report.value
+                {
+                    let issues: [ResultIssue]?
+                    do { _ = try value.decode(Value.self); issues = nil } catch {
+                        issues = [
+                            ResultIssue(
+                                path: "", keyword: "decode",
+                                message: "The accepted value could not be decoded as \(Value.self).", schemaPath: "")
+                        ]
+                    }
+                    error.accepted = AcceptedResult(value: value, issues: issues)
+                }
+                throw error
+            }
             guard let report = result.structured, report.name == name else {
                 throw AgnetaError(.protocolViolation, "The prompt returned no result for \(name).")
             }
@@ -106,11 +145,11 @@ public struct AskDetails<Value: Sendable>: Sendable {
             case .missing:
                 throw ResultFailure(
                     kind: .missing, report: report, turnResult: result,
-                    message: "No result was submitted: \(report.reason ?? "unknown reason").")
+                    message: "No result was submitted: \(report.reason ?? "unknown reason").", wrapped: wrapped)
             case .invalid:
                 throw ResultFailure(
                     kind: .invalid, report: report, turnResult: result,
-                    message: "Agneta refused the result against its schema.")
+                    message: "Agneta refused the result against its schema.", wrapped: wrapped)
             case .valid:
                 guard let value = wrapped ? report.value?["value"] : report.value else {
                     throw AgnetaError(.protocolViolation, "The result wrapper has no value.")
@@ -119,7 +158,7 @@ public struct AskDetails<Value: Sendable>: Sendable {
                 {
                     throw ResultFailure(
                         kind: .decoding, report: report, turnResult: result,
-                        message: "The accepted result could not be decoded as \(Value.self).")
+                        message: "The accepted result could not be decoded as \(Value.self).", wrapped: wrapped)
                 }
             }
         }
@@ -160,12 +199,19 @@ extension AgnetaClient {
         do {
             let answer = try session.ask(input, as: type, attempts: attempts)
             let result = try await answer.details
-            try await Task { @MainActor in try await session.close() }.value
+            await closeOneShot(session)
             return result
         } catch {
-            _ = await Task { @MainActor in try? await session.close() }.value
+            await closeOneShot(session)
             throw error
         }
+    }
+    private func closeOneShot(_ session: Session) async {
+        // Cleanup must run even when the caller's task was cancelled. Preserve the answer/original failure,
+        // but never leave a one-shot engine alive if its close cannot be acknowledged.
+        await Task { @MainActor in
+            do { try await session.close() } catch { session.connection.close() }
+        }.value
     }
 }
 
@@ -215,4 +261,21 @@ private func prepareResultSchema(_ schema: JSONValue) -> JSONValue {
             "required": ["value"], "additionalProperties": false
         ], uniquingKeysWith: { _, last in last })
     return .object(wrapper)
+}
+
+private func unwrapResultIssue(_ issue: ResultIssue) -> ResultIssue {
+    func strip(_ value: String, prefix: String) -> String? {
+        if value == prefix { return "" }
+        return value.hasPrefix(prefix + "/") ? String(value.dropFirst(prefix.count)) : nil
+    }
+    if let path = strip(issue.path, prefix: "/value"),
+        let schemaPath = strip(issue.schemaPath, prefix: "/properties/value")
+    {
+        return ResultIssue(path: path, keyword: issue.keyword, message: issue.message, schemaPath: schemaPath)
+    }
+    return ResultIssue(
+        path: "", keyword: issue.keyword,
+        message:
+            "the model didn't submit the value as { \"value\": … } (\(issue.path.isEmpty ? "the submission" : issue.path): \(issue.message))",
+        schemaPath: "")
 }

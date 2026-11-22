@@ -535,7 +535,15 @@ export function structuredResult(carrier: unknown): StructuredResult | null {
   const report = carrier && typeof carrier === 'object' ? (carrier as Record<string, unknown>)['agneta/result'] : undefined;
   if (!report || typeof report !== 'object') return null;
   const fields = report as Record<string, unknown>;
-  if (typeof fields.status !== 'string' || typeof fields.name !== 'string') return null;
+  if (typeof fields.status !== 'string' || typeof fields.name !== 'string' || typeof fields.mechanism !== 'string'
+    || !Number.isInteger(fields.attempts) || (fields.attempts as number) < 0) return null;
+  if (fields.status === 'valid' && !Object.hasOwn(fields, 'value')) return null;
+  if (fields.status === 'missing' && typeof fields.reason !== 'string') return null;
+  if (fields.issues !== undefined && (!Array.isArray(fields.issues) || fields.issues.some((issue: unknown) => {
+    if (!issue || typeof issue !== 'object') return true;
+    const value = issue as Record<string, unknown>;
+    return ['path', 'keyword', 'message', 'schemaPath'].some((key) => typeof value[key] !== 'string');
+  }))) return null;
   const result = { ...fields } as unknown as StructuredResult;
   if (result.status === 'invalid' && !Array.isArray(result.issues)) result.issues = [];
   return result;

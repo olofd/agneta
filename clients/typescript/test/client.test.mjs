@@ -367,3 +367,108 @@ test('closing from a paired listener never opens another connection in direct pa
   assert.equal(client.connection, null);
   assert.equal(agneta.calls('initialize').length, 0);
 });
+
+test('close from connected progress rejects rather than returning cleared access', async (t) => {
+  const { agneta } = await setUp(t);
+  const client = new AgnetaClient({ name: 'Example', port: agneta.port });
+  await assert.rejects(client.connect({ onProgress: ({ step }) => { if (step === 'connected') client.close(); } }),
+    (error) => error.kind === 'aborted' || error.kind === 'connectionClosed');
+  assert.equal(client.connection, null);
+});
+
+test('close from connected state rejects direct initialize', async (t) => {
+  const { agneta } = await setUp(t);
+  const client = new AgnetaClient({ name: 'Example', port: agneta.port });
+  client.on('state', (state) => { if (state === 'connected') client.close(); });
+  await assert.rejects(client.initialize('kept-token'), (error) => error.kind === 'connectionClosed');
+  assert.equal(client.connection, null);
+});
+
+test('a new connect after close does not inherit or get closed by the cancelled flow', async (t) => {
+  const { agneta } = await setUp(t);
+  let loadOld, entered, loads = 0;
+  const loading = new Promise((resolve) => { loadOld = resolve; });
+  const started = new Promise((resolve) => { entered = resolve; });
+  const client = new AgnetaClient({ name: 'Example', port: agneta.port, tokens: {
+    load: () => { if (++loads === 1) { entered(); return loading; } return 'kept-token'; }, save() {}, clear() {}
+  } });
+  t.after(() => client.close());
+  const old = client.connect();
+  const oldFailed = assert.rejects(old, (error) => error.kind === 'aborted');
+  await started;
+  client.close();
+  const current = client.connect({ pair: 'never' });
+  loadOld('kept-token');
+  await oldFailed;
+  assert.equal((await current).workspace, '/tmp/agneta-stand-in/workspace');
+  assert.equal(client.state, 'connected');
+  assert.equal(loads, 2);
+});
+
+test('a cancelled automatic reconnect cannot reschedule over a new explicit connection', async (t) => {
+  const { agneta } = await setUp(t);
+  let loadOld, entered, loads = 0;
+  const loading = new Promise((resolve) => { loadOld = resolve; });
+  const started = new Promise((resolve) => { entered = resolve; });
+  const client = new AgnetaClient({ name: 'Example', port: agneta.port, reconnect: { delay: 1, maxDelay: 2 }, tokens: {
+    load: () => { if (++loads === 2) { entered(); return loading; } return 'kept-token'; }, save() {}, clear() {}
+  } });
+  t.after(() => client.close());
+  const attempts = [];
+  client.on('reconnecting', (attempt) => attempts.push(attempt));
+  await client.connect();
+  agneta.drop();
+  await started;
+  client.close();
+  await client.connect({ pair: 'never' });
+  loadOld('kept-token');
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(client.state, 'connected');
+  assert.deepEqual(attempts, [1]);
+  assert.equal(loads, 3);
+});
+
+test('close promptly rejects connect while a token load is still pending', async (t) => {
+  const { agneta } = await setUp(t);
+  let entered, release;
+  const started = new Promise((resolve) => { entered = resolve; });
+  const loading = new Promise((resolve) => { release = resolve; });
+  const client = new AgnetaClient({ name: 'Example', port: agneta.port, tokens: {
+    load: () => { entered(); return loading; }, save() {}, clear() {}
+  } });
+  const connecting = client.connect();
+  const rejected = assert.rejects(connecting, (error) => error.kind === 'aborted');
+  await started;
+  client.close();
+  try {
+    await Promise.race([rejected, new Promise((_, reject) => setTimeout(() => reject(new Error('connect still waits on token load')), 100))]);
+    assert.equal(agneta.calls('initialize').length, 0);
+  } finally { release('kept-token'); }
+});
+
+test('a fresh manual connect owns the cycle after an automatic attempt fails', { timeout: 3000 }, async (t) => {
+  const { agneta } = await setUp(t);
+  let rejectOld, entered, loads = 0;
+  const loading = new Promise((_, reject) => { rejectOld = reject; });
+  const started = new Promise((resolve) => { entered = resolve; });
+  const client = new AgnetaClient({ name: 'Example', port: agneta.port, reconnect: { delay: 1, maxDelay: 2 }, tokens: {
+    load: () => { if (++loads === 2) { entered(); return loading; } return 'kept-token'; }, save() {}, clear() {}
+  } });
+  t.after(() => client.close());
+  const attempts = [];
+  let reconnected = 0;
+  client.on('reconnecting', (attempt) => attempts.push(attempt));
+  client.on('reconnected', () => reconnected++);
+  await client.connect();
+  agneta.drop();
+  await started;
+  const automatic = client.connect({ pair: 'never' }); // joins the attempt already in flight
+  const manual = automatic.catch(() => client.connect({ pair: 'never' }));
+  rejectOld(new Error('token read failed'));
+  await manual;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(attempts, [1]);
+  assert.equal(reconnected, 0);
+  assert.equal(client.state, 'connected');
+  assert.equal(loads, 3);
+});

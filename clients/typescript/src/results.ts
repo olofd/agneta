@@ -379,7 +379,7 @@ function planAsk(session: Session, options: AnyAskOptions): Plan {
 
 async function read(turnResult: TurnResult, plan: Plan): Promise<AskDetails<unknown>> {
   const report = turnResult.structured;
-  if (!report) throw new ProtocolError(`Agneta's reply has no structured result for "${plan.name}". Update Agneta.`, turnResult.raw);
+  if (!report || report.name !== plan.name) throw new ProtocolError(`Agneta's reply has no structured result for "${plan.name}". Update Agneta.`, turnResult.raw);
   if (report.status === 'missing') throw new ResultMissingError(report, turnResult, refused(report, plan));
   if (report.status === 'invalid') throw new ResultInvalidError('agneta', report, turnResult, refused(report, plan));
   if (report.status !== 'valid') {
@@ -419,7 +419,7 @@ async function appCheck(submitted: unknown, plan: Plan): Promise<{ value: unknow
  * have given it (`accepted`): read and checked like a reply's.
  */
 async function failed(error: unknown, plan: Plan): Promise<never> {
-  if (error instanceof AgnetaRpcError && error.structured?.status === 'valid') {
+  if (error instanceof AgnetaRpcError && error.structured?.status === 'valid' && error.structured.name === plan.name) {
     const checked = await appCheck(error.structured.value, plan);
     error.accepted = 'issues' in checked ? { value: checked.value, issues: checked.issues } : { value: checked.value, issues: null };
   }

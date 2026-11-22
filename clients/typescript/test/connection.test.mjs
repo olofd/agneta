@@ -151,3 +151,51 @@ test('a message listener cannot mutate a result before it reaches the caller', a
   connection.on('message', (message, direction) => { if (direction === 'in') message.result.nested.value = 'changed'; });
   assert.deepEqual(await connection.request('echo'), { nested: { value: 'original' } });
 });
+
+test('aborting from a message observer prevents the request from reaching the wire', async (t) => {
+  const agneta = await standIn((message) => ({ result: message.params }));
+  t.after(() => agneta.close());
+  const connection = await Connection.open({ url: agneta.url });
+  t.after(() => connection.close());
+  const controller = new AbortController();
+  connection.on('message', (message, direction) => { if (direction === 'out' && message.method === 'echo') controller.abort(); });
+  await assert.rejects(connection.request('echo', {}, { signal: controller.signal }), AbortedError);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(agneta.calls('echo').length, 0);
+});
+
+test('closing from an incoming message observer stops notification dispatch', async (t) => {
+  const agneta = await standIn((message, peer) => { peer.notify('marker', {}); return { result: {} }; });
+  t.after(() => agneta.close());
+  const connection = await Connection.open({ url: agneta.url });
+  let notifications = 0;
+  connection.on('message', (message, direction) => { if (direction === 'in' && message.method === 'marker') connection.close(); });
+  connection.on('notification', () => notifications++);
+  await assert.rejects(connection.request('echo'), ConnectionClosedError);
+  assert.equal(notifications, 0);
+});
+
+test('message observers see serialized JSON, including objects with toJSON', async (t) => {
+  const agneta = await standIn((message) => ({ result: message.params }));
+  t.after(() => agneta.close());
+  const connection = await Connection.open({ url: agneta.url });
+  t.after(() => connection.close());
+  const seen = [];
+  connection.on('message', (message, direction) => { if (direction === 'out') seen.push(message.params); });
+  const params = { toJSON: () => ({ value: 42 }) };
+  assert.deepEqual(await connection.request('echo', params), { value: 42 });
+  assert.deepEqual(seen, [{ value: 42 }]);
+});
+
+test('non-JSON handler results fail the remote call instead of hanging it', { timeout: 3000 }, async (t) => {
+  const agneta = await standIn();
+  t.after(() => agneta.close());
+  const connection = await Connection.open({ url: agneta.url });
+  t.after(() => connection.close());
+  while (!agneta.peers.length) await new Promise((resolve) => setTimeout(resolve, 1));
+  connection.handle('invalid', () => 1n);
+  assert.equal((await agneta.peers[0].request('invalid', {})).error.code, -32603);
+  connection.handle('invalid', () => { throw Object.assign(new Error('bad code'), { code: NaN }); });
+  assert.equal((await agneta.peers[0].request('invalid', {})).error.code, -32603);
+  assert.equal(connection.isOpen, true);
+});

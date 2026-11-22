@@ -9,8 +9,9 @@ import { agnetaLike, standIn, workspace } from './stand-in.mjs';
 async function setUp(t, options = {}) {
   const behaviour = agnetaLike(options);
   const agneta = await standIn(behaviour.answer);
-  const client = await connect({ name: 'Example', port: agneta.port });
-  t.after(async () => { client.close(); await agneta.close(); });
+  let client;
+  t.after(async () => { client?.close(); await agneta.close(); });
+  client = await connect({ name: 'Example', port: agneta.port });
   return { agneta, client, state: behaviour.state };
 }
 
@@ -508,4 +509,14 @@ test('an Agneta without structured results: refused before sending, never a sile
   assert.throws(() => session.ask('x', { schema: contact }), UnsupportedByAgnetaError);
   assert.equal(agneta.calls('session/prompt').length, 0);
   await session.prompt('An ordinary turn still works.');
+});
+
+test('a rejected one-shot close preserves its answer and stops the connection', async (t) => {
+  const { client } = await setUp(t, { handlers: {
+    'session/close': () => ({ error: { code: -32603, message: 'close failed' } })
+  } });
+  const answer = await client.ask(call('submit_result', { name: 'Ada' }), { schema: contact });
+  assert.deepEqual(answer, { name: 'Ada' });
+  assert.equal(client.sessions.length, 0);
+  assert.equal(client.connection, null);
 });

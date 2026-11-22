@@ -26,6 +26,8 @@ public struct ConnectProgress: Sendable, Equatable {
     public let step: Step
     public let title: String
     public let code: String?
+    public let seconds: Int?
+    public let keepWaiting: Bool
 }
 
 /// Native app discovery and explicit user-approved opening. Tests can replace this without launching applications.
