@@ -312,6 +312,40 @@ extension ToolBrokerTests {
         #expect(held.broker.runningCommands(token: "engine") == 0)
     }
 
+    /// A command's end is waited for on the broker's own thread, woken by the reaper: it needs none of Swift's shared
+    /// threads. Through a Task, as before, it waited for one, and with all of them busy every command hung (CI,
+    /// 2026-11-22). Here every shared thread is held by blocking work until the wait has returned: the old way waited
+    /// out the blockers' 3 s, this way returns as the process exits.
+    @Test func waitingForAnExitNeedsNoSharedThread() async throws {
+        final class Elapsed: @unchecked Sendable {
+            private let lock = NSLock()
+            private var value: Duration?
+            func set(_ duration: Duration) { lock.withLock { value = duration } }
+            var get: Duration? { lock.withLock { value } }
+        }
+        let child = try ChildProcess(executable: "/bin/sh", arguments: ["-c", "sleep 0.2; exit 3"], environment: [:])
+        // More blockers than the pool has threads (one per core; one with LIBDISPATCH_COOPERATIVE_POOL_STRICT).
+        let width = ProcessInfo.processInfo.activeProcessorCount + 2
+        let release = DispatchSemaphore(value: 0)
+        // Blocking a shared thread on purpose (a synchronous function: Swift refuses the wait in async code).
+        @Sendable func hold() { _ = release.wait(timeout: .now() + 3) }
+        for _ in 0..<width { Task.detached { hold() } }
+        let elapsed = Elapsed(), status = Counter()
+        Thread {
+            let started = ContinuousClock.now
+            if (child.waitForExitBlocking() >> 8) & 0xff == 3 { status.add() }
+            elapsed.set(ContinuousClock.now - started)
+            for _ in 0..<width { release.signal() }
+        }.start()
+        let raw = await child.waitForExit()
+        #expect((raw >> 8) & 0xff == 3)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while elapsed.get == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(status.value == 1)
+        #expect(try #require(elapsed.get) < .seconds(2), "the wait needed a shared thread")
+        #expect((child.waitForExitBlocking() >> 8) & 0xff == 3) // after the exit: at once
+    }
+
     /// Agneta stopping ends every command, background jobs included, and starts none after.
     @Test func stoppingAgnetaEndsEveryCommand() async throws {
         let held = try Held()

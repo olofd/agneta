@@ -37,6 +37,9 @@ public final class LocalHTTPServer: @unchecked Sendable {
     public init(port: UInt16, handler: @escaping Handler) throws {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!)
+        // Reuse only lets a port held by closing connections be bound again: Network.framework never lets a second
+        // listener share a listening port, either way round (measured, docs/PRIVACY.md). Raw BSD sockets with
+        // SO_REUSEPORT would (the later bind gets the connections): keep listeners on Network.framework.
         parameters.allowLocalEndpointReuse = port != 0
         listener = try NWListener(using: parameters)
         self.handler = handler

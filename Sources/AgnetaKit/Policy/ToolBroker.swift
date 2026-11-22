@@ -293,13 +293,9 @@ public final class ToolBroker: @unchecked Sendable {
         }
         // The shell's own exit ends the command, not its output: a background child (`npm run dev &`) keeps the
         // pipes open, and waiting for them would hang the tool call and leave the child running.
-        let semaphore = DispatchSemaphore(value: 0)
-        let box = StatusBox()
-        Task {
-            box.value = await child.waitForExit(); semaphore.signal()
-        }
-        semaphore.wait()
-        let raw = box.value
+        // Waited for on this thread itself: through a Task, a command's end needed one of Swift's shared threads,
+        // and when they were all busy every command hung.
+        let raw = child.waitForExitBlocking()
         // Whatever the command left running in its group (`nohup … &`) ended with it (ChildProcess's reaper), which
         // also closes the pipes.
         // Output already written is still delivered; a process that left the group can't hold the answer up.
@@ -347,5 +343,3 @@ private final class OutputCounts: @unchecked Sendable {
         }
     }
 }
-
-private final class StatusBox: @unchecked Sendable { var value: Int32 = 0 }

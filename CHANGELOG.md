@@ -2,6 +2,13 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
+## Unreleased
+
+**Fixes**
+
+- **Shell commands no longer hang when Agneta is busy.** The tool broker waited for each command's end through Swift's shared threads; with all of them taken (a 3-core Mac running several tasks), every command could hang. It now waits on its own thread. Engines' usage records are read off those threads too, so a slow read can't hold up the rest of Agneta.
+- **A session's last cost is counted when it ends during a usage read:** the read in flight is waited for before the final one, so its rows count toward the app's spending.
+
 ## 0.8.0 (2026-11-22)
 
 0.7.0 was not published as a release of its own: updating from 0.6.0 brings its changes too, listed under [0.7.0](https://github.com/olofd/agneta/blob/v0.8.0/CHANGELOG.md#070-2026-11-21) below (no engine output in another app's task, crash cleanup of engine homes, a paused account checked again while a session opens, traces read without holding up other apps, and client fixes).

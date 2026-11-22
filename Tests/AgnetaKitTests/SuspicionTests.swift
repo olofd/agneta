@@ -6,8 +6,18 @@ import Testing
 @testable import AgnetaKit
 
 /// A WebSocket client on a plain socket, so a test can make it stop reading for real: what it doesn't read stays in
-/// the kernel's buffers, which fill, as with an app that hangs.
-final class RawWebSocket {
+/// the kernel's buffers, which fill, as with an app that hangs. Its reads block, so async tests open it and make
+/// requests through `opened` and `asked`, on a thread of their own: on Swift's shared threads they held up the Agneta
+/// answering them (one test at a time uses a client, so it's unchecked Sendable).
+final class RawWebSocket: @unchecked Sendable {
+    static func opened(port: UInt16) async throws -> RawWebSocket {
+        try await RawHTTP.offPool { try RawWebSocket(port: port) }
+    }
+
+    func asked(_ id: Int, _ method: String, _ params: JSONValue) async throws -> JSONValue {
+        try await RawHTTP.offPool { try self.request(id, method, params) }
+    }
+
     private let fd: Int32
     private var buffer = Data()
 
@@ -151,16 +161,16 @@ extension RouterIntegrationTests {
         do {
             let projects = stack.root.appending(path: "projects", directoryHint: .isDirectory).realFileURL.path(
                 percentEncoded: false)
-            let stalled = try RawWebSocket(port: stack.port)
-            let paired = try stalled.request(
+            let stalled = try await RawWebSocket.opened(port: stack.port)
+            let paired = try await stalled.asked(
                 1, "agneta/pair", ["name": "Stalled", "scope": ["tools": "workspace", "folders": [.string(projects)]]])
-            _ = try stalled.request(
+            _ = try await stalled.asked(
                 2, "initialize",
                 [
                     "protocolVersion": 1, "clientCapabilities": [:],
                     "_meta": ["agneta": ["token": paired["token"] ?? .null]]
                 ])
-            let created = try stalled.request(
+            let created = try await stalled.asked(
                 3, "session/new",
                 [
                     "cwd": .string(try stack.workspace("Stalled").path(percentEncoded: false)), "mcpServers": [],
@@ -201,7 +211,7 @@ extension RouterIntegrationTests {
         let server = try WebSocketServer(port: 47631, maxQueued: 10_000, maxQueuedBytes: 256 << 10)
         try await server.start()
         defer { server.stop() }
-        let client = try RawWebSocket(port: server.port)
+        let client = try await RawWebSocket.opened(port: server.port)
         var connections = server.connections.makeAsyncIterator()
         let connection = try #require(await connections.next())
         let message = Data(repeating: UInt8(ascii: "x"), count: 1024)

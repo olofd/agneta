@@ -24,6 +24,8 @@ public final class ChildProcess: @unchecked Sendable {
     }
     private let group = Group()
     private var waiters: [CheckedContinuation<Int32, Never>] = []
+    /// Threads waiting in `waitForExitBlocking`, woken by the reaper.
+    private var blockingWaiters: [DispatchSemaphore] = []
 
     /// - Parameters:
     ///   - executable: absolute path.
@@ -135,10 +137,12 @@ public final class ChildProcess: @unchecked Sendable {
     private func finish(_ raw: Int32) {
         lock.lock()
         status = raw
-        let pending = waiters
+        let pending = waiters, blocked = blockingWaiters
         waiters.removeAll()
+        blockingWaiters.removeAll()
         lock.unlock()
         pending.forEach { $0.resume(returning: raw) }
+        blocked.forEach { $0.signal() }
     }
 
     public var hasExited: Bool {
@@ -158,6 +162,22 @@ public final class ChildProcess: @unchecked Sendable {
                 lock.unlock()
             }
         }
+    }
+
+    /// The raw wait status once the process has exited, blocking the calling thread: for threads of one's own (the tool
+    /// broker's), never from Swift concurrency. The reaper wakes it directly, so it needs nothing from Swift's shared
+    /// threads: waiting through a Task there hung every command whenever those threads were all busy.
+    public func waitForExitBlocking() -> Int32 {
+        lock.lock()
+        if let status {
+            lock.unlock()
+            return status
+        }
+        let woken = DispatchSemaphore(value: 0)
+        blockingWaiters.append(woken)
+        lock.unlock()
+        woken.wait()
+        return lock.withLock { status! }
     }
 
     /// Signals the process group, but only while its leader is unreaped: after that the number may belong to

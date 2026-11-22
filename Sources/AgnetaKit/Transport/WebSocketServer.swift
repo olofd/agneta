@@ -139,6 +139,8 @@ public final class WebSocketServer: @unchecked Sendable {
         let parameters = NWParameters.tcp
         parameters.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!)
+        // Network.framework never lets a second listener share this port, whichever binds first (measured,
+        // docs/PRIVACY.md); raw BSD sockets with SO_REUSEPORT would. Keep it on Network.framework.
         listener = try NWListener(using: parameters)
         (connections, accepted) = AsyncStream<Connection>.makeStream()
         listener.newConnectionHandler = { [accepted, queue] raw in

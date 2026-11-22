@@ -62,13 +62,16 @@ public final class Traces: @unchecked Sendable {
     }
 
     /// Ends a task's trace: flushes, closes, and forgets its bindings.
-    public func close(task: String) {
+    /// Closes a task's trace. Returns its poll still in flight, if any: whoever reads the ledger once more after
+    /// this (the router, for a session's last cost) waits for it first, since the ledger hands each row out once.
+    @discardableResult
+    public func close(task: String) -> Task<Void, Never>? {
         let session: TraceSession? = lock.withLock {
             byEngineSession = byEngineSession.filter { $0.value != task }
             for key in byLease.keys { byLease[key]?.remove(task) }
             return sessions.removeValue(forKey: task)
         }
-        session?.close()
+        return session?.close()
     }
 
     /// A page of a task's records after `after` (a sequence number), filtered by type: at most `limit` records
@@ -547,14 +550,22 @@ public final class TraceSession: @unchecked Sendable {
         }?.cancel()
     }
 
+    /// Where ledgers are read: GCD's threads, not Swift's shared ones. A read is blocking file or SQLite work (up to
+    /// its busy timeout), and every running task polls: on the shared threads, as few as a 3-core Mac's three, those
+    /// reads held up everything else (a deadlock of the whole test suite on CI, 2026-11-22).
+    static let ledgerReads = DispatchQueue(label: "agneta.ledger-reads", qos: .utility, attributes: .concurrent)
+
     /// New rows from Goose's database: messages as the model saw them, and one usage row per model call.
     func pollLedger() async {
         guard let ledger = lock.withLock({ self.ledger }) else { return }
-        let rows = ledger.read()
+        // takeNotice takes the ledger's lock too: read with it, so it never waits for another read on a shared thread.
+        let (rows, notice) = await withCheckedContinuation { continuation in
+            Self.ledgerReads.async { continuation.resume(returning: (ledger.read(), ledger.takeNotice())) }
+        }
         if let problem = rows.problem {
             writer.record("lifecycle", ["event": "engine-db-unavailable", "reason": .string(problem)])
         }
-        if let notice = ledger.takeNotice() {
+        if let notice {
             writer.record("lifecycle", ["event": "engine-records-limited", "reason": .string(notice)])
         }
         for message in rows.messages { writer.record("engine.message", message) }
@@ -692,16 +703,19 @@ public final class TraceSession: @unchecked Sendable {
         }
     }
 
-    /// Ends the trace. Calls still held (a session ended mid-turn) go out first, as they are.
-    func close() {
+    /// Ends the trace. Calls still held (a session ended mid-turn) go out first, as they are. Returns the poll still
+    /// in flight (cancelled, but its read finishes and records what it took).
+    @discardableResult
+    func close() -> Task<Void, Never>? {
         // A poll still in flight records rows at once from here on: it no longer holds them.
-        let left = lock.withLock {
-            defer { held = []; turnStarted = nil }
+        let (left, inFlight) = lock.withLock {
+            defer { held = []; turnStarted = nil; poller = nil }
             poller?.cancel()
-            return held
+            return (held, poller)
         }
         for row in left { record(modelCall: row.row) }
         writer.close()
+        return inFlight
     }
 }
 

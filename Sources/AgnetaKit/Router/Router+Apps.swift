@@ -116,18 +116,22 @@ extension Router {
         let announced = infos.removeValue(forKey: id) != nil
         _ = cancelWaiting(id)
         let turn = runningTurns[id], trace = traces?.session(id)
+        // The cost so far, before the trace closes: a poll in flight at the close may take the last rows, and they
+        // count too (below).
+        let before = trace?.progress.taskCost ?? 0
         finishTurn(id)
         byEngine.removeValue(forKey: key(session.lease.key, session.engineSession))
+        var lastPoll: Task<Void, Never>?
         if let traces {
             traces.session(id)?.writer.record("end", [:])
-            traces.close(task: id)
+            lastPoll = traces.close(task: id)
         }
         if announced { onEvent(.sessionEnded(id, ending)) }
         // What the engine recorded after the last read still counts: a turn cut off here, or rows that landed after an
         // idle session's last turn ended (a step OpenCode finished late). The engine's records, read once more. (Claude
         // Code's cost for a turn it never finished never arrives.)
         if turn.map({ $0.began && $0.counted }) ?? countsSpend(session.account), let trace {
-            let before = trace.progress.taskCost
+            await lastPoll?.value
             await trace.pollLedger()
             addUsage(
                 meter: turn?.meter ?? session.meter, AppMeter.Usage(cost: max(0, trace.progress.taskCost - before)))
