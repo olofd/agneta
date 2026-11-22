@@ -3,7 +3,7 @@
 // "something answered but refused the upgrade", and a timeout rejects one call, never the connection.
 import { Emitter } from './emitter.js';
 import {
-  AbortedError, ConnectionClosedError, ConnectionRefusedError, fromRpcError, NetworkBlockedError, NotRunningError, TimeoutError,
+  AbortedError, ConnectionClosedError, ConnectionRefusedError, fromRpcError, NetworkBlockedError, NotRunningError, ProtocolError, TimeoutError,
   type RpcErrorObject
 } from './errors.js';
 import type { AgnetaClientRequests, AgnetaNotifications, AgnetaRequests, AppNotifications } from './protocol.js';
@@ -116,6 +116,7 @@ export class Connection extends Emitter<ConnectionEvents> {
    * network client entitlement), `TimeoutError` when the upgrade takes too long.
    */
   static open(options: OpenOptions): Promise<Connection> {
+    if (options.signal?.aborted) return Promise.reject(new AbortedError('connect', { cause: options.signal.reason }));
     const WebSocketClass = options.WebSocket ?? (globalThis as { WebSocket?: WebSocketConstructor }).WebSocket;
     if (!WebSocketClass) return Promise.reject(new TypeError('No WebSocket here: use Node 22 or later, or pass the WebSocket option.'));
     const timeout = options.connectTimeout ?? 5000;
@@ -151,10 +152,12 @@ export class Connection extends Emitter<ConnectionEvents> {
       const failed = () => {
         if (settled) return;
         const probe = options.probe ?? probeAgneta;
-        probe(options.url).catch((): PortProbe => 'notListening').then((found) => settle(() => reject(
-          found === 'listening' ? new ConnectionRefusedError(options.url)
+        probe(options.url).catch((): PortProbe => 'notListening').then((found) => settle(() => {
+          try { socket.close(); } catch {}
+          reject(found === 'listening' ? new ConnectionRefusedError(options.url)
             : found === 'blocked' ? new NetworkBlockedError(options.url)
-              : new NotRunningError(options.url, options.openURL ?? null))));
+              : new NotRunningError(options.url, options.openURL ?? null));
+        }));
       };
       socket.addEventListener('error', failed, { once: true });
       socket.addEventListener('close', failed, { once: true });
@@ -277,9 +280,13 @@ export class Connection extends Emitter<ConnectionEvents> {
     if (!pending) return;
     this.#pending.delete(value.id);
     pending.cleanup();
-    if ('error' in value && value.error) {
-      const error = value.error;
-      pending.reject(fromRpcError({ code: Number(error.code), message: String(error.message ?? ''), data: error.data }, pending.method));
+    const hasResult = 'result' in value;
+    const hasError = 'error' in value;
+    if (hasResult === hasError || (hasError && (!value.error || typeof value.error !== 'object'
+      || !Number.isInteger(value.error.code) || typeof value.error.message !== 'string'))) {
+      pending.reject(new ProtocolError('Agneta returned an invalid JSON-RPC response.', value));
+    } else if (hasError && 'error' in value) {
+      pending.reject(fromRpcError(value.error, pending.method));
     } else {
       pending.resolve((value as { result?: unknown }).result);
     }
@@ -352,7 +359,6 @@ function redacted<T extends object>(message: T): T {
   const value = message as { params?: { _meta?: { agneta?: { token?: unknown } } }; result?: { token?: unknown } };
   const inParams = typeof value.params?._meta?.agneta?.token === 'string';
   const inResult = typeof value.result === 'object' && value.result !== null && typeof value.result.token === 'string';
-  if (!inParams && !inResult) return message;
   const copy = structuredClone(message) as typeof value;
   if (inParams) copy.params!._meta!.agneta!.token = '[redacted]';
   if (inResult) copy.result!.token = '[redacted]';

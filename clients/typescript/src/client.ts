@@ -226,6 +226,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   #connecting: Promise<Access> | null = null;
   #opening: Promise<Connection> | null = null;
   #closing = false;
+  #operations = new Set<AbortController>();
   /** Reconnecting: never guide (Agneta quit; it comes back when the user opens it), and no progress. */
   #quiet = false;
   /** The connect in progress: its progress listener, and whether the user already agreed to update Agneta. */
@@ -282,7 +283,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     if (this.#state === 'connected' && this.#connection?.isOpen && this.#access && options.pair !== 'always') return Promise.resolve(this.#access);
     // One connect at a time: a second call while one runs gets the same outcome.
     if (this.#connecting) return this.#connecting;
-    const connecting = this.#connect(options).finally(() => { if (this.#connecting === connecting) this.#connecting = null; });
+    const connecting = this.#cancellable(options.signal, (signal) => this.#connect({ ...options, signal })).finally(() => { if (this.#connecting === connecting) this.#connecting = null; });
     this.#connecting = connecting;
     return connecting;
   }
@@ -424,7 +425,11 @@ export class AgnetaClient extends Emitter<ClientEvents> {
    * for 5 s after an open, then every second. With `installing`, it also looks for Agneta to appear (and, with
    * `openWhenInstalled`, opens it). Cancel with the signal.
    */
-  async waitForAgneta(options: WaitForAgnetaOptions = {}): Promise<Connection> {
+  waitForAgneta(options: WaitForAgnetaOptions = {}): Promise<Connection> {
+    return this.#cancellable(options.signal, (signal) => this.#waitForAgneta({ ...options, signal }));
+  }
+
+  async #waitForAgneta(options: WaitForAgnetaOptions): Promise<Connection> {
     if (this.#connection?.isOpen) return this.#connection;
     const report = (progress: ProgressStep) => { const full = this.#progress(progress); options.onProgress?.(full); };
     const open = this.#openOptions(options.signal);
@@ -492,9 +497,10 @@ export class AgnetaClient extends Emitter<ClientEvents> {
    * reuses an open one. When Agneta isn't running it rejects (`NotRunningError`): `connect` is what guides the user.
    */
   open(options: { signal?: AbortSignal } = {}): Promise<Connection> {
+    if (options.signal?.aborted) return Promise.reject(new AbortedError('connect', { cause: options.signal.reason }));
     if (this.#connection?.isOpen) return Promise.resolve(this.#connection);
     if (this.#opening) return this.#opening;
-    const opening = this.#openSocket(options).finally(() => { if (this.#opening === opening) this.#opening = null; });
+    const opening = this.#cancellable(options.signal, (signal) => this.#openSocket({ signal })).finally(() => { if (this.#opening === opening) this.#opening = null; });
     this.#opening = opening;
     return opening;
   }
@@ -511,6 +517,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
       this.#setState('disconnected');
       throw error;
     }
+    if (options.signal?.aborted) { connection.close(); stopIfAborted(options.signal); }
     this.#attach(connection);
     return connection;
   }
@@ -623,6 +630,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   /** Disconnects. Open sessions end; no reconnect follows. */
   close(): void {
     this.#closing = true;
+    for (const operation of this.#operations) operation.abort();
     this.#cancelReconnect();
     const connection = this.#connection;
     if (connection) this.#drop(connection);
@@ -738,6 +746,18 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   }
 
   // MARK: Inside
+
+  async #cancellable<T>(signal: AbortSignal | undefined, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    this.#operations.add(controller);
+    try {
+      const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+      stopIfAborted(combined);
+      return await run(combined);
+    } finally {
+      this.#operations.delete(controller);
+    }
+  }
 
   #require(): Connection {
     if (!this.#connection?.isOpen) throw new ConnectionClosedError(undefined, 'not connected');
@@ -1030,7 +1050,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     if (options.guide && !await this.#ask(options.guide, this.#question('setup', { kinds }), signal)) throw new DeclinedError('setup');
     let waiting = this.waitForProvider(kind, signal ? { signal } : {});
     waiting.catch(() => {});
-    await this.setup(kind ? { kind } : {});
+    await this.setup(kind ? { kind } : {}, signal ? { signal } : {});
     this.emit('setup', kind);
     this.#progress({ step: 'settingUp', kinds });
     for (;;) {
