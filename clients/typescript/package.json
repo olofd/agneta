@@ -1,5 +1,5 @@
 {
-  "name": "@agneta/client",
+  "name": "@agneta-ai/client",
   "version": "0.1.0",
   "description": "The official TypeScript client for Agneta: run AI work on your users' own plans and API keys, over the Agent Client Protocol.",
   "license": "Apache-2.0",

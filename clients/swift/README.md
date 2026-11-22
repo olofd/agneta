@@ -9,12 +9,12 @@ Swift 6, macOS 14 or later. The library uses Foundation, AppKit and Security; it
 The repository's root Swift package exports the `AgnetaClient` product. Add the repository to Xcode's Package Dependencies, or use:
 
 ```swift
-.package(url: "https://github.com/olofd/agneta.git", branch: "main")
+.package(url: "https://github.com/olofd/agneta.git", from: "0.8.0")
 // In your app target's dependencies:
 .product(name: "AgnetaClient", package: "agneta")
 ```
 
-Use a reviewed revision for a reproducible build while the client is unreleased. The root package also contains Agneta's host: SwiftPM resolves its dependencies, but the `AgnetaClient` product neither links the host nor starts it. To build the client alone without resolving host dependencies, use the standalone package in this folder as a local dependency:
+Releases are tagged with Agneta's (`v0.8.0` and on); until 1.0 a minor version may change the API. The root package also contains Agneta's host: SwiftPM resolves its dependencies, but the `AgnetaClient` product neither links the host nor starts it. To build the client alone without resolving host dependencies, use the standalone package in this folder as a local dependency:
 
 ```swift
 .package(path: "../agneta/clients/swift")
@@ -58,7 +58,7 @@ removeListener()
 client.close()
 ```
 
-Keep the client alive while using it. The default token store is memory only. A Keychain store uses your app's own service, keeps pairing tokens on this device, and surfaces Keychain failures. Use a different account for each endpoint or build. Provider credentials remain inside Agneta; this library never receives them. Only an Always Allow token is saved. Allow Once is kept for its connection, and rejected stored tokens are cleared.
+Keep the client alive while using it. The default token store is memory only. A Keychain store uses your app's own service, keeps pairing tokens on this device, and surfaces Keychain failures. It uses the data protection keychain, which on macOS needs an app signed with a keychain access group (an application identifier entitlement, from a provisioning profile): an unsigned or ad hoc signed build, or one without that entitlement, gets `errSecMissingEntitlement` (-34018) on its first save. For such builds, pass your own `TokenStore`. Use a different account for each endpoint or build. Provider credentials remain inside Agneta; this library never receives them. Only an Always Allow token is saved. Allow Once is kept for its connection, and rejected stored tokens are cleared.
 
 `connect(ConnectOptions(pair: .never))` is the quiet launch path: it uses a saved token and never pairs. `.ifNeeded` is the default; `.always` asks to pair again. A failed re-pair preserves an existing working connection. Pairing permissions still come from the user in Agneta.
 

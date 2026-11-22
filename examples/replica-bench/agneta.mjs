@@ -1,4 +1,4 @@
-// The bench's side of Agneta: what a demanding app asks for, on top of @agneta/client (clients/typescript), which
+// The bench's side of Agneta: what a demanding app asks for, on top of @agneta-ai/client (clients/typescript), which
 // does the protocol's work (connecting, pairing, the kept token, access changes, sessions, errors). Shared by the
 // headless runner and the Electron window, so both measure exactly the same client.
 //
@@ -10,7 +10,7 @@ import { realpath } from 'node:fs/promises';
 import {
   AgnetaClient, builds, configSetting, findConfigOption, installPageURL, isAgnetaError, memoryTokenStore, NeedsPairingError,
   providerEngines
-} from '@agneta/client';
+} from '@agneta-ai/client';
 import { toolchainFolders } from './toolchain.mjs';
 
 /** The release and the development build: their ports, and the URLs that open them. */
@@ -112,7 +112,7 @@ export function providersOf(access) {
  * One connection to Agneta, with what the bench needs on top of the client: its scope, a grant that still covers its
  * folder, and the providers as its pickers show them. Emits `code` (a pairing code to show), `access` (what the app may
  * use, on connect and on change), `notification` (method, params), `permission` (a request no session answered) and
- * `disconnected` (a connection that was up went). `client` is the @agneta/client underneath.
+ * `disconnected` (a connection that was up went). `client` is the @agneta-ai/client underneath.
  */
 export class Agneta extends EventEmitter {
   /** Set once connected; a close, or a connect that fails, never reports a disconnection. */

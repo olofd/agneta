@@ -322,6 +322,24 @@ test('updates that arrive before session/new answers are kept in history; a load
   assert.deepEqual(agneta.calls('session/load')[0].params, { sessionId: 's-old', cwd: workspace, mcpServers: [], _meta: { 'agneta/policy': { tools: 'read' } } });
 });
 
+test('updates for unknown sessions are held only while a session opens', async (t) => {
+  const { agneta, client } = await setUp(t, {
+    handlers: {
+      'session/new': (message, peer, state) => {
+        const id = `s${++state.sessions}`;
+        peer.notify('session/update', update(id, { sessionUpdate: 'available_commands_update', availableCommands: [] }));
+        return { result: { sessionId: id, _meta: { agneta: { account: 'p1', dedicatedEngine: false, sandbox: 'contained', capabilities: { engine: 'goose' } } } } };
+      }
+    }
+  });
+  // Between opens (a late update of an ended session, say): not kept, so it can't show up in a later session.
+  agneta.notify('session/update', update('s1', text('stale')));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const session = await client.newSession();
+  assert.equal(session.id, 's1');
+  assert.deepEqual(session.history.map(({ sessionUpdate }) => sessionUpdate), ['available_commands_update']);
+});
+
 test('appTools asks for the app\'s tools up front on new, load and fork, and reads what the session got', async (t) => {
   const { agneta, client } = await setUp(t, {
     handlers: {

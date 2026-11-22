@@ -1,5 +1,5 @@
 // Finding Agneta on this Mac before connecting (docs/APP_PROTOCOL.md, Getting Agneta): whether it's installed, where,
-// and its version, through an environment the app provides (`@agneta/client/node` has one for Node and one for
+// and its version, through an environment the app provides (`@agneta-ai/client/node` has one for Node and one for
 // Electron's main process), so the core needs nothing from Node. Also the guided connect's questions and progress.
 import type { ProviderKind } from './protocol.js';
 
@@ -15,7 +15,7 @@ export interface AgnetaHandler {
   readOnly?: boolean;
 }
 
-/** What the client needs from the platform to find and open Agneta. `@agneta/client/node` provides two; write your own for anything else. */
+/** What the client needs from the platform to find and open Agneta. `@agneta-ai/client/node` provides two; write your own for anything else. */
 export interface AgnetaEnvironment {
   /** The app that opens this URL (`agneta://open`), or null when none does. */
   findHandler(url: string): Promise<AgnetaHandler | null>;

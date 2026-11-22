@@ -1,6 +1,6 @@
 # Changelog
 
-Notable changes to `@agneta/client`, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, a minor version may change the API, and each change says how. Agneta's own changes are in [its changelog](https://github.com/olofd/agneta/blob/main/CHANGELOG.md).
+Notable changes to `@agneta-ai/client`, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, a minor version may change the API, and each change says how. Agneta's own changes are in [its changelog](https://github.com/olofd/agneta/blob/main/CHANGELOG.md).
 
 ## 0.1.0 (unreleased)
 

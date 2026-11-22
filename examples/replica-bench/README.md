@@ -6,7 +6,7 @@ The work it gives agents has the shape of a demanding app's, whose agents Agneta
 
 ## Run it
 
-You need Node.js 24 or newer, and Agneta with a provider connected (a plan or an API key); the window helps you get Agneta, open it and connect a provider. Rust (`rustup`) is needed for the referee to score candidates; Python 3 is needed for the agent's probes. The bench talks to Agneta through the [TypeScript client](../../clients/typescript/README.md), `@agneta/client`: build it first. From the repository root:
+You need Node.js 24 or newer, and Agneta with a provider connected (a plan or an API key); the window helps you get Agneta, open it and connect a provider. Rust (`rustup`) is needed for the referee to score candidates; Python 3 is needed for the agent's probes. The bench talks to Agneta through the [TypeScript client](../../clients/typescript/README.md), `@agneta-ai/client`: build it first. From the repository root:
 
 ```sh
 (cd clients/typescript && npm ci && npm run build)
@@ -198,7 +198,7 @@ To see a contained grant without changing your own, run an isolated Agneta that 
 
 ## Pairing and policy
 
-The bench runs on [`@agneta/client`](../../clients/typescript/README.md). [`agneta.mjs`](agneta.mjs) holds only what the bench adds to it: the scope below, a check that a kept grant still covers the bench folder, and the providers as its pickers show them (each engine's `sandboxLevels` and `uncontained`). A [run](run.mjs) opens a client `Session` with its policy, tools, title, instructions and live trace, streams the reply and tool calls from the session's events, reads commands, permission decisions and model calls from its trace records, and sends each turn with `session.prompt()`. Refusals arrive as the client's typed errors (`UnenforceableError`, with Agneta's fields and reason).
+The bench runs on [`@agneta-ai/client`](../../clients/typescript/README.md). [`agneta.mjs`](agneta.mjs) holds only what the bench adds to it: the scope below, a check that a kept grant still covers the bench folder, and the providers as its pickers show them (each engine's `sandboxLevels` and `uncontained`). A [run](run.mjs) opens a client `Session` with its policy, tools, title, instructions and live trace, streams the reply and tool calls from the session's events, reads commands, permission decisions and model calls from its trace records, and sends each turn with `session.prompt()`. Refusals arrive as the client's typed errors (`UnenforceableError`, with Agneta's fields and reason).
 
 The pairing scope:
 

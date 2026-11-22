@@ -249,7 +249,7 @@ public struct TurnResult: Sendable, Equatable {
             try raw["configOptions"].flatMap { $0 == .null ? nil : try decodeResult($0, method: "session config") }
             ?? []
         modes = raw["modes"] == .null ? nil : raw["modes"]
-        if let listener = options.onEvent { events.on(listener) }
+        if let listener = options.onEvent { _ = events.on(listener) }
     }
     @discardableResult public func onEvent(_ listener: @escaping @MainActor (SessionEvent) -> Void)
         -> @MainActor () -> Void

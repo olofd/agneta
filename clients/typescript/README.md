@@ -1,4 +1,4 @@
-# @agneta/client
+# @agneta-ai/client
 
 The official TypeScript client for [Agneta](https://github.com/olofd/agneta), the Mac menu bar app that lets other apps run AI work on the user's own plans and API keys (a ChatGPT or Claude plan, an OpenAI or Anthropic key) through Claude Code, Codex, Goose and OpenCode.
 
@@ -14,13 +14,13 @@ The package isn't on npm yet. Until its first release, build it from this reposi
 cd clients/typescript && npm install && npm run build
 ```
 
-and depend on it by path (`"@agneta/client": "file:../agneta/clients/typescript"`).
+and depend on it by path (`"@agneta-ai/client": "file:../agneta/clients/typescript"`).
 
 ## Quick start
 
 ```js
-import { AgnetaClient } from '@agneta/client';
-import { fileTokenStore } from '@agneta/client/node';
+import { AgnetaClient } from '@agneta-ai/client';
+import { fileTokenStore } from '@agneta-ai/client/node';
 
 const client = new AgnetaClient({
   name: 'Example App',                            // shown in Agneta's approval window
@@ -68,7 +68,7 @@ const client = new AgnetaClient({
   build: 'release',        // or 'dev' for Agneta Dev (port 47331); or port: 47341, or url: 'ws://…'
   tokens,                  // a TokenStore (below); memory only by default
   scope: { tools: 'workspace', folders: ['/Users/me/Documents/Example Project'] },
-  environment: nodeEnvironment(),   // finds and opens Agneta on this Mac (@agneta/client/node); electronEnvironment in Electron
+  environment: nodeEnvironment(),   // finds and opens Agneta on this Mac (@agneta-ai/client/node); electronEnvironment in Electron
   minimumVersion: '0.5.0',          // optional: older is "outdated"
   permissions: (request) => 'allow',
   reconnect: true
@@ -94,15 +94,15 @@ A connection that something answered but refused is `ConnectionRefusedError` (`k
 
 **Reconnecting.** With `reconnect: true` (or `{ delay, maxDelay }`), a dropped connection whose token was remembered reconnects by itself, quietly (it never pairs or asks anything), with backoff from 1 s to 30 s: events `reconnecting`, `reconnected`, or `accessRemoved` when Agneta no longer accepts the token. Agneta closes a connection's sessions with it, so sessions don't come back by themselves: load them again with `client.loadSession(id)`.
 
-`@agneta/client/node` also has `isListening(port)`, `waitForPort(port)` and `runningBuilds()` (which of the release and Agneta Dev are running), for choosing which Agneta to use.
+`@agneta-ai/client/node` also has `isListening(port)`, `waitForPort(port)` and `runningBuilds()` (which of the release and Agneta Dev are running), for choosing which Agneta to use.
 
 ## Getting Agneta
 
 An app can take its user from nothing installed to a paired, working connection in one guided flow, without restarting (the recipe is [Getting Agneta](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md#getting-agneta) in the protocol). Give the client an `environment`, and `connect` a `guide` that shows each question in your own view and resolves to the user's answer:
 
 ```js
-import { AgnetaClient } from '@agneta/client';
-import { electronEnvironment } from '@agneta/client/node';
+import { AgnetaClient } from '@agneta-ai/client';
+import { electronEnvironment } from '@agneta-ai/client/node';
 
 const client = new AgnetaClient({ name: 'Example App', tokens, environment: electronEnvironment({ app, shell }) });
 await client.connect({
@@ -134,7 +134,7 @@ await client.connect({
 
 **The parts, for a flow of your own.** `client.presence()` says where Agneta is, without its path: `running`, `notRunning` (with `location`, `applications` or `elsewhere`, and `version`), `onDiskImage`, `notInstalled`, `blocked` (this app may not connect at all) or `unknown` (no environment). `client.openInstallPage({ architecture })` and `client.openAgneta()` open, only after the user asked. `client.waitForAgneta({ installing, openWhenInstalled, opened, timeout, signal, onProgress })` resolves with the connection once Agneta answers. `client.installURL` and `client.homebrew` say where to get it; for Agneta Dev, `installURL` is the README's Build and run.
 
-**Environments** (`@agneta/client/node`):
+**Environments** (`@agneta-ai/client/node`):
 
 | | Finds the app for `agneta://` | Opens |
 | --- | --- | --- |
@@ -183,8 +183,8 @@ result.unmet;        // what wasn't given: [{ provider: 'chatgpt', reason: 'not 
 | Store | Where |
 | --- | --- |
 | `memoryTokenStore()` | Memory only (the default) |
-| `fileTokenStore(path)` | A file only the user can read (`@agneta/client/node`) |
-| `safeStorageTokenStore(safeStorage, path)` | A file encrypted with Electron's `safeStorage`, whose key is in the login Keychain (`@agneta/client/node`) |
+| `fileTokenStore(path)` | A file only the user can read (`@agneta-ai/client/node`) |
+| `safeStorageTokenStore(safeStorage, path)` | A file encrypted with Electron's `safeStorage`, whose key is in the login Keychain (`@agneta-ai/client/node`) |
 | Your own | Any `{ load, save, clear }`, sync or async: the Keychain through a native module, say |
 
 Keep one store per Agneta build (release, Dev, an isolated instance): each has its own grants. `client.forgetToken()` clears it.
@@ -204,7 +204,7 @@ access.workspace;                    // your app's own folder
 client.on('accessChanged', (access) => updatePickers(access));
 await client.refreshAccess();        // agneta/access
 
-import { chooseProvider, providerEngines } from '@agneta/client';
+import { chooseProvider, providerEngines } from '@agneta-ai/client';
 const choice = chooseProvider(access, { kind: 'claude', sandbox: 'contained' });  // { account, provider, engine } | null
 const engines = providerEngines(access, access.providers[0]);  // each with name, state, sandboxLevels, uncontained, isDefault
 ```
@@ -336,7 +336,7 @@ const { attempts, turnResult } = await ask.details;
 - **`{ schema }`** is the shorthand for one schema named `result`, asked for on every prompt.
 - **`attempts`** (1 to 10, Agneta's default 3): the calls of the result tools the model gets this turn. Every call counts.
 - **`loadSession` and `fork`** keep the original's declaration unless given `results`. A handle opened without `results` (a task resumed in another process, say) gets the schemas from Agneta's reply (`session.results.schemas`, as they were sent), so asking by `name` or by schema works as in the session that declared them. An Agneta older than that says only the names: then pass `name` and `schema` (a `TypeError` says so).
-- **A root that isn't an object** (`{ type: 'array', … }`, a string, a union; `"type": "object"` and `["object"]` are objects) is sent as `{ value: … }`, as Agneta needs an object, and unwrapped when read: values and issues read as if it hadn't been. The wrapper is marked `"$comment": "@agneta/client: wraps a non-object root as { value }"` (`wrapperComment`), which is how a reply's recorded schema is recognized; it moves `$defs`, `definitions`, `$schema` and `$id` to its own root and points the schema's other local references (`#`, `#/items`, …) into `value`. It costs one level of nesting (a value may nest 63 levels, of Agneta's 64) and about 160 bytes of the schema's 16 KB. An issue with the wrapper itself (the model submitted something other than `{ "value": … }`) has an empty `path` and says so; the error's `submitted` is what the model sent, and `value` is undefined when there was no `value` in it.
+- **A root that isn't an object** (`{ type: 'array', … }`, a string, a union; `"type": "object"` and `["object"]` are objects) is sent as `{ value: … }`, as Agneta needs an object, and unwrapped when read: values and issues read as if it hadn't been. The wrapper is marked `"$comment": "@agneta-ai/client: wraps a non-object root as { value }"` (`wrapperComment`), which is how a reply's recorded schema is recognized; it moves `$defs`, `definitions`, `$schema` and `$id` to its own root and points the schema's other local references (`#`, `#/items`, …) into `value`. It costs one level of nesting (a value may nest 63 levels, of Agneta's 64) and about 160 bytes of the schema's 16 KB. An issue with the wrapper itself (the model submitted something other than `{ "value": … }`) has an empty `path` and says so; the error's `submitted` is what the model sent, and `value` is undefined when there was no `value` in it.
 
 **Three ways to give a schema**, with no dependency:
 
@@ -428,7 +428,7 @@ Records are typed by `type` (`meta`, `config`, `acp`, `event` with its `kind`, `
 Everything the client throws is an `AgnetaError`, with Agneta's own `message`, an `advice` (what to tell the user, or do) and a literal `kind`, so a `switch` narrows to the class and its typed fields. Errors Agneta sent also have `code`, `data`, `details` (`data.agneta`), `method` and `structured` (a failed turn's structured result).
 
 ```js
-import { isAgnetaError } from '@agneta/client';
+import { isAgnetaError } from '@agneta-ai/client';
 
 try { await session.prompt(text); } catch (error) {
   if (!isAgnetaError(error)) throw error;
@@ -530,8 +530,8 @@ Run the client in the main process (the renderer sends an `Origin` header, which
 ```js
 import { app, dialog, safeStorage, shell } from 'electron';
 import { join } from 'node:path';
-import { AgnetaClient } from '@agneta/client';
-import { electronEnvironment, safeStorageTokenStore } from '@agneta/client/node';
+import { AgnetaClient } from '@agneta-ai/client';
+import { electronEnvironment, safeStorageTokenStore } from '@agneta-ai/client/node';
 
 const client = new AgnetaClient({
   name: 'Example App',
@@ -558,8 +558,8 @@ The package exports:
 - **Structured results:** `Ask`, `Answer`, `AskOptions`, `AskDetails`, `OneShotOptions`, `PromptOptions`, `ResultSchemas`, `SchemaInput`, `FromSchema`, `FromStandardSchema`, `resultCallOf`, `resultExtension`; the Standard Schema interfaces (`StandardSchemaV1`, `StandardJSONSchemaV1`, `StandardTypedV1`, types only); the wire's `ResultDeclaration`, `ResultAsk`, `SessionResults`, `StructuredResult`, `ResultIssue`, `ResultMissingReason`, `JsonSchema`, `structuredResult`.
 - **Permissions:** `PermissionHandler`, `PermissionRequest`, `PermissionAnswer`, `permissionResponse`.
 - **Access and settings:** `chooseProvider`, `providerEngines`, `engineInfo`, `findConfigOption`, `configSetting`.
-- **Getting Agneta:** `AgnetaEnvironment`, `AgnetaHandler`, `AgnetaPresence`, `Guide`, `GuideQuestion`, `ConnectProgress`, `ConnectStep`, `WaitForAgnetaOptions`, `installPage`, `installPageURL`, `lookUpAgneta`, `placement`, `compareVersions`; from `@agneta/client/node`: `nodeEnvironment`, `electronEnvironment`, `isAgnetaInstalled`, `readBundle`, `macArchitecture`, `findInFolders`, `isReadOnly`, `openAgneta`.
-- **Tokens:** `TokenStore`, `memoryTokenStore`; from `@agneta/client/node`: `fileTokenStore`, `safeStorageTokenStore`, `isListening`, `waitForPort`, `runningBuilds`.
+- **Getting Agneta:** `AgnetaEnvironment`, `AgnetaHandler`, `AgnetaPresence`, `Guide`, `GuideQuestion`, `ConnectProgress`, `ConnectStep`, `WaitForAgnetaOptions`, `installPage`, `installPageURL`, `lookUpAgneta`, `placement`, `compareVersions`; from `@agneta-ai/client/node`: `nodeEnvironment`, `electronEnvironment`, `isAgnetaInstalled`, `readBundle`, `macArchitecture`, `findInFolders`, `isReadOnly`, `openAgneta`.
+- **Tokens:** `TokenStore`, `memoryTokenStore`; from `@agneta-ai/client/node`: `fileTokenStore`, `safeStorageTokenStore`, `isListening`, `waitForPort`, `runningBuilds`.
 - **The raw layer:** `Connection`, `probeAgneta`, `PortProbe`, `JsonRpcMessage` and its parts, `RequestOptions`, `WebSocketLike`.
 - **The protocol's types:** every method's params and result (`AgnetaRequests`, `AgnetaNotifications`, `AgnetaClientRequests`), `Access`, `Catalog`, `PairingScope`, `PairResult`, `Policy`, `SessionResult`, `PromptResult`, `AgnetaUsage`, `TraceRecord` and the rest; ACP's (`SessionUpdate`, `ContentBlock`, `ToolCall`, `SessionConfigOption`, …); `builds` (ports, open URLs, bundle identifiers, install pages) and `protocolVersion`.
 - **Errors:** every class above, `AnyAgnetaError`, `isAgnetaError`, `fromRpcError`, `ErrorCodes`.

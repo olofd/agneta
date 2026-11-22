@@ -1,4 +1,4 @@
-# Publishes @agneta/client to npm from a client-typescript-v* tag (clients/typescript/README.md, Releasing). A run by hand is a dry
+# Publishes @agneta-ai/client to npm from a client-typescript-v* tag (clients/typescript/README.md, Releasing). A run by hand is a dry
 # run: everything but publishing. npm's trusted publishing authenticates this workflow by OIDC, so no npm token is
 # stored anywhere, and --provenance links the published package to this run and commit. The publish job waits in the
 # `npm` environment for the maintainer's approval.
@@ -57,7 +57,7 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "Releasing @agneta/client $version (publish: $publish) from $(git rev-parse --short HEAD)"
+          echo "Releasing @agneta-ai/client $version (publish: $publish) from $(git rev-parse --short HEAD)"
 
       - name: The commit is on main
         run: |
@@ -101,7 +101,7 @@ jobs:
     name: Publish to npm
     needs: verify
     if: needs.verify.outputs.publish == 'true'
-    # Waits for the maintainer's approval. npm's trusted publisher for @agneta/client names this workflow and environment.
+    # Waits for the maintainer's approval. npm's trusted publisher for @agneta-ai/client names this workflow and environment.
     environment: npm
     runs-on: ubuntu-latest
     timeout-minutes: 10

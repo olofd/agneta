@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { AgnetaClient, configSetting, findConfigOption, memoryTokenStore } from '@agneta/client';
+import { AgnetaClient, configSetting, findConfigOption, memoryTokenStore } from '@agneta-ai/client';
 import { project, startProjectTools } from './project-tools.mjs';
 
 const limits = { maxTurns: 12, maxSeconds: 90 };
@@ -10,7 +10,7 @@ const instructions = [
   'Use plain text and keep replies brief.'
 ].join(' ');
 
-/** What to show for an error from Agneta (`@agneta/client` types each one by `kind`). */
+/** What to show for an error from Agneta (`@agneta-ai/client` types each one by `kind`). */
 function describeError(error) {
   switch (error?.kind) {
     case 'blocked': return 'Project Chat may not connect to Agneta here (a sandbox without the network client entitlement).';
@@ -45,7 +45,7 @@ export function settings(configOptions) {
 
 /**
  * Steps of getting Agneta that the window's panel shows (with the question, when there is one); the rest go in the
- * status line. `@agneta/client` words each one; the panel shows them as they are.
+ * status line. `@agneta-ai/client` words each one; the panel shows them as they are.
  */
 const panelSteps = new Set(['notInstalled', 'installing', 'onDiskImage', 'installed', 'notRunning', 'opening', 'slow', 'outdated', 'needsProvider', 'settingUp']);
 

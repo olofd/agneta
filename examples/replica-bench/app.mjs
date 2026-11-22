@@ -44,7 +44,7 @@ function runView(run) {
   };
 }
 
-/** Steps of getting Agneta the window's panel shows (`@agneta/client` words each one); the rest go in the status line. */
+/** Steps of getting Agneta the window's panel shows (`@agneta-ai/client` words each one); the rest go in the status line. */
 const panelSteps = new Set(['notInstalled', 'installing', 'onDiskImage', 'installed', 'notRunning', 'opening', 'slow', 'outdated', 'needsProvider', 'settingUp']);
 
 export class BenchApp extends EventEmitter {

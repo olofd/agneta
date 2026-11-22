@@ -150,7 +150,7 @@ python3 site/build.py && python3 -m http.server 8642 --bind 127.0.0.1 --director
 
 **Building a native Mac app?** Use the [Swift client](clients/swift/README.md), available as the `AgnetaClient` Swift package product: async turns and streaming, Keychain pairing tokens, policies, tools and typed structured results.
 
-**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app, built on [`@agneta/client`](clients/typescript/README.md) like Replica Bench, pairs with Agneta, keeps its access and reconnects by itself, helps the user get Agneta when it isn't installed and open it when it isn't running, lets you choose Agneta or Agneta Dev, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review. **[Replica Bench](examples/replica-bench/README.md)** shows the sandbox modes: it runs a demanding workload on every engine in both modes, and shows what each task got and how a refusal looks.
+**Try the [Project Chat example](examples/project-chat/README.md).** This small Electron app, built on [`@agneta-ai/client`](clients/typescript/README.md) like Replica Bench, pairs with Agneta, keeps its access and reconnects by itself, helps the user get Agneta when it isn't installed and open it when it isn't running, lets you choose Agneta or Agneta Dev, lets you pick the provider, engine, model and effort, streams a conversation, and lets the agent propose a note for you to review. **[Replica Bench](examples/replica-bench/README.md)** shows the sandbox modes: it runs a demanding workload on every engine in both modes, and shows what each task got and how a refusal looks.
 
 Your app is an ACP **client** and Agneta is the ACP **agent**. If your app already speaks ACP, most of what follows is familiar. What Agneta adds is how you reach it, how the user lets your app in, and the rules a task runs under.
 
@@ -163,10 +163,10 @@ Your app is an ACP **client** and Agneta is the ACP **agent**. If your app alrea
 | Typed results | Nothing standard | A value checked against your JSON Schema, on every engine ([Typed results](#typed-results)) |
 | Afterwards | Nothing standard | Usage in every prompt result, and the task's full trace, live or later |
 
-**In TypeScript or JavaScript (Node 22+ or Electron's main process), use [`@agneta/client`](clients/typescript/README.md),** the official client. It does everything below for you, typed, and keeps a raw layer for anything else:
+**In TypeScript or JavaScript (Node 22+ or Electron's main process), use [`@agneta-ai/client`](clients/typescript/README.md),** the official client. It does everything below for you, typed, and keeps a raw layer for anything else:
 
 ```js
-import { AgnetaClient } from '@agneta/client';
+import { AgnetaClient } from '@agneta-ai/client';
 
 const client = new AgnetaClient({ name: 'Example App', tokens });   // tokens: where Always Allow's token is kept
 await client.connect();                                             // pairs the first time, then reuses the token
@@ -178,7 +178,7 @@ Otherwise no SDK is needed. Any WebSocket and JSON-RPC 2.0 code will do, includi
 
 ### The conversation, step by step
 
-`@agneta/client` does each step below for you. They're here for apps in other languages, and to show what goes over the wire.
+`@agneta-ai/client` does each step below for you. They're here for apps in other languages, and to show what goes over the wire.
 
 **1. Connect.** Open `ws://127.0.0.1:47321/acp`, the port of releases; development builds listen on 47331. If the connection is refused, Agneta isn't running, and may not be installed: ask LaunchServices which app opens `agneta://open`. If none does, offer to get it (the install page, `https://agneta.dahlbom.io/get/`, or Homebrew) and wait until it's installed; if it's installed, ask the user whether to open it, and on a yes open `agneta://open` (`agneta-dev://open` for development builds), wait for the port and connect. Never open it without asking. [Getting Agneta](docs/APP_PROTOCOL.md#getting-agneta) has the whole recipe, with the Swift calls. Before pairing you may call `agneta/catalog` (what Agneta offers: each kind of provider, whether one is connected, the engines; never the user's accounts) and `agneta/setup` (Agneta's window for connecting a provider). See [Before pairing](docs/APP_PROTOCOL.md#before-pairing-what-agneta-offers).
 
@@ -374,7 +374,7 @@ The documents below are also on [agneta.dahlbom.io/docs](https://agneta.dahlbom.
 | --- | --- |
 | [docs/APP_PROTOCOL.md](docs/APP_PROTOCOL.md) | The protocol in full, for integrating an app: connecting and pairing, sessions and their policy, the sandbox modes, model choice, turns, permissions, the trace, and every error |
 | [clients/swift/README.md](clients/swift/README.md) | `AgnetaClient`, the official Swift client: async turns, Keychain pairing, policies, tools, traces and typed results |
-| [clients/typescript/README.md](clients/typescript/README.md) | `@agneta/client`, the official TypeScript client: a quick start, and every class, option, event and error |
+| [clients/typescript/README.md](clients/typescript/README.md) | `@agneta-ai/client`, the official TypeScript client: a quick start, and every class, option, event and error |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How Agneta is built, and its security model |
 | [docs/ENGINES.md](docs/ENGINES.md) | Goose, OpenCode, Claude Code and Codex behind the engine boundary |
 | [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) | Traces, `agneta-diag` and the diagnostics MCP server |

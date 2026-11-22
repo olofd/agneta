@@ -1,7 +1,7 @@
 import Foundation
 
 public let resultExtension = "agneta/result"
-private let wrapperComment = "@agneta/client: wraps a non-object root as { value }"
+private let wrapperComment = "@agneta-ai/client: wraps a non-object root as { value }"
 
 /// Named JSON Schemas declared when a session opens. Non-object roots are wrapped for the wire and unwrapped by `ask`.
 public struct ResultDeclaration: Sendable, Equatable {

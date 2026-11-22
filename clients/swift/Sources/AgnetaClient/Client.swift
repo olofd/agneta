@@ -418,7 +418,7 @@ public enum ClientEvent: Sendable, Equatable {
     }
     private func attach(_ connection: Connection) {
         self.connection = connection; access = nil; initializeResult = nil
-        connection.onEvent { [weak self, weak connection] event in
+        _ = connection.onEvent { [weak self, weak connection] event in
             guard let self, let connection, self.connection === connection else { return }
             switch event {
             case .notification(let method, let params): notification(method, params)
@@ -426,7 +426,7 @@ public enum ClientEvent: Sendable, Equatable {
             case .message: break
             }
         }
-        connection.handle("session/request_permission") { [weak self] params in
+        _ = connection.handle("session/request_permission") { [weak self] params in
             guard let self else { return ["outcome": ["outcome": "cancelled"]] }
             let request: PermissionRequest = try decodeResult(params, method: "session/request_permission")
             let handler = registered[request.sessionId]?.permissions ?? options.permissions

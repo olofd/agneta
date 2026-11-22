@@ -143,13 +143,21 @@ public enum JSONCoding {
             throw DecodingError.dataCorrupted(
                 .init(
                     codingPath: [],
-                    debugDescription: "JSON object keys must be unique, including Unicode canonical equivalents"))
+                    debugDescription:
+                        "JSON object keys must be unique, including Unicode canonical equivalents, and hold at most "
+                        + "\(maxCombiningRun) combining marks in a row"))
         }
         return try JSONDecoder().decode(JSONValue.self, from: data)
     }
 
+    /// The most combining marks (non-starters) a key may hold in a row: Unicode's Stream-Safe Text Format limit.
+    /// Hashing a key normalizes it, in time that grows with the square of such a run (a 400 KB key of them took 14 s),
+    /// so a longer run is refused before any key is hashed. Text in any script stays far below it.
+    static let maxCombiningRun = 30
+
     /// Foundation collapses canonically equivalent keys before a keyed container can inspect them. Refuse that
-    /// ambiguity on the wire so no schema constraint or submitted property can disappear during decoding.
+    /// ambiguity on the wire so no schema constraint or submitted property can disappear during decoding. Keys with
+    /// a run of combining marks past `maxCombiningRun` are refused too, before they're hashed.
     static func uniqueObjectKeys(in data: Data) -> Bool {
         let bytes = [UInt8](data)
         var frames: [Set<String>?] = []
@@ -176,12 +184,32 @@ public enum JSONCoding {
                 var next = i
                 while next < bytes.count, [0x20, 0x09, 0x0A, 0x0D].contains(bytes[next]) { next += 1 }
                 if next < bytes.count, bytes[next] == UInt8(ascii: ":"), !frames.isEmpty,
-                    let key = try? JSONDecoder().decode(String.self, from: Data(bytes[start..<i]))
+                    let key = objectKey(bytes[start..<i])
                 {
+                    guard streamSafe(key) else { return false }
                     if frames[frames.count - 1]?.insert(key).inserted == false { return false }
                 }
             default: i += 1
             }
+        }
+        return true
+    }
+
+    /// A quoted key's text: printable ASCII without escapes is read as it is (most keys), anything else decoded.
+    private static func objectKey(_ quoted: ArraySlice<UInt8>) -> String? {
+        let inner = quoted.dropFirst().dropLast()
+        if quoted.count >= 2, inner.allSatisfy({ $0 >= 0x20 && $0 < 0x7F && $0 != UInt8(ascii: "\\") }) {
+            return String(decoding: inner, as: UTF8.self)
+        }
+        return try? JSONDecoder().decode(String.self, from: Data(quoted))
+    }
+
+    /// Whether no run of combining marks in `key` is longer than `maxCombiningRun`.
+    static func streamSafe(_ key: String) -> Bool {
+        var run = 0
+        for scalar in key.unicodeScalars {
+            run = scalar.properties.canonicalCombiningClass == .notReordered ? 0 : run + 1
+            if run > maxCombiningRun { return false }
         }
         return true
     }

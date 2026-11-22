@@ -1,5 +1,5 @@
 // Where the token from Always Allow is kept between launches. Keep one store per Agneta build (release, Dev, or an
-// isolated instance): each has its own grants. File and Keychain stores are in `@agneta/client/node`.
+// isolated instance): each has its own grants. File and Keychain stores are in `@agneta-ai/client/node`.
 
 /** Keeps the app's pairing token. Methods may be sync or async. `load` returns null when there's none. */
 export interface TokenStore {

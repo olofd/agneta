@@ -4,8 +4,8 @@
 // token is kept in ~/.agneta-quickstart-token, readable only by you). A real app keeps it in the Keychain.
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { AgnetaClient, isAgnetaError } from '@agneta/client';
-import { fileTokenStore, nodeEnvironment } from '@agneta/client/node';
+import { AgnetaClient, isAgnetaError } from '@agneta-ai/client';
+import { fileTokenStore, nodeEnvironment } from '@agneta-ai/client/node';
 
 const dev = process.argv.includes('--dev');
 const prompt = process.argv.slice(2).find((arg) => !arg.startsWith('--')) ?? 'Say hello in five words.';

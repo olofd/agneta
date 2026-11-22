@@ -148,9 +148,14 @@ public actor RPCPeer {
             // In particular, deep JSON and duplicate/canonically equivalent keys are refused before decoding.
             if let top = JSONCoding.topLevel(of: line), let raw = top.id, let id = RPCID(raw) {
                 let reason =
-                    JSONCoding.nesting(of: line) > JSONCoding.maxDepth
-                    ? "The message is nested more than \(JSONCoding.maxDepth) levels deep"
-                    : "The message is malformed or has duplicate/canonically equivalent object keys"
+                    if JSONCoding.nesting(of: line) > JSONCoding.maxDepth {
+                        "The message is nested more than \(JSONCoding.maxDepth) levels deep"
+                    } else if !JSONCoding.uniqueObjectKeys(in: line) {
+                        "The message has duplicate or canonically equivalent object keys, or a key with more than "
+                            + "\(JSONCoding.maxCombiningRun) combining marks in a row"
+                    } else {
+                        "The message isn't a valid JSON-RPC message"
+                    }
                 let error = RPCError(code: RPCError.invalidRequest, message: reason)
                 if top.method != nil {
                     if let data = try? RPCMessage.response(id: id, result: .failure(error)).encoded() {

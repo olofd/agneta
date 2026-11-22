@@ -1,4 +1,4 @@
-// @agneta/client: the official TypeScript client for Agneta's app protocol (docs/APP_PROTOCOL.md).
+// @agneta-ai/client: the official TypeScript client for Agneta's app protocol (docs/APP_PROTOCOL.md).
 export * from './acp.js';
 export * from './protocol.js';
 export * from './errors.js';

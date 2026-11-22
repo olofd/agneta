@@ -83,7 +83,7 @@ function outputOf(update) {
 
 export class BenchRun extends EventEmitter {
   #agneta;
-  /** The run's session (@agneta/client's Session) while it's open. */
+  /** The run's session (@agneta-ai/client's Session) while it's open. */
   #session = null;
   #tools;
   #gateway;

@@ -90,6 +90,42 @@ import Testing
         #expect(try JSONCoding.decode(Data(#"{"a":{"x":1},"b":{"x":2},"text":"\"x\": 3"}"#.utf8))["b"]?["x"] == 2)
     }
 
+    @Test func aKeyWithALongRunOfCombiningMarksIsRefusedBeforeItsHashed() throws {
+        let mark = "\u{0301}"
+        let thirty = "e" + String(repeating: mark, count: JSONCoding.maxCombiningRun)
+        let ok: JSONValue = .object(["k": .object([thirty: 1])])
+        #expect(try JSONCoding.decode(JSONCoding.encode(ok))["k"] != nil)
+        let over = "e" + String(repeating: mark, count: JSONCoding.maxCombiningRun + 1)
+        #expect(throws: DecodingError.self) { _ = try JSONCoding.decode(Data("{\"\(over)\":1}".utf8)) }
+        // A run that would take seconds to hash is refused at once; the same run in a value is fine.
+        let huge = "e" + String(repeating: mark, count: 160_000)
+        let started = ContinuousClock.now
+        #expect(throws: DecodingError.self) { _ = try JSONCoding.decode(Data("{\"\(huge)\":1}".utf8)) }
+        #expect(ContinuousClock.now - started < .seconds(1))
+        #expect(try JSONCoding.decode(Data("{\"k\":\"\(over)\"}".utf8))["k"]?.stringValue == over)
+        // Escaped keys are read as their text.
+        #expect(try JSONCoding.decode(Data(#"{"\u0061":1,"b\"c":2}"#.utf8))["a"] == 1)
+    }
+
+    @Test func aRefusedFramesAnswerSaysWhy() async throws {
+        let (lines, input) = AsyncThrowingStream<Data, Error>.makeStream()
+        let (answers, output) = AsyncStream<Data>.makeStream()
+        let peer = RPCPeer { data in output.yield(data) }
+        let running = Task { await peer.run(lines) }
+        var iterator = answers.makeAsyncIterator()
+        input.yield(Data(#"{"jsonrpc":"2.0","id":1,"method":"example","params":{"a":1,"a":2}}"#.utf8))
+        input.yield(Data(#"{"jsonrpc":"1.0","id":2,"method":"example"}"#.utf8))
+        var reasons: [String] = []
+        for _ in 0..<2 {
+            let answer = try #require(await iterator.next())
+            if case .response(_, .failure(let error)) = try RPCMessage.parse(answer) { reasons.append(error.message) }
+        }
+        #expect(reasons.count == 2)
+        #expect(reasons.first?.contains("duplicate or canonically equivalent") == true)
+        #expect(reasons.last == "The message isn't a valid JSON-RPC message")
+        input.finish(); await running.value
+    }
+
     @Test func anAmbiguousReplyFailsItsPendingRequest() async throws {
         let (lines, input) = AsyncThrowingStream<Data, Error>.makeStream()
         let peer = RPCPeer { data in

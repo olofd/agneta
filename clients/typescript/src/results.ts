@@ -148,7 +148,7 @@ export function prepareDeclaration(results: ResultSchemas): PreparedDeclaration 
 }
 
 /** Marks the client's wrapper (`$comment`, an annotation Agneta accepts), so a reply's recorded schema is told by it. */
-export const wrapperComment = '@agneta/client: wraps a non-object root as { value }';
+export const wrapperComment = '@agneta-ai/client: wraps a non-object root as { value }';
 
 /**
  * `{ value: S }`, marked by `$comment`, with S's definitions, `$schema` and `$id` moved to the new root, and its local
@@ -379,7 +379,8 @@ function planAsk(session: Session, options: AnyAskOptions): Plan {
 
 async function read(turnResult: TurnResult, plan: Plan): Promise<AskDetails<unknown>> {
   const report = turnResult.structured;
-  if (!report || report.name !== plan.name) throw new ProtocolError(`Agneta's reply has no structured result for "${plan.name}". Update Agneta.`, turnResult.raw);
+  if (!report) throw new ProtocolError(`Agneta's reply has no structured result for "${plan.name}". Update Agneta.`, turnResult.raw);
+  if (report.name !== plan.name) throw new ProtocolError(`Agneta's reply has a result for "${String(report.name)}", not the "${plan.name}" this prompt asked for.`, report);
   if (report.status === 'missing') throw new ResultMissingError(report, turnResult, refused(report, plan));
   if (report.status === 'invalid') throw new ResultInvalidError('agneta', report, turnResult, refused(report, plan));
   if (report.status !== 'valid') {

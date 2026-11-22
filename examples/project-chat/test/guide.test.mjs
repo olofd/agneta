@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import test from 'node:test';
-import { installPage } from '@agneta/client';
+import { installPage } from '@agneta-ai/client';
 import { agnetaLike, standIn } from '../../../clients/typescript/test/stand-in.mjs';
 import { ProjectChat } from '../chat.mjs';
 

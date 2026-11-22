@@ -33,7 +33,7 @@ test('backgroundQuiet: not busy means no wait; busy waits until quiet, or until 
   assert.deepEqual(forever, { busy: true, quiet: false, waitedMs: 180_000 });
 });
 
-/** A run of the background-job scenario with a fake session that answers each prompt (as @agneta/client's turn) and records it. */
+/** A run of the background-job scenario with a fake session that answers each prompt (as @agneta-ai/client's turn) and records it. */
 async function fakeRun(t) {
   const workspace = await mkdtemp(join(tmpdir(), 'replica-bench-followup-'));
   t.after(() => rm(workspace, { recursive: true, force: true }));

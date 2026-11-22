@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { electronEnvironment, isListening, safeStorageTokenStore } from '@agneta/client/node';
+import { electronEnvironment, isListening, safeStorageTokenStore } from '@agneta-ai/client/node';
 import { ProjectChat } from './chat.mjs';
 
 // Which Agneta to use: the release (port 47321, opened by agneta://) or a development build (47331, agneta-dev://),

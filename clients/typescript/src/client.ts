@@ -75,7 +75,7 @@ export interface AgnetaClientOptions {
   bundleIdentifier?: string | null;
   /**
    * How to find and open Agneta on this Mac: `nodeEnvironment()` or `electronEnvironment({ app, shell })` from
-   * `@agneta/client/node`, or your own. Without one, the client can't tell "not installed" from "not running", and the
+   * `@agneta-ai/client/node`, or your own. Without one, the client can't tell "not installed" from "not running", and the
    * guided connect can't open anything.
    */
   environment?: AgnetaEnvironment;
@@ -223,6 +223,8 @@ export class AgnetaClient extends Emitter<ClientEvents> {
    * trace records), and a load's replay. Given to the session when it opens.
    */
   #early = new Map<string, Array<{ method: string; params: any }>>();
+  /** Session opens in flight: notifications for unknown sessions are held only while one is (as the Swift client does). */
+  #openingSessions = 0;
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #connecting: Promise<Access> | null = null;
   #opening: Promise<Connection> | null = null;
@@ -301,7 +303,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
 
   async #connect(options: ConnectOptions): Promise<Access> {
     if (options.guide && !this.options.environment) {
-      throw new TypeError('connect({ guide }) needs the client\'s environment: nodeEnvironment() or electronEnvironment() from @agneta/client/node.');
+      throw new TypeError('connect({ guide }) needs the client\'s environment: nodeEnvironment() or electronEnvironment() from @agneta-ai/client/node.');
     }
     this.#closing = false;
     this.#cancelReconnect();
@@ -837,8 +839,12 @@ export class AgnetaClient extends Emitter<ClientEvents> {
       this.#loading.add(loading);
       this.#early.set(loading, []);
     }
+    this.#openingSessions++;
     try { return await this.#openSession(method, params, options, idOf, declared); }
     finally {
+      // With no open in flight, nothing held can belong to a session still to come: late updates of ended sessions
+      // don't stay in memory, or push out an opening session's early ones.
+      if (--this.#openingSessions === 0) this.#early.clear();
       if (loading !== undefined) {
         this.#loading.delete(loading);
         if (!this.#sessions.has(loading)) this.#early.delete(loading);
@@ -1019,7 +1025,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     if (typeof id === 'string') {
       const session = this.#sessions.get(id);
       if (session) session.receive(method, params);
-      else if (method !== 'session/update' || params?.update) this.#hold(id, method, params);
+      else if (this.#openingSessions > 0 && (method !== 'session/update' || params?.update)) this.#hold(id, method, params);
     }
     this.emit('notification', method, params);
   }
@@ -1181,7 +1187,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
 
   #environment(method: string): AgnetaEnvironment {
     const environment = this.options.environment;
-    if (!environment) throw new TypeError(`${method} needs the client's environment: nodeEnvironment() or electronEnvironment() from @agneta/client/node.`);
+    if (!environment) throw new TypeError(`${method} needs the client's environment: nodeEnvironment() or electronEnvironment() from @agneta-ai/client/node.`);
     return environment;
   }
 

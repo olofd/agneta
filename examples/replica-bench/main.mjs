@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { electronEnvironment, isListening, safeStorageTokenStore } from '@agneta/client/node';
+import { electronEnvironment, isListening, safeStorageTokenStore } from '@agneta-ai/client/node';
 import { agnetas as known, memoryTokens } from './agneta.mjs';
 import { BenchApp } from './app.mjs';
 import { resultsFolder } from './bench.mjs';

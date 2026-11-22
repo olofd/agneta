@@ -14,7 +14,7 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@agneta/client": "file:../../clients/typescript"
+    "@agneta-ai/client": "file:../../clients/typescript"
   },
   "devDependencies": {
     "electron": "45.3.4"
