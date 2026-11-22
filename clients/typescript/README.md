@@ -6,6 +6,7 @@ It speaks [Agneta's app protocol](https://github.com/olofd/agneta/blob/main/docs
 
 - **No dependencies.** ESM, with type declarations.
 - **Node 22 or later, and Electron's main process.** Agneta refuses connections from web pages and Electron renderers (anything that sends an `Origin` header), so the client says so rather than failing as "not running".
+- **Its own versions.** The client is versioned apart from Agneta. Each release says which Agneta its features need: structured results (`ask`, `results`) need **Agneta 0.8.0** or later, so an app that uses them passes `minimumVersion: '0.8.0'`.
 - **Before 1.0**, like Agneta's protocol: minor versions may change the API, and the [changelog](CHANGELOG.md) says how.
 
 ```sh

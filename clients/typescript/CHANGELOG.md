@@ -4,7 +4,7 @@ Notable changes to `@agneta-ai/client`, newest first. Versions follow [semantic 
 
 ## 0.1.0 (2026-11-22)
 
-The first release on npm.
+The first release on npm. Structured results need Agneta 0.8.0 or later (pass `minimumVersion: '0.8.0'`); the rest works with the Agneta versions each feature names in the README.
 
 Hardening:
 
