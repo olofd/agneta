@@ -1,36 +1,9 @@
-// Regression tests for faults found by measuring: stalled engines, stray sign-in callbacks, Claude Code's
-// usage reporting and Codex's modes.
+// Regression tests for faults found by measuring: stray sign-in callbacks, Claude Code's usage reporting and Codex's
+// modes. The stalled-engines test is in TimingTests.
 import Foundation
 import Testing
 
 @testable import AgnetaKit
-
-@Suite struct RobustnessTests {
-    /// More engines than the task pool has threads stop reading their stdin mid-write; Agneta keeps running,
-    /// and the stuck writes fail once the engines go.
-    @Test func stalledEnginesDontFreezeAgneta() async throws {
-        let count = ProcessInfo.processInfo.activeProcessorCount + 2
-        var children: [ChildProcess] = []
-        for _ in 0..<count {
-            children.append(try ChildProcess(executable: "/bin/sleep", arguments: ["30"], environment: [:]))
-        }
-        defer { for child in children { kill(child.pid, SIGKILL) } }
-        let payload = Data(repeating: 0x41, count: 512 << 10) // well past a pipe's 64 KB
-        let failures = Counter()
-        let writes = children.map { child in
-            let writer = LineWriter(child.stdin)
-            return Task.detached { do { try await writer.write(payload) } catch { failures.add() } }
-        }
-        try await Task.sleep(for: .milliseconds(300))
-        let start = ContinuousClock.now
-        try await Task.sleep(for: .milliseconds(100))
-        // A starved pool never wakes the sleep at all; a busy CI runner has stretched it to 2.9 s.
-        #expect(ContinuousClock.now - start < .seconds(10), "the task pool is starved")
-        for child in children { kill(child.pid, SIGKILL) }
-        for write in writes { await write.value }
-        #expect(failures.value == count)
-    }
-}
 
 final class Counter: @unchecked Sendable {
     private let lock = NSLock()

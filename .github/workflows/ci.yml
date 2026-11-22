@@ -58,7 +58,14 @@ jobs:
         env:
           AGNETA_REQUIRE_ENGINES: "1"
           AGNETA_KEEP_TEST_FILES: "1"
-        run: swift test --skip-build
+        run: swift test --skip-build --skip TimingTests
+
+      # Tests that hold Agneta to a wall-clock bound, on their own and one at a time (Tests/AgnetaKitTests/
+      # TimingTests.swift): within the full suite, these runners' load stretched their 0.1 s sleeps past 10 s.
+      - name: Timing tests
+        env:
+          AGNETA_KEEP_TEST_FILES: "1"
+        run: swift test --skip-build --filter TimingTests
 
       # Foundation's temporary folder is the user's Darwin temp folder, whatever TMPDIR says.
       - name: Collect the test folders
