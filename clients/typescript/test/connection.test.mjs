@@ -120,3 +120,34 @@ test('large messages travel both ways', async (t) => {
   const text = 'x'.repeat(200_000);
   assert.equal((await connection.request('double', { text })).text.length, 400_000);
 });
+
+test('an already aborted open never constructs a socket', async () => {
+  let created = 0;
+  class Socket { constructor() { created++; } }
+  await assert.rejects(Connection.open({ url: 'ws://127.0.0.1:1/acp', WebSocket: Socket, signal: AbortSignal.abort() }), AbortedError);
+  assert.equal(created, 0);
+});
+
+test('malformed responses fail the call as protocol errors and leave the connection usable', async (t) => {
+  const agneta = await standIn((message, peer) => {
+    if (message.method === 'good') return { result: null };
+    const variants = [{}, { result: 1, error: { code: -32602, message: 'bad' } }, { error: null }, { error: { code: 'bad', message: 5 } }];
+    peer.send({ id: message.id, ...variants[message.params] });
+  });
+  t.after(() => agneta.close());
+  const connection = await Connection.open({ url: agneta.url });
+  t.after(() => connection.close());
+  for (let index = 0; index < 4; index++) {
+    await assert.rejects(connection.request('bad', index), (error) => error.kind === 'protocol');
+  }
+  assert.equal(await connection.request('good'), null);
+});
+
+test('a message listener cannot mutate a result before it reaches the caller', async (t) => {
+  const agneta = await standIn(() => ({ result: { nested: { value: 'original' } } }));
+  t.after(() => agneta.close());
+  const connection = await Connection.open({ url: agneta.url });
+  t.after(() => connection.close());
+  connection.on('message', (message, direction) => { if (direction === 'in') message.result.nested.value = 'changed'; });
+  assert.deepEqual(await connection.request('echo'), { nested: { value: 'original' } });
+});

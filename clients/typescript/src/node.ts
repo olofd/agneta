@@ -4,7 +4,8 @@
 // running. Kept apart so the core needs nothing from Node.
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access, chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { access, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { homedir, machine } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -27,18 +28,25 @@ export function fileTokenStore(path: string): TokenStore {
       }
     },
     async save(token) {
-      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-      // A new file, owner-only from its first byte, then renamed over the old one: never a half-written token, and
-      // never one readable by others even if the old file's mode was looser.
-      const temporary = `${path}.${process.pid}.tmp`;
-      await writeFile(temporary, token, { mode: 0o600, flag: 'w' });
-      await chmod(temporary, 0o600);
-      await rename(temporary, path);
+      await atomicPrivateWrite(path, token);
     },
     async clear() {
       await rm(path, { force: true });
     }
   };
+}
+
+// Exclusive creation prevents a stale file or symlink from receiving a credential; rename replaces a target
+// symlink instead of following it. Unique names also let independent stores save to the same path safely.
+async function atomicPrivateWrite(path: string, data: string | Uint8Array): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, data, { mode: 0o600, flag: 'wx' });
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 /** What `safeStorageTokenStore` needs of Electron's `safeStorage`. */
@@ -64,8 +72,7 @@ export function safeStorageTokenStore(safeStorage: SafeStorageLike, path: string
     },
     async save(token) {
       if (!safeStorage.isEncryptionAvailable()) return;
-      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-      await writeFile(path, safeStorage.encryptString(token), { mode: 0o600 });
+      await atomicPrivateWrite(path, safeStorage.encryptString(token));
     },
     async clear() {
       await rm(path, { force: true });

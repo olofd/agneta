@@ -57,3 +57,24 @@ test('off macOS the environments know nothing and open nothing', async (t) => {
   const client = new AgnetaClient({ name: 'Example', port, openURL: 'agneta://open', environment: nodeEnvironment() });
   assert.deepEqual(await client.presence(), { state: 'unknown' });
 });
+
+test('token stores replace symlinks, tighten permissions and support concurrent saves', async (t) => {
+  const { fileTokenStore, safeStorageTokenStore } = await import('../dist/node.js');
+  const { mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const folder = await mkdtemp(join(tmpdir(), 'agneta-client-tokens-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const victim = join(folder, 'other');
+  await writeFile(victim, 'untouched');
+  const plain = join(folder, 'plain'), encrypted = join(folder, 'encrypted');
+  for (const path of [plain, encrypted]) await symlink(victim, path);
+  const storage = { isEncryptionAvailable: () => true, encryptString: (text) => Buffer.from(`encrypted:${text}`), decryptString: (bytes) => bytes.toString().slice(10) };
+  for (const store of [fileTokenStore(plain), safeStorageTokenStore(storage, encrypted)]) {
+    await Promise.all(Array.from({ length: 20 }, (_, index) => store.save(`token-${index}`)));
+    assert.match(await store.load(), /^token-\d+$/);
+  }
+  assert.equal(await readFile(victim, 'utf8'), 'untouched');
+  for (const path of [plain, encrypted]) assert.equal((await stat(path)).mode & 0o777, 0o600);
+  assert.deepEqual((await readdir(folder)).sort(), ['encrypted', 'other', 'plain']);
+});

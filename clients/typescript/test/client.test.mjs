@@ -322,3 +322,39 @@ test('waitForProvider: a timeout ends the wait', async (t) => {
   t.after(() => client.close());
   await assert.rejects(client.waitForProvider('claude', { timeout: 30 }), (error) => error.kind === 'aborted');
 });
+
+test('close aborts an in-flight socket open and prevents a late upgrade from attaching', async () => {
+  const sockets = [];
+  class Socket extends EventTarget {
+    readyState = 0;
+    constructor() { super(); sockets.push(this); }
+    close() { this.readyState = 3; }
+  }
+  const client = new AgnetaClient({ name: 'Example', WebSocket: Socket });
+  const opening = client.open();
+  client.close();
+  await assert.rejects(opening, (error) => error.kind === 'aborted');
+  sockets[0].readyState = 1;
+  sockets[0].dispatchEvent(new Event('open'));
+  assert.equal(client.connection, null);
+  assert.equal(client.state, 'disconnected');
+});
+
+test('close during token loading prevents pairing or initialization', async (t) => {
+  const { agneta } = await setUp(t);
+  let loaded;
+  const loading = new Promise((resolve) => { loaded = resolve; });
+  let started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  const client = new AgnetaClient({ name: 'Example', port: agneta.port, tokens: {
+    load: () => { started(); return loading; }, save() {}, clear() {}
+  } });
+  const connecting = client.connect();
+  await entered;
+  client.close();
+  loaded('kept-token');
+  await assert.rejects(connecting, (error) => error.kind === 'aborted');
+  assert.equal(agneta.calls('initialize').length, 0);
+  assert.equal(agneta.calls('agneta/pair').length, 0);
+  assert.equal(client.connection, null);
+});

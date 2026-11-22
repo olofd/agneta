@@ -4,6 +4,13 @@ Notable changes to `@agneta/client`, newest first. Versions follow [semantic ver
 
 ## 0.1.0 (unreleased)
 
+Hardening from the client review:
+
+- Closing cancels connection and guided-connect work, including a socket upgrade still in flight. An already aborted open creates no socket.
+- Both disk token stores write through unique, exclusively created, owner-only temporary files and atomically replace the destination. Concurrent saves cannot share a temporary file; destination symlinks are replaced.
+- Malformed JSON-RPC replies fail their call with `ProtocolError`. Message observers receive detached, credential-redacted copies so they cannot change the reply delivered to the app.
+
+
 The first version: Agneta's whole app protocol ([docs/APP_PROTOCOL.md](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md)), typed.
 
 - **Connecting:** the release and Agneta Dev ports or any address; `ConnectionRefusedError` for a refused upgrade, `NetworkBlockedError` for an app that may not connect at all (a sandbox without `network.client`), `ConnectionClosedError` for a connection that went; quiet reconnecting with backoff.
