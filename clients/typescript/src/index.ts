@@ -10,7 +10,7 @@ export {
 } from './connection.js';
 export {
   AgnetaClient, connect, type AgnetaClientOptions, type ClientEvents, type ClientState, type ConnectOptions,
-  type ReconnectOptions, type Timeouts, type WaitForAgnetaOptions
+  type OneShotOptions, type ReconnectOptions, type Timeouts, type WaitForAgnetaOptions
 } from './client.js';
 export {
   compareVersions, installPage, installPageURL, lookUpAgneta, placement, type AgnetaEnvironment, type AgnetaHandler,
@@ -18,11 +18,16 @@ export {
   type GuideText
 } from './install.js';
 export {
-  Session, Turn, httpMcpServer, permissionResponse, promptBlocks, type ForkOptions, type LoadSessionOptions,
+  Session, Turn, httpMcpServer, permissionResponse, promptBlocks, resultCallOf, type ForkOptions, type LoadSessionOptions,
   type NewSessionOptions, type PermissionAnswer, type PermissionHandler, type PermissionRequest, type PromptInput,
-  type SessionEnd, type SessionEvents, type SessionOptionsBase, type ToolCallState, type TraceRecordsOptions,
+  type PromptOptions, type SessionEnd, type SessionEvents, type SessionOptionsBase, type ToolCallState, type TraceRecordsOptions,
   type TurnEvent, type TurnResult
 } from './session.js';
+export {
+  Answer, Ask, resultExtension, type AskDetails, type AskOptions, type FromSchema, type FromStandardSchema,
+  type ResultSchemas, type SchemaInput
+} from './results.js';
+export type { StandardJSONSchemaV1, StandardSchemaV1, StandardTypedV1 } from './standard-schema.js';
 export { configSetting, findConfigOption, type ConfigChoice, type ConfigSetting } from './config.js';
 export { memoryTokenStore, type TokenStore } from './tokens.js';
 export { chooseProvider, engineInfo, providerEngines, type EngineChoice, type ProviderEngine } from './access.js';

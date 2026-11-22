@@ -1,7 +1,8 @@
 // Compile-time checks (`npm run typecheck`): the unions narrow, the method map types requests, and mistakes don't compile.
 import {
-  AgnetaClient, Connection, isAgnetaError, type Access, type AccessEngine, type AgnetaPresence, type ConnectProgress,
-  type GuideQuestion, type SessionUpdate, type TraceRecord, type TurnEvent
+  AgnetaClient, Connection, isAgnetaError, resultCallOf, type Access, type AccessEngine, type AgnetaPresence, type Answer,
+  type Ask, type AskDetails, type ConnectProgress, type FromSchema, type GuideQuestion, type Session, type SessionUpdate,
+  type StandardJSONSchemaV1, type StandardSchemaV1, type StructuredResult, type TraceRecord, type TurnEvent
 } from '../src/index.js';
 import { electronEnvironment, fileTokenStore, nodeEnvironment, safeStorageTokenStore } from '../src/node.js';
 
@@ -119,3 +120,112 @@ void guided; void environments;
 const store = fileTokenStore('/tmp/token');
 const electron = safeStorageTokenStore({ isEncryptionAvailable: () => true, encryptString: (text) => Buffer.from(text), decryptString: (data) => data.toString() }, '/tmp/t');
 void narrowing; void store; void electron;
+
+// MARK: Structured results
+
+// FromSchema: objects with required and optional properties, arrays, enum, const, primitives, type lists with null.
+const contact = {
+  type: 'object',
+  properties: {
+    name: { type: 'string' }, age: { type: 'integer' }, email: { type: ['string', 'null'] },
+    tags: { type: 'array', items: { type: 'string' } }, kind: { enum: ['person', 'company'] }, v: { const: 1 },
+    address: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
+    extra: { type: 'object', additionalProperties: { type: 'boolean' } }, anything: { anyOf: [{ type: 'string' }] }
+  },
+  required: ['name', 'kind']
+} as const;
+type Contact = FromSchema<typeof contact>;
+expect<Equal<Contact, {
+  name: string; kind: 'person' | 'company';
+  age?: number; email?: string | null; tags?: string[]; v?: 1; address?: { city: string }; extra?: { [key: string]: boolean };
+  anything?: unknown;
+}>>();
+expect<Equal<FromSchema<{ type: 'array' }>, unknown[]>>();
+expect<Equal<FromSchema<{ type: 'object' }>, { [key: string]: unknown }>>();
+expect<Equal<FromSchema<{ type: string }>, unknown>>();
+expect<Equal<FromSchema<{ readonly [key: string]: unknown }>, unknown>>();
+
+/** A minimal hand-written Standard Schema with Standard JSON Schema, as Zod 4.2+ gives one. */
+type Invoice = { number: string; total: number };
+declare const invoiceSchema: StandardSchemaV1<{ number: string; total: string }, Invoice> & StandardJSONSchemaV1<{ number: string; total: string }, Invoice>;
+const handWritten = {
+  '~standard': {
+    version: 1, vendor: 'mini',
+    validate: (value: unknown) => ({ value: value as { id: number } }),
+    jsonSchema: { input: () => ({ type: 'object' }), output: () => ({ type: 'object' }) },
+    types: undefined as unknown as { input: { id: string }; output: { id: number } }
+  }
+} as const;
+
+async function structured(client: AgnetaClient, session: Session) {
+  await client.newSession({ results: { schemas: { contact, invoice: invoiceSchema }, every: 'contact' } });
+  await client.newSession({ results: { schema: handWritten } });
+  // @ts-expect-error: a declaration needs schema or schemas
+  await client.newSession({ results: { every: 'x' } });
+
+  const ask = session.ask('Who?', { schema: contact });
+  expect<Equal<typeof ask, Ask<Contact>>>();
+  const value = await ask;
+  const name: string = value.name;
+  // @ts-expect-error: optional
+  const age: number = value.age;
+  void name; void age;
+  const details: AskDetails<Contact> = await ask.details;
+  const turnText: string = details.turnResult.text;
+  void turnText;
+  for await (const event of ask.turn) if (event.type === 'update') { const tag: { name: string | null } | null = resultCallOf(event.update); void tag; }
+
+  // Without `as const`: still typed, by the const type parameter.
+  const inline = await session.ask('Tags?', { schema: { type: 'array', items: { type: 'string' } } });
+  expect<Equal<typeof inline, string[]>>();
+
+  // A Standard Schema: its output type.
+  const fromStandard = await session.ask('Invoice?', { schema: invoiceSchema });
+  expect<Equal<typeof fromStandard, Invoice>>();
+  const fromHandWritten = await session.ask('Id?', { schema: handWritten });
+  expect<Equal<typeof fromHandWritten, { id: number }>>();
+
+  // A plain schema with the app's own type, by parse or given.
+  const parsed = await session.ask('Date?', { schema: { type: 'string' }, parse: (raw) => new Date(String(raw)) });
+  expect<Equal<typeof parsed, Date>>();
+  const given = await session.ask<Invoice>('Invoice?', { schema: { type: 'object' } });
+  expect<Equal<typeof given, Invoice>>();
+  const byName = await session.ask('Again', { name: 'contact', attempts: 2 });
+  expect<Equal<typeof byName, unknown>>();
+
+  // One-shot: an Answer, without a turn of its own.
+  const once = client.ask('Who?', { schema: contact, engine: 'goose', onTurn: (turn) => turn.cancel() });
+  expect<Equal<typeof once, Answer<Contact>>>();
+  // @ts-expect-error: the one-shot's turn is given to onTurn
+  void once.turn;
+  // @ts-expect-error: client.ask needs a schema
+  client.ask('Who?', { name: 'result' });
+
+  // The low level: the ask and the report, discriminated by status.
+  const turn = await session.prompt('Who?', { result: { name: 'contact', attempts: 3 } });
+  await session.prompt('Chat', { result: false });
+  // @ts-expect-error: Agneta takes schemas only when a session opens
+  await session.prompt('Who?', { result: { schema: contact } });
+  const report: StructuredResult | null = turn.structured;
+  if (report?.status === 'valid') { const v: unknown = report.value; void v; }
+  if (report?.status === 'missing') { const reason: string = report.reason; void reason; }
+  if (report?.status === 'invalid') { const path: string | undefined = report.issues[0]?.path; void path; }
+  // @ts-expect-error: only missing has a reason
+  if (report?.status === 'valid') void report.reason;
+  const resultCalls = turn.resultCalls.map((call) => call.result?.name);
+  void resultCalls;
+  const results = session.results;
+  if (results) { const every: string | null = results.every; void every; }
+
+  try { await ask; } catch (error) {
+    if (isAgnetaError(error)) {
+      switch (error.kind) {
+        case 'resultMissing': { const reason: string = error.reason; const usage = error.turnResult.usage; void reason; void usage; break; }
+        case 'resultInvalid': { const source: 'agneta' | 'client' = error.source; const path: string | undefined = error.issues[0]?.path; void source; void path; break; }
+        case 'unsupportedByAgneta': { const extension: string = error.extension; void extension; break; }
+        case 'internal': { const accepted: StructuredResult | null = error.structured; void accepted; break; }
+      }
+    }
+  }
+}
+void structured;

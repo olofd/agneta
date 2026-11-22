@@ -65,7 +65,7 @@ test('first connect pairs with the scope, shows the code, keeps a remembered tok
   assert.equal(init.params._meta.agneta.token, await tokens.load());
   assert.deepEqual(init.params.clientCapabilities, {});
   assert.equal(init.params.clientInfo.name, 'Example');
-  assert.deepEqual(client.extensions, ['agneta/policy', 'agneta/access']);
+  assert.deepEqual(client.extensions, ['agneta/policy', 'agneta/access', 'agneta/result']);
   // Connecting again while connected is a no-op.
   assert.equal(await client.connect(), access);
   assert.equal(agneta.calls('agneta/pair').length, 1);

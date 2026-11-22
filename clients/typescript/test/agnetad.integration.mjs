@@ -18,7 +18,8 @@ import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import {
-  AgnetaClient, DeclinedError, httpMcpServer, memoryTokenStore, NeedsPairingError, NotRunningError, UnenforceableError, chooseProvider
+  AgnetaClient, DeclinedError, httpMcpServer, memoryTokenStore, NeedsPairingError, NotRunningError, ResultInvalidError,
+  ResultMissingError, UnenforceableError, chooseProvider
 } from '../dist/index.js';
 import { fileTokenStore } from '../dist/node.js';
 
@@ -105,7 +106,7 @@ async function echoTools() {
   };
 }
 
-test('the client against agnetad: open, catalog, pair, sessions, streaming, tools, cancel, refusals, traces, fork, load, tokens', { timeout: 240_000 }, async (t) => {
+test('the client against agnetad: open, catalog, pair, sessions, streaming, tools, cancel, refusals, traces, fork, load, results, tokens', { timeout: 240_000 }, async (t) => {
   const hostBinary = join(repo, '.build/debug/agnetad');
   const fakes = join(repo, '.build/debug/agneta-fakes');
   const goose = join(repo, 'Engines', 'bin', process.arch === 'arm64' ? 'arm64' : 'x86_64', 'goose-acp');
@@ -258,7 +259,43 @@ test('the client against agnetad: open, catalog, pair, sessions, streaming, tool
   assert.equal((await loaded.prompt('Hello again')).stopReason, 'end_turn');
   await loaded.close();
 
-  // 11. The kept token: a new client connects without pairing (quietly). A token Agneta doesn't know is forgotten.
+  // 11. Structured results, through Goose's real calls of Agneta's result tool (Goose names it
+  // agneta-result__submit_<name>) and checked by Agneta's own validator. One-shot: a session declaring the schema, one
+  // ask, closed; a root that isn't an object, wrapped and unwrapped.
+  assert.ok(client.extensions.includes('agneta/result'));
+  const contact = {
+    type: 'object', properties: { name: { type: 'string' }, email: { type: 'string' } }, required: ['name'], additionalProperties: false
+  };
+  const onGoose = { account: choice.account, engine: 'goose' };
+  const before = client.sessions.length;
+  const card = client.ask('CALL agneta-result__submit_result {"name": "Ada", "email": "ada@example.com"}', { ...onGoose, schema: contact });
+  assert.deepEqual(await card, { name: 'Ada', email: 'ada@example.com' });
+  assert.deepEqual([(await card.details).name, (await card.details).attempts], ['result', 1]);
+  assert.equal(client.sessions.length, before, 'the one-shot closed its session');
+  const list = { type: 'array', items: { type: 'string' } };
+  assert.deepEqual(await client.ask('CALL agneta-result__submit_result {"value": ["a", "b"]}', { ...onGoose, schema: list }), ['a', 'b']);
+
+  // A session with every: each prompt asks for it unless it says false; the result tool's calls are tagged and kept
+  // apart from the model's own; Agneta's refusal of a value, the app's own parse refusing one, and none submitted.
+  const forms = await client.newSession({ ...onGoose, policy: { tools: 'app-only', approval: 'never-ask' }, results: { schemas: { contact }, every: 'contact' } });
+  assert.deepEqual(forms.results, { declared: ['contact'], every: 'contact', mechanism: 'tool' });
+  const filled = await forms.prompt('CALL agneta-result__submit_contact {"name": "Bo"}');
+  assert.equal(filled.structured?.status, 'valid', JSON.stringify(filled.structured));
+  assert.deepEqual(filled.structured.value, { name: 'Bo' });
+  assert.ok(filled.resultCalls.length > 0 && filled.resultCalls.every((call) => call.result.name === 'contact'), JSON.stringify(filled.resultCalls));
+  assert.deepEqual(filled.toolCalls, [], 'the result tool\'s calls aren\'t the model\'s tool calls');
+  assert.equal((await forms.prompt('Hello there', { result: false })).structured, null);
+  await assert.rejects(forms.ask('CALL agneta-result__submit_contact {"name": 7}', { schema: contact, attempts: 1 }),
+    (error) => error instanceof ResultInvalidError && error.source === 'agneta' && error.issues[0]?.path === '/name');
+  await assert.rejects(forms.ask('CALL agneta-result__submit_contact {"name": "Nobody"}', {
+    schema: contact, parse: (value) => { if (value.name === 'Nobody') throw new Error('not a name'); return value; }
+  }), (error) => error instanceof ResultInvalidError && error.source === 'client' && error.structured.status === 'valid');
+  await assert.rejects(forms.ask('Hello there', { schema: contact }), (error) => error instanceof ResultMissingError && error.reason === 'not-submitted');
+  await forms.close();
+  await assert.rejects(client.newSession({ ...onGoose, results: { schema: { type: 'object', if: { type: 'object' } } } }),
+    (error) => error instanceof UnenforceableError && error.fields.includes('agneta/result') && typeof error.reason === 'string');
+
+  // 12. The kept token: a new client connects without pairing (quietly). A token Agneta doesn't know is forgotten.
   client.close();
   const again = new AgnetaClient({ name: 'Client Test', port, tokens });
   clients.push(again);
@@ -271,7 +308,7 @@ test('the client against agnetad: open, catalog, pair, sessions, streaming, tool
   await assert.rejects(removed.connect({ pair: 'never' }), NeedsPairingError);
   assert.equal(await stale.load(), null);
 
-  // 12. Agneta quits: the connection is gone, and the open session ended with it.
+  // 13. Agneta quits: the connection is gone, and the open session ended with it.
   const last = new AgnetaClient({ name: 'Client Test', port, tokens });
   clients.push(last);
   await last.connect({ pair: 'never' });

@@ -523,7 +523,7 @@ The prompt's reply gains `_meta["agneta/result"]`:
 - **`issues`**: each `{"path", "keyword", "message", "schemaPath"}`, `path` a JSON Pointer into the value. At most 20.
 - **`valueOmitted`**: a refused value nested too deeply to carry back is left out and said so.
 - **`attempts`**: the calls of the session's result tools in the turn.
-- A missing or invalid result is still a successful reply: the turn ran and has usage. Errors keep their meaning; if the engine fails after a value was accepted, the error's `data["agneta/result"]` carries it.
+- A missing or invalid result is still a successful reply: the turn ran and has usage. Errors keep their meaning; when a prompt that asked for a result fails, the error's `data.agneta.result` carries the turn's result: `valid` with the value when one was accepted before the failure, else `missing` with `stopped`.
 - While the turn runs, the result tool's calls arrive as ordinary `tool_call` updates, tagged `update._meta.agneta.result: {"name"}`, so an app can show or hide them.
 - Agneta answers the result tool's permission requests itself (it runs nothing), whatever `approval` says.
 

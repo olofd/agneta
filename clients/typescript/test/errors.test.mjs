@@ -38,6 +38,16 @@ test('each of Agneta\'s codes maps to its kind, keeping the message, code, data 
   }
 });
 
+test('a failed prompt\'s structured result is on any Agneta error; unenforceable agneta/result advises on the schema', () => {
+  const report = { status: 'valid', name: 'invoice', mechanism: 'tool', attempts: 1, value: { total: 1 } };
+  assert.deepEqual(make(-32603, { agneta: { result: report } }).structured, report);
+  assert.deepEqual(make(-32000, { agneta: { x: 1, result: { status: 'invalid', name: 'a', mechanism: 'tool', attempts: 3 } } }).structured.issues, []);
+  assert.equal(make(-32603).structured, null);
+  assert.equal(make(-32603, { agneta: { result: { status: 1 } } }).structured, null);
+  assert.match(make(-32602, { agneta: { unenforceable: ['agneta/result'], reason: 'r' } }).advice, /schema/);
+  assert.match(make(-32602, { agneta: { unenforceable: ['sandbox'], reason: 'r' } }).advice, /wider scope/);
+});
+
 test('structured data is typed for each kind', () => {
   const paused = make(-32013, { agneta: { paused: 'acct-1' } });
   assert.equal(paused.account, 'acct-1');

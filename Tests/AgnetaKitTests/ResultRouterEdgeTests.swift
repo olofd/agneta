@@ -264,8 +264,8 @@ extension ResultRouterEdgeTests {
             Issue.record("the engine's error didn't come back")
         } catch let error as RPCError {
             #expect(error.message == "boom")
-            #expect(error.data?["agneta/result"]?["status"] == "valid")
-            #expect(error.data?["agneta/result"]?["value"] == C.good)
+            #expect(error.data?["agneta"]?["result"]?["status"] == "valid")
+            #expect(error.data?["agneta"]?["result"]?["value"] == C.good)
         }
     }
 

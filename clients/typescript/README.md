@@ -49,6 +49,7 @@ That's all of it: `connect()` opens `ws://127.0.0.1:47321/acp`, pairs (Agneta's 
 - [Access](#access)
 - [Sessions](#sessions)
 - [Turns](#turns)
+- [Structured results](#structured-results)
 - [Model, effort, mode and instructions](#model-effort-mode-and-instructions)
 - [Permissions](#permissions)
 - [Traces](#traces)
@@ -284,11 +285,12 @@ const result = await turn;
 
 A turn is a promise of its result and an async iterable of its events. Events are buffered from the start, so iterating late, or twice, misses nothing; a failed turn's iterator throws its error after its events. `turn.textStream()` yields the reply's text pieces, `turn.updates()` the updates only, and `turn.text`, `turn.thought`, `turn.toolCalls` (each call with its updates merged) and `turn.events` are there at any time.
 
-`result` is `{ stopReason, text, thought, usage, engineUsage, limit, cancelled, stoppedBy, toolCalls, raw }`:
+`result` is `{ stopReason, text, thought, usage, engineUsage, limit, cancelled, stoppedBy, toolCalls, resultCalls, structured, raw }`:
 
 - `usage` is Agneta's `agneta/usage`, from the engine's own records: `modelCalls`, `models`, `inputTokens`, `outputTokens`, cache tokens, `cost`, `costKind` (`estimated` for keys, `plan-equivalent` for plans), `taskCost`, `billing`, `ms`, `msToFirstToken`, `basis`. Unknown values are `null`. `engineUsage` is the engine's own figure.
 - `limit` is `{ limit: 'maxTurns' | 'maxSeconds' | 'maxCostUSD' | 'appSpend', value, setBy, sessionEnded? }` when a limit stopped the turn: the policy's (`setBy: 'app'`), or the spending limit the user set for the app in Agneta (`appSpend`, `setBy: 'user'`, with `period` and `resetsAt`). With `sessionEnded`, Agneta ended the session too: load it again to go on.
 - `cancelled` is true after `session/cancel`, the user's Stop, or a time or cost limit.
+- `toolCalls` are the model's own; `resultCalls` and `structured` are for [structured results](#structured-results).
 
 | To | Call |
 | --- | --- |
@@ -297,6 +299,79 @@ A turn is a promise of its result and an async iterable of its events. Events ar
 | Wait for room | nothing: a queued turn just returns later (`queued` events say its place) |
 
 One turn at a time: `prompt()` while one runs throws `TurnBusyError`. A prompt has no timeout by default (`timeouts.prompt`); a policy's `maxSeconds` limits it. A provider's limit fails the turn with `RateLimitedError` (`resetsAt`, `account`, `providerMessage`); a paused account with `PausedError`; an account that must sign in again with `NeedsSignInError`.
+
+## Structured results
+
+A turn can return a value that matches a JSON Schema: an invoice from a PDF, a form filled in from a conversation, a typed answer. The model returns it by calling a tool Agneta serves; **Agneta validates every call**, tells the model what's wrong so it can correct itself within the turn, and the reply says what came of it ([the protocol](https://github.com/olofd/agneta/blob/main/docs/APP_PROTOCOL.md#structured-results)). The same on every engine.
+
+**One-shot.** `client.ask` opens a session that declares the schema, asks, and closes it (also when it fails):
+
+```js
+const contactSchema = {
+  type: 'object',
+  properties: { name: { type: 'string' }, email: { type: ['string', 'null'] } },
+  required: ['name'], additionalProperties: false
+};
+const contact = await client.ask(`Find the sender in this email:\n${email}`, { schema: contactSchema });
+contact.name;    // string (typed from the schema)
+```
+
+It takes the session's options too (`engine`, `account`, `policy`, `instructions`, `task`, …; without a `policy`: app-only tools and `never-ask`), `attempts`, `timeout` (the prompt's), `signal`, and `onTurn(turn)` to stream or cancel the turn. `await answer.details` gives `{ value, name, mechanism, attempts, turnResult }`, `turnResult` with the usage and text.
+
+**In a session.** Agneta takes schemas when a session opens (engines take their tools only then), so declare the ones its prompts may ask for, then ask for one per turn:
+
+```js
+const session = await client.newSession({
+  results: { schemas: { invoice: invoiceSchema, contact: contactSchema }, every: 'invoice' }   // every: asked on each prompt
+});
+session.results;   // { declared: ['contact', 'invoice'], every: 'invoice', mechanism: 'tool' }
+
+const ask = session.ask('Now fill in the contact from what we discussed.', { schema: contactSchema });
+for await (const text of ask.turn.textStream()) render(text);   // the turn, to stream or cancel
+const filled = await ask;                                         // the value, typed
+const { attempts, turnResult } = await ask.details;
+```
+
+- **Which schema:** the one passed is matched to a declared one (the same object, or an equal JSON Schema); or pass `name`, or nothing for the session's `every`. One the session didn't declare is a `TypeError` before anything is sent: declare it in `newSession`, `loadSession` or `fork` (`results`), or use `client.ask`.
+- **`{ schema }`** is the shorthand for one schema named `result`, asked for on every prompt.
+- **`attempts`** (1 to 10, Agneta's default 3): the calls of the result tools the model gets this turn. Every call counts.
+- **`loadSession` and `fork`** keep the original's declaration unless given `results`. A fork of a session handle knows its schemas; a load without `results` knows only their names (`session.results.declared`), so ask it by `name` (with the schema too, to type and read the value).
+- **A root that isn't an object** (`{ type: 'array', … }`, a string, a union) is sent as `{ value: … }`, as Agneta needs an object, and unwrapped when read: values and issues read as if it hadn't been.
+
+**Three ways to give a schema**, with no dependency:
+
+```ts
+// 1. Plain JSON Schema: typed by the built-in FromSchema (objects, required, arrays, enum, const, primitives,
+//    type lists with null; anything else unknown). Passed inline or `as const`.
+const invoice = await session.ask(text, { schema: { type: 'object', properties: { total: { type: 'number' } }, required: ['total'] } });
+
+// 2. A Standard Schema that can say its JSON Schema (Zod 4.2+, ArkType 2.1.28+, Valibot with toStandardJsonSchema):
+//    converted for Agneta (draft 2020-12), Agneta's value checked again with it, and typed as its output.
+const Invoice = z.object({ number: z.string(), total: z.number() });
+const typed = await session.ask(text, { schema: Invoice });
+
+// 3. Plain JSON Schema with your own type, and optionally parse.
+const due = await session.ask<Date>(text, { schema: { type: 'string' }, parse: (value) => new Date(String(value)) });
+```
+
+Agneta's verdict stands: your schema (or `parse`) may only reject further, never accept what Agneta refused. Agneta takes a subset of JSON Schema 2020-12 and refuses anything outside it, naming the keyword (`UnenforceableError`, `fields: ['agneta/result']`); declare the checks you need there, so the model is told while it can still correct the value.
+
+**Errors.**
+
+| `kind` | When | Data |
+| --- | --- | --- |
+| `resultMissing` | No value: `stopped` (cancelled, Stop, a limit, cancelled while queued), `refused`, `truncated` (out of output tokens), `not-submitted` | `reason`, `resultName`, the last refused `value` and `issues` if any, `valueOmitted`, `structured`, `turnResult` |
+| `resultInvalid` | Only values that didn't match (`source: 'agneta'`), or Agneta accepted one and your schema or `parse` rejected it (`source: 'client'`) | `source`, `issues` (`{ path, keyword, message, schemaPath }`), `value`, `valueOmitted`, `resultName`, `structured`, `turnResult` |
+| `unsupportedByAgneta` | This Agneta doesn't offer structured results (not in `initialize`'s extensions): nothing was sent, never a silent fallback | `extension` |
+| `unenforceable` | A declaration or ask Agneta refuses | `fields: ['agneta/result']`, `reason` |
+
+A missing or invalid result is a successful turn: it ran and has usage (`error.turnResult.usage`). An engine that fails after a value was accepted fails the turn with its own error, whose `structured` holds the report and the value.
+
+**The low level.** `newSession({ results })` sends `_meta["agneta/result"]`; `session.prompt(text, { result: { name, attempts } })` asks (`result: false` opts out of `every`); the turn's result has `structured`, the report as Agneta sent it, discriminated by `status` (`valid` with `value`; `invalid` with `issues`; `missing` with `reason`). While the turn runs, the result tool's calls arrive as ordinary `tool_call` updates tagged `_meta.agneta.result`: `resultCallOf(update)` says which (`{ name }`, or null for the model's own calls), and `turn.toolCalls` leaves them out, `turn.resultCalls` has them.
+
+**Engines differ.** OpenCode checks a tool's arguments against its schema itself, so a value that doesn't match may never reach Agneta: the model reads OpenCode's message, and the turn ends `missing` with `not-submitted` where Goose's would be `invalid`.
+
+The value is model output: a document in the prompt can steer it. Check what matters before acting on it, and keep user data out of schemas (providers may cache tool definitions).
 
 ## Model, effort, mode and instructions
 
@@ -344,7 +419,7 @@ Records are typed by `type` (`meta`, `config`, `acp`, `event` with its `kind`, `
 
 ## Errors
 
-Everything the client throws is an `AgnetaError`, with Agneta's own `message`, an `advice` (what to tell the user, or do) and a literal `kind`, so a `switch` narrows to the class and its typed fields. Errors Agneta sent also have `code`, `data`, `details` (`data.agneta`) and `method`.
+Everything the client throws is an `AgnetaError`, with Agneta's own `message`, an `advice` (what to tell the user, or do) and a literal `kind`, so a `switch` narrows to the class and its typed fields. Errors Agneta sent also have `code`, `data`, `details` (`data.agneta`), `method` and `structured` (a failed turn's structured result).
 
 ```js
 import { isAgnetaError } from '@agneta/client';
@@ -392,6 +467,9 @@ try { await session.prompt(text); } catch (error) {
 | `invalidParams` | `InvalidParamsError` | `-32602` otherwise, such as "Unknown session" | |
 | `internal` | `InternalError` | `-32603`: the engine didn't start or stopped, or the app disconnected | |
 | `rpc` | `UnknownRpcError` | Any other code, such as an engine's own (`-32000`) | |
+| `unsupportedByAgneta` | `UnsupportedByAgnetaError` | This Agneta doesn't offer an extension the call needs (checked before sending) | `extension` |
+| `resultMissing` | `ResultMissingError` | A turn that asked for a [structured result](#structured-results) ended without one | `reason`, `turnResult`, … |
+| `resultInvalid` | `ResultInvalidError` | Its values didn't match the schema (Agneta's, or your own schema's after Agneta accepted one) | `source`, `issues`, `value`, `turnResult`, … |
 
 `fromRpcError({ code, message, data })` makes the typed error from a raw one, and `ErrorCodes` names the codes.
 
@@ -471,6 +549,7 @@ The package exports:
 
 - **Client:** `AgnetaClient`, `connect(options)` (a client, connected), with `AgnetaClientOptions`, `ConnectOptions`, `ClientEvents`, `ClientState`, `Timeouts`, `ReconnectOptions`.
 - **Sessions and turns:** `Session`, `Turn`, `TurnEvent`, `TurnResult`, `SessionEnd`, `NewSessionOptions`, `LoadSessionOptions`, `ForkOptions`, `ToolCallState`, `PromptInput`, `promptBlocks`, `httpMcpServer`.
+- **Structured results:** `Ask`, `Answer`, `AskOptions`, `AskDetails`, `OneShotOptions`, `PromptOptions`, `ResultSchemas`, `SchemaInput`, `FromSchema`, `FromStandardSchema`, `resultCallOf`, `resultExtension`; the Standard Schema interfaces (`StandardSchemaV1`, `StandardJSONSchemaV1`, `StandardTypedV1`, types only); the wire's `ResultDeclaration`, `ResultAsk`, `SessionResults`, `StructuredResult`, `ResultIssue`, `ResultMissingReason`, `JsonSchema`, `structuredResult`.
 - **Permissions:** `PermissionHandler`, `PermissionRequest`, `PermissionAnswer`, `permissionResponse`.
 - **Access and settings:** `chooseProvider`, `providerEngines`, `engineInfo`, `findConfigOption`, `configSetting`.
 - **Getting Agneta:** `AgnetaEnvironment`, `AgnetaHandler`, `AgnetaPresence`, `Guide`, `GuideQuestion`, `ConnectProgress`, `ConnectStep`, `WaitForAgnetaOptions`, `installPage`, `installPageURL`, `lookUpAgneta`, `placement`, `compareVersions`; from `@agneta/client/node`: `nodeEnvironment`, `electronEnvironment`, `isAgnetaInstalled`, `readBundle`, `macArchitecture`, `findInFolders`, `isReadOnly`, `openAgneta`.

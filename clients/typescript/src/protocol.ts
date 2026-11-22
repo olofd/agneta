@@ -216,7 +216,7 @@ export interface InitializeParams {
 export type AgnetaExtension =
   | 'agneta/policy' | 'agneta/access' | 'agneta/catalog' | 'agneta/setup' | 'agneta/task' | 'agneta/instructions'
   | 'agneta/steer' | 'agneta/usage' | 'agneta/limit' | 'agneta/queue' | 'agneta/fork' | 'agneta/rateLimited' | 'agneta/trace'
-  | 'agneta/appLimits' | 'agneta/appTools'
+  | 'agneta/appLimits' | 'agneta/appTools' | 'agneta/result'
   | (string & {});
 
 export interface InitializeResult {
@@ -310,6 +310,7 @@ export interface SessionRequestMeta {
   'agneta/instructions'?: { text: string };
   'agneta/appTools'?: { load: AppToolsLoad };
   'agneta/trace'?: TraceDelivery;
+  'agneta/result'?: ResultDeclaration;
   [key: string]: unknown;
 }
 
@@ -357,6 +358,8 @@ export interface SessionResultAgneta {
   resumed?: boolean;
   /** `agneta/fork`: the source task. */
   forkOf?: string;
+  /** For a session that declared structured results: what its prompts may ask for. */
+  results?: SessionResults;
   [key: string]: unknown;
 }
 
@@ -417,8 +420,101 @@ export interface PromptResult {
   sessionId?: string;
   stopReason: StopReason;
   usage?: Usage;
-  _meta?: { 'agneta/usage'?: AgnetaUsage; 'agneta/limit'?: LimitHit; [key: string]: unknown };
+  _meta?: { 'agneta/usage'?: AgnetaUsage; 'agneta/limit'?: LimitHit; 'agneta/result'?: StructuredResult; [key: string]: unknown };
   [key: string]: unknown;
+}
+
+// MARK: Structured results (docs/APP_PROTOCOL.md, Structured results)
+
+/** A JSON Schema, as plain data (Agneta takes the 2020-12 subset its protocol lists, and refuses anything else). */
+export type JsonSchema = { readonly [key: string]: unknown };
+
+/**
+ * `_meta["agneta/result"]` on `session/new`, `session/load` and `agneta/fork`: the schemas this session's prompts may
+ * ask for, by name, and the one every prompt asks for unless it opts out (`every`). `{ schema }` is the shorthand for one
+ * schema named `result`, asked for on every prompt. Each root must be `"type": "object"`. A load or fork without it
+ * keeps the original's.
+ */
+export type ResultDeclaration =
+  | { schemas: { [name: string]: JsonSchema }; every?: string }
+  | { schema: JsonSchema };
+
+/**
+ * `_meta["agneta/result"]` on `session/prompt`: a declared schema by name, with the calls of the result tools the model
+ * gets this turn (1 to 10, default 3); or `false`, no result this turn in a session with `every`.
+ */
+export type ResultAsk = { name: string; attempts?: number } | false;
+
+/** How the model returned the result: through the result tool Agneta serves (version 1's only mechanism). */
+export type ResultMechanism = 'tool' | (string & {});
+
+/** What a session that declared results can ask for: `_meta.agneta.results` in the reply that opened it. */
+export interface SessionResults {
+  /** The declared schemas' names. */
+  declared: string[];
+  /** The one every prompt asks for, or null. */
+  every: string | null;
+  mechanism: ResultMechanism;
+}
+
+/** One way a value failed its schema. */
+export interface ResultIssue {
+  /** A JSON Pointer into the value (`/total`, `` for the whole). */
+  path: string;
+  /** The schema keyword it broke (`type`, `required`, …). */
+  keyword: string;
+  message: string;
+  /** A JSON Pointer into the schema, to the keyword. */
+  schemaPath: string;
+}
+
+/**
+ * Why a turn has no value: `stopped` (cancelled, the user's Stop, a limit, or cancelled while it waited in the queue),
+ * `refused` (the model refused), `truncated` (it ran out of output tokens), `not-submitted` (it ended without calling the
+ * result tool).
+ */
+export type ResultMissingReason = 'stopped' | 'refused' | 'truncated' | 'not-submitted' | (string & {});
+
+interface StructuredResultBase {
+  /** The schema asked for. */
+  name: string;
+  mechanism: ResultMechanism;
+  /** The calls of the session's result tools in the turn, valid or not. */
+  attempts: number;
+}
+
+/** A value that was refused, as the report carries it: the value, or why it's left out, and what was wrong. */
+interface RefusedValue {
+  /** The last refused value; absent when `valueOmitted`. */
+  value?: unknown;
+  /** Why the value is left out (it nested too deeply to carry back). */
+  valueOmitted?: string;
+  /** At most 20. */
+  issues: ResultIssue[];
+}
+
+/**
+ * A turn's structured result, `_meta["agneta/result"]` on the prompt's reply (or, when the engine failed after a value
+ * was accepted, on the error's data), discriminated by `status`. A missing or invalid result is still a successful
+ * reply: the turn ran.
+ */
+export type StructuredResult =
+  /** `value` matches the schema. The first valid value is final. */
+  | (StructuredResultBase & { status: 'valid'; value: unknown })
+  /** Only values that didn't match, and the turn ended or its attempts ran out. */
+  | (StructuredResultBase & RefusedValue & { status: 'invalid' })
+  /** No value, for `reason`; with the last refused value and its issues when one was refused before the turn ended. */
+  | (StructuredResultBase & Partial<RefusedValue> & { status: 'missing'; reason: ResultMissingReason });
+
+/** The structured result in a reply's `_meta` or an error's `data` (`value["agneta/result"]`), or null when there's none. */
+export function structuredResult(carrier: unknown): StructuredResult | null {
+  const report = carrier && typeof carrier === 'object' ? (carrier as Record<string, unknown>)['agneta/result'] : undefined;
+  if (!report || typeof report !== 'object') return null;
+  const fields = report as Record<string, unknown>;
+  if (typeof fields.status !== 'string' || typeof fields.name !== 'string') return null;
+  const result = { ...fields } as unknown as StructuredResult;
+  if (result.status === 'invalid' && !Array.isArray(result.issues)) result.issues = [];
+  return result;
 }
 
 export interface SteerParams {

@@ -6,7 +6,8 @@ import { Connection, probeAgneta, type OpenOptions, type PortProbe, type Request
 import { Emitter } from './emitter.js';
 import {
   AbortedError, ConnectionClosedError, DeclinedError, EngineDownloadingError, MethodNotFoundError, NeedsPairingError,
-  NotInstalledError, NotRunningError, OutdatedError, ProtocolError, UnsupportedEnvironmentError, type DownloadProgress
+  NotInstalledError, NotRunningError, OutdatedError, ProtocolError, UnsupportedByAgnetaError, UnsupportedEnvironmentError,
+  type DownloadProgress
 } from './errors.js';
 import {
   compareVersions, installPageURL, lookUpAgneta, type AgnetaEnvironment, type AgnetaPresence, type Architecture,
@@ -14,14 +15,19 @@ import {
 } from './install.js';
 import {
   builds, protocolVersion, type Access, type AgnetaNotifications, type AgnetaRequests, type Build, type Catalog,
-  type InitializeResult, type PairingCodeParams, type PairingScope, type PairResult, type ProviderKind, type QueuedParams,
+  type InitializeResult, type JsonSchema, type PairingCodeParams, type PairingScope, type PairResult, type ProviderKind, type QueuedParams,
   type RateLimitedParams, type SessionRequestMeta, type SessionResult, type SessionStoppedParams, type TraceReadParams,
   type TraceReadResult, type TraceRecord
 } from './protocol.js';
 import {
+  Answer, prepareDeclaration, resultExtension, type AskOptions, type FromSchema, type FromStandardSchema, type PreparedDeclaration,
+  type PreparedSchema, type SchemaInput
+} from './results.js';
+import {
   permissionResponse, Session, type ForkOptions, type LoadSessionOptions, type NewSessionOptions, type PermissionHandler,
-  type SessionHost, type SessionOptionsBase, type TraceRecordsOptions
+  type PromptInput, type SessionHost, type SessionOptionsBase, type TraceRecordsOptions, type Turn
 } from './session.js';
+import type { StandardJSONSchemaV1 } from './standard-schema.js';
 import { memoryTokenStore, type TokenStore } from './tokens.js';
 
 export interface Timeouts {
@@ -169,6 +175,15 @@ export interface WaitForAgnetaOptions {
   signal?: AbortSignal;
   onProgress?: (progress: ConnectProgress) => void;
 }
+
+/**
+ * What `client.ask` takes: the session's options (without `results`, which is the schema), and the ask's `attempts` and
+ * `timeout` (the prompt's). `signal` cancels opening and the turn. Without a `policy`: app-only tools, never-ask.
+ */
+export type OneShotOptions = Omit<NewSessionOptions, 'results' | 'timeout'> & Pick<AskOptions, 'attempts' | 'timeout'> & {
+  /** The turn, once the session is open and the prompt sent: to stream its events, or cancel it. */
+  onTurn?: (turn: Turn) => void;
+};
 
 const defaults: Timeouts = {
   request: 30_000, connect: 5000, pair: 310_000, session: 180_000, prompt: 0, open: 300_000, slow: 15_000, keepWaiting: 60_000
@@ -620,10 +635,11 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   async newSession(options: NewSessionOptions = {}): Promise<Session> {
     const cwd = options.cwd ?? this.#requireAccess().workspace;
     if (!cwd) throw new TypeError('newSession needs a cwd: this Agneta gives the app no workspace of its own.');
+    const declaration = this.#declaration(options);
     const agneta = { ...(options.account ? { account: options.account } : {}), ...(options.engine ? { engine: options.engine } : {}) };
-    const meta = this.#meta(options, Object.keys(agneta).length ? agneta : undefined);
+    const meta = this.#meta(options, Object.keys(agneta).length ? agneta : undefined, declaration);
     const params = { cwd, mcpServers: options.mcpServers ?? [], ...(meta ? { _meta: meta } : {}), ...options.params };
-    return this.#open('session/new', params, options, (result) => result.sessionId);
+    return this.#open('session/new', params, options, (result) => result.sessionId, declaration?.schemas);
   }
 
   /**
@@ -633,18 +649,52 @@ export class AgnetaClient extends Emitter<ClientEvents> {
   async loadSession(sessionId: string, options: LoadSessionOptions = {}): Promise<Session> {
     const cwd = options.cwd ?? this.#requireAccess().workspace;
     if (!cwd) throw new TypeError('loadSession needs a cwd.');
-    const meta = this.#meta(options);
+    const declaration = this.#declaration(options);
+    const meta = this.#meta(options, undefined, declaration);
     const params = { sessionId, cwd, mcpServers: options.mcpServers ?? [], ...(meta ? { _meta: meta } : {}), ...options.params };
+    // Agneta keeps the original's declaration: so does a handle still known here.
+    const declared = declaration?.schemas ?? this.#sessions.get(sessionId)?.declaredSchemas;
     this.#early.set(sessionId, []);
-    return this.#open('session/load', params, options, () => sessionId);
+    return this.#open('session/load', params, options, () => sessionId, declared);
   }
 
   /** `agneta/fork`: a new task with a copy of one of the app's tasks, open or finished. Without a policy: the original's, read-only. */
   async fork(source: string | Session, options: ForkOptions = {}): Promise<Session> {
     const sessionId = typeof source === 'string' ? source : source.id;
-    const meta = this.#meta(options);
+    const declaration = this.#declaration(options);
+    const meta = this.#meta(options, undefined, declaration);
     const params = { sessionId, mcpServers: options.mcpServers ?? [], ...(options.cwd ? { cwd: options.cwd } : {}), ...(meta ? { _meta: meta } : {}), ...options.params };
-    return this.#open('agneta/fork', params, options, (result) => result.sessionId);
+    // Agneta keeps the original's declaration: so does the fork of a handle known here.
+    const declared = declaration?.schemas ?? (typeof source === 'string' ? this.#sessions.get(source) : source)?.declaredSchemas;
+    return this.#open('agneta/fork', params, options, (result) => result.sessionId, declared);
+  }
+
+  /**
+   * One question with a structured answer: opens a session that declares the schema (`{ schema }`), asks, and closes
+   * it, also when the ask fails. `await` it for the value, `answer.details` for how it came; `onTurn` gets the turn.
+   * The schema forms, checks and errors are `session.ask`'s, and opening's errors are `newSession`'s
+   * (`UnenforceableError` with `fields: ['agneta/result']` for a schema Agneta refuses).
+   */
+  ask<const S extends StandardJSONSchemaV1>(input: PromptInput, options: OneShotOptions & { schema: S }): Answer<FromStandardSchema<S>>;
+  ask<T>(input: PromptInput, options: OneShotOptions & { schema: SchemaInput; parse: (value: unknown) => T }): Answer<T>;
+  ask<const S extends JsonSchema>(input: PromptInput, options: OneShotOptions & { schema: S }): Answer<FromSchema<S>>;
+  ask<T = unknown>(input: PromptInput, options: OneShotOptions & { schema: SchemaInput }): Answer<T>;
+  ask(input: PromptInput, options: OneShotOptions & { schema: SchemaInput; parse?: (value: unknown) => unknown }): Answer<unknown> {
+    const { schema, parse, attempts, timeout, policy, onTurn, ...rest } = options;
+    return new Answer((async () => {
+      let session: Session | undefined;
+      try {
+        session = await this.newSession({ ...rest, policy: policy ?? { tools: 'app-only', approval: 'never-ask' }, results: { schema } });
+        const asked = session.ask(input, {
+          name: 'result', schema, ...(parse ? { parse } : {}), ...(attempts !== undefined ? { attempts } : {}),
+          ...(timeout !== undefined ? { timeout } : {}), ...(rest.signal ? { signal: rest.signal } : {})
+        });
+        onTurn?.(asked.turn);
+        return await asked.details;
+      } finally {
+        await session?.close().catch(() => {});
+      }
+    })());
   }
 
   /** One page of a task's trace (`agneta/trace/read`): running or finished, the app's own tasks only. */
@@ -705,9 +755,18 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     this.emit('state', state);
   }
 
-  #meta(options: SessionOptionsBase, agneta?: SessionRequestMeta['agneta']): SessionRequestMeta | undefined {
+  /** `results` made ready, refused before sending when this Agneta doesn't offer structured results. */
+  #declaration(options: SessionOptionsBase): PreparedDeclaration | undefined {
+    if (options.results === undefined) return undefined;
+    this.#requireAccess();
+    if (!this.extensions.includes(resultExtension)) throw new UnsupportedByAgnetaError(resultExtension, 'structured results');
+    return prepareDeclaration(options.results);
+  }
+
+  #meta(options: SessionOptionsBase, agneta?: SessionRequestMeta['agneta'], declaration?: PreparedDeclaration): SessionRequestMeta | undefined {
     const meta: SessionRequestMeta = {};
     if (agneta) meta.agneta = agneta;
+    if (declaration) meta[resultExtension] = declaration.wire;
     if (options.policy) meta['agneta/policy'] = options.policy;
     if (options.task) meta['agneta/task'] = typeof options.task === 'string' ? { title: options.task } : options.task;
     if (options.instructions !== undefined) meta['agneta/instructions'] = { text: options.instructions };
@@ -717,7 +776,8 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     return Object.keys(meta).length ? meta : undefined;
   }
 
-  async #open(method: 'session/new' | 'session/load' | 'agneta/fork', params: any, options: SessionOptionsBase, idOf: (result: SessionResult) => string | undefined): Promise<Session> {
+  async #open(method: 'session/new' | 'session/load' | 'agneta/fork', params: any, options: SessionOptionsBase,
+    idOf: (result: SessionResult) => string | undefined, declared?: ReadonlyMap<string, PreparedSchema>): Promise<Session> {
     const connection = this.#require();
     this.#requireAccess();
     const wait = options.waitForDownload === false ? 0 : typeof options.waitForDownload === 'number' ? options.waitForDownload : 600_000;
@@ -756,7 +816,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     const early = this.#early.get(id) ?? [];
     this.#early.delete(id);
     const history = early.filter(({ method }) => method === 'session/update').map(({ params }) => params.update as SessionUpdate);
-    const session = new Session(this.#host, id, { ...result, sessionId: id }, history, options.permissions, options.on);
+    const session = new Session(this.#host, id, { ...result, sessionId: id }, history, options.permissions, options.on, declared);
     if (this.#connection !== connection || !connection.isOpen) {
       session.end({ reason: 'disconnected', error: new ConnectionClosedError(undefined, 'closed while the session opened') });
       throw new ConnectionClosedError(undefined, 'closed while the session opened');
@@ -779,6 +839,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
       timeouts: this.timeouts,
       forget: (session) => { if (client.#sessions.get(session.id) === session) client.#sessions.delete(session.id); },
       fork: (source, options) => client.fork(source, options),
+      supports: (extension) => client.extensions.includes(extension),
       readTrace: (sessionId, params, options) => client.readTrace(sessionId, params, options),
       traceRecords: (sessionId, options) => client.traceRecords(sessionId, options)
     };

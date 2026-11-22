@@ -136,13 +136,167 @@ export const catalogReport = (connected = true) => ({
   connected
 });
 
+// MARK: agneta/result, as Agneta answers it (Sources/AgnetaKit/Results, Router+Results.swift)
+
+const resultKey = 'agneta/result';
+const refuse = (reason) => ({ error: { code: -32602, message: `Agneta can't enforce agneta/result: ${reason}`, data: { agneta: { unenforceable: [resultKey], reason } } } });
+const usableName = (name) => /^[a-z][a-z0-9_]{0,31}$/.test(name) && !name.includes('__') && name !== 'any';
+
+/** `_meta["agneta/result"]` on a session's opening: `{ declaration }`, or `{ refusal }`. Agneta's rules, its validator aside. */
+export function parseDeclaration(value) {
+  if (value === undefined || value === null) return { declaration: null };
+  if (typeof value !== 'object' || Array.isArray(value)) return { refusal: refuse('it must be an object') };
+  const unknown = Object.keys(value).sort().find((key) => !['schema', 'schemas', 'every'].includes(key));
+  if (unknown) return { refusal: refuse(`unknown field ${unknown}`) };
+  let schemas, every = value.every;
+  if (value.schema !== undefined && value.schemas === undefined) {
+    if (value.every !== undefined) return { refusal: refuse('"schema" already asks for its result on every prompt') };
+    schemas = { result: value.schema };
+    every = 'result';
+  } else if (value.schemas !== undefined && value.schema === undefined) {
+    schemas = value.schemas;
+    if (!schemas || typeof schemas !== 'object' || !Object.keys(schemas).length) return { refusal: refuse('"schemas" must name at least one schema') };
+  } else return { refusal: refuse('declare either "schema" or "schemas"') };
+  if (every !== undefined && typeof every !== 'string') return { refusal: refuse('"every" must be a schema\'s name') };
+  if (Object.keys(schemas).length > 8) return { refusal: refuse('a session may declare at most 8 schemas') };
+  for (const [name, schema] of Object.entries(schemas)) {
+    if (!usableName(name)) return { refusal: refuse(`"${name}" isn't a usable name`) };
+    if (schema?.type !== 'object') return { refusal: refuse(`schema "${name}" at /type: the root must be "type": "object"`) };
+    if ('if' in schema) return { refusal: refuse(`schema "${name}" at /if: if isn't supported`) };
+  }
+  if (every !== undefined && !(every in schemas)) return { refusal: refuse(`"every" names "${every}", which isn't declared`) };
+  return { declaration: { schemas, every: every ?? null } };
+}
+
+/** `_meta["agneta/result"]` on a prompt: `{ ask }` (null for none), or `{ refusal }`. */
+function parseAsk(value, declaration) {
+  if (value === undefined || value === null) return { ask: declaration?.every ? { name: declaration.every, attempts: 3 } : null };
+  if (value === false) return { ask: null };
+  if (typeof value !== 'object' || Array.isArray(value)) return { refusal: refuse('a prompt asks with {"name": "…"}, or false') };
+  if (!declaration) return { refusal: refuse('this session declared no results') };
+  if (value.schema !== undefined) return { refusal: refuse('a schema is declared when the session opens and asked for by name here') };
+  const unknown = Object.keys(value).sort().find((key) => !['name', 'attempts'].includes(key));
+  if (unknown) return { refusal: refuse(`unknown field ${unknown}`) };
+  const name = value.name ?? declaration.every;
+  if (typeof name !== 'string' || !(name in declaration.schemas)) return { refusal: refuse(`"${name}" wasn't declared when the session opened`) };
+  const attempts = value.attempts ?? 3;
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts > 10) return { refusal: refuse('attempts must be a whole number from 1 to 10') };
+  return { ask: { name, attempts } };
+}
+
+/** A small validator, enough for the tests: type (lists too), required, properties, additionalProperties false, items, enum. */
+function check(schema, value, path = '', schemaPath = '') {
+  const issues = [];
+  const kind = (v) => v === null ? 'null' : Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v;
+  if (schema.type !== undefined) {
+    const types = [schema.type].flat();
+    if (!types.some((type) => type === kind(value) || (type === 'number' && kind(value) === 'integer'))) {
+      return [{ path, keyword: 'type', message: `expected ${types.join(' or ')}, got ${kind(value)}`, schemaPath: `${schemaPath}/type` }];
+    }
+  }
+  if (schema.enum && !schema.enum.some((item) => JSON.stringify(item) === JSON.stringify(value))) {
+    issues.push({ path, keyword: 'enum', message: 'not one of the allowed values', schemaPath: `${schemaPath}/enum` });
+  }
+  if (kind(value) === 'object') {
+    for (const key of schema.required ?? []) {
+      if (!(key in value)) issues.push({ path, keyword: 'required', message: `missing ${key}`, schemaPath: `${schemaPath}/required` });
+    }
+    for (const [key, item] of Object.entries(value)) {
+      if (schema.properties?.[key]) issues.push(...check(schema.properties[key], item, `${path}/${key}`, `${schemaPath}/properties/${key}`));
+      else if (schema.additionalProperties === false) issues.push({ path: `${path}/${key}`, keyword: 'additionalProperties', message: `${key} isn't allowed`, schemaPath: `${schemaPath}/additionalProperties` });
+    }
+  }
+  if (kind(value) === 'array' && schema.items) value.forEach((item, index) => issues.push(...check(schema.items, item, `${path}/${index}`, `${schemaPath}/items`)));
+  return issues;
+}
+
+const depth = (value) => value && typeof value === 'object' ? 1 + Math.max(0, ...Object.values(value).map(depth)) : 0;
+
+/**
+ * One turn's result, by ResultTurn's rules: every call counts, the first valid value wins, and the outcome's precedence
+ * (valid; attempts used up; an abnormal end; a refused value; nothing submitted).
+ */
+function resultTurn(ask, declaration) {
+  let submissions = 0, accepted, lastRefused;
+  return {
+    submit(tool, value) {
+      if (accepted !== undefined || submissions >= ask.attempts) return;
+      submissions++;
+      if (tool !== `submit_${ask.name}`) return;
+      const issues = check(declaration.schemas[ask.name], value);
+      if (!issues.length) accepted = value;
+      else lastRefused = { value, issues };
+    },
+    report(stopReason, stopped) {
+      const base = { name: ask.name, mechanism: 'tool', attempts: submissions };
+      const refused = () => depth(lastRefused.value) <= 64 ? { value: lastRefused.value, issues: lastRefused.issues } : { valueOmitted: 'nested too deeply to report', issues: lastRefused.issues };
+      if (accepted !== undefined) return { status: 'valid', ...base, value: accepted };
+      if (lastRefused && submissions >= ask.attempts) return { status: 'invalid', ...base, ...refused() };
+      const abnormal = stopped || stopReason === 'cancelled' || stopReason === 'max_turn_requests' ? 'stopped'
+        : stopReason === 'max_tokens' ? 'truncated' : stopReason === 'refusal' ? 'refused' : null;
+      if (abnormal) return { status: 'missing', ...base, reason: abnormal, ...(lastRefused ? refused() : {}) };
+      if (lastRefused) return { status: 'invalid', ...base, ...refused() };
+      return { status: 'missing', ...base, reason: 'not-submitted' };
+    }
+  };
+}
+
+/**
+ * A prompt that may ask for a result, scripted by its text, a line each: `CALL <tool> <json>` calls a tool (`submit_<name>`
+ * is the result tool, its updates tagged as Agneta tags them), `STOP <stopReason>` ends the turn so, `FAIL` makes the
+ * engine fail after the calls (the report then in the error's data); anything else is a reply.
+ */
+function scriptedPrompt(params, peer, state) {
+  const id = params.sessionId;
+  const declaration = state.declarations.get(id) ?? null;
+  const parsed = parseAsk(params._meta?.[resultKey], declaration);
+  if (parsed.refusal) return parsed.refusal;
+  const turn = parsed.ask ? resultTurn(parsed.ask, declaration) : null;
+  const text = params.prompt.map((block) => block.text ?? '').join('\n');
+  let stopReason = 'end_turn', fail = false, calls = 0;
+  const notify = (update) => peer.notify('session/update', { sessionId: id, update });
+  for (const line of text.split('\n')) {
+    const call = /^CALL (\S+) (.*)$/.exec(line);
+    if (call) {
+      const [, tool, json] = call;
+      const toolCallId = `call-${++calls}`;
+      const name = tool.startsWith('submit_') && declaration && tool.slice(7) in declaration.schemas ? tool.slice(7) : null;
+      const tag = declaration && tool.startsWith('submit_') ? { _meta: { agneta: { result: { name } } } } : {};
+      const value = JSON.parse(json);
+      notify({ sessionUpdate: 'tool_call', toolCallId, title: tool, kind: 'other', status: 'pending', rawInput: value, ...tag });
+      if (tag._meta) turn?.submit(tool, value);
+      notify({ sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', ...tag });
+    } else if (line.startsWith('STOP ')) stopReason = line.slice(5);
+    else if (line === 'FAIL') fail = true;
+    else if (line) notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: line } });
+  }
+  const report = turn?.report(fail ? 'error' : stopReason, fail);
+  if (fail) return { error: { code: -32603, message: 'The engine stopped', data: report ? { agneta: { result: report } } : {} } };
+  return { result: { stopReason, _meta: report ? { [resultKey]: report } : {} } };
+}
+
 /**
  * Agneta's behaviour, enough for the client: pairs (Always Allow unless `remembered: false`, with a pairing code),
  * initializes known tokens, opens sessions, and answers prompts with `prompt(message, peer)` (default: a short reply).
- * Every handler can be replaced through `handlers[method]`.
+ * Structured results as Agneta answers them: declarations, asks, their refusals, and a prompt that asks for a result
+ * scripted by its text (`scriptedPrompt`). `extensions`: what `initialize` lists. Every handler can be replaced through
+ * `handlers[method]`.
  */
-export function agnetaLike({ remembered = true, code = '123456', access = accessReport(), handlers = {} } = {}) {
-  const state = { tokens: new Set(['kept-token']), sessions: 0, access, config: new Map() };
+export function agnetaLike({
+  remembered = true, code = '123456', access = accessReport(), handlers = {}, extensions = ['agneta/policy', 'agneta/access', resultKey]
+} = {}) {
+  const state = { tokens: new Set(['kept-token']), sessions: 0, access, config: new Map(), declarations: new Map() };
+  /** A session's declaration, as Agneta keeps it: given, the original's (load, fork), or refused. */
+  const declare = (params, original) => {
+    const given = params._meta?.[resultKey];
+    if (given === undefined && original !== undefined) return { declaration: state.declarations.get(original) ?? null };
+    return parseDeclaration(given);
+  };
+  const opened = (id, declaration, extra = {}) => {
+    if (declaration) state.declarations.set(id, declaration);
+    else state.declarations.delete(id);
+    return { result: sessionResult(id, { ...extra, ...(declaration ? { results: { declared: Object.keys(declaration.schemas).sort(), every: declaration.every, mechanism: 'tool' } } : {}) }) };
+  };
   const sessionResult = (id, extra = {}) => ({
     sessionId: id,
     configOptions: [
@@ -169,12 +323,23 @@ export function agnetaLike({ remembered = true, code = '123456', access = access
       }
       case 'initialize':
         if (!state.tokens.has(params._meta?.agneta?.token)) return { error: { code: -32001, message: 'Pair with Agneta first', data: { agneta: { needsPairing: true } } } };
-        return { result: { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [], _meta: { agneta: { extensions: ['agneta/policy', 'agneta/access'], access: state.access } } } };
+        return { result: { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [], _meta: { agneta: { extensions, access: state.access } } } };
       case 'agneta/access': return { result: state.access };
-      case 'session/new': return { result: sessionResult(`s${++state.sessions}`) };
-      case 'session/load': return { result: (({ sessionId, ...rest }) => rest)(sessionResult(params.sessionId, { resumed: true })) };
-      case 'agneta/fork': return { result: sessionResult(`s${++state.sessions}`, { forkOf: params.sessionId }) };
+      case 'session/new': {
+        const { declaration, refusal } = declare(params);
+        return refusal ?? opened(`s${++state.sessions}`, declaration);
+      }
+      case 'session/load': {
+        const { declaration, refusal } = declare(params, params.sessionId);
+        if (refusal) return refusal;
+        return { result: (({ sessionId, ...rest }) => rest)(opened(params.sessionId, declaration, { resumed: true }).result) };
+      }
+      case 'agneta/fork': {
+        const { declaration, refusal } = declare(params, params.sessionId);
+        return refusal ?? opened(`s${++state.sessions}`, declaration, { forkOf: params.sessionId });
+      }
       case 'session/prompt': {
+        if (state.declarations.has(params.sessionId) || params._meta?.[resultKey] !== undefined) return scriptedPrompt(params, peer, state);
         peer.notify('session/update', { sessionId: params.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Hello ' } } });
         peer.notify('session/update', { sessionId: params.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'there.' } } });
         return { result: { stopReason: 'end_turn', _meta: { 'agneta/usage': { modelCalls: 1, models: ['m'], inputTokens: 3, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, cost: null, costKind: 'plan-equivalent', taskCost: null, billing: 'subscription', account: 'p1', ms: 12, msToFirstToken: 5, basis: 'engine-ledger' } } } };

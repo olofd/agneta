@@ -7,12 +7,22 @@ import type {
 import { configSetting, findConfigOption, type ConfigSetting } from './config.js';
 import type { Connection, RequestOptions } from './connection.js';
 import { Emitter } from './emitter.js';
-import { InvalidParamsError, NoTurnRunningError, TimeoutError, TurnBusyError, type ConnectionClosedError, type DownloadProgress } from './errors.js';
-import type {
-  AgnetaRequests, AgnetaUsage, AppToolsLoad, EngineId, LimitHit, Policy, PromptResult, QueuedParams, RateLimitDetails, SandboxLevel,
-  SessionCapabilities, SessionRequestMeta, SessionResult, SessionResultAgneta, SteerResult, StoppedBy, TaskInfo, TraceDelivery,
-  TraceReadParams, TraceReadResult, TraceRecord, TraceRecordType
+import {
+  InvalidParamsError, NoTurnRunningError, TimeoutError, TurnBusyError, UnsupportedByAgnetaError, type ConnectionClosedError,
+  type DownloadProgress
+} from './errors.js';
+import {
+  structuredResult, type AgnetaRequests, type AgnetaUsage, type AppToolsLoad, type EngineId, type JsonSchema, type LimitHit,
+  type Policy, type PromptResult, type QueuedParams, type RateLimitDetails, type ResultAsk, type SandboxLevel,
+  type SessionCapabilities, type SessionRequestMeta, type SessionResult, type SessionResultAgneta, type SessionResults,
+  type SteerResult, type StoppedBy, type StructuredResult, type TaskInfo, type TraceDelivery, type TraceReadParams,
+  type TraceReadResult, type TraceRecord, type TraceRecordType
 } from './protocol.js';
+import {
+  askIn, resultExtension, type Ask, type AskOptions, type FromSchema, type FromStandardSchema, type PreparedSchema,
+  type ResultSchemas, type SchemaInput
+} from './results.js';
+import type { StandardJSONSchemaV1 } from './standard-schema.js';
 
 /** What a prompt or steer may be: text, one content block, or several. */
 export type PromptInput = string | ContentBlock | readonly ContentBlock[];
@@ -58,6 +68,21 @@ export interface ToolCallState {
   rawInput?: unknown;
   rawOutput?: unknown;
   _meta?: Meta | null;
+  /** Set on a call of Agneta's result tool (`_meta.agneta.result`): the result it submits, or null when Agneta can't tell. */
+  result?: { name: string | null };
+}
+
+/**
+ * Whether an update is of a call of Agneta's result tool, the model returning a structured result (Agneta tags each of
+ * its updates `_meta.agneta.result`): the result's name (null when Agneta can't tell), or null for any other update.
+ */
+export function resultCallOf(update: SessionUpdate): { name: string | null } | null {
+  if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return null;
+  const agneta = update._meta?.agneta;
+  const tag = agneta && typeof agneta === 'object' ? (agneta as Record<string, unknown>).result : undefined;
+  if (!tag || typeof tag !== 'object') return null;
+  const name = (tag as Record<string, unknown>).name;
+  return { name: typeof name === 'string' ? name : null };
 }
 
 function mergeToolCall(calls: Map<string, ToolCallState>, update: SessionUpdate): void {
@@ -65,7 +90,8 @@ function mergeToolCall(calls: Map<string, ToolCallState>, update: SessionUpdate)
   const { sessionUpdate: _, ...fields } = update;
   const known = calls.get(fields.toolCallId);
   const defined = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
-  calls.set(fields.toolCallId, { title: '', ...known, ...defined } as ToolCallState);
+  const tag = resultCallOf(update);
+  calls.set(fields.toolCallId, { title: '', ...known, ...defined, ...(tag ? { result: tag } : {}) } as ToolCallState);
 }
 
 function chunkText(update: SessionUpdate, kind: 'agent_message_chunk' | 'agent_thought_chunk'): string {
@@ -100,8 +126,12 @@ export interface TurnResult {
   cancelled: boolean;
   /** Set when the session was stopped while the turn ran. */
   stoppedBy: StoppedBy | null;
-  /** The turn's tool calls, each with its updates merged. */
+  /** The turn's tool calls, each with its updates merged: the model's work, without the result tool's calls. */
   toolCalls: ToolCallState[];
+  /** The calls of Agneta's result tool, the model returning a structured result. */
+  resultCalls: ToolCallState[];
+  /** The structured result (`_meta["agneta/result"]`) when the prompt asked for one, else null. */
+  structured: StructuredResult | null;
   /** The prompt's result as Agneta sent it. */
   raw: PromptResult;
 }
@@ -131,8 +161,10 @@ export class Turn implements PromiseLike<TurnResult>, AsyncIterable<TurnEvent> {
   get text(): string { return this.#text; }
   /** The reasoning so far, where the engine sends it. */
   get thought(): string { return this.#thought; }
-  /** The tool calls so far, with their updates merged. */
-  get toolCalls(): ToolCallState[] { return [...this.#toolCalls.values()]; }
+  /** The tool calls so far, with their updates merged: the model's work, without the result tool's calls. */
+  get toolCalls(): ToolCallState[] { return [...this.#toolCalls.values()].filter((call) => !call.result); }
+  /** The calls of Agneta's result tool so far (the model returning a structured result). */
+  get resultCalls(): ToolCallState[] { return [...this.#toolCalls.values()].filter((call) => call.result); }
   /** Every event so far. */
   get events(): readonly TurnEvent[] { return this.#events; }
   get done(): boolean { return this.#done; }
@@ -223,6 +255,8 @@ export class Turn implements PromiseLike<TurnResult>, AsyncIterable<TurnEvent> {
       cancelled: raw?.stopReason === 'cancelled',
       stoppedBy: this.#stoppedBy ?? (limit?.sessionEnded ? 'limit' : null),
       toolCalls: this.toolCalls,
+      resultCalls: this.resultCalls,
+      structured: structuredResult(meta),
       raw
     };
   }
@@ -268,6 +302,8 @@ export interface SessionHost {
   timeouts: { request: number; prompt: number; session: number };
   forget(session: Session): void;
   fork(source: Session, options: ForkOptions): Promise<Session>;
+  /** Whether Agneta listed the extension in `initialize`. */
+  supports(extension: string): boolean;
   readTrace(sessionId: string, params?: Omit<TraceReadParams, 'sessionId'>, options?: RequestOptions): Promise<TraceReadResult>;
   traceRecords(sessionId: string, params?: TraceRecordsOptions): AsyncGenerator<TraceRecord>;
 }
@@ -290,6 +326,12 @@ export interface SessionOptionsBase {
   appTools?: AppToolsLoad;
   /** `_meta["agneta/trace"]`: `true` for live trace records. */
   trace?: boolean | TraceDelivery;
+  /**
+   * `_meta["agneta/result"]`: the schemas this session's prompts may ask for (`{ schemas: { invoice }, every? }`), or
+   * `{ schema }`, one named `result` asked for on every prompt. Plain JSON Schema or a Standard Schema; Agneta takes
+   * them only when a session opens. Load and fork keep the original's unless given.
+   */
+  results?: ResultSchemas;
   /** The app's own tool servers: loopback Streamable HTTP, each with a bearer (`httpMcpServer`). */
   mcpServers?: McpServerHttp[];
   /** More `_meta` keys, merged over the ones above. */
@@ -324,6 +366,17 @@ export interface NewSessionOptions extends SessionOptionsBase {
 export type LoadSessionOptions = SessionOptionsBase;
 export type ForkOptions = SessionOptionsBase;
 
+/** What `prompt` takes. */
+export interface PromptOptions extends RequestOptions {
+  /** More `_meta` keys on the prompt. */
+  meta?: Meta;
+  /**
+   * `_meta["agneta/result"]`: a declared schema by name (`{ name, attempts? }`), or `false` for no result in a session
+   * with `every`. The turn's `structured` has the report. `ask` does this and reads it, typed.
+   */
+  result?: ResultAsk;
+}
+
 export interface TraceRecordsOptions {
   after?: number;
   types?: TraceRecordType[];
@@ -345,10 +398,11 @@ export class Session extends Emitter<SessionEvents> {
   #configOptions: SessionConfigOption[];
   #modes: SessionModeState | null;
   #permissions: PermissionHandler | undefined;
+  #declared: ReadonlyMap<string, PreparedSchema>;
 
   /** @internal */
   constructor(host: SessionHost, id: string, raw: SessionResult, history: SessionUpdate[], permissions?: PermissionHandler,
-    listeners?: SessionOptionsBase['on']) {
+    listeners?: SessionOptionsBase['on'], declared: ReadonlyMap<string, PreparedSchema> = new Map()) {
     super();
     for (const [name, listener] of Object.entries(listeners ?? {})) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -361,6 +415,7 @@ export class Session extends Emitter<SessionEvents> {
     this.#configOptions = raw.configOptions ?? [];
     this.#modes = raw.modes ?? null;
     this.#permissions = permissions;
+    this.#declared = declared;
     for (const update of history) this.#track(update);
   }
 
@@ -381,6 +436,12 @@ export class Session extends Emitter<SessionEvents> {
   get resumed(): boolean { return this.raw._meta?.agneta?.resumed === true; }
   /** The task it was forked from, if any. */
   get forkOf(): string | undefined { return this.raw._meta?.agneta?.forkOf; }
+  /** The structured results it declared, as Agneta answered: `{ declared, every, mechanism }`; null when none. */
+  get results(): SessionResults | null { return this.raw._meta?.agneta?.results ?? null; }
+  /** @internal The schemas this handle was opened with, by name: empty for a load or fork that didn't give them. */
+  get declaredSchemas(): ReadonlyMap<string, PreparedSchema> { return this.#declared; }
+  /** @internal */
+  supports(extension: string): boolean { return this.#host.supports(extension); }
 
   /** The engine's settings (model, effort, …) as they are now. */
   get configOptions(): SessionConfigOption[] { return this.#configOptions; }
@@ -402,13 +463,16 @@ export class Session extends Emitter<SessionEvents> {
   /**
    * Sends a prompt (`session/prompt`) and returns the turn: `await` it for the result, or `for await` its events.
    * One turn at a time: while one runs, this throws `TurnBusyError` (steer the running turn instead).
-   * An aborted `signal` cancels the turn, which then ends as `cancelled`.
+   * An aborted `signal` cancels the turn, which then ends as `cancelled`. `result` asks for a structured result
+   * (`UnsupportedByAgnetaError` from an Agneta without them, before sending).
    */
-  prompt(input: PromptInput, options: RequestOptions & { meta?: Meta } = {}): Turn {
+  prompt(input: PromptInput, options: PromptOptions = {}): Turn {
     if (this.#turn && !this.#turn.done) {
       throw new TurnBusyError({ code: -32011, message: 'A turn is already running in this session; steer it or wait' }, 'session/prompt');
     }
-    const { signal, meta } = options;
+    if (options.result !== undefined && !this.#host.supports(resultExtension)) throw new UnsupportedByAgnetaError(resultExtension, 'structured results');
+    const meta = options.result !== undefined ? { ...options.meta, [resultExtension]: options.result } : options.meta;
+    const { signal } = options;
     const turn = new Turn(this, () => {
       const onAbort = () => this.cancel();
       signal?.addEventListener('abort', onAbort, { once: true });
@@ -423,6 +487,22 @@ export class Session extends Emitter<SessionEvents> {
     const release = () => { if (this.#turn === turn) this.#turn = null; };
     turn.result.then(release, release);
     return turn;
+  }
+
+  /**
+   * Asks for a structured result: a prompt that asks for one of the schemas this session declared, read as a typed
+   * value. Returns an `Ask`: `await` it for the value, `ask.turn` to stream or cancel, `ask.details` for how it came.
+   * The schema is matched to a declared one (the same object, or an equal JSON Schema), or named (`name`); one the
+   * session didn't declare is a TypeError before anything is sent (Agneta takes schemas only when a session opens).
+   * A Standard Schema checks Agneta's value again and gives its output; `parse` may reject further. Fails with
+   * `ResultMissingError`, `ResultInvalidError` (`source: 'agneta'` or `'client'`), or the turn's own error.
+   */
+  ask<const S extends StandardJSONSchemaV1>(input: PromptInput, options: AskOptions & { schema: S }): Ask<FromStandardSchema<S>>;
+  ask<T>(input: PromptInput, options: AskOptions & { schema?: SchemaInput; parse: (value: unknown) => T }): Ask<T>;
+  ask<const S extends JsonSchema>(input: PromptInput, options: AskOptions & { schema: S }): Ask<FromSchema<S>>;
+  ask<T = unknown>(input: PromptInput, options?: AskOptions & { schema?: SchemaInput }): Ask<T>;
+  ask(input: PromptInput, options: AskOptions & { schema?: SchemaInput; parse?: (value: unknown) => unknown } = {}): Ask<unknown> {
+    return askIn(this, input, options);
   }
 
   /** Adds input to the running turn (`agneta/steer`). Rejects with `NoTurnRunningError` when none runs. */

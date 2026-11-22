@@ -1,7 +1,8 @@
 // Every way a call to Agneta can fail, as typed errors (docs/APP_PROTOCOL.md, Errors). Each class has a literal `kind`,
 // so `instanceof` and `switch (error.kind)` both narrow, keeps Agneta's own `message`, and adds `advice`: what to tell
 // the user. Errors Agneta sent keep their raw `code` and `data`.
-import type { Access } from './protocol.js';
+import { structuredResult, type Access, type ResultIssue, type ResultMissingReason, type StructuredResult } from './protocol.js';
+import type { TurnResult } from './session.js';
 
 /** A JSON-RPC error object as Agneta sends it. */
 export interface RpcErrorObject {
@@ -211,6 +212,14 @@ export abstract class AgnetaRpcError extends AgnetaError {
     return agnetaData(this.data);
   }
 
+  /**
+   * The turn's structured result when a prompt that asked for one failed (`data.agneta.result`): with the value when
+   * one was accepted before the engine failed. Null otherwise.
+   */
+  get structured(): StructuredResult | null {
+    return structuredResult({ 'agneta/result': agnetaData(this.data).result });
+  }
+
   /** The error as it came over the wire. */
   toJSON(): RpcErrorObject {
     return { code: this.code, message: this.message, ...(this.data === undefined ? {} : { data: this.data }) };
@@ -340,9 +349,12 @@ export class UnenforceableError extends AgnetaRpcError {
   /** Agneta's reason. */
   readonly reason: string | null;
   constructor(error: RpcErrorObject, method?: string) {
-    super(error, 'Ask for less, or pair again with a wider scope.', method);
-    const fields = this.details.unenforceable;
-    this.fields = Array.isArray(fields) ? fields.filter((field): field is string => typeof field === 'string') : [];
+    const raw = agnetaData(error.data).unenforceable;
+    const fields = Array.isArray(raw) ? raw.filter((field): field is string => typeof field === 'string') : [];
+    super(error, fields.includes('agneta/result')
+      ? 'Change the schema or the ask as the reason says (Agneta takes a subset of JSON Schema 2020-12, declared when the session opens).'
+      : 'Ask for less, or pair again with a wider scope.', method);
+    this.fields = fields;
     this.reason = stringOrNull(this.details.reason);
   }
 }
@@ -434,6 +446,112 @@ export class UnknownRpcError extends AgnetaRpcError {
   }
 }
 
+// MARK: Structured results
+
+/** This Agneta doesn't offer an extension the call needs (not in `initialize`'s extensions), so nothing was sent. */
+export class UnsupportedByAgnetaError extends AgnetaError {
+  readonly kind = 'unsupportedByAgneta' as const;
+  /** The extension, such as `agneta/result`. */
+  readonly extension: string;
+  constructor(extension: string, feature: string) {
+    super(`This Agneta doesn't offer ${feature} (${extension}).`,
+      'Ask the user to update Agneta (Check for Updates… in its ⋯ menu); until then, don\'t offer this.');
+    this.extension = extension;
+  }
+}
+
+/** A refused value and its issues, as an error carries them (unwrapped like the value, for a schema that isn't an object). */
+export interface RefusedResult {
+  value: unknown;
+  issues: ResultIssue[];
+}
+
+const missingWords: Record<string, string> = {
+  stopped: 'the turn was stopped', refused: 'the model refused', truncated: 'the reply ran out of output tokens',
+  'not-submitted': 'the model ended without returning it'
+};
+
+const missingAdvice: Record<string, string> = {
+  stopped: 'Nothing to tell the user if they stopped it; otherwise say the work was stopped before it finished, and offer to try again.',
+  refused: 'Tell the user the model declined this request.',
+  truncated: 'Tell the user the answer was too long to finish; try again with less input or a smaller schema.',
+  'not-submitted': 'Tell the user no answer came back, and offer to try again (a prompt that says plainly what to return helps).'
+};
+
+/** A turn that asked for a structured result ended without one (`status: "missing"`). The turn ran: see `turnResult`. */
+export class ResultMissingError extends AgnetaError {
+  readonly kind = 'resultMissing' as const;
+  readonly reason: ResultMissingReason;
+  /** The schema asked for. */
+  readonly resultName: string;
+  /** The last value Agneta refused before the turn ended, if one was (else undefined). */
+  readonly value: unknown;
+  /** What was wrong with it; empty when none was refused. */
+  readonly issues: ResultIssue[];
+  /** Why the refused value is left out (it nested too deeply to carry back), or null. */
+  readonly valueOmitted: string | null;
+  /** The report as Agneta sent it. */
+  readonly structured: StructuredResult & { status: 'missing' };
+  /** The turn's result: its stop reason, text, usage and the report (`structured`). */
+  readonly turnResult: TurnResult;
+  constructor(structured: StructuredResult & { status: 'missing' }, turnResult: TurnResult,
+    refused: RefusedResult = { value: structured.value, issues: structured.issues ?? [] }) {
+    super(`No result "${structured.name}": ${missingWords[structured.reason] ?? structured.reason}.`,
+      missingAdvice[structured.reason] ?? 'Tell the user no answer came back, and offer to try again.');
+    this.reason = structured.reason;
+    this.resultName = structured.name;
+    this.value = refused.value;
+    this.issues = refused.issues;
+    this.valueOmitted = structured.valueOmitted ?? null;
+    this.structured = structured;
+    this.turnResult = turnResult;
+  }
+}
+
+/**
+ * A turn's structured result didn't match its schema: Agneta refused the model's values (`source: 'agneta'`,
+ * `status: "invalid"`), or Agneta accepted one and the app's own schema or `parse` rejected it (`source: 'client'`).
+ */
+export class ResultInvalidError extends AgnetaError {
+  readonly kind = 'resultInvalid' as const;
+  /** Who rejected it: Agneta, against the declared schema, or the app's own schema (or `parse`) after Agneta accepted it. */
+  readonly source: 'agneta' | 'client';
+  /** The schema asked for. */
+  readonly resultName: string;
+  /** The last value refused: Agneta's last refused value, or the value Agneta accepted that the app's schema rejected. */
+  readonly value: unknown;
+  /**
+   * What was wrong. From the app's own schema, `keyword` is the schema library's vendor (`zod`, …) or `parse`, and
+   * `schemaPath` is empty.
+   */
+  readonly issues: ResultIssue[];
+  /** Why the refused value is left out (it nested too deeply to carry back), or null. */
+  readonly valueOmitted: string | null;
+  /** The report as Agneta sent it (`valid` when the app's own schema rejected the value). */
+  readonly structured: StructuredResult;
+  /** The turn's result: its stop reason, text, usage and the report (`structured`). */
+  readonly turnResult: TurnResult;
+  constructor(source: 'agneta' | 'client', structured: StructuredResult, turnResult: TurnResult,
+    refused: RefusedResult = { value: structured.value, issues: structured.status === 'valid' ? [] : structured.issues ?? [] },
+    options?: { cause?: unknown }) {
+    const first = refused.issues[0];
+    const more = refused.issues.length > 1 ? ` (and ${refused.issues.length - 1} more)` : '';
+    super(`The result "${structured.name}" didn't match ${source === 'client' ? 'the app\'s own schema' : 'its schema'}`
+      + (first ? `: ${first.path || 'the value'}: ${first.message}${more}.` : '.'),
+      source === 'client'
+        ? 'Agneta accepted the value but the app\'s own schema rejected it: make the declared schema check what the app\'s does, so the model is told; offer the user to try again.'
+        : 'Tell the user the answer didn\'t come back in the expected form, and offer to try again (more attempts may help).',
+      options);
+    this.source = source;
+    this.resultName = structured.name;
+    this.value = refused.value;
+    this.issues = refused.issues;
+    this.valueOmitted = structured.status === 'valid' ? null : structured.valueOmitted ?? null;
+    this.structured = structured;
+    this.turnResult = turnResult;
+  }
+}
+
 /** Every error the library throws. `switch (error.kind)` narrows to the class. */
 export type AnyAgnetaError =
   | NotRunningError | NotInstalledError | OutdatedError | NetworkBlockedError | DeclinedError
@@ -442,7 +560,7 @@ export type AnyAgnetaError =
   | NeedsPairingError | NotAllowedError | NoTurnRunningError | TurnBusyError | QueueFullError | PausedError
   | UnsupportedByEngineError | EngineDownloadingError | AppLimitError | MethodNotFoundError | UnenforceableError | EngineRefusedError
   | AccessChangedError | StateChangedError | InvalidParamsError | InternalError | NeedsSignInError | RateLimitedError
-  | UnknownRpcError;
+  | UnknownRpcError | UnsupportedByAgnetaError | ResultMissingError | ResultInvalidError;
 
 /** Whether `error` is one of this library's errors, narrowed so `switch (error.kind)` works. */
 export function isAgnetaError(error: unknown): error is AnyAgnetaError {

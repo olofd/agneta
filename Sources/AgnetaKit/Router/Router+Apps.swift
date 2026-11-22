@@ -537,13 +537,14 @@ extension Router {
                 }
                 if current(id, generation) { onEvent(.turnEnded(id, stopReason: "error")) }
             }
-            // A value accepted before the engine failed was checked: it goes back with the error, in its data.
+            // The turn's result goes back with the error, in `data.agneta.result` beside Agneta's other details: a value
+            // accepted before the engine failed was checked, and is the app's.
             if method == "session/prompt",
                 let report = closeResult(id, generation: generation, stopReason: "error", stopped: true)
             {
-                let data = (error.data?.objectValue != nil ? error.data! : [:]).setting(
-                    ResultDeclaration.key, to: report)
-                error = RPCError(code: error.code, message: error.message, data: data)
+                let data = (error.data?.objectValue != nil ? error.data! : [:])
+                let agneta = (data["agneta"] ?? [:]).setting("result", to: report)
+                error = RPCError(code: error.code, message: error.message, data: data.setting("agneta", to: agneta))
             }
             record(method, params: params, result: .failure(error), in: trace)
             return .failure(error)
