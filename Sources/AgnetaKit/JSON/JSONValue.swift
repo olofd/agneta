@@ -139,7 +139,51 @@ public enum JSONCoding {
             throw DecodingError.dataCorrupted(
                 .init(codingPath: [], debugDescription: "JSON nested more than \(maxDepth) levels deep"))
         }
+        guard uniqueObjectKeys(in: data) else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: [],
+                    debugDescription: "JSON object keys must be unique, including Unicode canonical equivalents"))
+        }
         return try JSONDecoder().decode(JSONValue.self, from: data)
+    }
+
+    /// Foundation collapses canonically equivalent keys before a keyed container can inspect them. Refuse that
+    /// ambiguity on the wire so no schema constraint or submitted property can disappear during decoding.
+    static func uniqueObjectKeys(in data: Data) -> Bool {
+        let bytes = [UInt8](data)
+        var frames: [Set<String>?] = []
+        var i = 0
+        while i < bytes.count {
+            switch bytes[i] {
+            case UInt8(ascii: "{"): frames.append(Set()); i += 1
+            case UInt8(ascii: "["): frames.append(nil); i += 1
+            case UInt8(ascii: "}"), UInt8(ascii: "]"):
+                if !frames.isEmpty { frames.removeLast() }; i += 1
+            case UInt8(ascii: "\""):
+                let start = i
+                i += 1
+                while i < bytes.count {
+                    if bytes[i] == UInt8(ascii: "\\") {
+                        i += 2
+                    } else if bytes[i] == UInt8(ascii: "\"") {
+                        i += 1; break
+                    } else {
+                        i += 1
+                    }
+                }
+                guard i <= bytes.count else { return false }
+                var next = i
+                while next < bytes.count, [0x20, 0x09, 0x0A, 0x0D].contains(bytes[next]) { next += 1 }
+                if next < bytes.count, bytes[next] == UInt8(ascii: ":"), !frames.isEmpty,
+                    let key = try? JSONDecoder().decode(String.self, from: Data(bytes[start..<i]))
+                {
+                    if frames[frames.count - 1]?.insert(key).inserted == false { return false }
+                }
+            default: i += 1
+            }
+        }
+        return true
     }
 
     /// A message's top-level `id` and `method` (scalars only), read without decoding the rest: for a message nested

@@ -6,7 +6,7 @@ Notable changes to `@agneta/client`, newest first. Versions follow [semantic ver
 
 Hardening:
 
-- Closing cancels connection and guided-connect work, including a socket upgrade still in flight. An already aborted open creates no socket.
+- Closing from a pairing callback cannot reopen the client. Closing cancels connection and guided-connect work, including a socket upgrade still in flight. An already aborted open creates no socket.
 - Both disk token stores write through unique, exclusively created, owner-only temporary files and atomically replace the destination. Concurrent saves cannot share a temporary file; destination symlinks are replaced.
 - Malformed JSON-RPC replies fail their call with `ProtocolError`. Message observers receive detached, credential-redacted copies so they cannot change the reply delivered to the app.
 

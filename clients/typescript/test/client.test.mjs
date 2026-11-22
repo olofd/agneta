@@ -358,3 +358,12 @@ test('close during token loading prevents pairing or initialization', async (t) 
   assert.equal(agneta.calls('agneta/pair').length, 0);
   assert.equal(client.connection, null);
 });
+
+test('closing from a paired listener never opens another connection in direct pair()', async (t) => {
+  const { agneta } = await setUp(t);
+  const client = new AgnetaClient({ name: 'Example', port: agneta.port });
+  client.on('paired', () => client.close());
+  await assert.rejects(client.pair(), (error) => error.kind === 'connectionClosed');
+  assert.equal(client.connection, null);
+  assert.equal(agneta.calls('initialize').length, 0);
+});

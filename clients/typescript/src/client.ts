@@ -590,6 +590,7 @@ export class AgnetaClient extends Emitter<ClientEvents> {
     if (result.remembered) await this.tokens.save(result.token);
     this.#remembered = result.remembered === true;
     this.emit('paired', result);
+    if (this.#connection !== connection || !connection.isOpen) throw new ConnectionClosedError(undefined, 'closed while pairing');
     await this.initialize(result.token, options);
     return result;
   }

@@ -525,6 +525,9 @@ import Testing
 
     // Patterns mean what ECMA-262 means.
     @Test func patternsFollowECMA262() throws {
+        let combining = "^[a]\u{301}.[b]$"
+        #expect(try !valid(["type": "string", "pattern": .string(combining)], "a\u{301}x[b]"))
+        #expect(try valid(["type": "string", "pattern": .string(combining)], "a\u{301}xb"))
         #expect(try !valid(["type": "string", "pattern": "^[a-z]+$"], "abc\n")) // $ is the end, not before a newline
         #expect(try valid(["type": "string", "pattern": "^[a-z]+$"], "abc"))
         #expect(try !valid(["type": "string", "pattern": "^\\d+$"], "١٢")) // \d is ASCII
@@ -553,7 +556,10 @@ import Testing
         }
         #expect(try !valid(["type": "string", "pattern": "^\\s$"], "\u{85}"))
         #expect(try valid(["type": "string", "pattern": "^\\S$"], "\u{85}"))
-        for icuOnly in ["(?i)a", "\\Aa", "a\\z", "a*+", "a++", "\\Qa\\E", "[\\D]", "[\\S]", "\\h", "\\p", "\\p{L"] {
+        for icuOnly in [
+            #"^\p{Latin}+$"#, #"^\p{word}+$"#, #"^\_+$"#, #"^\!+$"#, "(?i)a", "\\Aa", "a\\z", "a*+", "a++", "\\Qa\\E",
+            "[\\D]", "[\\S]", "\\h", "\\p", "\\p{L"
+        ] {
             #expect(
                 refusal(object(["type": "string", "pattern": .string(icuOnly)]))?.reason.contains("pattern") == true,
                 "\(icuOnly)")

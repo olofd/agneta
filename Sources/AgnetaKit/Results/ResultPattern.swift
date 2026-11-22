@@ -7,6 +7,7 @@
 // possessive quantifiers, \A and \z, nested classes) is refused rather than given a meaning ECMA doesn't have.
 // What can't be translated exactly is listed in docs/APP_PROTOCOL.md, Structured results.
 import Foundation
+import JavaScriptCore
 
 /// A compiled pattern. NSRegularExpression is immutable and documented safe to share across threads.
 final class Pattern: @unchecked Sendable {
@@ -16,6 +17,18 @@ final class Pattern: @unchecked Sendable {
 
     /// Compiles an ECMA-262 pattern, or gives why it can't be.
     static func compile(_ source: String) -> Result<Pattern, PatternRefusal> {
+        // ICU accepts property aliases and identity escapes that are invalid in ECMA's Unicode grammar.
+        // Compile (never execute) with the system JavaScript parser first. The pattern is an argument, never code.
+        let syntaxIsValid = autoreleasepool {
+            guard let context = JSContext(), let constructor = context.objectForKeyedSubscript("RegExp") else {
+                return false
+            }
+            let expression = constructor.construct(withArguments: [source, "u"])
+            return context.exception == nil && expression?.isObject == true
+        }
+        guard syntaxIsValid else {
+            return .failure(PatternRefusal(reason: "it isn't an ECMA-262 regular expression in Unicode mode"))
+        }
         switch ECMAPattern.translate(source) {
         case .failure(let refusal): return .failure(refusal)
         case .success(let icu):
@@ -74,7 +87,8 @@ enum ECMAPattern {
     ]
 
     static func translate(_ source: String) -> Result<String, PatternRefusal> {
-        let chars = Array(source)
+        // A combining mark next to a delimiter must not turn it into a single grapheme and hide the syntax.
+        let chars = source.unicodeScalars.map { Character(String($0)) }
         var out = "", i = 0, inClass = false
         func refuse(_ reason: String) -> Result<String, PatternRefusal> { .failure(PatternRefusal(reason: reason)) }
         while i < chars.count {

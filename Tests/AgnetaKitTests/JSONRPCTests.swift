@@ -78,6 +78,44 @@ import Testing
         #expect(String(decoding: try message.encoded(), as: UTF8.self) == raw)
     }
 
+    @Test func duplicateAndCanonicallyEquivalentKeysAreRefusedBeforeDecoding() throws {
+        for text in [
+            #"{"é":1,"e\u0301":"wrong"}"#,
+            #"{"properties":{"é":{"type":"integer"},"e\u0301":{"type":"string"}}}"#,
+            #"{"same":1,"\u0073ame":2}"#,
+            #"{"a":{"x":1,"x":2}}"#
+        ] {
+            #expect(throws: DecodingError.self) { _ = try JSONCoding.decode(Data(text.utf8)) }
+        }
+        #expect(try JSONCoding.decode(Data(#"{"a":{"x":1},"b":{"x":2},"text":"\"x\": 3"}"#.utf8))["b"]?["x"] == 2)
+    }
+
+    @Test func anAmbiguousReplyFailsItsPendingRequest() async throws {
+        let (lines, input) = AsyncThrowingStream<Data, Error>.makeStream()
+        let peer = RPCPeer { data in
+            guard case .request(let id, _, _) = try RPCMessage.parse(data) else { return }
+            input.yield(Data(#"{"jsonrpc":"2.0","id":\#(id.description),"result":{"é":1,"e\u0301":2}}"#.utf8))
+        }
+        let running = Task { await peer.run(lines) }
+        await #expect(throws: RPCError.self) { _ = try await peer.request("example") }
+        input.finish(); await running.value
+    }
+
+    @Test func anAmbiguousRequestGetsAnError() async throws {
+        let (lines, input) = AsyncThrowingStream<Data, Error>.makeStream()
+        let (answers, output) = AsyncStream<Data>.makeStream()
+        let peer = RPCPeer { data in output.yield(data) }
+        let running = Task { await peer.run(lines) }
+        input.yield(Data(#"{"jsonrpc":"2.0","id":7,"method":"example","params":{"é":1,"e\u0301":2}}"#.utf8))
+        var iterator = answers.makeAsyncIterator()
+        let answer = try #require(await iterator.next())
+        guard case .response(.int(7), .failure(let error)) = try RPCMessage.parse(answer) else {
+            Issue.record("Ambiguous request was not refused"); input.finish(); await running.value; return
+        }
+        #expect(error.code == RPCError.invalidRequest)
+        input.finish(); await running.value
+    }
+
     @Test func remapsIDsPerHop() {
         var map = RPCIDMap()
         let a = map.forward(.string("app-1"))
