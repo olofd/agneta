@@ -175,16 +175,16 @@ import Testing
         let route = try await server.register(session: "s1")
         let port = try await server.port()
         let path = String(route.url.dropFirst("http://127.0.0.1:\(port)".count))
-        let over = try RawHTTP.send(
+        let over = try await RawHTTP.send(
             port, "POST \(path) HTTP/1.1\r\nAuthorization: Bearer \(route.bearer)\r\nContent-Length: 1048577\r\n\r\n")
         #expect(over.hasPrefix("HTTP/1.1 413") && over.contains("-32600") && over.contains("larger than 1 MB"))
         // A request whose head never ends is answered the same once it passes the cap, not dropped without a word.
-        let endless = try RawHTTP.send(
+        let endless = try await RawHTTP.send(
             port, "POST \(path) HTTP/1.1\r\nX-Filler: " + String(repeating: "a", count: (1 << 20) + (32 << 10)))
         #expect(endless.hasPrefix("HTTP/1.1 413"))
         // Exactly 1 MB is read in full (and isn't JSON: a 400 parse error, not a closed connection).
         let body = String(repeating: " ", count: 1 << 20)
-        let at = try RawHTTP.send(
+        let at = try await RawHTTP.send(
             port,
             "POST \(path) HTTP/1.1\r\nAuthorization: Bearer \(route.bearer)\r\nContent-Length: \(1 << 20)\r\n\r\n"
                 + body)
@@ -199,21 +199,21 @@ import Testing
         let path = String(route.url.dropFirst("http://127.0.0.1:\(port)".count))
         let ping = #"{"jsonrpc":"2.0","id":1,"method":"ping"}"#
         // "Origin :" is malformed, not a request without an Origin.
-        let spaced = try RawHTTP.send(
+        let spaced = try await RawHTTP.send(
             port,
             "POST \(path) HTTP/1.1\r\nOrigin : https://example.com\r\nAuthorization: Bearer \(route.bearer)\r\n"
                 + "Content-Length: \(ping.utf8.count)\r\n\r\n\(ping)")
         #expect(spaced.hasPrefix("HTTP/1.1 400"))
-        func post(_ body: String) throws -> String {
-            try RawHTTP.send(
+        func post(_ body: String) async throws -> String {
+            try await RawHTTP.send(
                 port,
                 "POST \(path) HTTP/1.1\r\nAuthorization: Bearer \(route.bearer)\r\nContent-Length: \(body.utf8.count)\r\n\r\n"
                     + body)
         }
-        #expect(try post(#"[{"jsonrpc":"2.0","id":1,"method":"ping"}]"#).contains("-32600")) // a batch
-        #expect(try post(#"{"jsonrpc":"2.0","id":1}"#).contains("-32600")) // no method
-        #expect(try post(#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#).contains("-32600"))
-        #expect(try post(ping).hasPrefix("HTTP/1.1 200"))
+        #expect(try await post(#"[{"jsonrpc":"2.0","id":1,"method":"ping"}]"#).contains("-32600")) // a batch
+        #expect(try await post(#"{"jsonrpc":"2.0","id":1}"#).contains("-32600")) // no method
+        #expect(try await post(#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#).contains("-32600"))
+        #expect(try await post(ping).hasPrefix("HTTP/1.1 200"))
         await server.stop()
     }
 
@@ -276,7 +276,7 @@ import Testing
         let port = UInt16(URL(string: route.url)!.port!)
         var closed = false
         for _ in 0..<20 where !closed {
-            closed = (try? RawHTTP.connect(port, closedWithin: .milliseconds(100))) == nil
+            closed = (try? await RawHTTP.connect(port, closedWithin: .milliseconds(100))) == nil
             if !closed { try await Task.sleep(for: .milliseconds(100)) }
         }
         #expect(closed)
@@ -318,9 +318,25 @@ import Testing
     }
 }
 
-/// Raw HTTP over a socket, for what URLSession won't send (malformed headers, exact lengths).
+/// Raw HTTP over a socket, for what URLSession won't send (malformed headers, exact lengths). Its waits block, so the
+/// async calls run them on a thread of their own: on Swift's shared threads (as few as a 3-core CI runner's three)
+/// they starved the server answering them, and every other test, for up to their 10 s timeout.
 enum RawHTTP {
     struct Closed: Error {}
+
+    static func offPool<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            Thread { continuation.resume(with: Result { try work() }) }.start()
+        }
+    }
+
+    static func send(_ port: UInt16, _ request: String) async throws -> String {
+        try await offPool { try sendBlocking(port, request) }
+    }
+
+    static func connect(_ port: UInt16, closedWithin wait: Duration) async throws -> Int32 {
+        try await offPool { try connectBlocking(port, closedWithin: wait) }
+    }
 
     static func connect(_ port: UInt16) throws -> Int32 {
         let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
@@ -343,7 +359,7 @@ enum RawHTTP {
     }
 
     /// Connects, and throws when the server refuses or closes the connection within `closedWithin`.
-    static func connect(_ port: UInt16, closedWithin wait: Duration) throws -> Int32 {
+    static func connectBlocking(_ port: UInt16, closedWithin wait: Duration) throws -> Int32 {
         let socket = try connect(port)
         var timeout = timeval(tv_sec: 0, tv_usec: Int32(wait.components.attoseconds / 1_000_000_000_000))
         setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
@@ -357,7 +373,7 @@ enum RawHTTP {
     }
 
     /// Sends a whole request and reads the answer until the server closes the connection.
-    static func send(_ port: UInt16, _ request: String) throws -> String {
+    static func sendBlocking(_ port: UInt16, _ request: String) throws -> String {
         let socket = try connect(port)
         defer { close(socket) }
         var timeout = timeval(tv_sec: 10, tv_usec: 0)
