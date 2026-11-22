@@ -49,7 +49,10 @@ let showRaw = raw
 func runSignIn() async throws {
     switch route {
     case "claude":
-        let repo = URL(filePath: CommandLine.arguments[0]).deletingLastPathComponent().deletingLastPathComponent()
+        // The tool runs from the source tree (it isn't shipped), so the lock is found from this file, not from the
+        // executable: `swift run` starts it as .build/<triple>/debug/agneta-signin, one folder deeper than
+        // .build/debug, which put the lock under .build.
+        let repo = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
         let installer = RuntimeInstaller(
             lockFile: repo.appending(path: "Engines/runtimes.lock"),
