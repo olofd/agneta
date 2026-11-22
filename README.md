@@ -55,6 +55,7 @@ Agneta is a free, open-source menu bar app that runs AI agents for your other Ma
 - **One place for your providers.** It handles sign-in for ChatGPT and Claude plans through your own Codex's and Claude Code's logins, so Agneta never holds a plan's tokens. API keys stay in your Keychain. One provider can serve several apps, and every task shows which app it belongs to, which provider it runs on and what it costs.
 - **A consent layer.** An app has to pair before it can do anything. You approve it in a window that shows whether its code signature checks out and what it will be able to do (its tools and folders), and you choose which of your providers (plans and API keys) it may use, once or always, and for an app that edits files and runs commands, Developer access or Contained. Engines are all allowed unless you narrow them (Engines… in that window, or Advanced in Settings → Apps); the app picks the engine for each task. In Settings → Apps you can also limit each app: what it may spend on your API keys a day, week or month, how many of its tasks run at once, and how many new ones it starts. You can see and stop every task, and remove an app's access at any time.
 - **A sandbox.** Every engine runs under a macOS sandbox profile. When contained, it can read the task's workspace, the folders the policy names and what the engine itself needs, and nothing else in your home folder. The engine itself can reach any HTTPS host, which is how it reaches its provider. Shell commands, on every engine, go through Agneta and run under an even stricter profile, confined to the workspace with no network. Developer access, the default for an app that edits files and runs commands (you can choose Contained when you approve it, or later in Settings), gives a terminal's reach instead: the home folder apart from credentials and Agneta's data, the internet and your own toolchains. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#sandbox-profiles) lists exactly what each part can reach.
+- **Typed results.** An app can ask a task for a value that matches its own JSON Schema: an invoice read from a PDF, a form filled in from a conversation. The model submits it through a tool Agneta serves, Agneta checks it the same way on every engine and tells the model what to fix, and the app gets the value, or a plain reason why there is none.
 - **A flight recorder.** Every task leaves a structured trace: prompts, tool calls, model calls, permission decisions and timing. You read it with the `agneta-diag` command-line tool or an optional local MCP server. Apps can read their own tasks' traces live.
 
 ## What it is not
@@ -157,6 +158,7 @@ Your app is an ACP **client** and Agneta is the ACP **agent**. If your app alrea
 | Who may connect | Whoever starts the process | Apps the user approved. Pairing gives your app a token, sent in `initialize` |
 | Which provider, engine and model | The agent's own configuration | The providers and engines the user allowed your app, picked per session (`agneta/access` lists them); model and effort through the engine's own config options |
 | What the agent may touch | Whatever the agent process can reach | A policy you send with each session (tools, folders, sandbox mode, network, approval, limits), within the mode the user chose for your app, enforced by sandboxes, or refused |
+| Typed results | Nothing standard | A value checked against your JSON Schema, on every engine ([Typed results](#typed-results)) |
 | Afterwards | Nothing standard | Usage in every prompt result, and the task's full trace, live or later |
 
 **In TypeScript or JavaScript (Node 22+ or Electron's main process), use [`@agneta/client`](clients/typescript/README.md),** the official client. It does everything below for you, typed, and keeps a raw layer for anything else:
@@ -257,6 +259,30 @@ The engine's standard ACP `session/update` notifications arrive unchanged, under
 | Ask about a finished task without changing it | `agneta/fork` |
 | Read the task's trace from any point | `agneta/trace/read {"sessionId", "after"}` |
 | End it | `session/close` |
+
+### Typed results
+
+When your app needs data rather than prose, declare a JSON Schema when the session opens. The model submits the value through a tool Agneta serves; Agneta checks every call against the schema (a documented subset of JSON Schema 2020-12, the same on every engine) and tells the model what to fix, so it can correct itself within the turn.
+
+```text
+→ {"jsonrpc": "2.0", "id": 3, "method": "session/new",
+   "params": {"cwd": "…", "mcpServers": [], "_meta": {
+     "agneta/policy": {"tools": "app-only", "approval": "never-ask"},
+     "agneta/result": {"schema": {"type": "object",
+       "properties": {"number": {"type": "string"}, "total": {"type": "number"}},
+       "required": ["number", "total"], "additionalProperties": false}}}}}
+→ {"jsonrpc": "2.0", "id": 4, "method": "session/prompt",
+   "params": {"sessionId": "s_…", "prompt": [{"type": "text", "text": "Read this invoice: …"}]}}
+← {"jsonrpc": "2.0", "id": 4, "result": {"stopReason": "end_turn", "_meta": {
+     "agneta/result": {"status": "valid", "name": "result", "mechanism": "tool", "attempts": 1,
+                       "value": {"number": "A-1042", "total": 129.5}},
+     "agneta/usage": {…}}}}
+```
+
+- **`status`** is `valid` with the value, `invalid` with the last refused value and its `issues`, or `missing` with a `reason` (`stopped`, `refused`, `truncated`, `not-submitted`). A missing or invalid result is still a successful reply.
+- **Several schemas:** declare `{"schemas": {"invoice": {…}, "contact": {…}}, "every": "invoice"}` and ask per prompt with `_meta["agneta/result"]: {"name": "contact"}`, or `false` for a turn without one.
+- **Valid isn't true.** A valid value has the right shape; whether it's right about the source is the model's work. Treat it as untrusted input.
+- In TypeScript, `client.ask(prompt, { schema })` does all of it in one call and types the value from the schema ([the client](clients/typescript/README.md#structured-results)). Every field, limit and engine difference: [Structured results](docs/APP_PROTOCOL.md#structured-results).
 
 ### Messages your app should handle
 

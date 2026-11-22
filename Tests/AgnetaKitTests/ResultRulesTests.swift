@@ -21,7 +21,9 @@ import Testing
             "properties": [
                 "code": ["type": "string", "pattern": "^[A-Z]{3}-\\d{4}$"],
                 "score": ["type": "integer", "minimum": 1, "maximum": 5],
-                "tags": ["type": "array", "items": ["type": "string", "maxLength": 12], "maxItems": 3, "uniqueItems": true]
+                "tags": [
+                    "type": "array", "items": ["type": "string", "maxLength": 12], "maxItems": 3, "uniqueItems": true
+                ]
             ],
             "required": ["code", "score", "tags"], "additionalProperties": false
         ]
@@ -71,13 +73,13 @@ import Testing
         Limit(schema: ["type": "string", "minLength": 2], words: "at least 2 characters"),
         Limit(schema: ["type": "string", "minLength": 0, "maxLength": 8], words: "at most 8 characters"),
         Limit(schema: ["type": "string", "pattern": "[0-9]"], words: "contains a match for `[0-9]`"),
-        Limit(schema: ["type": "string", "pattern": "^a\\$"], words: "contains a match for `^a\\$`"),  // \$ is a literal $
-        Limit(schema: ["type": "string", "pattern": "^a\\\\$"], words: "matches `^a\\\\$`"),  // \\ then the end
+        Limit(schema: ["type": "string", "pattern": "^a\\$"], words: "contains a match for `^a\\$`"), // \$ is a literal $
+        Limit(schema: ["type": "string", "pattern": "^a\\\\$"], words: "matches `^a\\\\$`"), // \\ then the end
         Limit(schema: ["type": "string", "pattern": "^a\nb$"], words: "matches `^a\\u000ab$`"),
         Limit(schema: ["type": "array", "minItems": 1, "maxItems": 4], words: "1 to 4 items"),
         Limit(schema: ["type": "array", "minItems": 5, "maxItems": 3], words: "at least 5 items, at most 3 items"),
         Limit(schema: ["type": "object", "minProperties": 1], words: "at least 1 property"),
-        Limit(schema: ["type": "null", "maximum": 3], words: ""),
+        Limit(schema: ["type": "null", "maximum": 3], words: "")
     ]
 
     @Test(arguments: limits)
@@ -118,7 +120,7 @@ import Testing
         #expect(text.contains("/pair/0: at most 2 characters; /pair/1 onward: a whole number at most 3"))
         #expect(text.contains("/extra/a: at most 10 characters; /extra/(other properties): at most 2 characters"))
         #expect(text.contains("/map/(any property): at most 5 characters"))
-        #expect(text.contains("/a~1b~0c: at most 3 characters"))  // as a JSON Pointer, as the issues name it
+        #expect(text.contains("/a~1b~0c: at most 3 characters")) // as a JSON Pointer, as the issues name it
     }
 
     @Test func aPercentEncodedReferenceIsReadAsTheValidatorReadsIt() throws {
@@ -185,6 +187,7 @@ import Testing
             ]))
         let description = ResultServer.tools(declaration)[0]["description"]?.stringValue ?? ""
         #expect(
-            description.hasSuffix("Rules the result must meet (Agneta checks them when you submit): /tags: at most 3 items."))
+            description.hasSuffix(
+                "Rules the result must meet (Agneta checks them when you submit): /tags: at most 3 items."))
     }
 }

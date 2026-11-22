@@ -2,14 +2,16 @@
 
 Notable changes to Agneta, newest first. Versions follow [semantic versioning](https://semver.org); until 1.0, the app protocol may change between minor versions, and each change says how.
 
-## Unreleased
+## 0.8.0 (2026-11-22)
+
+0.7.0 was not published as a release of its own: updating from 0.6.0 brings its changes too, listed under [0.7.0](https://github.com/olofd/agneta/blob/v0.8.0/CHANGELOG.md#070-2026-11-21) below (no engine output in another app's task, crash cleanup of engine homes, a paused account checked again while a session opens, traces read without holding up other apps, and client fixes).
 
 **For apps**
 
-- **Structured results** (`agneta/result`, in `initialize`'s extensions). A session declares JSON Schemas when it opens; a prompt asks for one by name, or every prompt does; the model submits the value through a tool Agneta serves, Agneta checks it against the schema the same way on every engine and answers the model with what's wrong, and the prompt's reply carries `_meta["agneta/result"]`: `valid` with the value, or `invalid` or `missing` with why ([APP_PROTOCOL.md](docs/APP_PROTOCOL.md#structured-results)). Schemas are a documented subset of JSON Schema 2020-12; anything outside it is refused, never ignored. Additive: an app that doesn't use it sees nothing new, and Agneta listens on nothing new until a session declares results.
+- **Structured results** (`agneta/result`, in `initialize`'s extensions). A session declares JSON Schemas when it opens; a prompt asks for one by name, or every prompt does; the model submits the value through a tool Agneta serves, Agneta checks it against the schema the same way on every engine and answers the model with what's wrong, and the prompt's reply carries `_meta["agneta/result"]`: `valid` with the value, or `invalid` or `missing` with why ([APP_PROTOCOL.md](https://github.com/olofd/agneta/blob/v0.8.0/docs/APP_PROTOCOL.md#structured-results)). Schemas are a documented subset of JSON Schema 2020-12; anything outside it is refused, never ignored. Additive: an app that doesn't use it sees nothing new, and Agneta listens on nothing new until a session declares results.
 - **App server names starting like Agneta's result server's** (`agneta-result`, `agneta_result`, `agneta.result`, `agneta-result__…`, any case) are refused with `-32602`, as engines' own server names already are.
 - Sessions that declare results load the app's tools up front (`agneta/appTools` `always`) on every engine. `initialize` says what structured results can do in `_meta.agneta.results`. A request over the result server's 1 MB cap is answered `413`.
-- Structured results measured on real models ([ENGINES.md](docs/ENGINES.md)): Claude Code with Sonnet, and Codex with Luna and Terra, each pass every call on to Agneta; all 36 runs of the probe's cases ended valid and correct, Codex's on the constrained case after one correction.
+- Structured results measured on real models ([ENGINES.md](https://github.com/olofd/agneta/blob/v0.8.0/docs/ENGINES.md)): Claude Code with Sonnet, and Codex with Luna and Terra, each pass every call on to Agneta; all 36 runs of the probe's cases ended valid and correct, Codex's on the constrained case after one correction.
 - The result tool's description lists the schema's limits in words (counts, lengths, numeric bounds, patterns). Luna and Terra then met `maxItems` on the first call in 12 of 12 runs, against 0 of 6 before, halving that case's model calls and time. The words are read from the compiled schema, once, within a budget, and are said only for the kinds of value they apply to.
 
 **Fixes**

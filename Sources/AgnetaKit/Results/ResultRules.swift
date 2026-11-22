@@ -65,7 +65,9 @@ enum ResultRules {
             if let target = node.reference { visit(target, path: path, ancestors: inside) }
             for part in node.allOf { visit(part, path: path, ancestors: inside) }
             add(ResultRules.limits(node), at: path)
-            let named = node.properties.compactMap { key, child in String(data: key, encoding: .utf8).map { ($0, child) } }
+            let named = node.properties.compactMap { key, child in
+                String(data: key, encoding: .utf8).map { ($0, child) }
+            }
             for (name, child) in named.sorted(by: { $0.0 < $1.0 }) {
                 visit(child, path: path + "/" + escape(name), ancestors: inside)
             }
@@ -75,7 +77,8 @@ enum ResultRules {
                 visit(items, path: path + label, ancestors: inside)
             }
             if let other = node.additionalProperties {
-                visit(other, path: path + (named.isEmpty ? "/(any property)" : "/(other properties)"), ancestors: inside)
+                visit(
+                    other, path: path + (named.isEmpty ? "/(any property)" : "/(other properties)"), ancestors: inside)
             }
         }
 
@@ -94,7 +97,7 @@ enum ResultRules {
     static func limits(_ node: ResultSchema.Node) -> [String] {
         let allowed = node.types ?? Set(ResultSchema.Kind.allCases)
         let kinds = allowed.subtracting([.null])
-        guard !kinds.isEmpty else { return [] }  // only null: no limit applies
+        guard !kinds.isEmpty else { return [] } // only null: no limit applies
         let nullable = node.types != nil && allowed.contains(.null)
         // Words for one kind of value are said plainly only when the value can be nothing else (or null).
         func said(_ words: [String], only: Set<ResultSchema.Kind>, as kind: String) -> [String] {
@@ -111,13 +114,13 @@ enum ResultRules {
         let low = bound(node.minimum, node.exclusiveMinimum, tighter: >)
         let high = bound(node.maximum, node.exclusiveMaximum, tighter: <)
         switch (low, high) {
-        case let ((min, false)?, (max, false)?): numbers.append("\(noun)from \(number(min)) to \(number(max))")
-        case let (low?, high?):
+        case ((let min, false)?, (let max, false)?): numbers.append("\(noun)from \(number(min)) to \(number(max))")
+        case (let low?, let high?):
             numbers.append(
                 "\(noun)\(low.exclusive ? "above" : "at least") \(number(low.value)) and "
                     + "\(high.exclusive ? "below" : "at most") \(number(high.value))")
-        case let (low?, nil): numbers.append("\(noun)\(low.exclusive ? "above" : "at least") \(number(low.value))")
-        case let (nil, high?): numbers.append("\(noun)\(high.exclusive ? "below" : "at most") \(number(high.value))")
+        case (let low?, nil): numbers.append("\(noun)\(low.exclusive ? "above" : "at least") \(number(low.value))")
+        case (nil, let high?): numbers.append("\(noun)\(high.exclusive ? "below" : "at most") \(number(high.value))")
         case (nil, nil): if whole { numbers.append("a whole number") }
         }
         if let step = node.multipleOf { numbers.append("a multiple of \(number(step))") }
@@ -132,7 +135,8 @@ enum ResultRules {
         var arrays = range(node.minItems, node.maxItems, "item", "items")
         if node.uniqueItems { arrays.append("no two items the same") }
         words += said(arrays, only: [.array], as: "an array")
-        words += said(range(node.minProperties, node.maxProperties, "property", "properties"), only: [.object], as: "an object")
+        words += said(
+            range(node.minProperties, node.maxProperties, "property", "properties"), only: [.object], as: "an object")
         if nullable, !words.isEmpty, !words.contains(where: { $0.hasPrefix("if ") }) { words.append("or null") }
         return words
     }
@@ -149,7 +153,7 @@ enum ResultRules {
         _ inclusive: JSONValue?, _ exclusive: JSONValue?, tighter: (Double, Double) -> Bool
     ) -> (value: JSONValue, exclusive: Bool)? {
         switch (inclusive.flatMap(double), exclusive.flatMap(double)) {
-        case let (i?, e?): return tighter(e, i) || e == i ? (exclusive!, true) : (inclusive!, false)
+        case (let i?, let e?): return tighter(e, i) || e == i ? (exclusive!, true) : (inclusive!, false)
         case (_?, nil): return (inclusive!, false)
         case (nil, _?): return (exclusive!, true)
         case (nil, nil): return nil
@@ -167,11 +171,11 @@ enum ResultRules {
     private static func range(_ low: Int?, _ high: Int?, _ one: String, _ many: String) -> [String] {
         func count(_ n: Int) -> String { "\(n) \(n == 1 ? one : many)" }
         switch (low, high) {
-        case let (min?, max?) where min == max: return ["exactly \(count(min))"]
-        case let (min?, max?) where min > 0 && min < max: return ["\(min) to \(count(max))"]
-        case let (min?, max?) where min > max: return ["at least \(count(min))", "at most \(count(max))"]
-        case let (_, max?): return ["at most \(count(max))"]
-        case let (min?, nil) where min > 0: return ["at least \(count(min))"]
+        case (let min?, let max?) where min == max: return ["exactly \(count(min))"]
+        case (let min?, let max?) where min > 0 && min < max: return ["\(min) to \(count(max))"]
+        case (let min?, let max?) where min > max: return ["at least \(count(min))", "at most \(count(max))"]
+        case (_, let max?): return ["at most \(count(max))"]
+        case (let min?, nil) where min > 0: return ["at least \(count(min))"]
         default: return []
         }
     }
