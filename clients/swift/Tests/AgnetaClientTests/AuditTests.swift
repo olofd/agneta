@@ -92,7 +92,7 @@ import Testing
     }
     @Test func closeFromConnectedStateDoesNotReturnSuccessfulInitialize() async throws {
         let host = StandIn(), client = try host.client()
-        client.onEvent { if case .state(.connected) = $0 { client.close() } }
+        _ = client.onEvent { if case .state(.connected) = $0 { client.close() } }
         do {
             _ = try await client.initialize(token: "secret-token"); Issue.record("Initialized a closed connection")
         } catch is CancellationError {}
@@ -228,7 +228,7 @@ import Testing
         _ = try await client.connect()
         let old = try await client.newSession()
         var updates = 0
-        old.onEvent { if case .update = $0 { updates += 1 } }
+        _ = old.onEvent { if case .update = $0 { updates += 1 } }
         host.overrides = { method, message, socket in
             guard method == "session/load" else { return false }
             socket.update(
@@ -265,7 +265,7 @@ import Testing
     @Test func nonJSONHandlerResultFailsTheRemoteCallInsteadOfHangingIt() async throws {
         let socket = ScriptedTransport(), connection = try await Connection.open(transport: socket)
         defer { connection.close() }
-        connection.handle("invalid") { _ in .number(.nan) }
+        _ = connection.handle("invalid") { _ in .number(.nan) }
         socket.feed(["jsonrpc": "2.0", "id": "remote", "method": "invalid", "params": [:]])
         try await eventually { socket.sent.contains { $0["id"] == "remote" } }
         #expect(socket.sent.last?["error"]?["code"] == -32603)

@@ -9,7 +9,7 @@ import Testing
         let client = try host.client(tokens: tokens)
         defer { client.close() }
         var codes: [String] = []
-        client.onEvent { if case .pairingCode(let code) = $0 { codes.append(code) } }
+        _ = client.onEvent { if case .pairingCode(let code) = $0 { codes.append(code) } }
         async let first = client.connect()
         async let second = client.connect()
         let (a, b) = try await (first, second)
@@ -113,7 +113,7 @@ import Testing
         _ = try await client.connect()
         let session = try await client.newSession()
         var reconnected = false
-        client.onEvent { if case .reconnected = $0 { reconnected = true } }
+        _ = client.onEvent { if case .reconnected = $0 { reconnected = true } }
         first.transport.close()
         try await eventually { reconnected }
         #expect(session.ended != nil); #expect(client.sessions.isEmpty)
@@ -123,7 +123,7 @@ import Testing
     }
     @Test func closingInPairedCallbackNeverReopensDirectPair() async throws {
         let host = StandIn(), client = try host.client()
-        client.onEvent { if case .paired = $0 { client.close() } }
+        _ = client.onEvent { if case .paired = $0 { client.close() } }
         do { _ = try await client.pair(); Issue.record("Expected cancellation") } catch is CancellationError {}
         #expect(client.connection == nil)
         #expect(host.transport.calls("initialize").isEmpty)

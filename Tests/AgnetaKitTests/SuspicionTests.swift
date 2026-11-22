@@ -26,6 +26,10 @@ final class RawWebSocket {
             }
         }
         guard connected == 0 else { throw POSIXError(.ECONNREFUSED) }
+        // Agneta may disconnect this client (that's what some of these tests check): a write after that is an error,
+        // not a SIGPIPE ending the whole test run.
+        var on: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         let key = Data((0..<16).map { _ in UInt8.random(in: 0...255) }).base64EncodedString()
         try write(
             Data(

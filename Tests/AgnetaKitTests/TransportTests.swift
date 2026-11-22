@@ -143,6 +143,9 @@ import Testing
             }
         }
         guard result == 0 else { throw POSIXError(.ECONNREFUSED) }
+        // A server that closes first makes a later write an error, not a SIGPIPE ending the whole test run.
+        var on: Int32 = 1
+        setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         return socket
     }
 

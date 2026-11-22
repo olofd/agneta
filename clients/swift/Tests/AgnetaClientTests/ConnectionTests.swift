@@ -53,7 +53,7 @@ import Testing
         let socket = ScriptedTransport(), connection = try await Connection.open(transport: socket)
         defer { connection.close() }
         var log: [JSONValue] = []
-        connection.onEvent { if case .message(let message, _) = $0 { log.append(message) } }
+        _ = connection.onEvent { if case .message(let message, _) = $0 { log.append(message) } }
         socket.onSend = { message, socket in
             if message["method"] != nil { socket.reply(message, result: ["token": "pair-secret"]) }
         }
@@ -64,7 +64,7 @@ import Testing
         #expect(!text.contains("auth-secret")); #expect(!text.contains("pair-secret"));
         #expect(text.contains("[redacted]"))
         let old = connection.handle("custom") { _ in "old" }
-        connection.handle("custom") { params in params }
+        _ = connection.handle("custom") { params in params }
         old()
         socket.feed(["jsonrpc": "2.0", "id": 19, "method": "custom", "params": ["answer": 42]])
         try await eventually { socket.sent.contains { $0["id"] == 19 } }
